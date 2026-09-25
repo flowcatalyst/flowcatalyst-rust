@@ -173,6 +173,11 @@ pub struct SyncPrincipalItem {
     /// Defaults to `true` server-side when omitted.
     #[serde(default = "default_true")]
     pub active: bool,
+    /// Optional pre-hashed password (bcrypt, argon2), stored verbatim on a
+    /// user the sync creates. Ignored for an existing user; the result's
+    /// `password_hash_ignored` names those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -379,7 +384,9 @@ impl Principals<'_> {
     ///
     /// When `remove_unlisted` is true the platform strips SDK-sourced role
     /// assignments from principals not in the list (principals themselves
-    /// are never deleted by sync).
+    /// are never deleted by sync). A `password_hash` is used only to create a
+    /// user; the result's `password_hash_ignored` lists the existing users
+    /// whose hash was not applied.
     pub async fn sync(
         &self,
         app_code: &str,

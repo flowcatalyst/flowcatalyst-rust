@@ -267,6 +267,10 @@ class Principals
      * application code). When `$removeUnlisted` is true, SDK-synced roles
      * on unlisted principals are removed.
      *
+     * A `passwordHash` is used only when the sync creates the user; an existing
+     * user's password is never changed. The result's `passwordHashIgnored` lists
+     * those users' emails.
+     *
      * @param SyncPrincipalEntry[] $principals
      */
     public function sync(
@@ -303,6 +307,10 @@ class Principals
      * by email), so an application code adds nothing here.
      *
      * Pure upsert: it never strips roles from unlisted users.
+     *
+     * A `passwordHash` is used only when the sync creates the user; an existing
+     * user's password is never changed. The result's `passwordHashIgnored` lists
+     * those users' emails.
      *
      * @param SyncPrincipalEntry[] $users
      */

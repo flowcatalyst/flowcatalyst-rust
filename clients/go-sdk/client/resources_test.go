@@ -363,3 +363,50 @@ func TestScheduledJobsLogForInstanceDefaultsLevelToInfo(t *testing.T) {
 	assert.Contains(t, seen.body, `"level":"INFO"`)
 	assert.Equal(t, client.LogLevel(""), req.Level, "the caller's request is not mutated")
 }
+
+// Owner ruling 2 of 2026-09-25 (Java 714f3f2d): the router will verify the
+// platform bearer token, so both in-flight checks must carry the one the
+// client uses for the platform.
+func TestRouterCallsSendThePlatformBearerToken(t *testing.T) {
+	var seen []string
+	routerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/monitoring/in-flight-messages/check-batch" {
+			_, _ = w.Write([]byte(`{"m1":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"messageId":"m1","inPipeline":false}`))
+	}))
+	defer routerSrv.Close()
+
+	c := client.New("http://127.0.0.1:1", client.WithRouterBaseURL(routerSrv.URL), client.WithToken("tok-1"))
+	_, err := c.Router().InPipeline(context.Background(), "m1")
+	require.NoError(t, err)
+	_, err = c.Router().InPipelineBatch(context.Background(), []string{"m1"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bearer tok-1", "Bearer tok-1"}, seen)
+}
+
+// A new service account has no application access; AllApplications asks for
+// every application and is sent only when set.
+func TestServiceAccountsCreateSendsAllApplicationsOnlyWhenSet(t *testing.T) {
+	srv, seen := newMockSrv(t, `{"serviceAccount":{"id":"sa_1","code":"svc","name":"Svc","clientIds":[],"active":true,"authType":"BEARER_TOKEN","roles":[],"createdAt":"t","updatedAt":"t"},"principalId":"prn_1","oauth":{"clientId":"cid","clientSecret":"cs"},"webhook":{"authToken":"at","signingSecret":"ss"}}`)
+	c := client.New(srv.URL)
+
+	out, err := c.ServiceAccounts().Create(context.Background(), &client.CreateServiceAccountRequest{Code: "svc", Name: "Svc"})
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPost, seen.method)
+	assert.Equal(t, "/api/service-accounts", seen.path)
+	assert.NotContains(t, seen.body, "allApplications")
+	assert.Equal(t, "sa_1", out.ServiceAccount.ID)
+	assert.Equal(t, "prn_1", out.PrincipalID)
+	assert.Equal(t, "cs", out.OAuth.ClientSecret)
+	assert.Equal(t, "ss", out.Webhook.SigningSecret)
+
+	_, err = c.ServiceAccounts().Create(context.Background(), &client.CreateServiceAccountRequest{Code: "svc", Name: "Svc", AllApplications: true})
+	require.NoError(t, err)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(seen.body), &body))
+	assert.Equal(t, true, body["allApplications"])
+}

@@ -904,7 +904,7 @@ class DefinitionSynchronizer
      * @param string $appCode Application code
      * @param array<array<string, mixed>> $principals Principal definitions
      * @param bool $removeUnlisted Remove SDK-synced roles for unlisted principals
-     * @return array{created: int, updated: int, deleted: int, error?: string}
+     * @return array{created: int, updated: int, deleted: int, passwordHashIgnored?: list<string>, error?: string}
      */
     private function syncPrincipals(string $appCode, array $principals, bool $removeUnlisted): array
     {
@@ -921,11 +921,18 @@ class DefinitionSynchronizer
             );
             $result = $this->client->principals()->sync($appCode, $entries, $removeUnlisted);
 
-            return [
+            $counts = [
                 'created' => $result->created,
                 'updated' => $result->updated,
                 'deleted' => $result->deleted,
             ];
+            // A hash only creates a user; the platform names the existing users
+            // whose hash it left alone.
+            if ($result->passwordHashIgnored !== []) {
+                $counts['passwordHashIgnored'] = $result->passwordHashIgnored;
+            }
+
+            return $counts;
         } catch (\Exception $e) {
             return [
                 'created' => 0,

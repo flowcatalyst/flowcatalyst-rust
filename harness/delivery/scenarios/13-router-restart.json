@@ -1,0 +1,48 @@
+{
+  "name": "router-restart",
+  "description": "40 events in 4 groups, target answers after 250ms; the router is restarted (SIGTERM, start) 3s in. Nothing lost; nothing accepted twice.",
+  "covers": [
+    "H8",
+    "H9",
+    "H12"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "script": {
+        "default": {
+          "status": 200,
+          "body": {
+            "ack": true
+          },
+          "delayMs": 250
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 40,
+      "groups": [
+        "g1",
+        "g2",
+        "g3",
+        "g4"
+      ]
+    }
+  ],
+  "disruptions": [
+    {
+      "atMs": 3000,
+      "process": "router",
+      "action": "restart"
+    }
+  ],
+  "settle": {
+    "timeoutMs": 180000,
+    "quietMs": 10000
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "ack-false-no-delay",
+  "description": "Target answers 200 {\"ack\":false} (no delaySeconds) on the first attempt, 200 after. Go reschedules the job (default 30s, no retry budget spent); the second attempt must not follow at once.",
+  "covers": [
+    "H1",
+    "H2"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 3,
+      "script": {
+        "byAttempt": [
+          {
+            "attempts": [
+              1,
+              1
+            ],
+            "respond": {
+              "status": 200,
+              "body": {
+                "ack": false
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 5
+    }
+  ],
+  "settle": {
+    "timeoutMs": 120000
+  },
+  "invariants": {
+    "maxAttempts": 2,
+    "minRetryGapMs": 1000
+  }
+}

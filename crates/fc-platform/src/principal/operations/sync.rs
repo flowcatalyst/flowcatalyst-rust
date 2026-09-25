@@ -37,7 +37,7 @@ use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::authorization_service::AuthContext;
 use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use crate::ApplicationRepository;
 use crate::PrincipalRepository;
@@ -141,12 +141,6 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
     }
 }
 
-/// What one sync entry did to one user.
-enum RowEvent {
-    Created(UserCreated),
-    Updated(UserUpdated),
-}
-
 #[async_trait]
 impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
     type Command = SyncPrincipalsCommand;
@@ -190,18 +184,16 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        for event in row_events {
-            let emitted = match event {
-                RowEvent::Created(e) => self.unit_of_work.emit_event(e, &command).await.map(|_| ()),
-                RowEvent::Updated(e) => self.unit_of_work.emit_event(e, &command).await.map(|_| ()),
-            };
-            if let Err(e) = emitted.into_result() {
-                return UseCaseResult::failure(e);
-            }
-        }
-
+        // Go's usecaseop.Sync: each row's event and audit row, then the
+        // rollup, atomic with the batch write.
         self.unit_of_work
-            .commit(&batch, &*self.principal_repo, rollup, &command)
+            .commit_all_with_events(
+                std::slice::from_ref(&batch),
+                &*self.principal_repo,
+                row_events,
+                rollup,
+                &command,
+            )
             .await
     }
 }
@@ -249,7 +241,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
         &self,
         command: &SyncPrincipalsCommand,
         ctx: &ExecutionContext,
-    ) -> Result<(PrincipalSyncBatch, Vec<RowEvent>, PrincipalsSynced), UseCaseError> {
+    ) -> Result<(PrincipalSyncBatch, Vec<RecordedEvent>, PrincipalsSynced), UseCaseError> {
         let app_code = command.application_code.as_str();
         self.application_repo
             .find_by_code(app_code)
@@ -327,12 +319,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RowEvent::Updated(UserUpdated::new(
-                        ctx,
-                        &p.id,
-                        Some(&p.name),
-                        None,
-                    )));
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
                     updated += 1;
                     p
                 }
@@ -346,9 +333,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RowEvent::Created(UserCreated::new(
-                        ctx, &p.id, email, &p.name, p.scope, None,
-                    )));
+                    row_events.push(RecordedEvent::of(&UserCreated::new(ctx, &p.id, email))?);
                     created += 1;
                     p
                 }
@@ -384,12 +369,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                 }
                 p.roles.retain(|ra| !is_own_sdk_role(ra, app_code));
                 p.updated_at = now;
-                row_events.push(RowEvent::Updated(UserUpdated::new(
-                    ctx,
-                    &p.id,
-                    Some(&p.name),
-                    None,
-                )));
+                row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
                 deactivated += 1;
                 principals.push(p);
             }

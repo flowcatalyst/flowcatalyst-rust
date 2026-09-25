@@ -18,8 +18,8 @@ use fc_common::{
 };
 use fc_queue::{QueueConsumer, QueuePublisher};
 use fc_router::{
-    api::create_router, HealthService, HealthServiceConfig, Mediator, QueueManager,
-    WarningService, WarningServiceConfig,
+    api::create_router, HealthService, HealthServiceConfig, Mediator, QueueManager, WarningService,
+    WarningServiceConfig,
 };
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -101,10 +101,18 @@ impl QueueConsumer for MockQueueConsumer {
         self.acked.lock().push(receipt_handle.to_string());
         Ok(())
     }
-    async fn nack(&self, _receipt_handle: &str, _delay_seconds: Option<u32>) -> fc_queue::Result<()> {
+    async fn nack(
+        &self,
+        _receipt_handle: &str,
+        _delay_seconds: Option<u32>,
+    ) -> fc_queue::Result<()> {
         Ok(())
     }
-    async fn extend_visibility(&self, _receipt_handle: &str, _seconds: u32) -> fc_queue::Result<()> {
+    async fn extend_visibility(
+        &self,
+        _receipt_handle: &str,
+        _seconds: u32,
+    ) -> fc_queue::Result<()> {
         Ok(())
     }
     fn is_healthy(&self) -> bool {
@@ -144,7 +152,10 @@ fn queued(msg: Message, queue_id: &str) -> QueuedMessage {
 async fn build_app(manager: Arc<QueueManager>) -> axum::Router {
     let publisher: Arc<dyn QueuePublisher> = Arc::new(NoOpPublisher);
     let warnings = Arc::new(WarningService::new(WarningServiceConfig::default()));
-    let health = Arc::new(HealthService::new(HealthServiceConfig::default(), warnings.clone()));
+    let health = Arc::new(HealthService::new(
+        HealthServiceConfig::default(),
+        warnings.clone(),
+    ));
     let breakers = manager.circuit_breaker_registry().clone();
     create_router(publisher, manager, warnings, health, breakers)
 }
@@ -152,12 +163,7 @@ async fn build_app(manager: Arc<QueueManager>) -> axum::Router {
 async fn get(app: &axum::Router, path: &str) -> (StatusCode, Value) {
     let response = app
         .clone()
-        .oneshot(
-            Request::builder()
-                .uri(path)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -248,7 +254,11 @@ async fn get_mediating_shape_and_reflects_in_flight_delivery() {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
     let (_, body) = get(&app, "/monitoring/mediating").await;
-    assert_eq!(body, serde_json::json!([]), "must clear once delivery finishes");
+    assert_eq!(
+        body,
+        serde_json::json!([]),
+        "must clear once delivery finishes"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -268,7 +278,11 @@ async fn get_in_flight_detail_shape_for_untracked_message() {
         "/monitoring/in-flight-messages/detail?messageId=never-seen",
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "a miss is 200 inPipeline=false, not 404");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a miss is 200 inPipeline=false, not 404"
+    );
     assert_eq!(body["messageId"], "never-seen");
     assert_eq!(body["inPipeline"], false);
     assert!(body["status"].is_null());
@@ -445,7 +459,11 @@ async fn get_blocked_groups_shape_and_reflects_a_gated_group() {
 
     tokio::time::sleep(Duration::from_millis(350)).await;
     let (_, body) = get(&app, "/monitoring/blocked-groups").await;
-    assert_eq!(body, serde_json::json!([]), "fully-drained group must not show up");
+    assert_eq!(
+        body,
+        serde_json::json!([]),
+        "fully-drained group must not show up"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -480,7 +498,15 @@ async fn get_and_clear_group_flushes_shape_and_behaviour() {
 
     let (status, body) = get(&app, "/monitoring/group-flushes").await;
     assert_eq!(status, StatusCode::OK);
-    let rows = body.as_array().unwrap();
+    // One row per pool — DEFAULT-POOL is always present (Go: Reconfigure
+    // ensures it) — so pick the pool under test.
+    let rows: Vec<Value> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["poolCode"] == "FLUSHED")
+        .cloned()
+        .collect();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["poolCode"], "FLUSHED");
     assert_eq!(rows[0]["activeCount"], 1);
@@ -492,7 +518,11 @@ async fn get_and_clear_group_flushes_shape_and_behaviour() {
     assert!(groups[0]["suppressedUntil"].is_string());
 
     // Clearing an unknown pool/group 404s.
-    let (status, _) = post(&app, "/monitoring/group-flushes/FLUSHED/no-such-group/clear").await;
+    let (status, _) = post(
+        &app,
+        "/monitoring/group-flushes/FLUSHED/no-such-group/clear",
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     let (status, body) = post(&app, "/monitoring/group-flushes/FLUSHED/gF/clear").await;
@@ -502,8 +532,15 @@ async fn get_and_clear_group_flushes_shape_and_behaviour() {
     assert_eq!(body["group"], "gF");
 
     let (_, body) = get(&app, "/monitoring/group-flushes").await;
-    assert_eq!(body[0]["activeCount"], 0);
-    assert_eq!(body[0]["groups"], serde_json::json!([]));
+    let row = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["poolCode"] == "FLUSHED")
+        .cloned()
+        .unwrap();
+    assert_eq!(row["activeCount"], 0);
+    assert_eq!(row["groups"], serde_json::json!([]));
 
     // Already cleared: 404 again.
     let (status, _) = post(&app, "/monitoring/group-flushes/FLUSHED/gF/clear").await;
@@ -550,6 +587,100 @@ async fn dashboard_html_includes_the_new_operator_tabs() {
         "/monitoring/group-flushes",
         "clearGroupFlush",
     ] {
-        assert!(html.contains(marker), "dashboard.html must contain {marker:?}");
+        assert!(
+            html.contains(marker),
+            "dashboard.html must contain {marker:?}"
+        );
     }
+}
+
+// ---------------------------------------------------------------------
+// PUT /monitoring/pools/{code} (Go: UpdatePool)
+// ---------------------------------------------------------------------
+
+async fn put_json(app: &axum::Router, path: &str, body: Value) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("response body must be JSON")
+    };
+    (status, body)
+}
+
+/// H11: the pool is updated IN PLACE (same instance, new settings); only
+/// the fields sent change; the body echoes them as Go does. It used to
+/// build a second pool and swap it in without draining the first.
+#[tokio::test]
+async fn put_pool_updates_in_place_and_echoes_the_request() {
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(Arc::new(
+        DelayMediator::new(Duration::from_millis(1)),
+    )));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "P".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: Some(100),
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let before = manager.get_pool("P").unwrap();
+    let app = build_app(manager.clone()).await;
+
+    let (status, body) = put_json(
+        &app,
+        "/monitoring/pools/P",
+        serde_json::json!({"concurrency": 8}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+    assert_eq!(body["pool_code"], "P");
+    assert_eq!(body["new_config"], serde_json::json!({"concurrency": 8}));
+
+    let after = manager.get_pool("P").unwrap();
+    assert!(
+        Arc::ptr_eq(&before, &after),
+        "updated in place, not replaced"
+    );
+    assert_eq!(after.concurrency(), 8);
+    assert_eq!(
+        after.rate_limit_per_minute(),
+        Some(100),
+        "an omitted field is left unchanged"
+    );
+    assert_eq!(manager.draining_pool_count(), 0);
+}
+
+/// Go answers 404 for an unknown pool; it never creates one.
+#[tokio::test]
+async fn put_unknown_pool_is_404_and_creates_nothing() {
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(Arc::new(
+        DelayMediator::new(Duration::from_millis(1)),
+    )));
+    let app = build_app(manager.clone()).await;
+    let (status, _) = put_json(
+        &app,
+        "/monitoring/pools/NOPE",
+        serde_json::json!({"concurrency": 3}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(manager.get_pool("NOPE").is_none());
 }

@@ -45,11 +45,11 @@ Where the two conflict, the published code wins.
 
 | SDK | Base | Added from this repo | Next version |
 |---|---|---|---|
-| `clients/laravel-sdk` | Go 0.10.26 | `SubscriptionSource::FUNCTION`; audit redaction (`AuditRedaction`, `AuditMasked`, `$maskedFields` as the **last**, optional constructor parameter); MPL-2.0 licence | **0.10.27** |
-| `clients/typescript-sdk` | Go 0.11.27 | audit redaction (`redactAuditData`, `AuditMasked`, `auditMaskedFieldsOf`, optional `maskedFields` on `withOperationData`), wired into both outbox units of work; FUNCTION round-trip test; MPL-2.0 licence | **0.11.28** |
+| `clients/laravel-sdk` | Go 0.10.26 | `SubscriptionSource::FUNCTION`; audit redaction (`AuditRedaction`, `AuditMasked`, `$maskedFields` as the **last**, optional constructor parameter); the 2026-09-25 SDK rulings (below); MIT licence as published | **0.10.27** |
+| `clients/typescript-sdk` | Go 0.11.27 | audit redaction (`redactAuditData`, `AuditMasked`, `auditMaskedFieldsOf`, optional `maskedFields` on `withOperationData`), wired into both outbox units of work; FUNCTION round-trip test; the 2026-09-25 SDK rulings (below); Apache-2.0 licence as published | **0.11.28** |
 | `clients/java-sdk` | Go 0.0.10, as-is | audit redaction (`AuditRedaction`, `withOperationData(Map, Set)` overload) | **0.0.11** |
-| `clients/go-sdk` | this repo | token claims in Go's shape (below) | first release |
-| `crates/fc-sdk` | this repo | token claims in Go's shape (below) | n/a |
+| `clients/go-sdk` | this repo | token claims in Go's shape (below); the 2026-09-25 SDK rulings (below); Apache-2.0 licence | first release |
+| `crates/fc-sdk` | this repo | token claims in Go's shape (below); the 2026-09-25 SDK rulings (below); Apache-2.0 licence | n/a |
 
 Every SDK has a `CHANGELOG.md` with the unreleased entry. No published public API was removed or
 changed incompatibly.
@@ -64,6 +64,24 @@ changed incompatibly.
 The Laravel and TS SDKs got this from the Go repo. Before the merge, this repo's Laravel copy still
 read `scope` as the tier. The Go and Rust SDKs were fixed here. They fall back to a tier value in
 `scope` for tokens minted before `tier` existed.
+
+**SDK rulings of 2026-09-25** (owner decision #21; Java `docs/backlog.md` rulings 2, 5 and 11):
+- **Router calls carry the platform bearer token** (ruling 2, Java 714f3f2d). TS, Laravel and Java
+  now send it on `inPipeline` / `inPipelineBatch`; the Go and Rust SDKs already did (now pinned by
+  tests).
+  These releases must reach integral, hr and rfp **before** any router enforces auth.
+- **Single-flight session refresh** (ruling 5, Java e0a9fd13). TS joins an in-flight exchange per
+  refresh token and reuses its result for 10 s; Laravel does the same under a cache lock across
+  PHP workers, with the token set memoised encrypted for 10 s. The Rust and Go `OAuthClient`
+  refresh calls did not single-flight; they now do (join, 10 s memo, failures never remembered).
+- **Result-returning webhook check** (ruling 11, Java f55afed6): TS `checkDeliverySignature`,
+  Laravel `WebhookValidator::check` / `checkRequest` returning a `WebhookVerification`. The
+  throwing forms are unchanged. Rust `WebhookValidator::validate` and Go `Validator.Validate`
+  already return a result.
+- **Platform additions:** service-account create takes `allApplications` (every SDK; Go and Rust
+  gained a `ServiceAccounts` create for it), and both principal syncs report
+  `passwordHashIgnored` (decision #22). Go and Rust principal-sync items also gained the optional
+  `passwordHash` the TS and Laravel SDKs already sent.
 
 **Audit redaction.** Every SDK runs the shared vectors, `docs/spec/audit-redaction-vectors.json`.
 Each SDK carries a byte-identical copy because the SDKs are split into their own repos, and
@@ -150,11 +168,11 @@ tokens (`is_identity_token()`), but the session flow has not been changed.
 
 | SDK | Command | Result |
 |---|---|---|
-| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 228 tests, 0 failures |
-| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 142 tests, 0 failures |
+| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 236 tests, 0 failures |
+| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 148 tests, 0 failures |
 | Java | `mvn -o clean verify` (Maven offline; deps cached) | 80 tests, 0 failures, 1 skipped (real-PG, needs `FC_JAVA_SDK_TEST_PG_URL`) |
-| Go | `go vet ./... && go test ./...` | all packages pass (10 new cases) |
-| Rust | `cargo test -p fc-sdk` (and `--all-features`) | all pass (291 unit tests with all features) |
+| Go | `go vet ./... && go test ./...` | all packages pass (127 top-level tests) |
+| Rust | `cargo test -p fc-sdk` (and `--all-features`) | all pass (299 unit tests with all features) |
 
 ## Publishing from here
 
@@ -195,9 +213,10 @@ publishing moved from this repo to Go. Old tags keep pointing at their old commi
 
 ### Needs an owner decision
 
-- **Licence.** The published Laravel SDK is MIT and the TS SDK is Apache-2.0. This repo relicensed
-  both to **MPL-2.0** (2026-09-01, owner ruling: AGPL platform, MPL SDKs), and the merge keeps
-  MPL-2.0. The Java SDK has no licence file or pom `<licenses>` at all.
+- **Licence (decided 2026-09-25).** The SDKs keep their published licences: TS Apache-2.0,
+  Laravel MIT. The never-published Go SDK and `fc-sdk` follow the TS SDK (Apache-2.0). The
+  2026-09-01 move to MPL-2.0 is reverted for the SDKs; the function guest crates stay MPL-2.0
+  (decision #10). The Java SDK still has no licence file or pom `<licenses>` at all.
 - **Java distribution.** Maven Central, GitHub Packages or JitPack: Go's `docs/java-sdk-plan.md`
   left this open. Until it's decided, a Java release is only a tag.
 - **Go SDK module path.** `github.com/flowcatalyst/flowcatalyst/clients/go-sdk` names the **Go
@@ -205,16 +224,12 @@ publishing moved from this repo to Go. Old tags keep pointing at their old commi
   cannot resolve it. It needs either `github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`
   with `clients/go-sdk/vX.Y.Z` tags, or a split repo `github.com/flowcatalyst/go-sdk` with its own
   module path. The Go SDK has never been published, so the rename breaks no one.
-- **Unpublished work in `flowcatalyst-javalin`.** Its SDK copies carry changes that were never
-  released:
-  - Laravel/TS webhook `check()`
-  - `WebhookVerification`
-  - router bearer handling
-  - TS single-flight refresh
-  - a Jackson-3 Java SDK at 0.0.4
-
-  They are not merged here. Its Laravel `CreateAuditLogDto` also puts `maskedFields` **before**
-  `applicationCode`/`clientCode`, which breaks positional callers; the copy here puts it last.
+- **Unpublished work in `flowcatalyst-javalin`.** Its TS and Laravel webhook `check()` /
+  `WebhookVerification`, router bearer handling and single-flight refresh are now ported here
+  (see "SDK rulings of 2026-09-25"), and so is its Java SDK router bearer change. Not merged: a
+  Jackson-3 Java SDK at 0.0.4. Its Laravel `CreateAuditLogDto` also puts `maskedFields`
+  **before** `applicationCode`/`clientCode`, which breaks positional callers; the copy here puts
+  it last.
 - **Platform spec.** Should the Rust platform adopt Go's operationIds and schema names, so the
   SDKs can be regenerated from this repo's spec? This goes with the platform divergences listed
   under "Go SDK: remaining drift".

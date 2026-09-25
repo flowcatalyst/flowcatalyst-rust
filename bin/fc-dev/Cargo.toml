@@ -23,6 +23,7 @@ fc-mcp = { path = "../../crates/fc-mcp" }
 # The in-process function host `fc-dev` runs beside the platform (plan H8).
 fc-fnhost-core = { path = "../../crates/fc-fnhost-core" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }

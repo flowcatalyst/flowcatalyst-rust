@@ -5,6 +5,7 @@
 pub mod api;
 pub mod delivery_credentials;
 pub mod entity;
+pub mod reaper;
 pub mod repository;
 pub mod signing_guard;
 

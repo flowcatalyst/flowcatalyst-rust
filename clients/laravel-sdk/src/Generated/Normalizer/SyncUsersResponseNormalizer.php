@@ -55,6 +55,16 @@ class SyncUsersResponseNormalizer implements DenormalizerInterface, NormalizerIn
         elseif (\array_key_exists('deleted', $data) && $data['deleted'] === null) {
             $object->setDeleted(null);
         }
+        if (\array_key_exists('passwordHashIgnored', $data) && $data['passwordHashIgnored'] !== null) {
+            $values = [];
+            foreach ($data['passwordHashIgnored'] as $value) {
+                $values[] = $value;
+            }
+            $object->setPasswordHashIgnored($values);
+        }
+        elseif (\array_key_exists('passwordHashIgnored', $data) && $data['passwordHashIgnored'] === null) {
+            $object->setPasswordHashIgnored(null);
+        }
         if (\array_key_exists('syncedEmails', $data) && $data['syncedEmails'] !== null) {
             $values = [];
             foreach ($data['syncedEmails'] as $value) {
@@ -78,6 +88,13 @@ class SyncUsersResponseNormalizer implements DenormalizerInterface, NormalizerIn
         $dataArray = [];
         $dataArray['created'] = $data->getCreated();
         $dataArray['deleted'] = $data->getDeleted();
+        if ($data->isInitialized('passwordHashIgnored') && null !== $data->getPasswordHashIgnored()) {
+            $values = [];
+            foreach ($data->getPasswordHashIgnored() as $value) {
+                $values[] = $value;
+            }
+            $dataArray['passwordHashIgnored'] = $values;
+        }
         $values = [];
         foreach ($data->getSyncedEmails() as $value) {
             $values[] = $value;

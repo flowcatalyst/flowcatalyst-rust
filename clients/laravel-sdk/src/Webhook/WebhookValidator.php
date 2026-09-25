@@ -47,6 +47,34 @@ class WebhookValidator
     }
 
     /**
+     * Check a webhook signature, returning the outcome instead of throwing.
+     * The same check as {@see validate()}.
+     */
+    public function check(string $payload, string $signature, string $timestamp, int $tolerance = 300): WebhookVerification
+    {
+        try {
+            $this->validate($payload, $signature, $timestamp, $tolerance);
+            return WebhookVerification::valid();
+        } catch (WebhookValidationException $e) {
+            return WebhookVerification::invalid($e->getMessage());
+        }
+    }
+
+    /**
+     * Check a webhook from a Laravel Request, returning the outcome instead of throwing.
+     * The same check as {@see validateRequest()}.
+     */
+    public function checkRequest(Request $request, int $tolerance = 300): WebhookVerification
+    {
+        try {
+            $this->validateRequest($request, $tolerance);
+            return WebhookVerification::valid();
+        } catch (WebhookValidationException $e) {
+            return WebhookVerification::invalid($e->getMessage());
+        }
+    }
+
+    /**
      * Validate a webhook from a Laravel Request.
      *
      * @param Request $request The incoming request

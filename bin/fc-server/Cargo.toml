@@ -19,6 +19,7 @@ fc-stream = { path = "../../crates/fc-stream" }
 fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres"] }
 
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }

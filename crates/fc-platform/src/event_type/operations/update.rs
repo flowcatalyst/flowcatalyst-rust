@@ -149,7 +149,12 @@ impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
         event_type.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = EventTypeUpdated::new(ctx, &event_type.id, updated_name, updated_description);
+        let event = EventTypeUpdated::new(
+            ctx,
+            &event_type.id,
+            &event_type.name,
+            event_type.description.as_deref(),
+        );
         Ok((event_type, event))
     }
 }

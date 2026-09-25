@@ -221,7 +221,22 @@ pub struct NewDispatchAttempt<'a> {
     pub error_type: Option<ErrorType>,
     pub error_stack_trace: Option<&'a str>,
     pub duration_millis: i64,
+    /// When the attempt started and finished (Go's `NewAttempt` /
+    /// `Complete*`).
+    pub attempted_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+    /// What was sent (`request_info`, Go's `RequestSummary`): never a secret.
+    pub request_info: Option<&'a serde_json::Value>,
 }
+
+/// Recorded on the rows `/api/dispatch/settled` resets when the caller gives
+/// no reason (Go `settled.defaultReason`).
+pub const SETTLED_DEFAULT_REASON: &str =
+    "settled: router ACKed as an untried buffered sibling behind a failed BLOCK_ON_ERROR head";
+
+/// Recorded on the rows the stranded-sibling reaper resets (Go `reapReason`).
+pub const REAP_REASON: &str =
+    "reaper: sibling of a FAILED BLOCK_ON_ERROR head, stranded QUEUED/PROCESSING";
 
 pub struct DispatchJobRepository {
     pool: PgPool,
@@ -1158,7 +1173,8 @@ impl DispatchJobRepository {
 
     // ── Attempt tracking ─────────────────────────────────────────────────
 
-    /// Insert a delivery attempt record into msg_dispatch_job_attempts.
+    /// Record one delivery attempt in `msg_dispatch_job_attempts` (Go
+    /// `RecordAttempt`).
     pub async fn insert_attempt(&self, attempt: &NewDispatchAttempt<'_>) -> Result<()> {
         let NewDispatchAttempt {
             dispatch_job_id,
@@ -1170,16 +1186,18 @@ impl DispatchJobRepository {
             error_type,
             error_stack_trace,
             duration_millis,
+            attempted_at,
+            completed_at,
+            request_info,
         } = *attempt;
         let id = crate::shared::tsid::generate_untyped();
-        let now = Utc::now();
 
         sqlx::query(
             r#"INSERT INTO msg_dispatch_job_attempts
                 (id, dispatch_job_id, attempt_number, status, response_code,
                  response_body, error_message, error_type, error_stack_trace,
-                 duration_millis, attempted_at, completed_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
+                 duration_millis, attempted_at, completed_at, created_at, request_info)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13)"#,
         )
         .bind(&id)
         .bind(dispatch_job_id)
@@ -1191,53 +1209,209 @@ impl DispatchJobRepository {
         .bind(error_type.map(|t| t.as_str()))
         .bind(error_stack_trace)
         .bind(duration_millis)
-        .bind(now)
-        .bind(now)
-        .bind(now)
+        .bind(attempted_at)
+        .bind(completed_at)
+        .bind(request_info)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    /// Update a dispatch job after a delivery attempt.
-    ///
-    /// `created_at` is required because the table is partitioned on it —
-    /// passing it lets PG prune to a single partition.
-    pub async fn update_after_attempt(
-        &self,
-        id: &str,
-        created_at: DateTime<Utc>,
-        status: DispatchStatus,
-        attempt_count: u32,
-        duration_millis: i64,
-        last_error: Option<&str>,
-    ) -> Result<bool> {
-        let now = Utc::now();
-        let completed_at = if status.is_terminal() {
-            Some(now)
-        } else {
-            None
-        };
+    // ── Delivery lifecycle (platform infrastructure; Go's repository) ─────
+    //
+    // Every status flip carries `created_at` alongside the id: the table is
+    // partitioned on it, and the equality prunes to the row's partition.
 
-        let result = sqlx::query(
-            r#"UPDATE msg_dispatch_jobs SET
-                status = $1, attempt_count = $2, last_attempt_at = $3,
-                duration_millis = $4, last_error = $5, completed_at = $6, updated_at = $7
-            WHERE id = $8 AND created_at = $9"#,
+    /// Atomically claim a job for one delivery: `PENDING/QUEUED →
+    /// PROCESSING`. `false` means another delivery holds it (or it
+    /// finished) and the caller must not call the subscriber (Go
+    /// `ClaimForDelivery`).
+    pub async fn claim_for_delivery(&self, id: &str, created_at: DateTime<Utc>) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET status = 'PROCESSING', last_attempt_at = NOW(), updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2 AND status IN ('PENDING', 'QUEUED')",
         )
-        .bind(status.as_str())
-        .bind(attempt_count as i32)
-        .bind(now)
-        .bind(Some(duration_millis))
-        .bind(last_error)
-        .bind(completed_at)
-        .bind(now)
         .bind(id)
         .bind(created_at)
         .execute(&self.pool)
         .await?;
+        Ok(r.rows_affected() == 1)
+    }
 
-        Ok(result.rows_affected() > 0)
+    /// `→ COMPLETED`, stamping `completed_at` and the attempt's duration.
+    pub async fn mark_completed(
+        &self,
+        id: &str,
+        created_at: DateTime<Utc>,
+        duration_millis: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET status = 'COMPLETED', completed_at = NOW(), duration_millis = $3, \
+                    updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2",
+        )
+        .bind(id)
+        .bind(created_at)
+        .bind(duration_millis)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// `→ FAILED` (terminal), stamping `last_error`, `completed_at` and the
+    /// duration.
+    pub async fn mark_failed(
+        &self,
+        id: &str,
+        created_at: DateTime<Utc>,
+        last_error: &str,
+        duration_millis: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET status = 'FAILED', completed_at = NOW(), duration_millis = $3, \
+                    last_error = $4, updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2",
+        )
+        .bind(id)
+        .bind(created_at)
+        .bind(duration_millis)
+        .bind(last_error)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// A retryable failure: back to PENDING at `scheduled_for`, spending one
+    /// attempt of the budget (Go `ScheduleRetry`).
+    pub async fn schedule_retry(
+        &self,
+        id: &str,
+        created_at: DateTime<Utc>,
+        scheduled_for: DateTime<Utc>,
+        last_error: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET attempt_count = attempt_count + 1, scheduled_for = $3, last_error = $4, \
+                    last_attempt_at = NOW(), status = 'PENDING', queued_at = NULL, \
+                    updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2",
+        )
+        .bind(id)
+        .bind(created_at)
+        .bind(scheduled_for)
+        .bind(last_error)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Back to PENDING at `scheduled_for` WITHOUT spending the budget: a
+    /// subscriber's cooperative deferral (`ack:false`, 429), or a job held
+    /// behind its group at delivery time (Go `Reschedule`).
+    pub async fn reschedule(
+        &self,
+        id: &str,
+        created_at: DateTime<Utc>,
+        scheduled_for: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET status = 'PENDING', scheduled_for = $3, queued_at = NULL, updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2",
+        )
+        .bind(id)
+        .bind(created_at)
+        .bind(scheduled_for)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Whether an EARLIER job of `group` is holding it (failed, or in a
+    /// retry backoff) — the delivery-time half of the scheduler's hold (Go
+    /// `GroupHeldBefore`). Positional, so the holder itself is never held
+    /// by its own presence.
+    pub async fn group_held_before(
+        &self,
+        group: &str,
+        sequence: i32,
+        created_at: DateTime<Utc>,
+        id: &str,
+    ) -> Result<bool> {
+        let sql = format!(
+            "SELECT EXISTS (SELECT 1 FROM msg_dispatch_jobs \
+              WHERE message_group = $1 AND ({}) \
+                AND (sequence, created_at, id) < ($2, $3, $4))",
+            crate::scheduler::GROUP_HOLDING_STATUS_SQL
+        );
+        let (held,): (bool,) = sqlx::query_as(&sql)
+            .bind(group)
+            .bind(sequence)
+            .bind(created_at)
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(held)
+    }
+
+    /// The router's settled-message hook: reset `ids` still QUEUED or
+    /// PROCESSING to PENDING, recording `reason`. Returns the ids reset (Go
+    /// `SettleAcked`). No `created_at` is known, so this scans by id.
+    pub async fn settle_acked(&self, ids: &[String], reason: &str) -> Result<Vec<String>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "UPDATE msg_dispatch_jobs \
+                SET status = 'PENDING', scheduled_for = NULL, queued_at = NULL, \
+                    last_error = $2, updated_at = NOW() \
+              WHERE id = ANY($1) AND status IN ('QUEUED', 'PROCESSING') \
+             RETURNING id",
+        )
+        .bind(ids)
+        .bind(reason)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// The reaper backstop: reset to PENDING every QUEUED/PROCESSING
+    /// BLOCK_ON_ERROR job whose group is headed by an earlier FAILED/ERROR
+    /// job. A PROCESSING row updated since `live_before` is presumed in
+    /// flight and left alone (Go `SweepStrandedGroupSiblings`).
+    pub async fn sweep_stranded_group_siblings(
+        &self,
+        live_before: DateTime<Utc>,
+    ) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "WITH stranded AS ( \
+                 SELECT s.id, s.created_at \
+                   FROM msg_dispatch_jobs s \
+                   JOIN msg_dispatch_jobs h \
+                     ON h.message_group = s.message_group \
+                    AND h.status IN ('FAILED', 'ERROR') \
+                    AND (h.sequence, h.created_at, h.id) < (s.sequence, s.created_at, s.id) \
+                  WHERE s.mode = 'BLOCK_ON_ERROR' \
+                    AND s.message_group IS NOT NULL \
+                    AND s.status IN ('QUEUED', 'PROCESSING') \
+                    AND (s.status <> 'PROCESSING' OR s.updated_at < $1) \
+             ) \
+             UPDATE msg_dispatch_jobs j \
+                SET status = 'PENDING', scheduled_for = NULL, queued_at = NULL, \
+                    last_error = $2, updated_at = NOW() \
+               FROM stranded st \
+              WHERE j.id = st.id AND j.created_at = st.created_at \
+             RETURNING j.id",
+        )
+        .bind(live_before)
+        .bind(REAP_REASON)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }

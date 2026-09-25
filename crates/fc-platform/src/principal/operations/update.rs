@@ -132,13 +132,11 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
 
         // Apply updates — track whether anything actually changed.
         let mut changed = false;
-        let mut new_name: Option<String> = None;
 
         if let Some(ref name) = command.name {
             let trimmed = name.trim().to_string();
             if trimmed != principal.name {
-                principal.name = trimmed.clone();
-                new_name = Some(trimmed);
+                principal.name = trimmed;
                 changed = true;
             }
         }
@@ -224,7 +222,7 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
 
         principal.updated_at = chrono::Utc::now();
 
-        let event = UserUpdated::new(ctx, &principal.id, new_name.as_deref(), None);
+        let event = UserUpdated::new(ctx, &principal.id, &principal.name);
         Ok((principal, event))
     }
 }

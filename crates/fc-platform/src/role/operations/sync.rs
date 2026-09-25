@@ -8,10 +8,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::events::RolesSynced;
+use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use crate::ApplicationRepository;
 use crate::RoleRepository;
@@ -99,12 +99,14 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         command: SyncRolesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RolesSynced> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (rows, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // role, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 
@@ -113,7 +115,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
         &self,
         command: &SyncRolesCommand,
         ctx: &ExecutionContext,
-    ) -> Result<RolesSynced, UseCaseError> {
+    ) -> Result<(Vec<RecordedEvent>, RolesSynced), UseCaseError> {
         // Verify the application exists
         let application = self
             .application_repo
@@ -144,9 +146,13 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_names: Vec<String> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for input in &command.roles {
-            let full_name = format!("{}:{}", command.application_code, input.name.to_lowercase());
+            // As Go (`splitRoleName`): a name that already carries this
+            // application's prefix is not prefixed twice.
+            let short_name = short_role_name(&input.name.to_lowercase(), &command.application_code);
+            let full_name = format!("{}:{}", command.application_code, short_name);
             synced_names.push(full_name.clone());
 
             let existing_role = existing.iter().find(|r| r.name == full_name);
@@ -160,7 +166,12 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                             .clone()
                             .unwrap_or_else(|| input.name.clone());
                         updated.description = input.description.clone();
-                        updated.permissions = input.permissions.iter().cloned().collect();
+                        // As Go: apps usually declare role names and curate
+                        // permissions in the UI, so an empty list keeps the
+                        // stored permissions; only a non-empty list replaces them.
+                        if !input.permissions.is_empty() {
+                            updated.permissions = input.permissions.iter().cloned().collect();
+                        }
                         updated.client_managed = input.client_managed;
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.role_repo.update(&updated).await {
@@ -169,6 +180,11 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                                 full_name, e
                             )));
                         }
+                        rows.push(RecordedEvent::of(&RoleUpdated::new(
+                            ctx,
+                            &updated.id,
+                            &updated.name,
+                        ))?);
                         updated_count += 1;
                     }
                     // Skip CODE and DATABASE-sourced roles
@@ -176,7 +192,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                 None => {
                     let mut role = AuthRole::new(
                         &command.application_code,
-                        input.name.to_lowercase(),
+                        short_name.clone(),
                         input.display_name.as_deref().unwrap_or(&input.name),
                     );
                     role.application_id = Some(application.id.clone());
@@ -190,6 +206,9 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                             full_name, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&RoleCreated::new(
+                        ctx, &role.id, &role.name,
+                    ))?);
                     created_count += 1;
                 }
             }
@@ -220,6 +239,9 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                             role.name, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&RoleDeleted::new(
+                        ctx, &role.id, &role.name,
+                    ))?);
                     deleted_count += 1;
                 }
             }
@@ -227,13 +249,24 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
 
         let event = RolesSynced {
             metadata: RolesSynced::metadata_for(ctx, &command.application_code),
-            application_code: command.application_code.clone(),
             created: created_count,
             updated: updated_count,
-            deleted: deleted_count,
-            synced_names,
+            removed: deleted_count,
+            total: command.roles.len() as u32,
+            application_code: command.application_code.clone(),
+            synced_codes: synced_names,
         };
-        Ok(event)
+        Ok((rows, event))
+    }
+}
+
+/// The short role name: `name` without a leading `{application_code}:` (Go
+/// `splitRoleName`), so `orders:admin` and `admin` name the same role.
+fn short_role_name(name: &str, application_code: &str) -> String {
+    let prefix = format!("{application_code}:");
+    match name.strip_prefix(&prefix) {
+        Some(short) if !short.is_empty() => short.to_string(),
+        _ => name.to_string(),
     }
 }
 

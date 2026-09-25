@@ -1,0 +1,43 @@
+{
+  "name": "burst-pool-capacity",
+  "description": "60 ungrouped events into a pool of concurrency 2, target answers after 300ms: no more than 2 in flight at the target, nothing lost or duplicated.",
+  "covers": [
+    "capacity gating",
+    "H10"
+  ],
+  "pools": [
+    {
+      "code": "narrow",
+      "concurrency": 2
+    }
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "IMMEDIATE",
+      "pool": "narrow",
+      "script": {
+        "default": {
+          "status": 200,
+          "body": {
+            "ack": true
+          },
+          "delayMs": 300
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 60
+    }
+  ],
+  "settle": {
+    "timeoutMs": 150000
+  },
+  "invariants": {
+    "maxConcurrency": 2
+  }
+}

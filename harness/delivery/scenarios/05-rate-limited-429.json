@@ -1,0 +1,54 @@
+{
+  "name": "rate-limited-429",
+  "description": "Target answers 429 with Retry-After: 2 on attempt 1, 429 without Retry-After on attempt 2, 200 after. A 429 is a deferral, not a failure: no budget spent, the wait honoured.",
+  "covers": [
+    "H1",
+    "H3"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 2,
+      "script": {
+        "byAttempt": [
+          {
+            "attempts": [
+              1,
+              1
+            ],
+            "respond": {
+              "status": 429,
+              "headers": {
+                "Retry-After": "2"
+              }
+            }
+          },
+          {
+            "attempts": [
+              2,
+              2
+            ],
+            "respond": {
+              "status": 429
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 5
+    }
+  ],
+  "settle": {
+    "timeoutMs": 150000
+  },
+  "invariants": {
+    "maxAttempts": 3,
+    "minRetryGapMs": 1500
+  }
+}

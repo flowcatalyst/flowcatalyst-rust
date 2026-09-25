@@ -1126,6 +1126,7 @@ export type CreateServiceAccountRequest = {
      * A URL to the JSON Schema for this object.
      */
     readonly $schema?: string;
+    allApplications?: boolean;
     applicationId?: string;
     clientIds?: Array<string>;
     code: string;
@@ -1133,7 +1134,7 @@ export type CreateServiceAccountRequest = {
     name: string;
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
-    [key: string]: unknown | string | Array<string> | WebhookCredentialsDto | undefined;
+    [key: string]: unknown | string | boolean | Array<string> | WebhookCredentialsDto | undefined;
 };
 
 export type CreateServiceAccountResponse = {
@@ -2663,6 +2664,7 @@ export type SyncResultResponse = {
     applicationCode: string;
     created: number;
     deleted: number;
+    passwordHashIgnored?: Array<string>;
     syncedCodes: Array<string>;
     updated: number;
 };
@@ -2793,6 +2795,7 @@ export type SyncUsersResponse = {
     readonly $schema?: string;
     created: number;
     deleted: number;
+    passwordHashIgnored?: Array<string>;
     syncedEmails: Array<string>;
     updated: number;
 };
@@ -3810,6 +3813,7 @@ export type CreateScheduledJobRequestWritable = {
 };
 
 export type CreateServiceAccountRequestWritable = {
+    allApplications?: boolean;
     applicationId?: string;
     clientIds?: Array<string>;
     code: string;
@@ -3817,7 +3821,7 @@ export type CreateServiceAccountRequestWritable = {
     name: string;
     scope?: string;
     webhookCredentials?: WebhookCredentialsDto;
-    [key: string]: unknown | string | Array<string> | WebhookCredentialsDto | undefined;
+    [key: string]: unknown | boolean | string | Array<string> | WebhookCredentialsDto | undefined;
 };
 
 export type CreateServiceAccountResponseWritable = {
@@ -4646,6 +4650,7 @@ export type SyncResultResponseWritable = {
     applicationCode: string;
     created: number;
     deleted: number;
+    passwordHashIgnored?: Array<string>;
     syncedCodes: Array<string>;
     updated: number;
 };
@@ -4682,6 +4687,7 @@ export type SyncUsersRequestWritable = {
 export type SyncUsersResponseWritable = {
     created: number;
     deleted: number;
+    passwordHashIgnored?: Array<string>;
     syncedEmails: Array<string>;
     updated: number;
 };

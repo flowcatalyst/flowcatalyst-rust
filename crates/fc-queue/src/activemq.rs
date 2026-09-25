@@ -367,27 +367,22 @@ impl QueueConsumer for ActiveMqConsumer {
         true
     }
 
+    /// Stop intake only: the broker consumer is cancelled so nothing new is
+    /// delivered, but the channel stays open so the ack/nack of messages
+    /// already handed out still works (closing it returned every unacked
+    /// delivery to the queue, so work that completed after a stop was
+    /// delivered again). The channel and connection close when this
+    /// consumer is dropped (lapin's closers).
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
 
-        // Cancel the consumer
         if let Some(channel) = self.channel.read().await.as_ref() {
             let _ = channel
                 .basic_cancel(&self.config.consumer_tag, BasicCancelOptions::default())
                 .await;
         }
 
-        // Close channel
-        if let Some(channel) = self.channel.write().await.take() {
-            let _ = channel.close(200, "Shutdown").await;
-        }
-
-        // Close connection
-        if let Some(connection) = self.connection.write().await.take() {
-            let _ = connection.close(200, "Shutdown").await;
-        }
-
-        info!(queue = %self.config.queue_name, "ActiveMQ consumer stopped");
+        info!(queue = %self.config.queue_name, "ActiveMQ consumer stopped (intake only)");
     }
 }
 

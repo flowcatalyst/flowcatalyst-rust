@@ -1,0 +1,46 @@
+{
+  "name": "platform-down",
+  "description": "20 events in 2 groups, target answers after 200ms; the platform is stopped 2s in and kept down 5s (the router's /api/dispatch/process calls fail meanwhile). Nothing lost; nothing accepted twice.",
+  "covers": [
+    "R-57",
+    "router \u2192 platform transport errors"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "script": {
+        "default": {
+          "status": 200,
+          "body": {
+            "ack": true
+          },
+          "delayMs": 200
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 20,
+      "groups": [
+        "g1",
+        "g2"
+      ]
+    }
+  ],
+  "disruptions": [
+    {
+      "atMs": 2000,
+      "process": "platform",
+      "action": "down",
+      "downMs": 5000
+    }
+  ],
+  "settle": {
+    "timeoutMs": 180000,
+    "quietMs": 10000
+  }
+}

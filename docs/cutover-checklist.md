@@ -10,7 +10,9 @@ as they merge to `main`.
       `docs/parity/router-deviations-from-go.md` (`feat/go-conformance`)
 - [ ] Delivery parity harness, Go vs Rust end to end over SQS: scenarios pass or are ruled
       (`feat/harness-delivery`)
-- [ ] API parity runner, Go vs Rust on Java's 45 scenario files: diffs fixed or ruled (`feat/harness-parity`)
+- [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
+      `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
+- [ ] API parity converged: every diff fixed or ruled
 
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
 - [ ] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
@@ -34,12 +36,26 @@ as they merge to `main`.
 - [ ] Behaviour behind the `client-admin` and `portal-administrator` roles
 - [ ] Go's roleless-user "profile-only" middleware
 
+## API convergence (from parity run 1)
+- [ ] Core (`feat/api-core`): `POST /api/principals`; Go's error envelope and codes; extractor rejections as
+      400 VALIDATION; Go's 401/403 rules and headers; `$schema` omitted (#30, provisional); OAuth gaps
+      (unknown client, `client_credentials` with no service account, discovery, login backoff, family
+      revocation); token claims per #3/#20; `/auth/login` and `/api/me` shapes; passkey gate for INTERNAL IdPs
+- [ ] Missing routes (`feat/go-routes`): the run-1 list (2FA, change-password, login-history, portal, docs,
+      role-permission paths, service-account tokens, config properties, and more)
+- [ ] Per-area pass: write status codes (201/204), idempotent no-op repeats, Go's input validation, list
+      envelopes, null vs absent members, login-attempt fields, audit facet names
+- [ ] OpenAPI documents (`/q/openapi` and the developer spec) vs Go's huma documents: decide whether they
+      must match
+
 ## Rulings adopted from the Java session, not yet built
 - [ ] Router auth (ruling 2): platform bearer tokens, `router:view`/`operate`, the `router-operator` role,
       dev-only mocks, the PKCE dashboard. **The SDK releases that send the bearer must reach
-      integral/hr/rfp first.**
-- [ ] TS and Laravel SDKs: single-flight refresh (ruling 5) and webhook `check()` (ruling 11)
-- [ ] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results
+      integral/hr/rfp first** (laravel-sdk 0.10.27; hr is pinned to `^0.8` and must move to `^0.10`).
+      Rust's role catalogue doesn't have `router:view`/`operate` yet: add them, and grant `:view` to
+      `application-service` and `viewer`, when router auth is built.
+- [x] SDKs: single-flight refresh (ruling 5), webhook `check()` (ruling 11), bearer on router calls; licences as published (TS Apache-2.0, Laravel MIT, Go/Rust Apache-2.0)
+- [x] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results (Java SDK: not done)
 
 ## Already done
 - JWT claims in Go's shape (#3, #20)

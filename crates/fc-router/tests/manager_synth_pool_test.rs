@@ -207,7 +207,10 @@ fn queued_in_group(id: &str, pool_code: &str, queue_id: &str, group: &str) -> Qu
 /// Routes `messages` through `manager` as a single poll batch from a fresh
 /// mock consumer, and returns that consumer (so callers can inspect
 /// acks/nacks).
-async fn route(manager: &Arc<QueueManager>, messages: Vec<QueuedMessage>) -> Arc<MockQueueConsumer> {
+async fn route(
+    manager: &Arc<QueueManager>,
+    messages: Vec<QueuedMessage>,
+) -> Arc<MockQueueConsumer> {
     let consumer = Arc::new(MockQueueConsumer::with_messages("q", messages));
     let poll_result = consumer.poll(10).await.unwrap();
     manager
@@ -293,7 +296,9 @@ async fn idle_past_ttl_is_evicted() {
 
     // A 1ns TTL is already exceeded by the time evict_idle_synth_pools runs.
     tokio::time::sleep(Duration::from_millis(2)).await;
-    let evicted = manager.evict_idle_synth_pools(Duration::from_nanos(1)).await;
+    let evicted = manager
+        .evict_idle_synth_pools(Duration::from_nanos(1))
+        .await;
 
     assert_eq!(evicted, 1);
     assert!(
@@ -317,7 +322,9 @@ async fn evicted_pool_is_resynthesised_fresh_on_demand() {
 
     tokio::time::sleep(Duration::from_millis(2)).await;
     assert_eq!(
-        manager.evict_idle_synth_pools(Duration::from_nanos(1)).await,
+        manager
+            .evict_idle_synth_pools(Duration::from_nanos(1))
+            .await,
         1
     );
     assert!(manager.get_pool("acme-DEFAULT-POOL").is_none());
@@ -411,7 +418,9 @@ async fn global_default_pool_and_configured_pools_are_never_evicted() {
         .unwrap();
 
     tokio::time::sleep(Duration::from_millis(2)).await;
-    let evicted = manager.evict_idle_synth_pools(Duration::from_nanos(1)).await;
+    let evicted = manager
+        .evict_idle_synth_pools(Duration::from_nanos(1))
+        .await;
 
     assert_eq!(evicted, 0, "config-owned pools must never be evicted");
     assert!(manager.get_pool("DEFAULT-POOL").is_some());
@@ -458,7 +467,9 @@ async fn config_defining_a_synthesised_code_takes_ownership_without_pool_replace
     );
 
     tokio::time::sleep(Duration::from_millis(2)).await;
-    let evicted = manager.evict_idle_synth_pools(Duration::from_nanos(1)).await;
+    let evicted = manager
+        .evict_idle_synth_pools(Duration::from_nanos(1))
+        .await;
     assert_eq!(evicted, 0, "a code config now owns must survive eviction");
     assert!(manager.get_pool("acme-DEFAULT-POOL").is_some());
 }
@@ -533,10 +544,16 @@ async fn evicted_synth_pool_drains_buffered_group_work_instead_of_dropping_it() 
     // m1 is now mediating (blocked on `release`); m2 is buffered behind it
     // in the same ordered group, not yet started.
     started.notified().await;
-    assert_eq!(mediator.call_count(), 0, "m1 hasn't returned from mediate() yet");
+    assert_eq!(
+        mediator.call_count(),
+        0,
+        "m1 hasn't returned from mediate() yet"
+    );
 
     tokio::time::sleep(Duration::from_millis(2)).await;
-    let evicted = manager.evict_idle_synth_pools(Duration::from_nanos(1)).await;
+    let evicted = manager
+        .evict_idle_synth_pools(Duration::from_nanos(1))
+        .await;
     assert_eq!(evicted, 1, "the pool must be evicted while m1 is in flight");
     assert!(
         manager.get_pool("acme-DEFAULT-POOL").is_none(),
@@ -560,7 +577,10 @@ async fn evicted_synth_pool_drains_buffered_group_work_instead_of_dropping_it() 
         "FIFO ordering within the group must be preserved through the drain"
     );
 
-    wait_until(Duration::from_secs(2), || manager.draining_pool_count() == 0).await;
+    wait_until(Duration::from_secs(2), || {
+        manager.draining_pool_count() == 0
+    })
+    .await;
     assert_eq!(
         manager.draining_pool_count(),
         0,

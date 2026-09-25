@@ -1,142 +1,122 @@
 //! Connection Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/connection/operations/events.go`): type
+//! `platform:admin:connection:*`, source `platform:admin`, subject
+//! `platform.connection.{id}`, group `platform:connection:{id}`, and each
+//! payload carries exactly Go's `ToDataJSON` fields.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new connection is created.
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
+
+fn metadata(ctx: &ExecutionContext, event_type: &str, connection_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.connection.{}", connection_id),
+        format!("platform:connection:{}", connection_id),
+    )
+}
+
+/// `{connectionId, code, name}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub connection_id: String,
     pub code: String,
     pub name: String,
-    pub service_account_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
 }
 
 impl_domain_event!(ConnectionCreated);
 
 impl ConnectionCreated {
-    const EVENT_TYPE: &'static str = "platform:admin:connection:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:connection:created";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        connection_id: &str,
-        code: &str,
-        name: &str,
-        service_account_id: &str,
-        client_id: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, connection_id: &str, code: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.connection.{}", connection_id),
-                format!("platform:connection:{}", connection_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, connection_id),
             connection_id: connection_id.to_string(),
             code: code.to_string(),
             name: name.to_string(),
-            service_account_id: service_account_id.to_string(),
-            client_id: client_id.map(String::from),
         }
     }
 }
 
-/// Event emitted when a connection is updated.
+/// `{connectionId, name}`: the connection's name after the update (a status
+/// change is an update too, as Go's pause/activate).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub connection_id: String,
-    pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub name: String,
 }
 
 impl_domain_event!(ConnectionUpdated);
 
 impl ConnectionUpdated {
-    const EVENT_TYPE: &'static str = "platform:admin:connection:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:connection:updated";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        connection_id: &str,
-        code: &str,
-        name: Option<&str>,
-        status: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, connection_id: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.connection.{}", connection_id),
-                format!("platform:connection:{}", connection_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, connection_id),
             connection_id: connection_id.to_string(),
-            code: code.to_string(),
-            name: name.map(String::from),
-            status: status.map(String::from),
+            name: name.to_string(),
         }
     }
 }
 
-/// Event emitted when a connection is deleted.
+/// `{connectionId, code}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub connection_id: String,
     pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
 }
 
 impl_domain_event!(ConnectionDeleted);
 
 impl ConnectionDeleted {
-    const EVENT_TYPE: &'static str = "platform:admin:connection:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:connection:deleted";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        connection_id: &str,
-        code: &str,
-        client_id: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, connection_id: &str, code: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.connection.{}", connection_id),
-                format!("platform:connection:{}", connection_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, connection_id),
             connection_id: connection_id.to_string(),
             code: code.to_string(),
-            client_id: client_id.map(String::from),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_payloads_are_go_shaped() {
+        let ctx = ExecutionContext::create("prn_1");
+        let e = ConnectionCreated::new(&ctx, "con_1", "erp", "ERP");
+        assert_eq!(e.metadata.subject, "platform.connection.con_1");
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"connectionId": "con_1", "code": "erp", "name": "ERP"})
+        );
+        let u = ConnectionUpdated::new(&ctx, "con_1", "ERP");
+        assert_eq!(
+            serde_json::to_value(&u).unwrap(),
+            serde_json::json!({"connectionId": "con_1", "name": "ERP"})
+        );
     }
 }

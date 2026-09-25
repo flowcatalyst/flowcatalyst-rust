@@ -2708,6 +2708,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "fc-delivery-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "futures",
+ "hex",
+ "hmac",
+ "parking_lot 0.12.5",
+ "rand 0.9.2",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "fc-dev"
 version = "0.4.16"
 dependencies = [
@@ -2744,6 +2765,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http",
  "tracing",
@@ -2992,6 +3014,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
+ "aws-sdk-sqs",
  "axum",
  "axum-extra",
  "base64 0.22.1",
@@ -3009,6 +3032,7 @@ dependencies = [
  "fc-function-signing",
  "fc-http-listener",
  "fc-queue",
+ "fc-stream",
  "flate2",
  "futures",
  "governor",
@@ -3245,6 +3269,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-util",
  "tower",
  "tower-http",
  "tracing",
@@ -3263,6 +3288,8 @@ dependencies = [
  "async-trait",
  "fc-common",
  "redis",
+ "testcontainers",
+ "testcontainers-modules",
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",

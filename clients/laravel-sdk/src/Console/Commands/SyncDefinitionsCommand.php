@@ -557,5 +557,16 @@ class SyncDefinitionsCommand extends Command
                 ],
             ]
         );
+
+        // A sync uses passwordHash only to create a user; it never changes an
+        // existing user's password. Say which users kept theirs.
+        $ignored = $result->principals['passwordHashIgnored'] ?? [];
+        if ($ignored !== []) {
+            $this->newLine();
+            $this->warn('passwordHash not applied to ' . count($ignored) . ' existing user(s) (a sync only sets it on create):');
+            foreach ($ignored as $email) {
+                $this->warn("  {$email}");
+            }
+        }
     }
 }

@@ -8,9 +8,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::create::EventTypeBindingInput;
-use super::events::SubscriptionsSynced;
+use super::events::{
+    SubscriptionCreated, SubscriptionDeleted, SubscriptionUpdated, SubscriptionsSynced,
+};
 use crate::subscription::entity::SubscriptionSource;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
 use crate::SubscriptionRepository;
@@ -131,12 +135,14 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         command: SyncSubscriptionsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SubscriptionsSynced> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (rows, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // subscription, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 
@@ -145,7 +151,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         &self,
         command: &SyncSubscriptionsCommand,
         ctx: &ExecutionContext,
-    ) -> Result<SubscriptionsSynced, UseCaseError> {
+    ) -> Result<(Vec<RecordedEvent>, SubscriptionsSynced), UseCaseError> {
         // Every named connection, in one query: it must exist, and its scope
         // must be consistent with the subscription's (Go
         // subscription/operations/sync.go:224-243, ruling 2026-09-21 #5).
@@ -213,6 +219,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for input in &command.subscriptions {
             synced_codes.push(input.code.clone());
@@ -261,6 +268,11 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                                 input.code, e
                             )));
                         }
+                        rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
+                            ctx,
+                            &updated.id,
+                            &updated.name,
+                        ))?);
                         updated_count += 1;
                     }
                 }
@@ -294,6 +306,9 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                             input.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&SubscriptionCreated::new(
+                        ctx, &sub.id, &sub.code, &sub.name,
+                    ))?);
                     created_count += 1;
                 }
             }
@@ -311,6 +326,9 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                             sub.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
+                        ctx, &sub.id, &sub.code,
+                    ))?);
                     deleted_count += 1;
                 }
             }
@@ -319,12 +337,13 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         let event = SubscriptionsSynced {
             metadata: SubscriptionsSynced::metadata_for(ctx, &command.application_code),
             application_code: command.application_code.clone(),
+            client_id: None,
             created: created_count,
             updated: updated_count,
             deleted: deleted_count,
             synced_codes,
         };
-        Ok(event)
+        Ok((rows, event))
     }
 }
 

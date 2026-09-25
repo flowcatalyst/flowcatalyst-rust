@@ -10,6 +10,9 @@ type CategoryResult struct {
 	Updated     uint32
 	Deleted     uint32
 	SyncedCodes []string
+	// PasswordHashIgnored — principals only: the existing users (emails)
+	// whose PasswordHash the platform did not apply.
+	PasswordHashIgnored []string
 	// Error is non-empty if this category's HTTP call failed.
 	Error string
 }

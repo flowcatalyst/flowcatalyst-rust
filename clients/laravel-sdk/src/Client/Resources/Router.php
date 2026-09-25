@@ -19,9 +19,11 @@ use GuzzleHttp\Exception\GuzzleException;
  * own list of "messages that look stuck" and wants to confirm whether the
  * router is still actively processing each one before re-enqueueing.
  *
- * The router monitoring endpoints don't require authentication, so this
- * resource uses its own bare Guzzle client rather than the platform's
- * authenticated request flow.
+ * It sends the client's platform bearer token: the router verifies it and
+ * checks it for `platform:messaging:router:view`, which the built-in
+ * `platform:application-service` role holds (`docs/spec/router-api-auth.md`
+ * rule 8). The router is a different origin from the platform, so this
+ * resource keeps its own Guzzle client against the router base URL.
  */
 class Router
 {
@@ -31,9 +33,20 @@ class Router
     private readonly FlowCatalystClient $client;
     private ?HttpClient $httpClient = null;
 
-    public function __construct(FlowCatalystClient $client)
+    /**
+     * @param HttpClient|null $httpClient the client for the router's origin; built from
+     *                                    the router base URL when omitted
+     */
+    public function __construct(FlowCatalystClient $client, ?HttpClient $httpClient = null)
     {
         $this->client = $client;
+        $this->httpClient = $httpClient;
+    }
+
+    /** @return array<string, string> */
+    private function authorization(): array
+    {
+        return ['Authorization' => 'Bearer ' . $this->client->getTokenProvider()->getAccessToken()];
     }
 
     private function http(): HttpClient
@@ -58,6 +71,7 @@ class Router
         try {
             $response = $this->http()->get('/monitoring/in-flight-messages/check', [
                 'query' => ['messageId' => $messageId],
+                'headers' => $this->authorization(),
             ]);
         } catch (GuzzleException $e) {
             throw new FlowCatalystException(
@@ -97,7 +111,7 @@ class Router
         try {
             $response = $this->http()->post(
                 '/monitoring/in-flight-messages/check-batch',
-                ['json' => ['messageIds' => $messageIds]]
+                ['json' => ['messageIds' => $messageIds], 'headers' => $this->authorization()]
             );
         } catch (GuzzleException $e) {
             throw new FlowCatalystException(

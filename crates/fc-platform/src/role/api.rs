@@ -144,6 +144,10 @@ pub struct RolesState {
         Arc<crate::role::operations::UpdateRoleUseCase<crate::usecase::PgUnitOfWork>>,
     pub delete_use_case:
         Arc<crate::role::operations::DeleteRoleUseCase<crate::usecase::PgUnitOfWork>>,
+    pub grant_permission_use_case:
+        Arc<crate::role::operations::GrantRolePermissionUseCase<crate::usecase::PgUnitOfWork>>,
+    pub revoke_permission_use_case:
+        Arc<crate::role::operations::RevokeRolePermissionUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 /// Application option for filter dropdown
@@ -419,7 +423,6 @@ pub async fn grant_permission(
     Path(role_name): Path<String>,
     Json(req): Json<GrantPermissionRequest>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::shared::authorization_service::checks::can_administer_roles(
@@ -427,7 +430,7 @@ pub async fn grant_permission(
         crate::permissions::iam::ROLE_UPDATE,
     )?;
 
-    let mut role = if role_name.contains(':') {
+    let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
         state.role_repo.find_by_id(&role_name).await?
@@ -438,17 +441,18 @@ pub async fn grant_permission(
         // Owner ruling 14: only a permission the caller holds.
         crate::role::ceiling::require_permissions(Some(&auth.0), [req.permission.as_str()])?;
     }
-    role.grant_permission(req.permission);
-    let cmd = UpdateRoleCommand {
-        role_id: role.id.clone(),
-        display_name: None,
-        description: None,
-        permissions: Some(role.permissions.iter().cloned().collect()),
-        client_managed: None,
+    // Go's GrantPermission: platform:admin:role:permission-granted.
+    let cmd = crate::role::operations::GrantRolePermissionCommand {
+        role_name: role.name.clone(),
+        permission: req.permission,
         cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state.update_use_case.run(cmd, ctx).await.into_result()?;
+    state
+        .grant_permission_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
 
     let refreshed = state
         .role_repo
@@ -479,7 +483,6 @@ pub async fn revoke_permission(
     auth: Authenticated,
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::shared::authorization_service::checks::can_administer_roles(
@@ -487,7 +490,7 @@ pub async fn revoke_permission(
         crate::permissions::iam::ROLE_UPDATE,
     )?;
 
-    let mut role = if role_name.contains(':') {
+    let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
     } else {
         state.role_repo.find_by_id(&role_name).await?
@@ -498,17 +501,17 @@ pub async fn revoke_permission(
         // Owner ruling 14: removal counts too.
         crate::role::ceiling::require_permissions(Some(&auth.0), [permission.as_str()])?;
     }
-    role.revoke_permission(&permission);
-    let cmd = UpdateRoleCommand {
-        role_id: role.id.clone(),
-        display_name: None,
-        description: None,
-        permissions: Some(role.permissions.iter().cloned().collect()),
-        client_managed: None,
-        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
+    // Go's RevokePermission: platform:admin:role:permission-revoked.
+    let cmd = crate::role::operations::RevokeRolePermissionCommand {
+        role_name: role.name.clone(),
+        permission,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state.update_use_case.run(cmd, ctx).await.into_result()?;
+    state
+        .revoke_permission_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
 
     let refreshed = state
         .role_repo

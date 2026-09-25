@@ -5,6 +5,10 @@
  * Designed for an external recovery / replay process that maintains its
  * own list of "messages that look stuck" and wants to confirm whether the
  * router is still actively processing each one before re-enqueueing.
+ *
+ * Sends the client's platform bearer token: the router checks it for
+ * `platform:messaging:router:view`, which the built-in
+ * `platform:application-service` role holds (`router-api-auth.md` rule 8).
  */
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
@@ -62,7 +66,14 @@ export class RouterResource {
 		const url = this.routerUrl(
 			`/monitoring/in-flight-messages/check?messageId=${encodeURIComponent(messageId)}`,
 		);
-		return doFetchJson<InPipelineCheckResponse>(url, { method: "GET" });
+		return this.client
+			.accessToken()
+			.andThen((token) =>
+				doFetchJson<InPipelineCheckResponse>(url, {
+					method: "GET",
+					headers: { Authorization: `Bearer ${token}` },
+				}),
+			);
 	}
 
 	/**
@@ -77,11 +88,16 @@ export class RouterResource {
 		messageIds: readonly string[],
 	): ResultAsync<InPipelineBatchResponse, SdkError> {
 		const url = this.routerUrl("/monitoring/in-flight-messages/check-batch");
-		return doFetchJson<InPipelineBatchResponse>(url, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ messageIds }),
-		});
+		return this.client.accessToken().andThen((token) =>
+			doFetchJson<InPipelineBatchResponse>(url, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ messageIds }),
+			}),
+		);
 	}
 }
 

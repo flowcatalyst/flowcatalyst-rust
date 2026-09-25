@@ -283,7 +283,7 @@ async fn test_dispatch_job_query_performance() {
                     "{}",
                 );
                 if i % 3 == 0 {
-                    job.mark_queued();
+                    job.status = fc_platform::DispatchStatus::Queued;
                 }
                 job
             })

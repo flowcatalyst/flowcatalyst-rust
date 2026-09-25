@@ -7,11 +7,13 @@
 //! dispatcher (`docs/spec/scheduled-job-scheduler.md` §3 step 5). Answers
 //! are cached for one minute per key, as Java's `OutboundCredentials.cached`.
 //!
-//! The stored values are `encrypted:` refs; this is the only place they are
-//! opened for a delivery. A ref that cannot be opened (no encryption key, a
-//! plaintext value at rest, a bad ciphertext) reads as absent, with a WARN
-//! that names the account and never the value: the delivery then goes out
-//! without that credential, as Java's degraded cases do.
+//! The stored values are `encrypted:` refs, or secret-manager references
+//! stored as sent (`aws-sm://…`, see [`crate::shared::secret_ref`]); this is
+//! the only place they are opened for a delivery. A ref that cannot be
+//! opened (no encryption key, a plaintext value at rest, a bad ciphertext, a
+//! reference no store answers) reads as absent, with a WARN that names the
+//! account and never the value: the delivery then goes out without that
+//! credential, as Java's degraded cases do.
 
 use std::fmt;
 use std::sync::Arc;
@@ -23,6 +25,7 @@ use tracing::warn;
 use super::repository::{ServiceAccountRepository, StoredWebhookCredentials};
 use crate::shared::encryption_service::EncryptionService;
 use crate::shared::error::Result;
+use crate::shared::secret_ref::SecretResolver;
 
 /// How long one answer is reused (Java `OutboundCredentials.Cache.TTL`).
 const TTL: Duration = Duration::from_secs(60);
@@ -68,7 +71,7 @@ pub enum ById {
 /// Resolves and caches outbound credentials.
 pub struct OutboundCredentialsResolver {
     service_accounts: Arc<ServiceAccountRepository>,
-    encryption: Option<Arc<EncryptionService>>,
+    secrets: Arc<SecretResolver>,
     by_application: DashMap<String, (Option<OutboundCredentials>, Instant)>,
     by_id: DashMap<String, (ById, Instant)>,
 }
@@ -80,10 +83,18 @@ impl OutboundCredentialsResolver {
     ) -> Self {
         Self {
             service_accounts,
-            encryption,
+            secrets: Arc::new(SecretResolver::new(encryption)),
             by_application: DashMap::new(),
             by_id: DashMap::new(),
         }
+    }
+
+    /// Open stored credentials with `secrets`, which also resolves
+    /// secret-manager references (the default opens `encrypted:` and
+    /// `literal:` values only).
+    pub fn with_secret_resolver(mut self, secrets: Arc<SecretResolver>) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     /// The application's oldest active service account's credentials
@@ -102,7 +113,10 @@ impl OutboundCredentialsResolver {
             .service_accounts
             .oldest_active_webhook_credentials(application_id)
             .await?;
-        let resolved = stored.map(|s| self.open(&s));
+        let resolved = match stored {
+            Some(s) => Some(self.open(&s).await),
+            None => None,
+        };
         self.by_application.insert(
             application_id.to_string(),
             (resolved.clone(), Instant::now()),
@@ -123,10 +137,11 @@ impl OutboundCredentialsResolver {
             .service_accounts
             .oldest_active_webhook_credentials_for(application_ids)
             .await?;
-        Ok(stored
-            .into_iter()
-            .map(|(application_id, s)| (application_id, self.open(&s)))
-            .collect())
+        let mut opened = std::collections::HashMap::with_capacity(stored.len());
+        for (application_id, s) in stored {
+            opened.insert(application_id, self.open(&s).await);
+        }
+        Ok(opened)
     }
 
     /// One named account's credentials (Java `OutboundCredentials.resolveById`).
@@ -140,7 +155,7 @@ impl OutboundCredentialsResolver {
             None => ById::Missing,
             Some(s) if !s.active => ById::Inactive(s.code),
             Some(s) => {
-                let creds = self.open(&s);
+                let creds = self.open(&s).await;
                 if creds.is_empty() {
                     ById::NoCredentials(creds.signed_by)
                 } else {
@@ -153,25 +168,25 @@ impl OutboundCredentialsResolver {
         Ok(resolved)
     }
 
-    fn open(&self, stored: &StoredWebhookCredentials) -> OutboundCredentials {
+    async fn open(&self, stored: &StoredWebhookCredentials) -> OutboundCredentials {
         OutboundCredentials {
-            token: self.open_ref(stored.token_ref.as_deref(), &stored.code, "bearer token"),
-            signing_secret: self.open_ref(
-                stored.signing_secret_ref.as_deref(),
-                &stored.code,
-                "signing secret",
-            ),
+            token: self
+                .open_ref(stored.token_ref.as_deref(), &stored.code, "bearer token")
+                .await,
+            signing_secret: self
+                .open_ref(
+                    stored.signing_secret_ref.as_deref(),
+                    &stored.code,
+                    "signing secret",
+                )
+                .await,
             signed_by: stored.code.clone(),
         }
     }
 
-    fn open_ref(&self, stored: Option<&str>, code: &str, what: &str) -> Option<String> {
+    async fn open_ref(&self, stored: Option<&str>, code: &str, what: &str) -> Option<String> {
         let stored = stored.filter(|s| !s.is_empty())?;
-        let Some(encryption) = &self.encryption else {
-            warn!(service_account = %code, "{what} cannot be opened: encryption is not configured");
-            return None;
-        };
-        match encryption.decrypt_ref(stored) {
+        match self.secrets.resolve(stored).await {
             Ok(plain) if !plain.is_empty() => Some(plain),
             Ok(_) => None,
             Err(e) => {

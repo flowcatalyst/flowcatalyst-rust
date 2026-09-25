@@ -19,6 +19,10 @@ class CreateServiceAccountRequest extends \ArrayObject
      */
     protected $dollarSchema;
     /**
+     * @var bool|null
+     */
+    protected $allApplications;
+    /**
      * @var string|null
      */
     protected $applicationId;
@@ -66,6 +70,24 @@ class CreateServiceAccountRequest extends \ArrayObject
     {
         $this->initialized['dollarSchema'] = true;
         $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return bool|null
+     */
+    public function getAllApplications(): ?bool
+    {
+        return $this->allApplications;
+    }
+    /**
+     * @param bool|null $allApplications
+     *
+     * @return self
+     */
+    public function setAllApplications(?bool $allApplications): self
+    {
+        $this->initialized['allApplications'] = true;
+        $this->allApplications = $allApplications;
         return $this;
     }
     /**

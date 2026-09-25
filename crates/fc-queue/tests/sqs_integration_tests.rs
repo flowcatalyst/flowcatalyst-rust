@@ -102,6 +102,7 @@ async fn is_localstack_available() -> bool {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_poll_empty_queue() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -119,6 +120,7 @@ async fn test_poll_empty_queue() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_poll_single_message() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -141,6 +143,7 @@ async fn test_poll_single_message() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_poll_multiple_messages() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -165,6 +168,7 @@ async fn test_poll_multiple_messages() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_message_acknowledgment() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -196,6 +200,7 @@ async fn test_message_acknowledgment() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_message_nack_immediate_retry() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -229,6 +234,7 @@ async fn test_message_nack_immediate_retry() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_visibility_timeout_extension() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -264,6 +270,7 @@ async fn test_visibility_timeout_extension() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_consumer_stop() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -288,6 +295,7 @@ async fn test_consumer_stop() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_consumer_identifier() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -304,6 +312,7 @@ async fn test_consumer_identifier() {
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_malformed_message_handling() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");
@@ -328,9 +337,16 @@ async fn test_malformed_message_handling() {
     // Poll should return empty (malformed message is auto-acked)
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert!(messages.is_empty());
+
+    // ...and reported once, so the router can raise a CONFIGURATION warning.
+    let rejected = consumer.take_rejected();
+    assert_eq!(rejected.len(), 1);
+    assert!(rejected[0].broker_message_id.is_some());
+    assert!(consumer.take_rejected().is_empty());
 }
 
 #[tokio::test]
+#[ignore = "requires LocalStack on :4566 (docker-compose -f docker-compose.test.yml up -d localstack)"]
 async fn test_batch_send_and_receive() {
     if !is_localstack_available().await {
         eprintln!("Skipping test - LocalStack not available");

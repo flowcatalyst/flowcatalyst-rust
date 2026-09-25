@@ -13,6 +13,9 @@ pub mod postgres;
 #[cfg(feature = "sqs")]
 pub mod sqs;
 
+#[cfg(feature = "sqs")]
+pub mod sqs_publisher;
+
 #[cfg(feature = "activemq")]
 pub mod activemq;
 
@@ -41,6 +44,48 @@ pub struct QueueMetrics {
     pub total_nacked: u64,
     /// Total messages deferred (rate limiting, capacity - not counted as failures)
     pub total_deferred: u64,
+}
+
+/// A message a backend could not decode and therefore removed from the
+/// queue at the parse boundary (SQS: deleted; NATS: terminated; Postgres:
+/// quarantined) — never delivered. Reported through
+/// [`QueueConsumer::take_rejected`] so the router can raise a CONFIGURATION
+/// warning: it is a producer/config mistake an operator can fix (Go warns on
+/// an unsupported mediation type; corpus case `unsupported-mediation-type`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedMessage {
+    /// Broker id of the removed message, when the backend knows it.
+    pub broker_message_id: Option<String>,
+    /// Why it could not be decoded.
+    pub reason: String,
+}
+
+/// Bounded buffer backends record rejected messages in until the router
+/// drains it. Keeps at most [`RejectedLog::CAPACITY`] entries — a flood of
+/// malformed messages is reported by its first entries, not held in memory.
+#[derive(Debug, Default)]
+pub struct RejectedLog(std::sync::Mutex<Vec<RejectedMessage>>);
+
+impl RejectedLog {
+    pub const CAPACITY: usize = 100;
+
+    pub fn record(&self, broker_message_id: Option<String>, reason: impl Into<String>) {
+        if let Ok(mut v) = self.0.lock() {
+            if v.len() < Self::CAPACITY {
+                v.push(RejectedMessage {
+                    broker_message_id,
+                    reason: reason.into(),
+                });
+            }
+        }
+    }
+
+    pub fn take(&self) -> Vec<RejectedMessage> {
+        self.0
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default()
+    }
 }
 
 /// Trait for consuming messages from a queue
@@ -99,7 +144,23 @@ pub trait QueueConsumer: Send + Sync {
         None
     }
 
-    /// Stop the consumer
+    /// Messages removed at the parse boundary since the last call (see
+    /// [`RejectedMessage`]). Defaults to none.
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        Vec::new()
+    }
+
+    /// Whether a nack/defer with a delay really holds the message back for
+    /// that delay before it is redelivered (Go:
+    /// `queue.Consumer.HonoursDelayedReturn`, R5). SQS and the Postgres
+    /// queue do; NATS does not (no per-group ordering on the stream, so a
+    /// delayed head's successors would overtake it). Defaults to `true`.
+    fn honours_delayed_return(&self) -> bool {
+        true
+    }
+
+    /// Stop the consumer's intake. Every backend keeps `ack`/`nack` of
+    /// messages it already handed out working after `stop()`.
     async fn stop(&self);
 
     /// Get queue metrics (pending/in-flight message counts) — calls SQS API.

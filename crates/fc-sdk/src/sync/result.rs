@@ -18,6 +18,9 @@ pub struct CategorySyncResult {
     pub updated: u32,
     pub deleted: u32,
     pub synced_codes: Vec<String>,
+    /// Principals only: the existing users (emails) whose `password_hash`
+    /// the platform did not apply.
+    pub password_hash_ignored: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -123,6 +126,7 @@ mod tests {
             updated,
             deleted,
             synced_codes: Vec::new(),
+            password_hash_ignored: Vec::new(),
             error: None,
         }
     }

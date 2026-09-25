@@ -1,140 +1,108 @@
 //! Client Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/client/operations/events.go`): type
+//! `platform:admin:client:*`, source `platform:admin`, subject
+//! `platform.client.{id}`, group `platform:client:{id}`, and each payload
+//! carries exactly Go's `ToDataJSON` fields, since subscribers read them.
 
-use crate::client::entity::ClientStatus;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new client is created.
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
+
+fn metadata(ctx: &ExecutionContext, event_type: &str, client_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.client.{}", client_id),
+        format!("platform:client:{}", client_id),
+    )
+}
+
+/// `{clientId, name, identifier}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
     pub name: String,
     pub identifier: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
 }
 
 impl_domain_event!(ClientCreated);
 
 impl ClientCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:client:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:created";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        client_id: &str,
-        name: &str,
-        identifier: &str,
-        description: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str, identifier: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
             name: name.to_string(),
             identifier: identifier.to_string(),
-            description: description.map(String::from),
         }
     }
 }
 
-/// Event emitted when a client is updated.
+/// `{clientId, name}`: the client's name after the update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub name: String,
 }
 
 impl_domain_event!(ClientUpdated);
 
 impl ClientUpdated {
-    const EVENT_TYPE: &'static str = "platform:iam:client:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:updated";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        client_id: &str,
-        name: Option<&str>,
-        description: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
-            name: name.map(String::from),
-            description: description.map(String::from),
+            name: name.to_string(),
         }
     }
 }
 
-/// Event emitted when a client is activated.
+/// `{clientId}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientActivated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
-    pub previous_status: String,
 }
 
 impl_domain_event!(ClientActivated);
 
 impl ClientActivated {
-    const EVENT_TYPE: &'static str = "platform:iam:client:activated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:activated";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, previous_status: ClientStatus) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
-            previous_status: previous_status.as_str().to_string(),
         }
     }
 }
 
-/// Event emitted when a client is suspended.
+/// `{clientId, reason}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientSuspended {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
     pub reason: String,
 }
@@ -142,102 +110,64 @@ pub struct ClientSuspended {
 impl_domain_event!(ClientSuspended);
 
 impl ClientSuspended {
-    const EVENT_TYPE: &'static str = "platform:iam:client:suspended";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:suspended";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, reason: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
             reason: reason.to_string(),
         }
     }
 }
 
-/// Event emitted when a client is deleted.
+/// `{clientId, identifier}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
-    pub name: String,
     pub identifier: String,
 }
 
 impl_domain_event!(ClientDeleted);
 
 impl ClientDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:client:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:deleted";
 
-    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str, identifier: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &str, identifier: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
-            name: name.to_string(),
             identifier: identifier.to_string(),
         }
     }
 }
 
-/// Event emitted when a note is added to a client.
+/// `{clientId, category, text}`. The author is the event's principal, not a
+/// payload field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientNoteAdded {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub client_id: String,
     pub category: String,
     pub text: String,
-    pub author: String,
 }
 
 impl_domain_event!(ClientNoteAdded);
 
 impl ClientNoteAdded {
-    const EVENT_TYPE: &'static str = "platform:iam:client:note-added";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:client:note-added";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        client_id: &str,
-        category: &str,
-        text: &str,
-        author: &str,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, client_id: &str, category: &str, text: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.client.{}", client_id),
-                format!("platform:client:{}", client_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, client_id),
             client_id: client_id.to_string(),
             category: category.to_string(),
             text: text.to_string(),
-            author: author.to_string(),
         }
     }
 }
@@ -249,12 +179,16 @@ mod tests {
     #[test]
     fn test_client_created_event() {
         let ctx = ExecutionContext::create("user-123");
-        let event = ClientCreated::new(&ctx, "client-1", "Acme Corp", "acme-corp", None);
+        let event = ClientCreated::new(&ctx, "client-1", "Acme Corp", "acme-corp");
 
-        assert_eq!(event.metadata.event_type, "platform:iam:client:created");
-        assert_eq!(event.client_id, "client-1");
-        assert_eq!(event.name, "Acme Corp");
-        assert_eq!(event.identifier, "acme-corp");
+        assert_eq!(event.metadata.event_type, "platform:admin:client:created");
+        assert_eq!(event.metadata.source, "platform:admin");
+        assert_eq!(event.metadata.subject, "platform.client.client-1");
+        assert_eq!(event.metadata.message_group, "platform:client:client-1");
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({"clientId": "client-1", "name": "Acme Corp", "identifier": "acme-corp"})
+        );
     }
 
     #[test]
@@ -262,7 +196,7 @@ mod tests {
         let ctx = ExecutionContext::create("user-123");
         let event = ClientSuspended::new(&ctx, "client-1", "Payment overdue");
 
-        assert_eq!(event.metadata.event_type, "platform:iam:client:suspended");
+        assert_eq!(event.metadata.event_type, "platform:admin:client:suspended");
         assert_eq!(event.reason, "Payment overdue");
     }
 }

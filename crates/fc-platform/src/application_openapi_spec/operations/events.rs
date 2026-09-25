@@ -12,7 +12,7 @@ use crate::usecase::ExecutionContext;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationOpenApiSpecSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
 
     pub application_id: String,

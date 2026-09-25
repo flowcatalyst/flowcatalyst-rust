@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use fc_common::tsid::{self, EntityType};
+use fc_common::tsid;
 use fc_common::{DispatchMode, DispatchStatus};
 use sqlx::{PgPool, Postgres, Transaction};
 use tokio_util::sync::CancellationToken;
@@ -80,8 +80,21 @@ pub async fn run(
         if subs_cache.needs_refresh() {
             match load_active_subscriptions(&pool).await {
                 Ok(subs) => subs_cache.replace(subs),
-                Err(e) => {
+                Err(e) if subs_cache.has_loaded() => {
                     warn!(error = %e, "Failed to refresh subscriptions; using stale cache");
+                }
+                Err(e) => {
+                    // Never loaded: an empty set here means "unknown", not
+                    // "no subscriptions". Fanning out now would stamp events
+                    // fanned-out with no jobs, losing them (Go fails the
+                    // cycle the same way).
+                    error!(error = %e, "Failed to load subscriptions; fan-out waits for the first load");
+                    health.record_error();
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(5000)) => {}
+                        _ = cancel.cancelled() => { break; }
+                    }
+                    continue;
                 }
             }
         }
@@ -256,7 +269,9 @@ struct CachedSubscription {
     max_retries: i32,
     timeout_seconds: i32,
     sequence: i32,
-    connection_id: Option<String>,
+    /// `msg_subscriptions.queue`, copied verbatim onto each raised job (Go
+    /// fan-out R2): the job's own priority claim.
+    queue: Option<String>,
     /// Wildcard-supporting `:`-separated event type patterns
     event_type_patterns: Vec<String>,
 }
@@ -299,7 +314,7 @@ struct SubsRow {
     max_retries: i32,
     timeout_seconds: i32,
     sequence: i32,
-    connection_id: Option<String>,
+    queue: Option<String>,
     event_type_code: Option<String>,
 }
 
@@ -317,7 +332,7 @@ async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSu
             s.max_retries,
             s.timeout_seconds,
             s.sequence,
-            s.connection_id,
+            s.queue,
             e.event_type_code
         FROM msg_subscriptions s
         LEFT JOIN msg_subscription_event_types e ON e.subscription_id = s.id
@@ -343,7 +358,7 @@ async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSu
                 max_retries: r.max_retries,
                 timeout_seconds: r.timeout_seconds,
                 sequence: r.sequence,
-                connection_id: r.connection_id.clone(),
+                queue: r.queue.clone(),
                 event_type_patterns: Vec::new(),
             });
         if let Some(p) = r.event_type_code {
@@ -359,6 +374,9 @@ struct SubscriptionCache {
     subs: Vec<CachedSubscription>,
     last_refreshed: std::time::Instant,
     ttl: Duration,
+    /// Whether a load has ever succeeded. Until one has, `subs` being empty
+    /// says nothing about the subscriptions.
+    loaded: bool,
 }
 
 impl SubscriptionCache {
@@ -368,7 +386,11 @@ impl SubscriptionCache {
             // Force initial refresh.
             last_refreshed: std::time::Instant::now() - ttl - Duration::from_millis(1),
             ttl,
+            loaded: false,
         }
+    }
+    fn has_loaded(&self) -> bool {
+        self.loaded
     }
     fn needs_refresh(&self) -> bool {
         self.last_refreshed.elapsed() >= self.ttl
@@ -376,6 +398,7 @@ impl SubscriptionCache {
     fn replace(&mut self, subs: Vec<CachedSubscription>) {
         self.subs = subs;
         self.last_refreshed = std::time::Instant::now();
+        self.loaded = true;
     }
     fn subs(&self) -> &[CachedSubscription] {
         &self.subs
@@ -405,7 +428,7 @@ struct NewJobRow {
     service_account_id: Option<String>,
     client_id: Option<String>,
     subscription_id: String,
-    connection_id: Option<String>,
+    queue: Option<String>,
     mode: &'static str,
     dispatch_pool_id: Option<String>,
     message_group: Option<String>,
@@ -428,7 +451,10 @@ impl NewJobRow {
         let payload = serde_json::to_string(&event.data.clone().unwrap_or(serde_json::Value::Null))
             .unwrap_or_default();
         Self {
-            id: tsid::generate(EntityType::DispatchJob),
+            // Untyped, 13 characters: `msg_dispatch_jobs.id` is
+            // VARCHAR(13) (Go's fan-out does the same). A typed `djb_` id
+            // overflowed it and failed every fan-out insert.
+            id: tsid::generate_untyped(),
             code: event.event_type.clone(),
             source: event.source.clone(),
             subject: event.subject.clone(),
@@ -441,7 +467,7 @@ impl NewJobRow {
             service_account_id: sub.service_account_id.clone(),
             client_id: event.client_id.clone(),
             subscription_id: sub.id.clone(),
-            connection_id: sub.connection_id.clone(),
+            queue: sub.queue.clone(),
             mode: dispatch_mode_str(sub.mode),
             dispatch_pool_id: sub.dispatch_pool_id.clone(),
             message_group: event.message_group.clone(),
@@ -484,7 +510,7 @@ async fn insert_dispatch_jobs_tx(
     let mut service_account_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut client_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut subscription_ids = Vec::with_capacity(jobs.len());
-    let mut connection_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
+    let mut queues: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut modes = Vec::with_capacity(jobs.len());
     let mut dispatch_pool_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut message_groups: Vec<Option<String>> = Vec::with_capacity(jobs.len());
@@ -509,7 +535,7 @@ async fn insert_dispatch_jobs_tx(
         service_account_ids.push(j.service_account_id.clone());
         client_ids.push(j.client_id.clone());
         subscription_ids.push(j.subscription_id.clone());
-        connection_ids.push(j.connection_id.clone());
+        queues.push(j.queue.clone());
         modes.push(j.mode.to_string());
         dispatch_pool_ids.push(j.dispatch_pool_id.clone());
         message_groups.push(j.message_group.clone());
@@ -526,17 +552,17 @@ async fn insert_dispatch_jobs_tx(
         INSERT INTO msg_dispatch_jobs (
             id, code, source, subject, event_id, correlation_id,
             target_url, protocol, payload, data_only, service_account_id, client_id,
-            subscription_id, connection_id, mode, dispatch_pool_id, message_group,
+            subscription_id, mode, dispatch_pool_id, message_group,
             sequence, timeout_seconds, status, max_retries, idempotency_key,
-            created_at, updated_at
+            created_at, updated_at, queue
         )
         SELECT * FROM UNNEST(
             $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
             $5::varchar[], $6::varchar[],
             $7::varchar[], $8::varchar[], $9::text[], $10::bool[], $11::varchar[], $12::varchar[],
-            $13::varchar[], $14::varchar[], $15::varchar[], $16::varchar[], $17::varchar[],
-            $18::int[], $19::int[], $20::varchar[], $21::int[], $22::varchar[],
-            $23::timestamptz[], $23::timestamptz[]
+            $13::varchar[], $14::varchar[], $15::varchar[], $16::varchar[],
+            $17::int[], $18::int[], $19::varchar[], $20::int[], $21::varchar[],
+            $22::timestamptz[], $22::timestamptz[], $23::varchar[]
         )
         "#,
     )
@@ -553,7 +579,6 @@ async fn insert_dispatch_jobs_tx(
     .bind(&service_account_ids)
     .bind(&client_ids)
     .bind(&subscription_ids)
-    .bind(&connection_ids)
     .bind(&modes)
     .bind(&dispatch_pool_ids)
     .bind(&message_groups)
@@ -563,6 +588,7 @@ async fn insert_dispatch_jobs_tx(
     .bind(&max_retries_vec)
     .bind(&idempotency_keys)
     .bind(&created_ats)
+    .bind(&queues)
     .execute(&mut **tx)
     .await?;
 
@@ -632,9 +658,19 @@ mod tests {
             max_retries: 3,
             timeout_seconds: 30,
             sequence: 99,
-            connection_id: None,
+            queue: None,
             event_type_patterns: vec![],
         }
+    }
+
+    #[test]
+    fn the_cache_has_not_loaded_until_a_load_succeeds() {
+        let mut cache = SubscriptionCache::new(Duration::from_secs(5));
+        assert!(!cache.has_loaded());
+        assert!(cache.needs_refresh());
+        cache.replace(Vec::new());
+        // An empty set after a successful load is a real "no subscriptions".
+        assert!(cache.has_loaded());
     }
 
     #[test]

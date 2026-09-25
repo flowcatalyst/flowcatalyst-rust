@@ -53,3 +53,52 @@ test("syncUsers posts to /api/principals/sync with passwordHash and no appCode",
 		await new Promise<void>((r) => server.close(() => r()));
 	}
 });
+
+// Owner decision 22 of 2026-09-25: a sync uses passwordHash only to create a
+// user, and names the existing users whose hash it ignored.
+test("both principal syncs surface passwordHashIgnored", async () => {
+	const server: Server = createServer((req, res) => {
+		req.resume();
+		req.on("end", () => {
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(
+				JSON.stringify(
+					req.url?.startsWith("/api/applications/")
+						? {
+								applicationCode: "app",
+								created: 0,
+								updated: 1,
+								deleted: 0,
+								syncedCodes: ["a@example.com"],
+								passwordHashIgnored: ["a@example.com"],
+							}
+						: {
+								created: 0,
+								updated: 1,
+								deleted: 0,
+								syncedEmails: ["a@example.com"],
+								passwordHashIgnored: ["a@example.com"],
+							},
+				),
+			);
+		});
+	});
+	await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+	const port = (server.address() as AddressInfo).port;
+
+	try {
+		const client = new FlowCatalystClient({
+			baseUrl: `http://127.0.0.1:${port}`,
+			accessToken: "test-token",
+		});
+		const users = [
+			{ email: "a@example.com", name: "A", roles: [], passwordHash: "$2y$10$abcdefghijklmnopqrstuv" },
+		];
+		const platformWide = await client.principals().syncUsers(users);
+		assert.deepEqual(platformWide._unsafeUnwrap().passwordHashIgnored, ["a@example.com"]);
+		const appScoped = await client.principals().sync("app", users);
+		assert.deepEqual(appScoped._unsafeUnwrap().passwordHashIgnored, ["a@example.com"]);
+	} finally {
+		await new Promise<void>((r) => server.close(() => r()));
+	}
+});

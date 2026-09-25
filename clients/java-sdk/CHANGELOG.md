@@ -19,6 +19,13 @@ published, plus the additions below.
   overload for extra top-level fields to mask. The one-argument form is
   unchanged.
 
+### Changed
+- `client.router().inPipeline()` / `inPipelineBatch()` send the platform
+  bearer token to the router (with the same one-shot refresh on 401). Today's
+  routers ignore it; a router that enforces platform tokens (owner ruling 2
+  of 2026-09-25) requires it. `Transport.rawAuthenticated` is new;
+  `rawUnauthenticated` stays for callers.
+
 ## 0.0.10 and earlier
 
 Released from `flowcatalyst-go` (`clients/java-sdk`); see that repo's

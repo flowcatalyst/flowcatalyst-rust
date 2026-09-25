@@ -1,224 +1,156 @@
 //! Principal Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/principal/operations/events.go`): type
+//! `platform:iam:user:*`, source `platform:iam`, subject
+//! `platform.principal.{id}`, group `platform:principal:{id}` (except
+//! `logged-in`, which Go puts on `platform.user.{id}` / `platform:user:{id}`),
+//! and each payload carries exactly Go's `ToDataJSON` fields.
 
 use crate::impl_domain_event;
-use crate::principal::entity::UserScope;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new user is created.
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:iam";
+
+fn metadata(ctx: &ExecutionContext, event_type: &str, principal_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.principal.{}", principal_id),
+        format!("platform:principal:{}", principal_id),
+    )
+}
+
+/// `{principalId, email}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
     pub email: String,
-    pub email_domain: String,
-    pub name: String,
-    pub scope: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    pub is_anchor_user: bool,
 }
 
 impl_domain_event!(UserCreated);
 
 impl UserCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:user:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:created";
 
-    /// Build the event for a newly created user.
-    ///
-    /// Derives `email_domain` from `email`, and `is_anchor_user` from `scope`.
-    pub fn new(
-        ctx: &ExecutionContext,
-        principal_id: &str,
-        email: &str,
-        name: &str,
-        scope: UserScope,
-        client_id: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
-            email_domain: extract_email_domain(email),
-            name: name.to_string(),
-            scope: scope.as_str().to_string(),
-            client_id: client_id.map(String::from),
-            is_anchor_user: scope == UserScope::Anchor,
         }
     }
 }
 
-/// Extract the domain part from an email address.
-fn extract_email_domain(email: &str) -> String {
-    email
-        .split('@')
-        .nth(1)
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default()
-}
-
-/// Event emitted when a user is updated.
+/// `{principalId, name}`: the user's name after the change.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
+    pub name: String,
 }
 
 impl_domain_event!(UserUpdated);
 
 impl UserUpdated {
-    const EVENT_TYPE: &'static str = "platform:iam:user:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:updated";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        principal_id: &str,
-        name: Option<&str>,
-        email: Option<&str>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
-            name: name.map(String::from),
-            email: email.map(String::from),
+            name: name.to_string(),
         }
     }
 }
 
-/// Event emitted when a user is activated.
+/// `{principalId}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserActivated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
 }
 
 impl_domain_event!(UserActivated);
 
 impl UserActivated {
-    const EVENT_TYPE: &'static str = "platform:iam:user:activated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:activated";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
         }
     }
 }
 
-/// Event emitted when a user is deactivated.
+/// `{principalId}`. A deactivation reason is audited with the command, not
+/// carried in the event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserDeactivated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
 }
 
 impl_domain_event!(UserDeactivated);
 
 impl UserDeactivated {
-    const EVENT_TYPE: &'static str = "platform:iam:user:deactivated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:deactivated";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str, reason: Option<&str>) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
-            reason: reason.map(String::from),
         }
     }
 }
 
-/// Event emitted when a user is deleted.
+/// `{principalId, email}`: `email` is `""` for a principal without a user
+/// identity, as Go.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
+    pub email: String,
 }
 
 impl_domain_event!(UserDeleted);
 
 impl UserDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:user:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:deleted";
 
-    pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
+            email: email.to_string(),
         }
     }
 }
 
-/// Event emitted when roles are assigned to a user.
+/// `{principalId, roles, added, removed}`: empty lists are `[]` (Go's
+/// `defaultEmpty`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RolesAssigned {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
     pub roles: Vec<String>,
     pub added: Vec<String>,
@@ -228,9 +160,7 @@ pub struct RolesAssigned {
 impl_domain_event!(RolesAssigned);
 
 impl RolesAssigned {
-    const EVENT_TYPE: &'static str = "platform:iam:user:roles-assigned";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:roles-assigned";
 
     pub fn new(
         ctx: &ExecutionContext,
@@ -240,14 +170,7 @@ impl RolesAssigned {
         removed: Vec<String>,
     ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
             roles,
             added,
@@ -256,13 +179,12 @@ impl RolesAssigned {
     }
 }
 
-/// Event emitted when client access is granted to a user.
+/// `{principalId, clientId}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAccessGranted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
     pub client_id: String,
 }
@@ -270,33 +192,23 @@ pub struct ClientAccessGranted {
 impl_domain_event!(ClientAccessGranted);
 
 impl ClientAccessGranted {
-    const EVENT_TYPE: &'static str = "platform:iam:user:client-access-granted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:client-access-granted";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
             client_id: client_id.to_string(),
         }
     }
 }
 
-/// Event emitted when client access is revoked from a user.
+/// `{principalId, clientId}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAccessRevoked {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
     pub client_id: String,
 }
@@ -304,20 +216,11 @@ pub struct ClientAccessRevoked {
 impl_domain_event!(ClientAccessRevoked);
 
 impl ClientAccessRevoked {
-    const EVENT_TYPE: &'static str = "platform:iam:user:client-access-revoked";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:client-access-revoked";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
             client_id: client_id.to_string(),
         }
@@ -344,14 +247,15 @@ pub struct FederatedClaims {
     pub id_token: serde_json::Value,
 }
 
-/// Event emitted when a user logs in via OIDC.
-/// Matches the TypeScript `UserLoggedInData` interface.
+/// A user logged in via OIDC: `{userId, email, loginMethod,
+/// identityProviderCode?, flowcatalystClaims, federatedClaims?}` on subject
+/// `platform.user.{userId}` and group `platform:user:{userId}` (Go's
+/// `UserLoggedInSubject` / `UserLoggedInMessageGroup`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserLoggedIn {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub user_id: String,
     pub email: String,
     pub login_method: String,
@@ -365,9 +269,7 @@ pub struct UserLoggedIn {
 impl_domain_event!(UserLoggedIn);
 
 impl UserLoggedIn {
-    const EVENT_TYPE: &'static str = "platform:iam:user:logged-in";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:logged-in";
 
     pub fn new(
         ctx: &ExecutionContext,
@@ -382,8 +284,8 @@ impl UserLoggedIn {
             metadata: EventMetadata::from_ctx(
                 ctx,
                 Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
+                SPEC_VERSION,
+                SOURCE,
                 format!("platform.user.{}", user_id),
                 format!("platform:user:{}", user_id),
             ),
@@ -397,13 +299,16 @@ impl UserLoggedIn {
     }
 }
 
-/// Event emitted when principals are synced from an application SDK.
+/// The rollup of a principal sync:
+/// `{applicationCode, created, updated, deactivated, syncedEmails}` on
+/// subject `platform.principals.{applicationCode}` and group
+/// `platform:principals:{applicationCode}` (bare `platform.principals` /
+/// `platform:principals` for the platform-level sync).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalsSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub application_code: String,
     pub created: u32,
     pub updated: u32,
@@ -414,20 +319,21 @@ pub struct PrincipalsSynced {
 impl_domain_event!(PrincipalsSynced);
 
 impl PrincipalsSynced {
-    const EVENT_TYPE: &'static str = "platform:iam:principals:synced";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:principals:synced";
 
     /// Metadata for this event, raised inside `ctx` for a sync of
     /// `application_code`.
     pub fn metadata_for(ctx: &ExecutionContext, application_code: &str) -> EventMetadata {
+        if application_code.is_empty() {
+            return Self::metadata_for_platform(ctx);
+        }
         EventMetadata::from_ctx(
             ctx,
             Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            format!("platform.application.{}", application_code),
-            format!("platform:application:{}", application_code),
+            SPEC_VERSION,
+            SOURCE,
+            format!("platform.principals.{}", application_code),
+            format!("platform:principals:{}", application_code),
         )
     }
 
@@ -438,21 +344,20 @@ impl PrincipalsSynced {
         EventMetadata::from_ctx(
             ctx,
             Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
+            SPEC_VERSION,
+            SOURCE,
             "platform.principals".to_string(),
             "platform:principals".to_string(),
         )
     }
 }
 
-/// Event emitted when application access is assigned to a user.
+/// `{userId, applicationIds, added, removed}`: empty lists are `[]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationAccessAssigned {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub user_id: String,
     pub application_ids: Vec<String>,
     pub added: Vec<String>,
@@ -462,9 +367,7 @@ pub struct ApplicationAccessAssigned {
 impl_domain_event!(ApplicationAccessAssigned);
 
 impl ApplicationAccessAssigned {
-    const EVENT_TYPE: &'static str = "platform:iam:user:application-access-assigned";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:application-access-assigned";
 
     pub fn new(
         ctx: &ExecutionContext,
@@ -474,14 +377,7 @@ impl ApplicationAccessAssigned {
         removed: Vec<String>,
     ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", user_id),
-                format!("platform:user:{}", user_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, user_id),
             user_id: user_id.to_string(),
             application_ids,
             added,
@@ -490,13 +386,14 @@ impl ApplicationAccessAssigned {
     }
 }
 
-/// Event emitted when a password reset is requested.
+/// A password reset was requested (self-service). Go emits no event for a
+/// request; this one is Rust's own, on the user family's subject:
+/// `{principalId, email}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasswordResetRequested {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
     pub email: String,
 }
@@ -504,20 +401,15 @@ pub struct PasswordResetRequested {
 impl_domain_event!(PasswordResetRequested);
 
 impl PasswordResetRequested {
-    const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-requested";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-requested";
 
     pub fn new(principal_id: &str, email: &str) -> Self {
         // Password reset is unauthenticated — attribute it to "system".
         Self {
-            metadata: EventMetadata::from_ctx(
+            metadata: metadata(
                 &ExecutionContext::create("system"),
                 Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
+                principal_id,
             ),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
@@ -525,56 +417,26 @@ impl PasswordResetRequested {
     }
 }
 
-/// Event emitted when a user's password is reset.
+/// A user's password was reset: `{principalId}` (Go's `UserPasswordReset`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PasswordResetCompleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub principal_id: String,
-    pub email: String,
 }
 
 impl_domain_event!(PasswordResetCompleted);
 
 impl PasswordResetCompleted {
-    const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-completed";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-completed";
 
-    pub fn new(principal_id: &str, email: &str) -> Self {
-        // Password reset is unauthenticated — attribute it to "system".
+    /// The event attributed to the caller in `ctx` (an admin, or the
+    /// principal completing a self-service reset), keeping its trace ids.
+    pub fn from_ctx(ctx: &ExecutionContext, principal_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                &ExecutionContext::create("system"),
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, principal_id),
             principal_id: principal_id.to_string(),
-            email: email.to_string(),
-        }
-    }
-
-    /// Emit a password-reset event attributed to an authenticated caller
-    /// (e.g. an admin invoking the reset endpoint). Preserves the caller's
-    /// execution/correlation IDs so audit logs and downstream projections can
-    /// trace the action back to them.
-    pub fn from_ctx(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.user.{}", principal_id),
-                format!("platform:user:{}", principal_id),
-            ),
-            principal_id: principal_id.to_string(),
-            email: email.to_string(),
         }
     }
 }
@@ -586,61 +448,61 @@ mod tests {
     #[test]
     fn test_user_created_event() {
         let ctx = ExecutionContext::create("admin-123");
-        let event = UserCreated::new(
-            &ctx,
-            "user-1",
-            "user@example.com",
-            "Test User",
-            UserScope::Client,
-            Some("client-1"),
-        );
+        let event = UserCreated::new(&ctx, "user-1", "user@example.com");
 
         assert_eq!(event.metadata.event_type, "platform:iam:user:created");
-        assert_eq!(event.principal_id, "user-1");
-        assert_eq!(event.email, "user@example.com");
-        assert_eq!(event.email_domain, "example.com");
-        assert_eq!(event.scope, "CLIENT");
-        assert!(!event.is_anchor_user);
-    }
-
-    #[test]
-    fn test_user_created_copies_ctx_and_derives_anchor_flag() {
-        let ctx = ExecutionContext::create("admin-123");
-        let event = UserCreated::new(
-            &ctx,
-            "user-1",
-            "john.doe@acme.org",
-            "John Doe",
-            UserScope::Anchor,
-            None,
+        assert_eq!(event.metadata.subject, "platform.principal.user-1");
+        assert_eq!(event.metadata.message_group, "platform:principal:user-1");
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({"principalId": "user-1", "email": "user@example.com"})
         );
-
-        assert_eq!(event.email_domain, "acme.org");
-        assert_eq!(event.name, "John Doe");
-        assert_eq!(event.scope, "ANCHOR");
-        assert!(event.is_anchor_user);
-        // Verify tracing context was copied
+        // Tracing context was copied
         assert_eq!(event.metadata.execution_id, ctx.execution_id);
         assert_eq!(event.metadata.correlation_id, ctx.correlation_id);
     }
 
     #[test]
-    fn test_email_domain_extraction() {
-        assert_eq!(extract_email_domain("user@example.com"), "example.com");
+    fn test_user_deactivated_event() {
+        let ctx = ExecutionContext::create("admin-123");
+        let event = UserDeactivated::new(&ctx, "user-1");
+
+        assert_eq!(event.metadata.event_type, "platform:iam:user:deactivated");
         assert_eq!(
-            extract_email_domain("user@SUB.Example.COM"),
-            "sub.example.com"
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({"principalId": "user-1"})
         );
-        assert_eq!(extract_email_domain("invalid-email"), "");
-        assert_eq!(extract_email_domain(""), "");
     }
 
     #[test]
-    fn test_user_deactivated_event() {
-        let ctx = ExecutionContext::create("admin-123");
-        let event = UserDeactivated::new(&ctx, "user-1", Some("Policy violation"));
+    fn logged_in_keeps_the_user_subject() {
+        let ctx = ExecutionContext::create("usr_1");
+        let event = UserLoggedIn::new(
+            &ctx,
+            "usr_1",
+            "a@b.c",
+            "OIDC",
+            None,
+            FlowcatalystClaims {
+                email: "a@b.c".into(),
+                principal_type: "USER".into(),
+                roles: vec![],
+                clients: vec![],
+                applications: vec![],
+            },
+            None,
+        );
+        assert_eq!(event.metadata.subject, "platform.user.usr_1");
+        assert_eq!(event.metadata.message_group, "platform:user:usr_1");
+    }
 
-        assert_eq!(event.metadata.event_type, "platform:iam:user:deactivated");
-        assert_eq!(event.reason, Some("Policy violation".to_string()));
+    #[test]
+    fn principals_synced_subject_is_per_application() {
+        let ctx = ExecutionContext::create("usr_1");
+        let meta = PrincipalsSynced::metadata_for(&ctx, "hr");
+        assert_eq!(meta.subject, "platform.principals.hr");
+        assert_eq!(meta.message_group, "platform:principals:hr");
+        let meta = PrincipalsSynced::metadata_for(&ctx, "");
+        assert_eq!(meta.subject, "platform.principals");
     }
 }

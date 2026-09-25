@@ -7,8 +7,12 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::events::DispatchPoolsSynced;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use super::events::{
+    DispatchPoolArchived, DispatchPoolCreated, DispatchPoolUpdated, DispatchPoolsSynced,
+};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 
@@ -126,12 +130,14 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         command: SyncDispatchPoolsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<DispatchPoolsSynced> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (rows, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        // Go's usecaseop.Sync: a created/updated/archived event per synced
+        // pool, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 
@@ -140,7 +146,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
         &self,
         command: &SyncDispatchPoolsCommand,
         ctx: &ExecutionContext,
-    ) -> Result<DispatchPoolsSynced, UseCaseError> {
+    ) -> Result<(Vec<RecordedEvent>, DispatchPoolsSynced), UseCaseError> {
         // Fetch existing pools
         let existing = self.dispatch_pool_repo.find_all().await?;
 
@@ -148,6 +154,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for input in &command.pools {
             synced_codes.push(input.code.clone());
@@ -168,6 +175,11 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                             input.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&DispatchPoolUpdated::new(
+                        ctx,
+                        &updated.id,
+                        &updated.name,
+                    ))?);
                     updated_count += 1;
                 }
                 None => {
@@ -181,6 +193,9 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                             input.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&DispatchPoolCreated::new(
+                        ctx, &pool.id, &pool.code, &pool.name,
+                    ))?);
                     created_count += 1;
                 }
             }
@@ -201,6 +216,11 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                             pool.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&DispatchPoolArchived::new(
+                        ctx,
+                        &archived.id,
+                        &archived.code,
+                    ))?);
                     deleted_count += 1;
                 }
             }
@@ -214,7 +234,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
             deleted: deleted_count,
             synced_codes,
         };
-        Ok(event)
+        Ok((rows, event))
     }
 }
 

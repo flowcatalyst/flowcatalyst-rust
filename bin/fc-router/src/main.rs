@@ -104,16 +104,29 @@ async fn main() -> Result<()> {
     //    each pool gets its own HttpMediator + connection pool.
     let queue_manager = Arc::new(
         QueueManager::builder(HttpMediatorConfig::production())
+            // Go's DefaultStallConfig: derived from the mediation timeout,
+            // force-NACK off.
+            .stall_config(fc_router::stall_config_for_mediation_timeout(
+                HttpMediatorConfig::production().timeout,
+            ))
             .warning_service(warning_service.clone())
             .health_service(health_service.clone())
             .consumer_factory(Arc::new(SchemeConsumerFactory {
                 sqs_client: sqs_client.clone(),
             }))
             .strict_routing(strict_routing)
+            // FC_ROUTER_DEFERRAL_BUDGET (Go): capacity deferrals one queue
+            // may have outstanding before it stops polling into full pools.
+            .deferral_budget(fc_common::config::env_first_parse(
+                &["FC_ROUTER_DEFERRAL_BUDGET"],
+                0usize,
+            ))
             .build(),
     );
 
-    // 5. Initialize Standby Processor (Active/Passive HA)
+    // 5. Initialize Standby Processor (Active/Passive HA). A Redis that
+    //    cannot be reached at boot is fatal, as in Go (election.Start pings
+    //    Redis and Run returns the error).
     let standby_config = load_standby_config();
     let standby = if standby_config.enabled {
         info!(
@@ -139,22 +152,18 @@ async fn main() -> Result<()> {
         None
     };
 
-    // 6. Wait for leadership if in standby mode
-    if let Some(ref standby_proc) = standby {
-        if !standby_proc.is_leader() {
-            info!("Waiting to become leader before starting message processing...");
-            standby_proc.wait_for_leadership().await;
-            info!("Acquired leadership - starting message processing");
-        }
-    }
+    // 6. H14: never block start-up on leadership. A standby binds HTTP and
+    //    answers health like any other instance (an orchestrator that never
+    //    sees a healthy standby replaces it in a loop); its consumers simply
+    //    do not poll until it leads (owner ruling: leadership only pauses
+    //    polling), and the leadership monitor flips that every tick.
+    queue_manager.set_leader(standby.as_ref().is_none_or(|s| s.is_leader()));
 
-    // 7. Initialize Configuration
-    // Dev mode uses built-in LocalStack config, production requires config URL
-    let dev_mode = std::env::var("FLOWCATALYST_DEV_MODE")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-
-    let (router_config, config_sync) = if dev_mode {
+    // 7. Configuration. Dev mode uses the built-in LocalStack config;
+    //    production watches FLOWCATALYST_CONFIG_URL (Go: Watch), retrying at
+    //    boot until a configuration lands — a platform that is down when
+    //    the router starts no longer makes the router exit.
+    let (dev_config, config_sync) = if dev_mode {
         info!("Development mode enabled - using built-in LocalStack configuration");
         let config = create_dev_config();
         info!(
@@ -162,22 +171,17 @@ async fn main() -> Result<()> {
             pools = config.processing_pools.len(),
             "Loaded dev configuration"
         );
-        (config, None)
+        (Some(config), None)
     } else {
-        // Production mode - fetch config from URL(s)
-        // Supports comma-separated URLs for multi-platform environments
         let config_url = std::env::var("FLOWCATALYST_CONFIG_URL").map_err(|_| {
             anyhow::anyhow!(
                 "FLOWCATALYST_CONFIG_URL is required (or set FLOWCATALYST_DEV_MODE=true)"
             )
         })?;
-
         if config_url.is_empty() {
             return Err(anyhow::anyhow!("FLOWCATALYST_CONFIG_URL cannot be empty"));
         }
-
         let config_sync_config = load_config_sync_config(&config_url);
-
         info!(
             urls = ?config_sync_config.config_urls,
             interval = ?config_sync_config.sync_interval,
@@ -188,74 +192,25 @@ async fn main() -> Result<()> {
             queue_manager.clone(),
             warning_service.clone(),
         ));
-
-        // Perform initial sync - router cannot start without configuration
-        let config = match sync_service.initial_sync().await {
-            Ok(config) => config,
-            Err(e) => {
-                error!(error = %e, "Initial configuration sync failed - cannot start router");
-                return Err(anyhow::anyhow!("Initial config sync failed: {}", e));
-            }
-        };
-
-        (config, Some(sync_service))
+        (None, Some(sync_service))
     };
 
-    // 8. Create consumers from config, dispatching on each queue URI's
-    // scheme (item 1 — the blocker this fixes: every queue used to be
-    // handed to SqsConsumerFactory regardless of its scheme).
-    //
-    // Item 1 (router bench rig, 2026-09-07): in production mode
-    // (`config_sync.is_some()`, i.e. `FLOWCATALYST_CONFIG_URL` set),
-    // `sync_service.initial_sync()` above already created AND spawned a
-    // poll task for every one of these queues via `QueueManager`'s own
-    // `reload_config` -> `sync_queue_consumers` (the manager was built
-    // with a `consumer_factory` specifically so that path could do this —
-    // see the `.consumer_factory(...)` call above). This loop used to
-    // unconditionally create a SECOND, fully independent consumer per
-    // queue here too (its own `PostgresQueue`/etc. instance, own DB
-    // connection pool) and `add_consumer` it — `add_consumer` only
-    // overwrites the manager's `consumers` map entry, it neither stops the
-    // poll task `sync_queue_consumers` already spawned for that id nor
-    // spawns one for this new instance (that only happened later, when
-    // `QueueManager::start()` — step 11, below — spawned one for whatever
-    // was currently in the map). Net effect: two independent pollers
-    // racing each other against the same `queue_name`, reproduced as
-    // spurious "ACK failed - message not found" warnings and a handful of
-    // genuine duplicate deliveries within milliseconds of a message's
-    // first claim (`QueueManager`'s new `polling_consumer_ids` guard is
-    // the defence-in-depth backstop for this same class of bug; this is
-    // the direct fix — never create the redundant instance in the first
-    // place).
-    //
-    // Dev mode (`config_sync` is `None`) has no config-sync service at
-    // all, so `initial_sync` never runs and `self.consumers` starts empty
-    // — this loop is still the only thing that ever creates a consumer
-    // there, so it still needs to run in full for that branch.
-    //
-    // In production the consumers already exist (and are already polling)
-    // courtesy of initial_sync() above.
-    if config_sync.is_none() {
+    // 8. Dev mode has no config source: build its consumers here (config
+    //    sync builds and starts them itself in production).
+    if let Some(ref config) = dev_config {
+        queue_manager.apply_config(config.clone()).await?;
         let scheme_factory = SchemeConsumerFactory {
             sqs_client: sqs_client.clone(),
         };
-        for queue_config in &router_config.queues {
+        for queue_config in &config.queues {
             let consumer = scheme_factory.create_consumer(queue_config).await?;
             queue_manager.add_consumer(consumer).await;
         }
     }
-    // The first queue's URL is the publisher's target (still SQS-only — see
-    // SqsPublisher's doc comment).
-    let first_queue_url = router_config.queues.first().map(|q| q.uri.clone());
 
-    if router_config.queues.is_empty() {
-        error!("No queues configured - cannot start router");
-        return Err(anyhow::anyhow!(
-            "No queues configured in config sync response"
-        ));
-    }
-
-    // 9. Start lifecycle manager with all features
+    // 9. Start lifecycle manager with all features (the config watcher,
+    //    gated on first leadership when standby is on; the stall detector;
+    //    the queue-health monitor; the consumer watchdog).
     let mut lifecycle_config = LifecycleConfig::default();
     // R-59: FC_ROUTER_SYNTH_POOL_IDLE_SECS — idle TTL for synthesised
     // per-client fallback pools ({identifier}-DEFAULT-POOL). Mirrors Go's
@@ -276,6 +231,11 @@ async fn main() -> Result<()> {
         }
     }
     let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
+    // POST /config/reload re-fetches from the same config source (Go:
+    // Server.Reload). None in dev mode: there is no source to re-fetch.
+    let config_reloader: Option<Arc<dyn fc_router::api::ConfigReloader>> = config_sync
+        .clone()
+        .map(|s| s as Arc<dyn fc_router::api::ConfigReloader>);
     let mut lifecycle = LifecycleManager::start_with_features(
         queue_manager.clone(),
         warning_service.clone(),
@@ -320,9 +280,16 @@ async fn main() -> Result<()> {
         info!(prefix = %prefix, "FC_ROUTER_HTTP_PREFIX set — route tree also nested under prefix");
     }
 
-    // Create a simple publisher that publishes to the first queue
-    let publisher_queue_url = first_queue_url.expect("At least one queue must be configured");
-    let publisher = Arc::new(SqsPublisher::new(sqs_client, publisher_queue_url));
+    // The publisher resolves its target queue when it publishes (Go:
+    // Manager.Publisher), since in production the queues arrive with the
+    // config, after HTTP is already serving.
+    let publisher = Arc::new(SqsPublisher::new(
+        sqs_client,
+        queue_manager.clone(),
+        dev_config
+            .as_ref()
+            .and_then(|c| c.queues.first().map(|q| q.uri.clone())),
+    ));
 
     // Use the QueueManager's shared circuit breaker registry so the monitoring
     // API reads the *same* breakers the pools record into (and operator
@@ -357,6 +324,7 @@ async fn main() -> Result<()> {
             metrics_handle: Some(metrics_handle),
             auth_state,
             router_http_prefix,
+            config_reloader,
             ..RouterOptions::default()
         },
     )
@@ -376,49 +344,11 @@ async fn main() -> Result<()> {
         axum::serve(listener, app).await.unwrap();
     });
 
-    // 11. Start QueueManager in background (respecting standby status)
-    // Create a shutdown channel for the manager loop
-    let (manager_shutdown_tx, mut manager_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let manager_handle = {
-        let manager = queue_manager.clone();
-        let standby_for_loop = standby.clone();
-
-        tokio::spawn(async move {
-            // If we have standby, wait for leadership before processing
-            if let Some(ref standby_proc) = standby_for_loop {
-                loop {
-                    tokio::select! {
-                        _ = &mut manager_shutdown_rx => {
-                            info!("Manager loop received shutdown signal");
-                            break;
-                        }
-                        _ = async {
-                            if standby_proc.should_process() {
-                                info!("Leader status confirmed - starting message consumption");
-                                if let Err(e) = manager.clone().start().await {
-                                    error!("QueueManager error: {}", e);
-                                }
-                                // If start() returns, check if we lost leadership
-                                if !standby_proc.should_process() {
-                                    warn!("Lost leadership during processing - pausing");
-                                    standby_proc.wait_for_leadership().await;
-                                    info!("Re-acquired leadership - resuming");
-                                }
-                            } else {
-                                // Not leader, wait
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                            }
-                        } => {}
-                    }
-                }
-            } else {
-                // No standby mode - just run (start() already listens to shutdown_tx)
-                if let Err(e) = manager.clone().start().await {
-                    error!("QueueManager error: {}", e);
-                }
-            }
-        })
-    };
+    // 11. Start the QueueManager: spawns the poll loops of consumers
+    //     registered so far (dev mode) and the in-pipeline reaper. Consumers
+    //     that config sync creates start their own loops. Whether they poll
+    //     is decided per iteration by leadership, never by waiting here.
+    let manager_handle = tokio::spawn(queue_manager.clone().start());
 
     // Log startup summary
     log_startup_summary(&lifecycle);
@@ -429,11 +359,8 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     info!("Shutdown signal received...");
 
-    // Graceful shutdown
-    // Signal the manager loop to exit
-    let _ = manager_shutdown_tx.send(());
-
-    lifecycle.shutdown().await;
+    // Go's order: stop polling, drain, tear the manager down; only then
+    // stop the lifecycle tasks and release leadership.
     // FC_DRAIN_TIMEOUT_SECONDS makes the pool-drain budget operator/env
     // tunable instead of the crate's hardcoded 60s default
     // (QueueManager::DEFAULT_DRAIN_TIMEOUT).
@@ -442,6 +369,7 @@ async fn main() -> Result<()> {
     queue_manager
         .shutdown_with_timeout(Duration::from_secs(drain_timeout_secs))
         .await;
+    lifecycle.shutdown().await;
 
     server_task.abort();
 
@@ -805,35 +733,65 @@ use async_trait::async_trait;
 use fc_common::Message;
 use fc_queue::{QueueError, QueuePublisher};
 
+/// Publishes to an SQS queue chosen when it publishes, the way Go's
+/// `Manager.Publisher` resolves one: the lowest-named SQS queue the manager
+/// currently runs, falling back to `fallback_url` (the dev config's first
+/// queue, whose consumers are registered without a config).
 struct SqsPublisher {
     client: aws_sdk_sqs::Client,
-    queue_url: String,
+    manager: Arc<QueueManager>,
+    fallback_url: Option<String>,
 }
 
 impl SqsPublisher {
-    fn new(client: aws_sdk_sqs::Client, queue_url: String) -> Self {
-        Self { client, queue_url }
+    fn new(
+        client: aws_sdk_sqs::Client,
+        manager: Arc<QueueManager>,
+        fallback_url: Option<String>,
+    ) -> Self {
+        Self {
+            client,
+            manager,
+            fallback_url,
+        }
+    }
+
+    fn queue_url(&self) -> fc_queue::Result<String> {
+        let mut sqs: Vec<(String, String)> = self
+            .manager
+            .queue_configs()
+            .into_iter()
+            .filter(|(_, c)| matches!(fc_queue::resolve_scheme(&c.uri), Ok(QueueScheme::Sqs)))
+            .map(|(name, c)| (name, c.uri))
+            .collect();
+        sqs.sort();
+        sqs.into_iter()
+            .next()
+            .map(|(_, uri)| uri)
+            .or_else(|| self.fallback_url.clone())
+            .ok_or_else(|| QueueError::Config("publisher: no SQS queue registered".to_string()))
     }
 }
 
 #[async_trait]
 impl QueuePublisher for SqsPublisher {
     fn identifier(&self) -> &str {
-        &self.queue_url
+        "sqs-publisher"
     }
 
     async fn publish(&self, message: Message) -> fc_queue::Result<String> {
         let message_id = message.id.clone();
         let body = serde_json::to_string(&message)?;
+        let queue_url = self.queue_url()?;
 
         let mut request = self
             .client
             .send_message()
-            .queue_url(&self.queue_url)
+            .queue_url(&queue_url)
             .message_body(body);
 
         // FIFO queues require message_group_id and message_deduplication_id
-        if self.queue_url.ends_with(".fifo") {
+        if queue_url.ends_with(".fifo") {
             let group_id = message
                 .message_group_id
                 .clone()

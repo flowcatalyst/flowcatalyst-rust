@@ -97,7 +97,7 @@ impl<U: UnitOfWork> ActivateApplicationUseCase<U> {
         application.activate();
 
         // Create domain event
-        let event = ApplicationActivated::new(ctx, &application.id, &application.code);
+        let event = ApplicationActivated::new(ctx, &application.id);
         Ok((application, event))
     }
 }

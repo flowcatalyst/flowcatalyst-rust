@@ -32,6 +32,7 @@ pub mod processes;
 pub mod roles;
 pub mod router;
 pub mod scheduled_jobs;
+pub mod service_accounts;
 pub mod subscriptions;
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -46,6 +47,12 @@ pub struct SyncResult {
     pub updated: u32,
     pub deleted: u32,
     pub synced_codes: Vec<String>,
+    /// Principal syncs only: the emails whose `passwordHash` the platform
+    /// ignored because the user already existed. A sync uses a hash only to
+    /// create a user, never to change an existing one's password (owner
+    /// decision 22 of 2026-09-25). Empty (omitted on the wire) otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub password_hash_ignored: Vec<String>,
 }
 
 // Re-export request/response DTOs at the module root so callers can write
@@ -65,6 +72,7 @@ pub use processes::*;
 pub use roles::*;
 pub use router::*;
 pub use scheduled_jobs::*;
+pub use service_accounts::*;
 pub use subscriptions::*;
 
 /// HTTP client for the FlowCatalyst platform API.
@@ -186,6 +194,11 @@ impl FlowCatalystClient {
     /// Scheduled jobs — `/api/scheduled-jobs/*`.
     pub fn scheduled_jobs(&self) -> scheduled_jobs::ScheduledJobs<'_> {
         scheduled_jobs::ScheduledJobs { client: self }
+    }
+
+    /// Service accounts — `/api/service-accounts/*`.
+    pub fn service_accounts(&self) -> service_accounts::ServiceAccounts<'_> {
+        service_accounts::ServiceAccounts { client: self }
     }
 
     /// Subscriptions — `/api/subscriptions/*`.

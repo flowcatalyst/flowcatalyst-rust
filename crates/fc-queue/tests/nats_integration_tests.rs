@@ -58,6 +58,23 @@ async fn start_jetstream() -> (testcontainers::ContainerAsync<Nats>, String) {
     (container, format!("nats://127.0.0.1:{port}"))
 }
 
+/// Connect an admin client, retrying briefly: the container's port can be
+/// mapped a moment before the server accepts connections, which made these
+/// tests flaky when several containers start at once.
+async fn admin_connect(servers: &str) -> async_nats::Client {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        match async_nats::connect(servers).await {
+            Ok(c) => return c,
+            Err(e) if Instant::now() < deadline => {
+                let _ = e;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Err(e) => panic!("failed to connect to nats: {e}"),
+        }
+    }
+}
+
 fn healthy_message(id: &str) -> Message {
     Message {
         id: id.to_string(),
@@ -82,11 +99,14 @@ async fn publish_raw(servers: &str, subject: &str, message: &Message) {
         .await
         .expect("failed to connect to publish");
     let js = async_nats::jetstream::new(client);
-    js.publish(subject.to_string(), serde_json::to_vec(message).unwrap().into())
-        .await
-        .expect("publish request failed")
-        .await
-        .expect("publish ack failed");
+    js.publish(
+        subject.to_string(),
+        serde_json::to_vec(message).unwrap().into(),
+    )
+    .await
+    .expect("publish request failed")
+    .await
+    .expect("publish ack failed");
 }
 
 /// Messages already sitting on the stream when the consumer's standing
@@ -127,7 +147,12 @@ async fn item2_available_messages_return_without_waiting() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     for i in 0..3 {
-        publish_raw(&servers, &format!("{stream}.m{i}"), &healthy_message(&format!("item2-{i}"))).await;
+        publish_raw(
+            &servers,
+            &format!("{stream}.m{i}"),
+            &healthy_message(&format!("item2-{i}")),
+        )
+        .await;
     }
 
     // Settle window: `publish_raw`'s ack only proves the broker has the
@@ -148,7 +173,10 @@ async fn item2_available_messages_return_without_waiting() {
         "should have picked up all three already-published messages in one poll"
     );
     assert_eq!(
-        messages.iter().map(|m| m.message.id.as_str()).collect::<Vec<_>>(),
+        messages
+            .iter()
+            .map(|m| m.message.id.as_str())
+            .collect::<Vec<_>>(),
         vec!["item2-0", "item2-1", "item2-2"],
         "delivery order must match publish order"
     );
@@ -206,7 +234,12 @@ async fn item2_blocks_on_empty_then_returns_promptly_once_published() {
          nothing published — it's an untimed wait, not a short fixed poll"
     );
 
-    publish_raw(&servers, &format!("{stream}.m0"), &healthy_message("item2-block-0")).await;
+    publish_raw(
+        &servers,
+        &format!("{stream}.m0"),
+        &healthy_message("item2-block-0"),
+    )
+    .await;
 
     let messages = tokio::time::timeout(Duration::from_millis(500), handle)
         .await
@@ -255,7 +288,10 @@ async fn item2_stop_unblocks_a_parked_poll_within_500ms() {
 
     // Give the poll task a moment to actually be parked on `recv()`.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!handle.is_finished(), "poll() should still be parked before stop()");
+    assert!(
+        !handle.is_finished(),
+        "poll() should still be parked before stop()"
+    );
 
     let start = Instant::now();
     consumer.stop().await;
@@ -394,4 +430,197 @@ async fn item2_bounded_channel_caps_ack_pending_before_any_poll() {
     // poll() must still work and return real messages once we do call it.
     let messages = consumer.poll(max_messages).await.expect("poll failed");
     assert_eq!(messages.len(), max_messages as usize);
+}
+
+/// C4: `max_deliver` and `max_ack_pending` default to unlimited, as Go's do
+/// (owner ruling 2026-09-22: "the router owns give-up") — and a durable
+/// consumer provisioned earlier under the old finite defaults (10 / 1000)
+/// is UPDATED on the next start, not reused untouched. Before this,
+/// `get_or_create_consumer` returned the existing consumer as it was, so a
+/// deployment's first-ever limits stayed in force for ever.
+#[tokio::test]
+#[ignore]
+async fn c4_existing_durable_consumer_is_updated_to_unlimited_limits() {
+    let (_container, servers) = start_jetstream().await;
+    let stream = format!("C4LIMITS{}", uuid::Uuid::new_v4().simple());
+    let subject_filter = format!("{stream}.>");
+
+    // Provision stream + durable consumer the way the old code did.
+    {
+        let client = admin_connect(&servers).await;
+        let js = async_nats::jetstream::new(client);
+        let s = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: stream.clone(),
+                subjects: vec![subject_filter.clone()],
+                retention: async_nats::jetstream::stream::RetentionPolicy::WorkQueue,
+                ..Default::default()
+            })
+            .await
+            .expect("create stream");
+        let _: async_nats::jetstream::consumer::PullConsumer = s
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                durable_name: Some("router".to_string()),
+                ack_wait: Duration::from_secs(120),
+                max_deliver: 10,
+                max_ack_pending: 1000,
+                filter_subject: subject_filter.clone(),
+                ..Default::default()
+            })
+            .await
+            .expect("create legacy consumer");
+    }
+
+    let config = NatsConfig {
+        servers: servers.clone(),
+        stream_name: stream.clone(),
+        consumer_name: "router".to_string(),
+        subject: subject_filter,
+        ..NatsConfig::default()
+    };
+    assert_eq!(config.max_deliver, -1);
+    assert_eq!(config.max_ack_pending, -1);
+    let consumer = NatsQueueConsumer::new(config)
+        .await
+        .expect("failed to build consumer");
+
+    let client = admin_connect(&servers).await;
+    let js = async_nats::jetstream::new(client);
+    let mut nats_consumer: async_nats::jetstream::consumer::PullConsumer = js
+        .get_stream(&stream)
+        .await
+        .expect("get stream")
+        .get_consumer("router")
+        .await
+        .expect("get consumer");
+    let info = nats_consumer.info().await.expect("consumer info");
+    assert_eq!(
+        info.config.max_deliver, -1,
+        "the existing durable consumer's max_deliver must be updated to unlimited"
+    );
+    assert_eq!(
+        info.config.max_ack_pending, -1,
+        "the existing durable consumer's max_ack_pending must be updated to unlimited"
+    );
+    consumer.stop().await;
+}
+
+/// H8: `stop()` stops intake, but a message already handed out must still
+/// be ackable afterwards. `stop()` used to clear the pending-ack map, so the
+/// ack of work that finished after a consumer was stopped (shutdown,
+/// restart) failed and the message was redelivered after `ack_wait` — a
+/// completed delivery sent twice.
+#[tokio::test]
+#[ignore]
+async fn h8_ack_after_stop_still_reaches_the_server() {
+    let (_container, servers) = start_jetstream().await;
+    let stream = format!("H8STOP{}", uuid::Uuid::new_v4().simple());
+    let subject_filter = format!("{stream}.>");
+    let config = NatsConfig {
+        servers: servers.clone(),
+        stream_name: stream.clone(),
+        consumer_name: "router".to_string(),
+        subject: subject_filter,
+        ..NatsConfig::default()
+    };
+    let consumer = NatsQueueConsumer::new(config)
+        .await
+        .expect("failed to build consumer");
+    publish_raw(&servers, &format!("{stream}.a"), &healthy_message("h8-1")).await;
+
+    let polled = tokio::time::timeout(Duration::from_secs(5), consumer.poll(10))
+        .await
+        .expect("poll timed out")
+        .expect("poll failed");
+    assert_eq!(polled.len(), 1);
+
+    consumer.stop().await;
+    assert!(matches!(consumer.poll(10).await, Err(QueueError::Stopped)));
+
+    consumer
+        .ack(&polled[0].receipt_handle)
+        .await
+        .expect("an in-flight message must still be ackable after stop()");
+
+    let client = admin_connect(&servers).await;
+    let js = async_nats::jetstream::new(client);
+    let info = js
+        .get_stream(&stream)
+        .await
+        .expect("get stream")
+        .info()
+        .await
+        .expect("stream info")
+        .clone();
+    assert_eq!(
+        info.state.messages, 0,
+        "the acked message must be gone from the WorkQueue stream"
+    );
+}
+
+/// H9 / G14: when the standing subscription dies (here: the durable
+/// consumer is deleted under it) the consumer stops vouching for itself
+/// (`last_broker_activity` goes stale, so the router's bounded poll reports
+/// an error rather than an idle queue), keeps resubscribing, and resumes
+/// delivery once the subscription can be re-opened. It used to exit its
+/// forwarding task for good, after which every `poll()` returned `Stopped`.
+#[tokio::test]
+#[ignore]
+async fn h9_dead_subscription_resubscribes_and_resumes_delivery() {
+    let (_container, servers) = start_jetstream().await;
+    let stream = format!("H9RESUB{}", uuid::Uuid::new_v4().simple());
+    let subject_filter = format!("{stream}.>");
+    let config = NatsConfig {
+        servers: servers.clone(),
+        stream_name: stream.clone(),
+        consumer_name: "router".to_string(),
+        subject: subject_filter.clone(),
+        ..NatsConfig::default()
+    };
+    let consumer = NatsQueueConsumer::new(config)
+        .await
+        .expect("failed to build consumer");
+    assert!(consumer.last_broker_activity().is_some());
+
+    let client = admin_connect(&servers).await;
+    let js = async_nats::jetstream::new(client);
+    let s = js.get_stream(&stream).await.expect("get stream");
+    s.delete_consumer("router").await.expect("delete consumer");
+
+    // The subscription notices and starts resubscribing (which fails while
+    // the consumer is gone): liveness must stop reading "now".
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let fresh = consumer
+            .last_broker_activity()
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(500));
+        if !fresh {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a dead subscription must stop reporting itself alive"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Re-create the durable consumer; the resubscribe loop must pick it up.
+    let _: async_nats::jetstream::consumer::PullConsumer = s
+        .create_consumer(async_nats::jetstream::consumer::pull::Config {
+            name: Some("router".to_string()),
+            durable_name: Some("router".to_string()),
+            ack_wait: Duration::from_secs(120),
+            filter_subject: subject_filter,
+            ..Default::default()
+        })
+        .await
+        .expect("re-create consumer");
+    publish_raw(&servers, &format!("{stream}.a"), &healthy_message("h9-1")).await;
+
+    let polled = tokio::time::timeout(Duration::from_secs(20), consumer.poll(10))
+        .await
+        .expect("delivery must resume after the subscription is re-opened")
+        .expect("poll must not report Stopped after a resubscribe");
+    assert_eq!(polled[0].message.id, "h9-1");
+    consumer.stop().await;
 }

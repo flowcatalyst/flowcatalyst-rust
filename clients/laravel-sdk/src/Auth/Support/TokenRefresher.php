@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\Auth\Support;
 
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use FlowCatalyst\Auth\Contracts\OidcUserHandler;
 use FlowCatalyst\Auth\DTOs\FlowCatalystUser;
 use FlowCatalyst\Auth\Http\Controllers\OidcAuthController;
@@ -95,10 +100,60 @@ final class TokenRefresher
     }
 
     /**
+     * Single-flight (owner ruling 2026-09-25, backlog "Overnight review" item 5). The
+     * platform rotates refresh tokens and revokes the whole family when a rotated-out
+     * one is presented again, beyond a 10 s leeway meant for exactly this race.
+     * Concurrent requests of one session that see the access token expire at once
+     * would each spend the same token. So one exchange runs per refresh token, under a
+     * cache lock across workers, and its token set is kept encrypted in the cache for
+     * {@see self::REFRESH_MEMO_SECONDS} so the others reuse it. A store without locks
+     * still gets the memo.
+     *
      * @return array{access_token: string, refresh_token?: string, id_token?: string}
      * @throws AuthenticationException
      */
     private function exchangeRefreshToken(array $config, string $refreshToken): array
+    {
+        $key = 'flowcatalyst:refresh:' . hash('sha256', $refreshToken);
+        $lock = null;
+        if (Cache::getStore() instanceof LockProvider) {
+            // Held for longer than the token request may take (the HTTP client's
+            // 30 s timeout), so a slow exchange never lets a second one start.
+            $lock = Cache::lock($key . ':lock', 35);
+            try {
+                $lock->block(10);
+            } catch (LockTimeoutException) {
+                $lock = null; // a stuck holder: fall through to the memo, then exchange
+            }
+        }
+        try {
+            $cached = Cache::get($key);
+            if (is_string($cached)) {
+                try {
+                    $tokens = Crypt::decrypt($cached);
+                    if (is_array($tokens) && !empty($tokens['access_token'])) {
+                        return $tokens;
+                    }
+                } catch (DecryptException) {
+                    // an unreadable memo is ignored: exchange afresh
+                }
+            }
+            $tokens = $this->exchangeRefreshTokenOnce($config, $refreshToken);
+            Cache::put($key, Crypt::encrypt($tokens), self::REFRESH_MEMO_SECONDS);
+            return $tokens;
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    /** How long a completed exchange is reused for a request that read the old token. */
+    private const REFRESH_MEMO_SECONDS = 10;
+
+    /**
+     * @return array{access_token: string, refresh_token?: string, id_token?: string}
+     * @throws AuthenticationException
+     */
+    private function exchangeRefreshTokenOnce(array $config, string $refreshToken): array
     {
         $tokenUrl = rtrim($config['base_url'], '/') . '/oauth/token';
 

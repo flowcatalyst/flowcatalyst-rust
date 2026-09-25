@@ -5,7 +5,7 @@
 //! This use case completes the assertion check, applies counter / backup-state
 //! updates, enforces the hard-cutover domain gate (federated principals can
 //! never authenticate with a passkey, even if a stale row exists), and emits
-//! `UserLoggedInWithPasskey`.
+//! `PasskeyAuthenticated`.
 //!
 //! Counter regression: handled inside `webauthn-rs` — its
 //! `require_valid_counter_value` defaults to `true`, so the library returns
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 
-use super::events::UserLoggedInWithPasskey;
+use super::events::PasskeyAuthenticated;
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::principal::repository::PrincipalRepository;
 use crate::usecase::{
@@ -71,7 +71,7 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
 #[async_trait]
 impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
     type Command = AuthenticatePasskeyCommand;
-    type Event = UserLoggedInWithPasskey;
+    type Event = PasskeyAuthenticated;
 
     async fn validate(&self, command: &AuthenticatePasskeyCommand) -> Result<(), UseCaseError> {
         if command.authentication_state.is_none() {
@@ -96,7 +96,7 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
         &self,
         command: AuthenticatePasskeyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserLoggedInWithPasskey> {
+    ) -> UseCaseResult<PasskeyAuthenticated> {
         let (credential, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
@@ -113,7 +113,7 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
         &self,
         command: &AuthenticatePasskeyCommand,
         ctx: &ExecutionContext,
-    ) -> Result<(WebauthnCredential, UserLoggedInWithPasskey), UseCaseError> {
+    ) -> Result<(WebauthnCredential, PasskeyAuthenticated), UseCaseError> {
         let state = command.authentication_state.clone().ok_or_else(|| {
             UseCaseError::business_rule("STATE_MISSING", "authentication ceremony state missing")
         })?;
@@ -178,7 +178,7 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
         credential.record_authentication(&result);
 
         // 6. Commit credential update + login event.
-        let event = UserLoggedInWithPasskey::new(ctx, &credential.id, &credential.principal_id);
+        let event = PasskeyAuthenticated::new(ctx, &credential.id, &credential.principal_id);
         Ok((credential, event))
     }
 }

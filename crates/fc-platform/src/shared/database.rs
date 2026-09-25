@@ -435,6 +435,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "038_aud_logs_entity_id_width",
             include_str!("../../../../migrations/038_aud_logs_entity_id_width.sql"),
         ),
+        // Go's 054 + 057 (the parts the dispatch pipeline needs): a job's
+        // own queue priority, and what an attempt sent.
+        (
+            "039_dispatch_job_queue_and_attempt_request",
+            include_str!("../../../../migrations/039_dispatch_job_queue_and_attempt_request.sql"),
+        ),
         // Go's 031: two-factor authentication (factors, recovery codes,
         // email PINs, trusted devices, the per-domain policy).
         (
@@ -621,6 +627,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' AND table_name = 'aud_logs' \
                AND column_name = 'entity_id' \
                AND character_maximum_length >= 100)",
+        ),
+        // A database Go migrated to 057 already has both columns.
+        (
+            "039_dispatch_job_queue_and_attempt_request",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' \
+               AND column_name = 'queue') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_job_attempts' \
+               AND column_name = 'request_info')",
         ),
         // A database Go migrated has the last of the tables and the policy
         // junction.
@@ -989,6 +1005,23 @@ pub async fn seed_platform_application(pool: &PgPool) -> crate::shared::error::R
     );
     repo.insert(&app).await?;
     info!("Seeded built-in platform application");
+    Ok(())
+}
+
+/// Seed the platform's event-type catalogue, as Go does on every start
+/// (`seed/event_types.go` `seedPlatformEventTypes`). See
+/// [`EventTypeRepository::seed_catalogue`](crate::event_type::repository::EventTypeRepository::seed_catalogue).
+///
+/// Bootstrap-only, like [`seed_builtin_roles`]: it runs before HTTP serving
+/// begins, has no executing principal, and writes no events (see CLAUDE.md
+/// "Built-in role seeding").
+pub async fn seed_platform_event_types(pool: &PgPool) -> crate::shared::error::Result<()> {
+    let repo = crate::event_type::repository::EventTypeRepository::new(pool);
+    let defs = crate::seed::platform_event_types::definitions();
+    let inserted = repo.seed_catalogue(&defs).await?;
+    if inserted > 0 {
+        info!(inserted, total = defs.len(), "Seeded platform event types");
+    }
     Ok(())
 }
 

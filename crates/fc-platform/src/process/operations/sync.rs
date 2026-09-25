@@ -6,10 +6,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::events::ProcessesSynced;
+use super::events::{ProcessCreated, ProcessDeleted, ProcessUpdated, ProcessesSynced};
 use crate::process::entity::{Process, ProcessSource};
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,12 +82,14 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
         command: SyncProcessesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessesSynced> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (rows, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // process, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 
@@ -94,7 +98,7 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
         &self,
         command: &SyncProcessesCommand,
         ctx: &ExecutionContext,
-    ) -> Result<ProcessesSynced, UseCaseError> {
+    ) -> Result<(Vec<RecordedEvent>, ProcessesSynced), UseCaseError> {
         let existing = self
             .process_repo
             .find_by_application(&command.application_code)
@@ -104,6 +108,7 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
         let mut updated = 0u32;
         let mut deleted = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for input in &command.processes {
             synced_codes.push(input.code.clone());
@@ -129,6 +134,9 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                                 input.code, e
                             )));
                         }
+                        rows.push(RecordedEvent::of(&ProcessUpdated::new(
+                            ctx, &up.id, &up.name,
+                        ))?);
                         updated += 1;
                     }
                 }
@@ -151,6 +159,9 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                             input.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&ProcessCreated::new(
+                        ctx, &p.id, &p.code, &p.name,
+                    ))?);
                     created += 1;
                 }
             }
@@ -167,6 +178,9 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                             p.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&ProcessDeleted::new(
+                        ctx, &p.id, &p.code,
+                    ))?);
                     deleted += 1;
                 }
             }
@@ -180,6 +194,6 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
             deleted,
             synced_codes,
         };
-        Ok(event)
+        Ok((rows, event))
     }
 }

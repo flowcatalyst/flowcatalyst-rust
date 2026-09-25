@@ -1,0 +1,42 @@
+{
+  "name": "server-error-then-success",
+  "description": "Target answers 503 twice, then 200 (maxRetries 5): retried with backoff, accepted once, job COMPLETED with 3 attempts.",
+  "covers": [
+    "H1",
+    "H4"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 5,
+      "script": {
+        "byAttempt": [
+          {
+            "attempts": [
+              1,
+              2
+            ],
+            "respond": {
+              "status": 503
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 5
+    }
+  ],
+  "settle": {
+    "timeoutMs": 120000
+  },
+  "invariants": {
+    "maxAttempts": 3,
+    "minRetryGapMs": 3000
+  }
+}

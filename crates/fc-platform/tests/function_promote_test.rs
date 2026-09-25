@@ -474,7 +474,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
         1
     );
     assert_eq!(
-        events_of_type(&app, "platform:admin:scheduledjob:created").await,
+        events_of_type(&app, "platform:admin:scheduled-job:created").await,
         1
     );
     assert_eq!(app.audit_count_for(&sub.0).await, 1);
@@ -591,7 +591,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
         1
     );
     assert_eq!(
-        events_of_type(&app, "platform:admin:scheduledjob:deleted").await,
+        events_of_type(&app, "platform:admin:scheduled-job:deleted").await,
         1
     );
     assert_eq!(
@@ -674,7 +674,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
         1
     );
     assert_eq!(
-        events_of_type(&app, "platform:admin:scheduledjob:paused").await,
+        events_of_type(&app, "platform:admin:scheduled-job:paused").await,
         1
     );
     // A disabled function cannot be promoted.
@@ -739,7 +739,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
         3
     );
     assert_eq!(
-        events_of_type(&app, "platform:admin:scheduledjob:deleted").await,
+        events_of_type(&app, "platform:admin:scheduled-job:deleted").await,
         3
     );
 }

@@ -5,12 +5,10 @@
 //! task here follows.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::future;
 use tracing::{debug, info, warn};
-
-use fc_queue::QueueConsumer;
 
 use super::QueueManager;
 use crate::pool::ProcessPool;
@@ -26,58 +24,37 @@ impl QueueManager {
     /// owned `Arc<Self>` means the caller's last reference is consumed
     /// at the call site; the spawned tasks become the new owners.
     pub async fn start(self: Arc<Self>) -> Result<()> {
-        let consumers = self.consumers.read().await;
+        let consumers = self.consumers.active();
         info!(consumers = consumers.len(), "Starting QueueManager");
 
         let mut handles = Vec::new();
-
-        // Clone consumers for spawning tasks
-        let consumers_vec: Vec<_> = consumers.values().cloned().collect();
-        drop(consumers); // Release the read lock
-
-        for consumer in consumers_vec {
-            // Item 4 (router bench rig, 2026-09-07): in production/
-            // config-sync mode, `sync_queue_consumers` (run by
-            // `initial_sync`/`reload_config` before this ever executes)
-            // already spawned a poll task for every consumer now sitting
-            // in `self.consumers` — see `bin/fc-router/src/main.rs`'s
-            // step-8 comment. Calling `spawn_consumer_poll_task` again
-            // here for one of those would hit its own
-            // `polling_consumer_ids` duplicate guard and log a WARN for
-            // every configured queue on every ordinary startup (8 of them
-            // in one bench run) — the guard already makes the second
-            // attempt harmless, but a routine, expected startup path has
-            // no business logging a warning or paying for a wasted
-            // `tokio::spawn`. Checking the same guard here first makes the
-            // already-running case silent instead of merely harmless; dev
-            // mode (`add_consumer`, which never spawns a poll task itself)
-            // still reaches the real spawn below exactly as before, since
-            // its consumers never appear in `polling_consumer_ids` yet.
-            let id = consumer.identifier().to_string();
-            if self.polling_consumer_ids.contains_key(&id) {
+        for rc in consumers {
+            // A consumer created by config sync (`reload_config`) already
+            // has its poll loop; only consumers registered directly
+            // (`add_consumer`) are started here. `spawn_consumer_poll_task`
+            // is a no-op for an instance whose loop is running, so this
+            // check only keeps the start-up path quiet.
+            if rc
+                .poll_task_started
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 debug!(
-                    consumer = %id,
-                    "start(): consumer already has a poll task running (started via config sync) — not spawning a second one"
+                    consumer = %rc.identifier(),
+                    "start(): consumer already has a poll task running (started via config sync)"
                 );
                 continue;
             }
-            handles.push(self.spawn_consumer_poll_task(consumer));
+            handles.push(self.spawn_consumer_poll_task(rc));
         }
 
         // Item 5: every configured consumer now has a poll task spawned —
-        // flip the readiness gate `api::health::health_handler` reads
-        // before the bench rig's (or any operator's) health probe can see
-        // 200. Ordering: `tokio::spawn` above only *schedules* each task;
-        // it doesn't run until this async fn next yields. That's fine —
-        // "started" means "a poll task exists and will run", not "has
-        // already completed a poll" (see the field doc on why we don't
-        // wait for that).
-        self.consumers_started.store(true, std::sync::atomic::Ordering::SeqCst);
+        // flip the readiness gate `api::health::health_handler` reads.
+        self.consumers_started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
 
         // Defence-in-depth: reaper for stuck `in_pipeline` entries.
         handles.push(self.clone().spawn_in_pipeline_reaper());
 
-        // Wait for all consumer tasks
         for handle in handles {
             let _ = handle.await;
         }
@@ -85,34 +62,17 @@ impl QueueManager {
         Ok(())
     }
 
-    /// TTL of an `in_pipeline` entry before the reaper considers it stuck.
-    /// Production processing should never take this long; legitimate
-    /// long-running work should have its visibility timeout extended.
+    /// Idle bound for an `in_pipeline` entry before this reaper considers
+    /// it stuck — see [`Self::reap_stale_entries`] for the full rule (it
+    /// ages on last-seen, with an absolute ceiling of 8× this).
     const IN_PIPELINE_TTL: Duration = Duration::from_secs(15 * 60);
     const IN_PIPELINE_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
-    /// Spawn a periodic task that scans `in_pipeline` and removes any entry
-    /// older than `IN_PIPELINE_TTL`. This is a safety net for cases where a
-    /// callback is dropped without firing AND its `Drop` impl somehow
-    /// doesn't run (e.g. forgotten ownership in a future map). Without this,
-    /// SQS would keep redelivering and `filter_duplicates` would silently
-    /// swallow each redelivery as a duplicate, leaving thousands of
-    /// messages stuck on the queue.
-    /// **Why `self: Arc<Self>`** (owned): the spawned reaper task closes
-    /// over `in_pipeline` and `app_index` (Arc clones extracted from
-    /// `self`) and lives until shutdown — the receiver's Arc is consumed
-    /// by the call site and the task becomes the new owner of the
-    /// captured references.
-    /// **Shutdown signalling.** `token` is a child of `self.shutdown`
-    /// (`CancellationToken`), level-triggered: cancellation is observed
-    /// immediately by `token.cancelled()` even if this task were somehow
-    /// spawned after `shutdown()` had already run — there is no
-    /// subscribe-before-signal race like the old `broadcast` channel had.
+    /// Defence-in-depth reaper for stuck `in_pipeline` entries, alongside
+    /// the lifecycle manager's 5-minute sweep: same rule, finer cadence.
+    /// Exits when the manager's shutdown token is cancelled.
     fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let token = self.shutdown.child_token();
-        let in_pipeline = self.in_pipeline.clone();
-        let app_index = self.app_message_to_pipeline_key.clone();
-
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -122,60 +82,7 @@ impl QueueManager {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let now = Instant::now();
-
-                        // Snapshot candidates first (don't mutate while iterating).
-                        // Each candidate captures the full context we need to log
-                        // — once we yank the entry from the map, this is gone.
-                        struct Candidate {
-                            pipeline_key: String,
-                            app_message_id: String,
-                            broker_message_id: Option<String>,
-                            queue_identifier: String,
-                            pool_code: String,
-                            message_group_id: Option<String>,
-                            age_secs: u64,
-                        }
-                        let mut candidates: Vec<Candidate> = Vec::new();
-                        for entry in in_pipeline.iter() {
-                            let age = now.duration_since(entry.value().started_at);
-                            if age > Self::IN_PIPELINE_TTL {
-                                candidates.push(Candidate {
-                                    pipeline_key: entry.key().clone(),
-                                    app_message_id: entry.value().message_id.clone(),
-                                    broker_message_id: entry.value().broker_message_id.clone(),
-                                    queue_identifier: entry.value().queue_identifier.clone(),
-                                    pool_code: entry.value().pool_code.clone(),
-                                    message_group_id: entry.value().message_group_id.clone(),
-                                    age_secs: age.as_secs(),
-                                });
-                            }
-                        }
-
-                        for c in &candidates {
-                            in_pipeline.remove(&c.pipeline_key);
-                            app_index.remove(&c.app_message_id);
-                            warn!(
-                                pipeline_key = %c.pipeline_key,
-                                app_message_id = %c.app_message_id,
-                                broker_message_id = ?c.broker_message_id,
-                                queue = %c.queue_identifier,
-                                pool_code = %c.pool_code,
-                                message_group_id = ?c.message_group_id,
-                                age_secs = c.age_secs,
-                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
-                                "Reaped stuck in_pipeline entry — SQS redelivery will retry"
-                            );
-                        }
-
-                        if !candidates.is_empty() {
-                            warn!(
-                                count = candidates.len(),
-                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
-                                "in_pipeline reaper cycle: {} entries expired",
-                                candidates.len()
-                            );
-                        }
+                        self.reap_in_pipeline(Self::IN_PIPELINE_TTL);
                     }
                     _ = token.cancelled() => {
                         info!("In-pipeline reaper shutting down");
@@ -186,70 +93,74 @@ impl QueueManager {
         })
     }
 
-    /// Graceful shutdown.
+    /// Graceful shutdown, in Go's order (`Server.Run`'s shutdown sequence):
     ///
-    /// Cancels [`Self::shutdown_token`]'s parent (level-triggered — every
-    /// consumer poll task and background watcher observes it immediately,
-    /// even one spawned after this call started), stops consumers, drains
-    /// every pool (active and already-draining), and waits — bounded by a
-    /// 60s drain budget — for tracked pool work to finish via
-    /// [`ProcessPool::wait_drained`], instead of polling a "drained?" flag
-    /// on a fixed sleep interval.
+    /// 1. **Stop polling** ([`Self::stop_polling`]): intake ends, but every
+    ///    consumer stays alive, so work already routed can still be acked.
+    /// 2. **Drain**: pools stop admitting, each group's *buffered* remainder
+    ///    is released back to the broker (R-49 — shutdown never works
+    ///    through a backlog against a slow target), and the in-hand
+    ///    deliveries are awaited, bounded by the drain budget.
+    /// 3. **Tear down**: only now are the consumers stopped and the registry
+    ///    emptied, and the pools shut down.
     ///
-    /// **R-49 (ruled 2026-09-02):** the intended semantic is narrower than
-    /// what this currently does. A worker should finish only the message
-    /// it's in the middle of (its in-hand delivery), then immediately
-    /// release the rest of its group's *buffered* backlog back to the
-    /// broker (NACK, undelivered) rather than continuing to drain it —
-    /// draining the whole backlog against a slow target could take
-    /// arbitrarily long, past any drain budget, right up to the point the
-    /// orchestrator's SIGKILL severs everything mid-flight anyway.
-    ///
-    /// R-49 (ledger): shutdown finishes the message currently in the air
-    /// and RELEASES each group's buffered remainder back to the broker —
-    /// it never drains a whole backlog against a slow target, and never
-    /// abandons buffered work to visibility-timeout limbo. The sequencing:
-    /// `pool.drain()` stops admission, then `pool.release_remainder()`
-    /// empties every group buffer with explicit NACKs, so a drain task
-    /// mid-loop finds its queue empty after the in-hand task and exits.
-    /// The bounded `wait_drained` below therefore only ever waits on
-    /// in-hand deliveries, not backlogs.
+    /// Consumers used to be stopped first. For NATS that discarded the
+    /// pending-ack map, so the acks of deliveries that then completed during
+    /// the drain failed and the work was redelivered after `ack_wait` — long
+    /// after the router's duplicate guard had expired.
     ///
     /// Uses the default 60s drain budget ([`Self::DEFAULT_DRAIN_TIMEOUT`]).
     /// Callers that want the budget to be operator/env-tunable (`bin/fc-router`
     /// honours `FC_DRAIN_TIMEOUT_SECONDS`) should call
     /// [`Self::shutdown_with_timeout`] directly instead.
     pub async fn shutdown(&self) {
-        self.shutdown_with_timeout(Self::DEFAULT_DRAIN_TIMEOUT).await
+        self.shutdown_with_timeout(Self::DEFAULT_DRAIN_TIMEOUT)
+            .await
     }
 
-    /// Default drain budget for [`Self::shutdown`] — 60s, matching the
-    /// value this crate has always used. `bin/fc-router`'s
-    /// `FC_DRAIN_TIMEOUT_SECONDS` also defaults to this.
+    /// Default drain budget for [`Self::shutdown`] — 60s, matching Go's
+    /// `DrainTimeout` default. `bin/fc-router`'s `FC_DRAIN_TIMEOUT_SECONDS`
+    /// also defaults to this.
     pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// End every consumer's poll loop while leaving work already in the
+    /// pipeline running and ackable (Go: `StopPolling`). Latched: the
+    /// stalled-consumer watchdog will not respawn what this stopped, and a
+    /// config reload will not start new consumers. Idempotent.
+    pub fn stop_polling(&self) {
+        self.polling_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        for rc in self
+            .consumers
+            .active()
+            .into_iter()
+            .chain(self.consumers.detaching())
+        {
+            rc.stop_poll.cancel();
+        }
+        // Wake loops parked on the capacity gate so they see the cancel.
+        self.capacity_notify().notify_waiters();
+    }
+
+    /// Whether [`Self::stop_polling`] has run.
+    pub fn polling_stopped(&self) -> bool {
+        self.polling_stopped
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 
     /// Same as [`Self::shutdown`], but with an explicit drain budget instead
     /// of the [`Self::DEFAULT_DRAIN_TIMEOUT`] default — the bounded wait for
     /// every pool's tracked (in-hand) tasks to finish before shutdown gives
     /// up and lets the process exit anyway.
     pub async fn shutdown_with_timeout(&self, drain_timeout: Duration) {
-        info!(drain_timeout_secs = drain_timeout.as_secs(), "QueueManager shutting down...");
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        info!(
+            drain_timeout_secs = drain_timeout.as_secs(),
+            in_flight = self.in_pipeline.len(),
+            "QueueManager shutting down..."
+        );
 
-        // Signal all consumer loops / background watchers to stop.
-        self.shutdown.cancel();
-
-        // Stop all consumers. Clone the Arcs and drop the read guard before
-        // awaiting `stop()` on each — never hold `consumers` across an
-        // `.await` (see the field's doc comment / item 4 of the manager
-        // shutdown convention).
-        let consumers: Vec<Arc<dyn QueueConsumer>> = {
-            let guard = self.consumers.read().await;
-            guard.values().cloned().collect()
-        };
-        for consumer in consumers {
-            consumer.stop().await;
-        }
+        // 1. Stop polling; consumers stay alive for the drain's acks.
+        self.stop_polling();
 
         // Collect every pool — active, already-draining, AND any
         // predecessor orphaned into `orphaned_draining` by a later Active
@@ -265,7 +176,8 @@ impl QueueManager {
             self.pools.iter().map(|e| e.value().pool.clone()).collect();
         pools.extend(self.orphaned_draining.lock().iter().cloned());
 
-        // Drain all pools (non-blocking: flips `running`, closes the tracker).
+        // 2. Drain all pools (non-blocking: flips `running`, closes the
+        //    tracker).
         for pool in &pools {
             pool.drain().await;
         }
@@ -300,6 +212,23 @@ impl QueueManager {
                 timeout_secs = drain_timeout.as_secs(),
                 "Shutdown drain timed out — some pools still had in-flight work"
             );
+        }
+
+        // 3. Tear down. From here nothing more is routed or reconfigured.
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown.cancel();
+
+        // Go's Shutdown: every consumer — active or still detaching — is
+        // stopped and the registry emptied.
+        for rc in self
+            .consumers
+            .drain_active()
+            .into_iter()
+            .chain(self.consumers.drain_detaching())
+        {
+            rc.stop_poll.cancel();
+            rc.consumer.stop().await;
         }
 
         // Log any remaining in-flight messages (they'll be NACKed when tasks are dropped)
@@ -338,6 +267,7 @@ mod start_double_spawn_tests {
     use crate::mediator::HttpMediatorConfig;
     use async_trait::async_trait;
     use fc_common::{PoolConfig, RouterConfig};
+    use fc_queue::QueueConsumer;
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
     /// Blocks `poll()` forever (until `stop()`) on an un-fired `Notify`,
@@ -392,30 +322,11 @@ mod start_double_spawn_tests {
         }
     }
 
-    /// Item 4 (router bench rig, 2026-09-07): `start()` must not even
-    /// ATTEMPT a second `spawn_consumer_poll_task` call for a consumer
-    /// whose poll task is already running — reproduced here by spawning
-    /// one directly and registering the same consumer in `self.consumers`,
-    /// exactly what `sync_queue_consumers` (run by `apply_config`/
-    /// `reload_config`/`initial_sync` before `start()` ever executes in
-    /// production, per `bin/fc-router/src/main.rs`'s step-8 comment) does.
-    ///
-    /// Distinguishing "skipped" from "attempted but harmlessly refused"
-    /// without any timing/counting race: a genuinely SKIPPED attempt calls
-    /// `identifier()` exactly once (this fix's own
-    /// `polling_consumer_ids.contains_key` check); an attempt that reaches
-    /// `spawn_consumer_poll_task` calls it at least twice more (the
-    /// guard's own map key plus the "Refusing to spawn" `warn!`) even
-    /// though that inner guard still keeps it harmless either way. The
-    /// consumer's own already-running poll loop contributes zero further
-    /// calls during the test's window (parked untimed in `poll()` on a
-    /// `Notify` nothing ever fires).
-    ///
-    /// Mutant check: reverting `start()`'s loop to call
-    /// `spawn_consumer_poll_task` unconditionally (this fix's guard
-    /// removed) reproduces the bench rig's exact "Refusing to spawn a
-    /// second poll task" log line and fails the assertion below —
-    /// confirmed by hand while implementing the fix.
+    /// Item 4 (router bench rig, 2026-09-07): `start()` must not start a
+    /// second poll loop for a consumer whose loop is already running (the
+    /// config-sync path spawns loops before `start()` runs). The consumer's
+    /// first loop is parked inside `poll()`, so a second loop would show up
+    /// as a second `poll()` call.
     #[tokio::test]
     async fn start_does_not_attempt_a_second_spawn_for_an_already_running_consumer() {
         let manager = Arc::new(QueueManager::builder(HttpMediatorConfig::dev()).build());
@@ -433,49 +344,20 @@ mod start_double_spawn_tests {
 
         let counter = Arc::new(BlockingPollConsumer::new("dup"));
         let consumer: Arc<dyn QueueConsumer> = counter.clone();
+        manager.add_consumer(consumer).await;
+        let rc = manager.consumers.get("dup").expect("registered");
+        let poll_task = manager.spawn_consumer_poll_task(rc);
 
-        // Mirrors `sync_queue_consumers`: the consumer is registered in
-        // `self.consumers` AND already has a poll task running, both
-        // before `start()` is ever called.
-        manager
-            .consumers
-            .write()
-            .await
-            .insert("dup".to_string(), consumer.clone());
-        let poll_task = manager.spawn_consumer_poll_task(consumer.clone());
-
-        // Let the loop settle into its first (blocked) poll() call.
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(counter.poll_calls(), 1);
 
-        // `next_poll_task_generation` is bumped unconditionally at the top
-        // of EVERY `spawn_consumer_poll_task` call, accepted or rejected by
-        // its internal duplicate guard — unlike counting `identifier()`
-        // calls through the `debug!`/`warn!` log lines (which `tracing`
-        // evaluates lazily and skips entirely with no subscriber
-        // installed, as in this test — a dead end confirmed while writing
-        // this test), this counter is a plain, always-executed increment,
-        // so it reliably tells "was `spawn_consumer_poll_task` invoked at
-        // all" apart from "was it invoked and merely refused by its own
-        // guard".
-        let generation_before_start = manager
-            .next_poll_task_generation
-            .load(AtomicOrdering::SeqCst);
-
-        // `start()` blocks on its background tasks (including the
-        // in-pipeline reaper, which runs forever) — run it in the
-        // background and just observe the effect of its startup pass.
         let start_task = tokio::spawn(manager.clone().start());
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert_eq!(
-            manager
-                .next_poll_task_generation
-                .load(AtomicOrdering::SeqCst),
-            generation_before_start,
-            "start() must not call spawn_consumer_poll_task AT ALL for a \
-             consumer whose poll task is already running — even a call \
-             that gets refused by the inner duplicate guard still bumps \
-             this generation counter"
+            counter.poll_calls(),
+            1,
+            "start() must not start a second poll loop for a consumer whose loop is running"
         );
 
         manager.shutdown().await;
@@ -485,8 +367,7 @@ mod start_double_spawn_tests {
 
     /// Regression guard: a consumer that was only ever registered (never
     /// spawned — the dev-mode `add_consumer` path) must still get a real
-    /// poll task from `start()`. Pins that the new skip-check doesn't
-    /// accidentally swallow the genuine "not yet polling" case.
+    /// poll task from `start()`.
     #[tokio::test]
     async fn start_still_spawns_a_real_poll_task_for_a_never_started_consumer() {
         let manager = Arc::new(QueueManager::builder(HttpMediatorConfig::dev()).build());
@@ -504,30 +385,11 @@ mod start_double_spawn_tests {
 
         let counter = Arc::new(BlockingPollConsumer::new("never-started"));
         let consumer: Arc<dyn QueueConsumer> = counter.clone();
-        manager.add_consumer(consumer.clone()).await;
-
-        // See the previous test's comment on why this, not counting
-        // `identifier()` calls through log macros, is the reliable signal:
-        // it is bumped unconditionally at the top of every
-        // `spawn_consumer_poll_task` call.
-        let generation_before_start = manager
-            .next_poll_task_generation
-            .load(AtomicOrdering::SeqCst);
+        manager.add_consumer(consumer).await;
 
         let start_task = tokio::spawn(manager.clone().start());
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        assert!(
-            manager
-                .next_poll_task_generation
-                .load(AtomicOrdering::SeqCst)
-                > generation_before_start,
-            "start() must still call spawn_consumer_poll_task for a consumer \
-             that was only ever registered, never polled"
-        );
-        // And the task it spawned must be a REAL, live poller, not the
-        // guard's trivial no-op — the consumer's `poll()` must actually
-        // have been reached at least once.
         assert!(
             counter.poll_calls() > 0,
             "the spawned poll task must actually call poll() on the consumer"

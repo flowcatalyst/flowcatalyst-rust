@@ -540,13 +540,6 @@ impl DispatchJob {
         self
     }
 
-    /// Mark the job as queued (schedule it for now)
-    pub fn mark_queued(&mut self) {
-        self.status = DispatchStatus::Queued;
-        self.scheduled_for = Some(Utc::now());
-        self.updated_at = Utc::now();
-    }
-
     /// Mark the job as in progress
     pub fn mark_in_progress(&mut self) {
         self.status = DispatchStatus::Processing;
@@ -971,12 +964,13 @@ mod tests {
 
     // --- Lifecycle methods ---
 
+    /// A new job starts PENDING with no schedule, so the scheduler claims it
+    /// (review C2: API-created jobs were inserted QUEUED and never polled).
     #[test]
-    fn test_mark_queued() {
-        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
-        job.mark_queued();
-        assert_eq!(job.status, DispatchStatus::Queued);
-        assert!(job.scheduled_for.is_some());
+    fn a_new_job_is_pending_and_unscheduled() {
+        let job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
+        assert_eq!(job.status, DispatchStatus::Pending);
+        assert!(job.scheduled_for.is_none());
     }
 
     #[test]

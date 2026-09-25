@@ -37,12 +37,22 @@ class CreateServiceAccountRequestNormalizer implements DenormalizerInterface, No
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('allApplications', $data) && \is_int($data['allApplications'])) {
+            $data['allApplications'] = (bool) $data['allApplications'];
+        }
         if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
             $object->setDollarSchema($data['$schema']);
             unset($data['$schema']);
         }
         elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
             $object->setDollarSchema(null);
+        }
+        if (\array_key_exists('allApplications', $data) && $data['allApplications'] !== null) {
+            $object->setAllApplications($data['allApplications']);
+            unset($data['allApplications']);
+        }
+        elseif (\array_key_exists('allApplications', $data) && $data['allApplications'] === null) {
+            $object->setAllApplications(null);
         }
         if (\array_key_exists('applicationId', $data) && $data['applicationId'] !== null) {
             $object->setApplicationId($data['applicationId']);
@@ -107,6 +117,9 @@ class CreateServiceAccountRequestNormalizer implements DenormalizerInterface, No
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
+        if ($data->isInitialized('allApplications') && null !== $data->getAllApplications()) {
+            $dataArray['allApplications'] = $data->getAllApplications();
+        }
         if ($data->isInitialized('applicationId') && null !== $data->getApplicationId()) {
             $dataArray['applicationId'] = $data->getApplicationId();
         }

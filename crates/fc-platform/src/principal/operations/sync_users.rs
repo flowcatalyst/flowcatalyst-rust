@@ -36,7 +36,9 @@ use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
 use crate::role::ceiling;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::authorization_service::AuthContext;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::{PrincipalRepository, RoleRepository};
 
 /// One user in a platform-level sync.
@@ -98,12 +100,6 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
     }
 }
 
-/// What one sync entry did to one user.
-enum RowEvent {
-    Created(UserCreated),
-    Updated(UserUpdated),
-}
-
 #[async_trait]
 impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
     type Command = SyncUsersCommand;
@@ -139,18 +135,16 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        for event in row_events {
-            let emitted = match event {
-                RowEvent::Created(e) => self.unit_of_work.emit_event(e, &command).await.map(|_| ()),
-                RowEvent::Updated(e) => self.unit_of_work.emit_event(e, &command).await.map(|_| ()),
-            };
-            if let Err(e) = emitted.into_result() {
-                return UseCaseResult::failure(e);
-            }
-        }
-
+        // Go's usecaseop.Sync: each row's event and audit row, then the
+        // rollup, atomic with the batch write.
         self.unit_of_work
-            .commit(&batch, &*self.principal_repo, rollup, &command)
+            .commit_all_with_events(
+                std::slice::from_ref(&batch),
+                &*self.principal_repo,
+                row_events,
+                rollup,
+                &command,
+            )
             .await
     }
 }
@@ -160,7 +154,7 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
         &self,
         command: &SyncUsersCommand,
         ctx: &ExecutionContext,
-    ) -> Result<(PrincipalSyncBatch, Vec<RowEvent>, PrincipalsSynced), UseCaseError> {
+    ) -> Result<(PrincipalSyncBatch, Vec<RecordedEvent>, PrincipalsSynced), UseCaseError> {
         let now = Utc::now();
         let emails: Vec<String> = command
             .principals
@@ -235,12 +229,7 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RowEvent::Updated(UserUpdated::new(
-                        ctx,
-                        &p.id,
-                        Some(&p.name),
-                        None,
-                    )));
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
                     updated += 1;
                     p
                 }
@@ -252,9 +241,7 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RowEvent::Created(UserCreated::new(
-                        ctx, &p.id, email, &p.name, p.scope, None,
-                    )));
+                    row_events.push(RecordedEvent::of(&UserCreated::new(ctx, &p.id, email))?);
                     created += 1;
                     p
                 }

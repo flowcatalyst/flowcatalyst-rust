@@ -1,0 +1,30 @@
+{
+  "name": "connection-refused",
+  "description": "The subscription endpoint is a port nothing listens on (maxRetries 2): each job is retried and ends FAILED; the receiver sees nothing.",
+  "covers": [
+    "transport errors"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 2,
+      "endpoint": "refused"
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 3
+    }
+  ],
+  "settle": {
+    "allAccepted": false,
+    "allTerminal": true,
+    "timeoutMs": 90000
+  },
+  "invariants": {
+    "noLoss": false
+  }
+}

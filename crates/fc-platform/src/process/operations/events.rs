@@ -1,156 +1,127 @@
 //! Process Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/process/operations/events.go`): type
+//! `platform:admin:process:*`, source `platform:admin`, subject
+//! `platform.process.{id}`, group `platform:process:{id}`, and each payload
+//! carries exactly Go's `ToDataJSON` fields.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-fn subject(id: &str) -> String {
-    format!("platform.process.{}", id)
-}
-fn message_group(id: &str) -> String {
-    format!("platform:process:{}", id)
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
+
+fn metadata(ctx: &ExecutionContext, event_type: &str, process_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.process.{}", process_id),
+        format!("platform:process:{}", process_id),
+    )
 }
 
+/// `{processId, code, name}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub process_id: String,
     pub code: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub application: String,
-    pub subdomain: String,
-    pub process_name: String,
 }
 
 impl_domain_event!(ProcessCreated);
 
 impl ProcessCreated {
-    const EVENT_TYPE: &'static str = "platform:admin:process:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:process:created";
 
-    /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, process_id: &str) -> EventMetadata {
-        EventMetadata::from_ctx(
-            ctx,
-            Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            subject(process_id),
-            message_group(process_id),
-        )
+    pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str, name: &str) -> Self {
+        Self {
+            metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
+            process_id: process_id.to_string(),
+            code: code.to_string(),
+            name: name.to_string(),
+        }
     }
 }
 
+/// `{processId, name}`: the process's name after the update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub process_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body_changed: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<String>>,
+    pub name: String,
 }
 
 impl_domain_event!(ProcessUpdated);
 
 impl ProcessUpdated {
-    const EVENT_TYPE: &'static str = "platform:admin:process:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:process:updated";
 
-    /// Metadata for this event, raised inside `ctx`.
-    pub fn metadata_for(ctx: &ExecutionContext, process_id: &str) -> EventMetadata {
-        EventMetadata::from_ctx(
-            ctx,
-            Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            subject(process_id),
-            message_group(process_id),
-        )
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessArchived {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-    pub process_id: String,
-    pub code: String,
-}
-
-impl_domain_event!(ProcessArchived);
-
-impl ProcessArchived {
-    const EVENT_TYPE: &'static str = "platform:admin:process:archived";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, process_id: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                subject(process_id),
-                message_group(process_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
             process_id: process_id.to_string(),
-            code: code.to_string(),
+            name: name.to_string(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessDeleted {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-    pub process_id: String,
-    pub code: String,
-}
-
-impl_domain_event!(ProcessDeleted);
-
-impl ProcessDeleted {
-    const EVENT_TYPE: &'static str = "platform:admin:process:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                subject(process_id),
-                message_group(process_id),
-            ),
-            process_id: process_id.to_string(),
-            code: code.to_string(),
+macro_rules! process_code_event {
+    ($(#[$doc:meta])* $name:ident, $event_type:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            #[serde(skip)]
+            pub metadata: EventMetadata,
+            pub process_id: String,
+            pub code: String,
         }
-    }
+
+        impl_domain_event!($name);
+
+        impl $name {
+            pub const EVENT_TYPE: &'static str = $event_type;
+
+            pub fn new(ctx: &ExecutionContext, process_id: &str, code: &str) -> Self {
+                Self {
+                    metadata: metadata(ctx, Self::EVENT_TYPE, process_id),
+                    process_id: process_id.to_string(),
+                    code: code.to_string(),
+                }
+            }
+        }
+    };
 }
 
+process_code_event!(
+    /// `{processId, code}`.
+    ProcessArchived,
+    "platform:admin:process:archived"
+);
+process_code_event!(
+    /// `{processId, code}`.
+    ProcessDeleted,
+    "platform:admin:process:deleted"
+);
+
+/// The rollup of an SDK process sync:
+/// `{applicationCode, created, updated, deleted, syncedCodes}` on subject
+/// `platform.processes.{applicationCode}` and group
+/// `platform:processes:{applicationCode}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessesSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
     pub application_code: String,
     pub created: u32,
@@ -162,20 +133,43 @@ pub struct ProcessesSynced {
 impl_domain_event!(ProcessesSynced);
 
 impl ProcessesSynced {
-    const EVENT_TYPE: &'static str = "platform:admin:processes:synced";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:processes:synced";
 
     /// Metadata for this event, raised inside `ctx` for a sync of
     /// `application_code`.
     pub fn metadata_for(ctx: &ExecutionContext, application_code: &str) -> EventMetadata {
+        let group = if application_code.is_empty() {
+            "platform:processes".to_string()
+        } else {
+            format!("platform:processes:{}", application_code)
+        };
         EventMetadata::from_ctx(
             ctx,
             Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            format!("platform.application.{}", application_code),
-            format!("platform:application:{}", application_code),
+            SPEC_VERSION,
+            SOURCE,
+            format!("platform.processes.{}", application_code),
+            group,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_events_are_go_shaped() {
+        let ctx = ExecutionContext::create("prn_1");
+        let e = ProcessUpdated::new(&ctx, "prc_1", "Order flow");
+        assert_eq!(e.metadata.event_type, "platform:admin:process:updated");
+        assert_eq!(e.metadata.subject, "platform.process.prc_1");
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"processId": "prc_1", "name": "Order flow"})
+        );
+        let meta = ProcessesSynced::metadata_for(&ctx, "orders");
+        assert_eq!(meta.subject, "platform.processes.orders");
+        assert_eq!(meta.message_group, "platform:processes:orders");
     }
 }

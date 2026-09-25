@@ -700,8 +700,7 @@ impl TriggerSync {
                 let mut pool = linked(key)?;
                 pool.concurrency = desired;
                 pool.updated_at = now;
-                let event =
-                    DispatchPoolUpdated::new(ctx, &pool.id, None, None, Some(desired as u32));
+                let event = DispatchPoolUpdated::new(ctx, &pool.id, &pool.name);
                 let command = UpdateDispatchPoolCommand {
                     id: pool.id.clone(),
                     name: None,
@@ -726,7 +725,7 @@ impl TriggerSync {
                 let name = format!("function {}", f.address.render());
                 let pool =
                     DispatchPool::new(key.clone(), name.clone()).with_concurrency(desired as u32);
-                let event = DispatchPoolCreated::new(ctx, &pool.id, &pool.code, &pool.name, None);
+                let event = DispatchPoolCreated::new(ctx, &pool.id, &pool.code, &pool.name);
                 let command = CreateDispatchPoolCommand {
                     code: key.clone(),
                     name,
@@ -777,11 +776,6 @@ impl TriggerSync {
 
         match current.subscriptions.get(key).and_then(|(_, s)| s.clone()) {
             Some(mut sub) => {
-                let before: Vec<String> = sub
-                    .event_types
-                    .iter()
-                    .map(|b| b.event_type_code.clone())
-                    .collect();
                 sub.name = name.clone();
                 sub.application_code = Some(application_code.to_string());
                 sub.client_id = client_id;
@@ -794,16 +788,7 @@ impl TriggerSync {
                 sub.max_retries = spec.max_retries;
                 sub.data_only = spec.data_only;
                 sub.updated_at = now;
-                let added = if before.contains(&spec.event_type) {
-                    Vec::new()
-                } else {
-                    vec![spec.event_type.clone()]
-                };
-                let removed = before
-                    .into_iter()
-                    .filter(|c| *c != spec.event_type)
-                    .collect();
-                let event = SubscriptionUpdated::new(ctx, &sub.id, Some(&name), added, removed);
+                let event = SubscriptionUpdated::new(ctx, &sub.id, &name);
                 let command = UpdateSubscriptionCommand {
                     subscription_id: sub.id.clone(),
                     name: Some(name),
@@ -846,15 +831,7 @@ impl TriggerSync {
                 sub.max_retries = spec.max_retries;
                 sub.timeout_seconds = spec.timeout_seconds;
                 sub.data_only = spec.data_only;
-                let event = SubscriptionCreated::new(
-                    ctx,
-                    &sub.id,
-                    &sub.code,
-                    &sub.name,
-                    &sub.endpoint,
-                    vec![spec.event_type.clone()],
-                    sub.client_id.as_deref(),
-                );
+                let event = SubscriptionCreated::new(ctx, &sub.id, &sub.code, &sub.name);
                 let command = CreateSubscriptionCommand {
                     code: key.to_string(),
                     name,
@@ -903,19 +880,12 @@ impl TriggerSync {
         let d = self.job_definition(f, manifest, spec)?;
         match current.jobs.get(key).and_then(|(_, j)| j.as_ref()) {
             Some(existing) => {
-                let Some((job, changed)) =
+                let Some((job, _changed)) =
                     existing.reconcile(&d, Some(&f.application_id), Some(&ctx.principal_id))
                 else {
                     return Ok(()); // no difference: no write, no event
                 };
-                let event = ScheduledJobUpdated::new(
-                    ctx,
-                    &job.id,
-                    job.client_id.as_deref(),
-                    &job.code,
-                    changed,
-                    job.version,
-                );
+                let event = ScheduledJobUpdated::new(ctx, &job.id, &job.code);
                 let command = UpdateScheduledJobCommand {
                     scheduled_job_id: job.id.clone(),
                     name: Some(d.name.clone()),
@@ -953,17 +923,7 @@ impl TriggerSync {
                 job.client_id = client_id.clone();
                 job.payload = d.payload.clone();
                 job.target_url = d.target_url.clone();
-                let event = ScheduledJobCreated {
-                    metadata: ScheduledJobCreated::metadata_for(ctx, &job.id),
-                    scheduled_job_id: job.id.clone(),
-                    client_id: job.client_id.clone(),
-                    code: job.code.clone(),
-                    name: job.name.clone(),
-                    crons: job.crons.clone(),
-                    timezone: job.timezone.clone(),
-                    concurrent: job.concurrent,
-                    tracks_completion: job.tracks_completion,
-                };
+                let event = ScheduledJobCreated::new(ctx, &job.id, &job.code);
                 let command = CreateScheduledJobCommand {
                     code: key.to_string(),
                     name: d.name.clone(),
@@ -1093,7 +1053,7 @@ impl TriggerSync {
             if disable && j.status == ScheduledJobStatus::Active {
                 j.pause();
                 j.updated_by = Some(ctx.principal_id.clone());
-                let event = ScheduledJobPaused::new(ctx, &j.id, j.client_id.as_deref(), &j.code);
+                let event = ScheduledJobPaused::new(ctx, &j.id, &j.code);
                 let command = PauseScheduledJobCommand {
                     scheduled_job_id: j.id.clone(),
                 };
@@ -1103,7 +1063,7 @@ impl TriggerSync {
             } else if !disable && j.status == ScheduledJobStatus::Paused {
                 j.resume();
                 j.updated_by = Some(ctx.principal_id.clone());
-                let event = ScheduledJobResumed::new(ctx, &j.id, j.client_id.as_deref(), &j.code);
+                let event = ScheduledJobResumed::new(ctx, &j.id, &j.code);
                 let command = ResumeScheduledJobCommand {
                     scheduled_job_id: j.id.clone(),
                 };
@@ -1116,7 +1076,7 @@ impl TriggerSync {
             let Some(mut s) = sub.clone() else { continue };
             if disable && s.status == SubscriptionStatus::Active {
                 s.pause();
-                let event = SubscriptionPaused::new(ctx, &s.id, &s.code);
+                let event = SubscriptionPaused::new(ctx, &s.id);
                 let command = PauseSubscriptionCommand {
                     subscription_id: s.id.clone(),
                 };
@@ -1125,7 +1085,7 @@ impl TriggerSync {
                     .into_result()?;
             } else if !disable && s.status == SubscriptionStatus::Paused {
                 s.resume();
-                let event = SubscriptionResumed::new(ctx, &s.id, &s.code);
+                let event = SubscriptionResumed::new(ctx, &s.id);
                 let command = ResumeSubscriptionCommand {
                     subscription_id: s.id.clone(),
                 };
@@ -1159,7 +1119,7 @@ impl TriggerSync {
         link: &TriggerObject,
         j: &ScheduledJob,
     ) -> Result<(), UseCaseError> {
-        let event = ScheduledJobDeleted::new(ctx, &j.id, j.client_id.as_deref(), &j.code);
+        let event = ScheduledJobDeleted::new(ctx, &j.id, &j.code);
         let command = DeleteScheduledJobCommand {
             scheduled_job_id: j.id.clone(),
         };

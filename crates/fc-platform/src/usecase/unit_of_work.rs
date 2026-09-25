@@ -23,7 +23,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use tokio::sync::Mutex;
 use tracing::{debug, error};
 
-use super::domain_event::DomainEvent;
+use super::domain_event::{DomainEvent, RecordedEvent};
 use super::error::UseCaseError;
 use super::result::UseCaseResult;
 use fc_common::audit_redaction::{redacted_command_json, AuditMasked};
@@ -192,6 +192,38 @@ pub trait UnitOfWork: Send + Sync {
         E: DomainEvent + Send + 'static,
         C: Serialize + AuditMasked + Send + Sync;
 
+    /// Emit a sync's per-row events and its rollup event, each with its
+    /// audit row, in one transaction, without an entity change: Go's
+    /// `usecaseop.Sync`, which writes a created/updated/deleted event per
+    /// synced row and then the rollup. For a sync whose rows its repository
+    /// already wrote.
+    async fn emit_events<E, C>(
+        &self,
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync;
+
+    /// [`commit_all`](Self::commit_all) that also writes a sync's per-row
+    /// events (each with its audit row) ahead of the rollup `event`, all in
+    /// the one transaction.
+    async fn commit_all_with_events<A, R, E, C>(
+        &self,
+        aggregates: &[A],
+        repository: &R,
+        rows: Vec<RecordedEvent>,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync;
+
     /// A [`LockedRead`] on this unit of work's transaction. Only a
     /// transaction-scoped unit of work ([`PgUnitOfWork::run`]) has one that
     /// outlives the call, so only it holds the lock until its commit; any
@@ -320,7 +352,9 @@ impl PgUnitOfWork {
                  client_id, performed_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
-        .bind(crate::shared::tsid::generate_untyped())
+        .bind(crate::shared::tsid::generate(
+            crate::shared::tsid::EntityType::AuditLog,
+        ))
         .bind(&row.entity_type)
         .bind(&row.entity_id)
         .bind(&row.operation)
@@ -341,6 +375,19 @@ impl PgUnitOfWork {
         }
 
         Ok(())
+    }
+
+    /// Each row event with its audit row, then `event` with its own.
+    async fn persist_events_and_audits<E: DomainEvent, C: Serialize + AuditMasked>(
+        txn: &mut Transaction<'_, Postgres>,
+        rows: &[RecordedEvent],
+        event: &E,
+        command: &C,
+    ) -> Result<(), UseCaseError> {
+        for row in rows {
+            Self::persist_event_and_audit(&mut *txn, row, command).await?;
+        }
+        Self::persist_event_and_audit(&mut *txn, event, command).await
     }
 
     async fn persist_event_and_audit<E: DomainEvent, C: Serialize + AuditMasked>(
@@ -372,21 +419,29 @@ pub(crate) struct EventRow<'a> {
     pub subject: &'a str,
     pub time: chrono::DateTime<Utc>,
     pub data: serde_json::Value,
-    pub correlation_id: &'a str,
+    pub correlation_id: Option<&'a str>,
     pub causation_id: Option<&'a str>,
     pub deduplication_id: String,
-    pub message_group: &'a str,
+    pub message_group: Option<&'a str>,
     pub context_data: serde_json::Value,
 }
 
 impl<'a> EventRow<'a> {
-    /// The event's `Serialize` output is the `data` payload; a serialization
-    /// failure fails the commit rather than persisting a placeholder.
+    /// The event's `Serialize` output is the `data` payload (its own fields,
+    /// no envelope: Go's `ToDataJSON`); a serialization failure fails the
+    /// commit rather than persisting a placeholder. An event with no fields
+    /// persists `{}`, as Go does for an empty payload.
+    ///
+    /// Correlation id, causation id and message group are NULL when empty,
+    /// never `''` (Go's platform sink, `nullIfEmpty`).
     pub(crate) fn from_event<E: DomainEvent>(event: &'a E) -> Result<Self, UseCaseError> {
-        let data = serde_json::to_value(event).map_err(|e| {
+        let mut data = serde_json::to_value(event).map_err(|e| {
             error!("Failed to serialize domain event: {}", e);
             UseCaseError::commit(format!("Failed to serialize domain event: {}", e))
         })?;
+        if data.is_null() {
+            data = serde_json::json!({});
+        }
         let meta = event.metadata();
 
         let context_data = serde_json::json!([
@@ -402,19 +457,29 @@ impl<'a> EventRow<'a> {
             subject: &meta.subject,
             time: meta.time,
             data,
-            correlation_id: &meta.correlation_id,
-            causation_id: meta.causation_id.as_deref(),
+            correlation_id: non_empty(&meta.correlation_id),
+            causation_id: meta.causation_id.as_deref().and_then(non_empty),
             deduplication_id: format!("{}-{}", meta.event_type, meta.event_id),
-            message_group: &meta.message_group,
+            message_group: non_empty(&meta.message_group),
             context_data,
         })
     }
 }
 
+/// `None` for an empty string, so an optional column stores NULL.
+fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 /// Column values of the `aud_logs` row written for a command.
 ///
-/// `id` (fresh TSID), `application_id` and `client_id` (always NULL) are bound
-/// by the INSERT itself.
+/// `id` (a fresh `aud_` TSID, as Go's `tsid.Generate(tsid.AuditLog)`),
+/// `application_id` and `client_id` (always NULL) are bound by the INSERT
+/// itself.
 #[derive(Debug, Serialize)]
 pub(crate) struct AuditRow<'a> {
     pub entity_type: String,
@@ -627,6 +692,96 @@ impl UnitOfWork for PgUnitOfWork {
         UseCaseResult::success(event)
     }
 
+    async fn emit_events<E, C>(
+        &self,
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut txn = match self.pool.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to start transaction: {}", e);
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to start transaction: {}",
+                    e
+                )));
+            }
+        };
+
+        if let Err(e) = Self::persist_events_and_audits(&mut txn, &rows, &rollup, command).await {
+            let _ = txn.rollback().await;
+            return UseCaseResult::failure(e);
+        }
+
+        if let Err(e) = txn.commit().await {
+            error!("Failed to commit transaction: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(format!(
+                "Failed to commit transaction: {}",
+                e
+            )));
+        }
+
+        UseCaseResult::success(rollup)
+    }
+
+    async fn commit_all_with_events<A, R, E, C>(
+        &self,
+        aggregates: &[A],
+        repository: &R,
+        rows: Vec<RecordedEvent>,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut txn = match self.pool.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to start transaction: {}", e);
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to start transaction: {}",
+                    e
+                )));
+            }
+        };
+
+        for aggregate in aggregates {
+            let persist_result = {
+                let mut tx = DbTx { inner: &mut txn };
+                repository.persist(aggregate, &mut tx).await
+            };
+            if let Err(e) = persist_result {
+                let _ = txn.rollback().await;
+                error!("Failed to persist aggregate in sync: {}", e);
+                return UseCaseResult::failure(write_failure("persist", aggregate, e));
+            }
+        }
+
+        if let Err(e) = Self::persist_events_and_audits(&mut txn, &rows, &event, command).await {
+            let _ = txn.rollback().await;
+            return UseCaseResult::failure(e);
+        }
+
+        if let Err(e) = txn.commit().await {
+            error!("Failed to commit transaction: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(format!(
+                "Failed to commit transaction: {}",
+                e
+            )));
+        }
+
+        UseCaseResult::success(event)
+    }
+
     async fn read_locked<Q, R>(
         &self,
         _repository: &R,
@@ -784,6 +939,76 @@ impl UnitOfWork for TxScopedUnitOfWork {
         }
 
         if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn emit_events<E, C>(
+        &self,
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedUnitOfWork: transaction already finalized",
+                ))
+            }
+        };
+
+        if let Err(e) = PgUnitOfWork::persist_events_and_audits(txn, &rows, &rollup, command).await
+        {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(rollup)
+    }
+
+    async fn commit_all_with_events<A, R, E, C>(
+        &self,
+        aggregates: &[A],
+        repository: &R,
+        rows: Vec<RecordedEvent>,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedUnitOfWork: transaction already finalized",
+                ))
+            }
+        };
+
+        for aggregate in aggregates {
+            let persist_result = {
+                let mut tx = DbTx { inner: txn };
+                repository.persist(aggregate, &mut tx).await
+            };
+            if let Err(e) = persist_result {
+                error!("Failed to persist aggregate in scoped sync: {}", e);
+                return UseCaseResult::failure(write_failure("persist", aggregate, e));
+            }
+        }
+
+        if let Err(e) = PgUnitOfWork::persist_events_and_audits(txn, &rows, &event, command).await {
             return UseCaseResult::failure(e);
         }
 
@@ -1014,6 +1239,44 @@ impl UnitOfWork for InMemoryUnitOfWork {
         UseCaseResult::success(event)
     }
 
+    async fn emit_events<E, C>(
+        &self,
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        for row in &rows {
+            self.record(row, command);
+        }
+        self.record(&rollup, command);
+        UseCaseResult::success(rollup)
+    }
+
+    async fn commit_all_with_events<A, R, E, C>(
+        &self,
+        _aggregates: &[A],
+        _repository: &R,
+        rows: Vec<RecordedEvent>,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        for row in &rows {
+            self.record(row, command);
+        }
+        self.record(&event, command);
+        UseCaseResult::success(event)
+    }
+
     async fn read_locked<Q, R>(
         &self,
         _repository: &R,
@@ -1196,9 +1459,6 @@ mod tests {
             &super::super::ExecutionContext::create("prn_actor"),
             "prn_1",
             "a@b.c",
-            "A",
-            crate::principal::entity::UserScope::Anchor,
-            None,
         )
     }
 

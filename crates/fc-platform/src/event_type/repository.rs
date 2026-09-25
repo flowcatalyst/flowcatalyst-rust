@@ -96,6 +96,147 @@ pub struct EventTypeRepository {
 }
 
 impl EventTypeRepository {
+    /// Bootstrap seeding of the platform's own event-type catalogue, as Go's
+    /// `seedPlatformEventTypes`: insert a missing code (source `UI`, status
+    /// `CURRENT`), refresh the name of an existing one, and attach the
+    /// catalogue schema as spec version `1.0` (status `CURRENT`) when the type
+    /// has no `1.0` or legacy `v1` version yet. Never deletes, and never
+    /// changes a row's source, status or client scope. Returns how many
+    /// types it inserted. Startup-only (no principal, no events), like the
+    /// built-in role seeding.
+    pub async fn seed_catalogue(
+        &self,
+        defs: &[crate::event_type::operations::SyncEventTypeInput],
+    ) -> Result<usize> {
+        use crate::event_type::entity::EventType;
+        use crate::shared::tsid::{self, EntityType};
+
+        let codes: Vec<String> = defs.iter().map(|d| d.code.clone()).collect();
+
+        // One read for the ids already present and one for the types that
+        // already carry a 1.0 schema.
+        let existing: Vec<(String, String)> =
+            sqlx::query_as("SELECT code, id FROM msg_event_types WHERE code = ANY($1)")
+                .bind(&codes)
+                .fetch_all(&self.pool)
+                .await?;
+        let mut ids: std::collections::HashMap<String, String> = existing.into_iter().collect();
+        let versioned: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT et.code FROM msg_event_type_spec_versions sv \
+             JOIN msg_event_types et ON et.id = sv.event_type_id \
+             WHERE et.code = ANY($1) AND sv.version IN ('1.0', 'v1')",
+        )
+        .bind(&codes)
+        .fetch_all(&self.pool)
+        .await?;
+        let versioned: std::collections::HashSet<String> =
+            versioned.into_iter().map(|(c,)| c).collect();
+
+        let now = chrono::Utc::now();
+        let mut new_ids = Vec::new();
+        let mut new_codes = Vec::new();
+        let mut new_names = Vec::new();
+        let mut applications = Vec::new();
+        let mut subdomains = Vec::new();
+        let mut aggregates = Vec::new();
+        let mut renamed_ids = Vec::new();
+        let mut renamed_names = Vec::new();
+        for d in defs {
+            match ids.get(&d.code) {
+                Some(id) => {
+                    renamed_ids.push(id.clone());
+                    renamed_names.push(d.name.clone());
+                }
+                None => {
+                    let et = EventType::new(&d.code, &d.name).map_err(|e| {
+                        PlatformError::internal(format!("catalogue event type {}: {e}", d.code))
+                    })?;
+                    new_ids.push(et.id.clone());
+                    new_codes.push(et.code.clone());
+                    new_names.push(et.name.clone());
+                    applications.push(et.application.clone());
+                    subdomains.push(et.subdomain.clone());
+                    aggregates.push(et.aggregate.clone());
+                }
+            }
+        }
+
+        if !new_codes.is_empty() {
+            sqlx::query(
+                "INSERT INTO msg_event_types \
+                     (id, code, name, description, status, source, client_scoped, \
+                      application, subdomain, aggregate, created_at, updated_at) \
+                 SELECT id, code, name, NULL, 'CURRENT', 'UI', false, application, subdomain, \
+                        aggregate, $7, $7 \
+                 FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[]) \
+                      AS t(id, code, name, application, subdomain, aggregate) \
+                 ON CONFLICT (code) DO NOTHING",
+            )
+            .bind(&new_ids)
+            .bind(&new_codes)
+            .bind(&new_names)
+            .bind(&applications)
+            .bind(&subdomains)
+            .bind(&aggregates)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+            // A concurrent seeder may have won a code: re-read the real ids.
+            let inserted: Vec<(String, String)> =
+                sqlx::query_as("SELECT code, id FROM msg_event_types WHERE code = ANY($1)")
+                    .bind(&new_codes)
+                    .fetch_all(&self.pool)
+                    .await?;
+            ids.extend(inserted);
+        }
+
+        if !renamed_ids.is_empty() {
+            sqlx::query(
+                "UPDATE msg_event_types AS t SET name = v.name, updated_at = $3 \
+                 FROM UNNEST($1::text[], $2::text[]) AS v(id, name) WHERE t.id = v.id",
+            )
+            .bind(&renamed_ids)
+            .bind(&renamed_names)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        let mut sv_ids = Vec::new();
+        let mut sv_types = Vec::new();
+        let mut sv_schemas = Vec::new();
+        for d in defs {
+            let (Some(schema), Some(id)) = (d.schema.as_ref(), ids.get(&d.code)) else {
+                continue;
+            };
+            if versioned.contains(&d.code) {
+                continue;
+            }
+            sv_ids.push(tsid::generate(EntityType::Schema));
+            sv_types.push(id.clone());
+            sv_schemas.push(schema.clone());
+        }
+        if !sv_ids.is_empty() {
+            sqlx::query(
+                "INSERT INTO msg_event_type_spec_versions \
+                     (id, event_type_id, version, mime_type, schema_content, schema_type, \
+                      status, created_at, updated_at) \
+                 SELECT id, event_type_id, '1.0', 'application/schema+json', schema_content, \
+                        'JSON_SCHEMA', 'CURRENT', $4, $4 \
+                 FROM UNNEST($1::text[], $2::text[], $3::jsonb[]) \
+                      AS v(id, event_type_id, schema_content) \
+                 ON CONFLICT (event_type_id, version) DO NOTHING",
+            )
+            .bind(&sv_ids)
+            .bind(&sv_types)
+            .bind(&sv_schemas)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(new_codes.len())
+    }
+
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
     }

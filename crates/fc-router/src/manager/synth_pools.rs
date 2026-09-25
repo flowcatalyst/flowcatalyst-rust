@@ -106,19 +106,16 @@ impl QueueManager {
     /// `{identifier}-DEFAULT-POOL` codes, so these only ever arrive from
     /// the scheduler at routing time.
     ///
-    /// Re-checks `self.pools` after the (non-atomic) creation work, same as
-    /// `get_or_create_pool` — see that method's doc comment; there is no
-    /// `poolMu`-equivalent single lock here to make the check-then-create
-    /// atomic (`pools` is a `DashMap` and pool creation is `async`, so a
-    /// lock can't be held across the `.await` in `pool.start()`). Two
-    /// concurrent first-messages for a brand-new client can therefore each
-    /// build and start a pool before either inserts; the loser's pool is
-    /// simply never referenced again from `pools`, but it *did* spawn
-    /// worker tasks via `start()` that nothing then stops — a small,
-    /// pre-existing class of leak shared with `get_or_create_pool`, not
-    /// introduced by this method. Flagged rather than fixed: closing it
-    /// needs an async-aware per-code lock, out of scope for R-59.
+    /// Creation is serialised by the manager's pool-creation lock and
+    /// re-checked under it, so two first messages for a brand-new client
+    /// land in the same pool (Go: `ensureFallbackPool`'s double-check under
+    /// `poolMu`).
     pub(super) async fn ensure_fallback_pool(&self, code: &str) -> Result<Arc<ProcessPool>> {
+        if let Some(pool) = self.active_pool(code) {
+            self.touch_synth_pool(code);
+            return Ok(pool);
+        }
+        let _create = self.pool_create_lock.lock().await;
         if let Some(pool) = self.active_pool(code) {
             self.touch_synth_pool(code);
             return Ok(pool);
@@ -134,8 +131,11 @@ impl QueueManager {
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
 
-        self.insert_active_pool(code.to_string(), pool_arc.clone());
+        self.insert_active_pool(code.to_string(), pool_arc.clone())
+            .await;
         self.track_synth_pool(code);
+        // A new pool is a capacity event (Go: ensureFallbackPool signals).
+        self.capacity_notify().notify_waiters();
         info!(
             pool_code = %code,
             concurrency = pool_config.concurrency,

@@ -47,7 +47,7 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "oidc-flow")]
 use crate::api::oidc_flow::{PendingOidcStateStore, SessionStore};
 use crate::circuit_breaker_registry::CircuitBreakerRegistry;
-use crate::config_sync::{spawn_config_sync_task, ConfigSyncService};
+use crate::config_sync::ConfigSyncService;
 use crate::health::HealthService;
 use crate::manager::QueueManager;
 use crate::standby::{spawn_leadership_monitor, StandbyAwareProcessor};
@@ -65,8 +65,12 @@ pub struct LifecycleConfig {
     pub warning_cleanup_interval: Duration,
     /// Interval for health report generation
     pub health_report_interval: Duration,
-    /// Consumer restart delay after detecting a stall
+    /// Pause between consecutive consumer rebuilds in one watchdog sweep
+    /// (Go: `consumerRestartDelay`, 5s).
     pub consumer_restart_delay: Duration,
+    /// How long a consumer's poll loop may go without a heartbeat before the
+    /// watchdog rebuilds it (Go: `ConsumerStallThreshold`, 60s).
+    pub consumer_stall_threshold: Duration,
     /// Interval for reaping stale in-pipeline entries and idle circuit breakers
     pub reaper_interval: Duration,
     /// Max age for in-pipeline entries before they are reaped
@@ -83,6 +87,12 @@ pub struct LifecycleConfig {
     /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` wiring in `bin/fc-router/src/main.rs`.
     /// Mirrors Go's `ServerConfig.SynthPoolIdleAge` default (1 hour).
     pub synth_pool_idle_ttl: Duration,
+    /// How often the stall detector runs (Go: `StallConfig.CheckInterval`,
+    /// 60s). What counts as stalled is the manager's `StallConfig`.
+    pub stall_check_interval: Duration,
+    /// Queue backlog/growth monitoring (Go: `QueueHealthMonitor`, every
+    /// 30s against broker metrics). `None` disables it.
+    pub queue_health: Option<crate::queue_health_monitor::QueueHealthConfig>,
 }
 
 impl Default for LifecycleConfig {
@@ -93,11 +103,14 @@ impl Default for LifecycleConfig {
             warning_cleanup_interval: Duration::from_secs(300), // 5 minutes
             health_report_interval: Duration::from_secs(60),
             consumer_restart_delay: Duration::from_secs(5),
+            consumer_stall_threshold: Duration::from_secs(60),
             reaper_interval: Duration::from_secs(300), // 5 minutes
             in_pipeline_max_age: Duration::from_secs(900), // 15 minutes
             pending_delete_max_age: Duration::from_secs(60), // 1 minute — short so deliberate resends are reprocessed
             circuit_breaker_max_idle: Duration::from_secs(3600), // 1 hour
             synth_pool_idle_ttl: Duration::from_secs(3600),  // 1 hour, matches Go's default
+            stall_check_interval: Duration::from_secs(60),
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig::default()),
         }
     }
 }
@@ -180,74 +193,35 @@ impl LifecycleManager {
             }));
         }
 
-        // Consumer health monitor with auto-restart
+        // Consumer health monitor with auto-restart (Go:
+        // `consumerHealthLoop` → `Manager.RestartStalledConsumers`). The
+        // watchdog judges consumers by the manager's own heartbeat, builds a
+        // replacement before retiring a stalled consumer, leaves consumers
+        // paused for capacity or leadership alone, and escalates to CRITICAL
+        // after 10 failed attempts.
         {
             let manager = manager.clone();
             let health_service = health_service.clone();
-            let warning_service = warning_service.clone();
             let token = shutdown.child_token();
             let interval = config.consumer_health_interval;
             let restart_delay = config.consumer_restart_delay;
+            let threshold = config.consumer_stall_threshold;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                let mut restart_attempts: std::collections::HashMap<String, u32> =
-                    std::collections::HashMap::new();
+                // The first tick fires immediately; nothing can be stalled yet.
+                ticker.tick().await;
 
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
-                            let stalled = health_service.get_stalled_consumers();
-                            for consumer_id in stalled {
-                                let attempts = restart_attempts.entry(consumer_id.clone()).or_insert(0);
-
-                                // Java: retries indefinitely (no max attempts).
-                                // Escalate severity after many failed attempts.
-                                let severity = if *attempts >= 10 {
-                                    WarningSeverity::Critical
-                                } else {
-                                    WarningSeverity::Warn
-                                };
-
-                                warn!(
-                                    consumer_id = %consumer_id,
-                                    attempt = *attempts + 1,
-                                    "Stalled consumer detected, attempting restart"
-                                );
-
-                                warning_service.add_warning(
-                                    WarningCategory::ConsumerHealth,
-                                    severity,
-                                    format!("Consumer {} is stalled, restart attempt {}", consumer_id, *attempts + 1),
-                                    "LifecycleManager".to_string(),
-                                );
-
-                                // Wait before restart — cancel-aware so several stalled
-                                // consumers back-to-back can't stack up N × restart_delay
-                                // of unresponsiveness to shutdown.
-                                tokio::select! {
-                                    _ = tokio::time::sleep(restart_delay) => {}
-                                    _ = token.cancelled() => {
-                                        info!("Consumer health monitor shutting down");
-                                        return;
-                                    }
-                                }
-
-                                // Attempt restart
-                                if manager.restart_consumer(&consumer_id).await {
-                                    *attempts += 1;
-                                    info!(consumer_id = %consumer_id, "Consumer restart initiated");
-                                }
-                            }
-
-                            // Clear restart attempts for healthy consumers
-                            let healthy_consumers: Vec<String> = restart_attempts.keys()
-                                .filter(|id| !health_service.get_stalled_consumers().contains(id))
-                                .cloned()
-                                .collect();
-                            for id in healthy_consumers {
-                                restart_attempts.remove(&id);
+                            health_service.cleanup();
+                            let n = manager
+                                .restart_stalled_consumers(threshold, restart_delay, &token)
+                                .await;
+                            if n > 0 {
+                                warn!(count = n, "Restarted stalled consumers");
                             }
                         }
                         _ = token.cancelled() => {
@@ -257,6 +231,48 @@ impl LifecycleManager {
                     }
                 }
             }));
+        }
+
+        // Stall detector (Go: `StallDetector.Watch`, started in
+        // `Server.Run`): warns once per episode about messages in flight
+        // past the stall threshold; force-NACKs only if the manager's
+        // StallConfig enables it (off by default, as in Go). It was never
+        // started, so a message wedged for an hour raised nothing.
+        {
+            let manager = manager.clone();
+            let token = shutdown.child_token();
+            let interval = config.stall_check_interval;
+            tasks.push(tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                ticker.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            manager.check_and_handle_stalled_messages().await;
+                        }
+                        _ = token.cancelled() => {
+                            info!("Stall detector shutting down");
+                            break;
+                        }
+                    }
+                }
+            }));
+        }
+
+        // Queue health monitor (Go: `QueueHealthMonitor.Watch`, started in
+        // `Server.Run`): backlog and sustained-growth warnings from broker
+        // metrics. It was never started either.
+        if let Some(qh_config) = config.queue_health.clone() {
+            let monitor = Arc::new(crate::queue_health_monitor::QueueHealthMonitor::new(
+                qh_config,
+                warning_service.clone(),
+            ));
+            tasks.push(crate::queue_health_monitor::spawn_queue_health_monitor(
+                monitor,
+                manager.clone(),
+                shutdown.child_token(),
+            ));
         }
 
         // Warning service cleanup
@@ -348,6 +364,13 @@ impl LifecycleManager {
                             // Clean up draining pools that have finished
                             manager.cleanup_draining_pools().await;
 
+                            // X-11 / R-26/R-49: retire detached consumers
+                            // nothing in the pipeline references any more.
+                            let retired = manager.retire_detached_consumers();
+                            if retired > 0 {
+                                info!(retired, "Retired detached consumers");
+                            }
+
                             // R-59: evict synthesised per-client fallback pools
                             // idle past their TTL (drains via the same path as
                             // a config-removed pool; see
@@ -361,7 +384,12 @@ impl LifecycleManager {
                                 );
                             }
 
-                            // Remove stale health service entries for destroyed pools/consumers
+                            // Drop pool counters for pools that no longer
+                            // exist. Consumer liveness is read live from the
+                            // manager, so it needs no pruning (Go:
+                            // RemoveStaleEntries) — this used to prune it by
+                            // config name while it was keyed by identifier,
+                            // blinding the watchdog to NATS consumers.
                             let pool_codes = manager.pool_codes();
                             let consumer_ids = manager.consumer_ids().await;
                             health_service.remove_stale_entries(&pool_codes, &consumer_ids);
@@ -411,12 +439,35 @@ impl LifecycleManager {
         // Start the base lifecycle manager
         let mut lifecycle = Self::start(manager, warning_service, health_service, config);
 
-        // Start config sync task if provided and enabled
+        // Start the config watcher if provided and enabled (Go: `Watch`):
+        // it retries until a configuration lands, then polls on the sync
+        // interval. A config already applied by the caller hashes the same,
+        // so its first pass is a no-op.
+        //
+        // With standby enabled the watcher starts only once this instance
+        // first becomes leader (Go: `gateOnLeadership` → `startPools`), so
+        // a standby that has never led builds no consumers; after that it
+        // keeps running across leadership changes, since losing leadership
+        // only pauses polling (owner ruling). The wait never blocks the
+        // caller — HTTP is served meanwhile.
         if let Some(ref sync_service) = config_sync {
             if sync_service.is_enabled() {
-                info!("Starting configuration sync background task");
-                let handle =
-                    spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown.child_token());
+                let token = lifecycle.shutdown.child_token();
+                let sync_service = sync_service.clone();
+                let standby_gate = standby.clone();
+                let handle = tokio::spawn(async move {
+                    if let Some(standby) = standby_gate {
+                        if !standby.is_leader() {
+                            info!("Configuration sync waits for this instance to become leader");
+                            tokio::select! {
+                                _ = standby.wait_for_leadership() => {}
+                                _ = token.cancelled() => return,
+                            }
+                        }
+                    }
+                    info!("Starting configuration sync background task");
+                    sync_service.run(token).await;
+                });
                 lifecycle.tasks.push(handle);
             }
         }
@@ -472,7 +523,9 @@ impl LifecycleManager {
         self.standby.as_ref().is_none_or(|s| s.is_leader())
     }
 
-    /// Signal shutdown to all lifecycle tasks, then bounded-join them.
+    /// Signal shutdown to all lifecycle tasks, bounded-join them, then
+    /// release leadership. Call this AFTER the queue manager's shutdown
+    /// (which stops polling and drains), as Go's `Server.Run` does.
     ///
     /// Cancels the token (every task's `token.cancelled()` resolves immediately,
     /// including tokens cloned after this call — level-triggered, unlike a
@@ -483,11 +536,6 @@ impl LifecycleManager {
     /// `send()`, never less.
     pub async fn shutdown(&mut self) {
         info!("Lifecycle manager shutting down...");
-
-        // Shutdown standby processor first
-        if let Some(ref standby) = self.standby {
-            standby.shutdown().await;
-        }
 
         // Signal all tasks to stop
         self.shutdown.cancel();
@@ -508,6 +556,13 @@ impl LifecycleManager {
                     "Lifecycle tasks did not all stop within timeout — leaving remainder to process exit"
                 ),
             }
+        }
+
+        // Leadership is released last (Go: election.Stop after the manager's
+        // shutdown): releasing it while this instance was still draining let
+        // a standby start polling the same queues underneath it.
+        if let Some(ref standby) = self.standby {
+            standby.shutdown().await;
         }
     }
 
@@ -592,11 +647,159 @@ mod tests {
     use crate::manager::QueueManager;
     use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningService;
+    use fc_common::WarningCategory;
 
     #[test]
     fn test_default_config() {
         let config = LifecycleConfig::default();
         assert_eq!(config.memory_health_interval, Duration::from_secs(60));
+    }
+
+    /// Go's `Server.Run` starts the stall detector and the queue-health
+    /// monitor; they were never started here. Both now run on the lifecycle
+    /// ticks: a message in flight past the stall threshold raises a Stall
+    /// warning, and a queue backlog raises a QueueHealth warning.
+    #[tokio::test]
+    async fn stall_detector_and_queue_health_monitor_run() {
+        use async_trait::async_trait;
+        use fc_common::{MediationOutcome, Message, PoolConfig, QueuedMessage, RouterConfig};
+        use fc_queue::{QueueConsumer, QueueMetrics};
+
+        struct Hang;
+        #[async_trait]
+        impl crate::Mediator for Hang {
+            async fn mediate(&self, _m: &Message) -> MediationOutcome {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                MediationOutcome::success(200)
+            }
+        }
+        struct Backlogged;
+        #[async_trait]
+        impl QueueConsumer for Backlogged {
+            fn identifier(&self) -> &str {
+                "backlogged"
+            }
+            async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+            async fn get_metrics(&self) -> fc_queue::Result<Option<QueueMetrics>> {
+                Ok(Some(QueueMetrics {
+                    pending_messages: 50_000,
+                    queue_identifier: "backlogged".to_string(),
+                    ..QueueMetrics::default()
+                }))
+            }
+        }
+
+        let warning_service = Arc::new(WarningService::default());
+        let manager = Arc::new(
+            QueueManager::builder_with_shared_mediator(Arc::new(Hang))
+                .warning_service(warning_service.clone())
+                .stall_config(fc_common::StallConfig {
+                    enabled: true,
+                    stall_threshold_seconds: 0,
+                    force_nack_stalled: false,
+                    force_nack_after_seconds: 3600,
+                    nack_delay_seconds: 30,
+                })
+                .build(),
+        );
+        manager
+            .apply_config(RouterConfig {
+                processing_pools: vec![PoolConfig {
+                    code: "P".to_string(),
+                    concurrency: 1,
+                    rate_limit_per_minute: None,
+                }],
+                queues: vec![],
+            })
+            .await
+            .unwrap();
+        manager.add_consumer(Arc::new(Backlogged)).await;
+        let msg = Message {
+            id: "slow".to_string(),
+            pool_code: "P".to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: fc_common::MediationType::HTTP,
+            mediation_target: "http://localhost/x".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: fc_common::DispatchMode::Immediate,
+            dispatch_mode_specified: true,
+        };
+        manager
+            .route_batch(
+                vec![QueuedMessage {
+                    message: msg,
+                    receipt_handle: "rh".to_string(),
+                    broker_message_id: Some("b".to_string()),
+                    queue_identifier: "backlogged".to_string(),
+                }],
+                Arc::new(Backlogged),
+            )
+            .await
+            .unwrap();
+
+        let health_service = Arc::new(HealthService::new(
+            HealthServiceConfig::default(),
+            warning_service.clone(),
+        ));
+        let long = Duration::from_secs(60);
+        let config = LifecycleConfig {
+            memory_health_interval: long,
+            consumer_health_interval: long,
+            warning_cleanup_interval: long,
+            health_report_interval: long,
+            reaper_interval: long,
+            stall_check_interval: Duration::from_millis(50),
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+                check_interval: Duration::from_millis(50),
+                ..Default::default()
+            }),
+            ..LifecycleConfig::default()
+        };
+        let mut lifecycle = LifecycleManager::start(
+            manager.clone(),
+            warning_service.clone(),
+            health_service,
+            config,
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let stall = warning_service
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len();
+            let backlog = warning_service
+                .get_warnings_by_category(WarningCategory::QueueHealth)
+                .len();
+            if stall > 0 && backlog > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "stall={stall} backlog={backlog}: both detectors must run"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        lifecycle.shutdown().await;
+        manager
+            .shutdown_with_timeout(Duration::from_millis(50))
+            .await;
     }
 
     /// `CancellationToken` is level-triggered: shutdown must complete
@@ -619,11 +822,17 @@ mod tests {
             warning_cleanup_interval: long,
             health_report_interval: long,
             consumer_restart_delay: long,
+            consumer_stall_threshold: long,
             reaper_interval: long,
             in_pipeline_max_age: long,
             pending_delete_max_age: long,
             circuit_breaker_max_idle: long,
             synth_pool_idle_ttl: long,
+            stall_check_interval: long,
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+                check_interval: long,
+                ..Default::default()
+            }),
         };
 
         let mut lifecycle =

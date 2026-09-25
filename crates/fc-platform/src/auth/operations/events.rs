@@ -1,280 +1,180 @@
-//! Auth Domain Events — AnchorDomain and ClientAuthConfig
+//! Auth Domain Events — AnchorDomain, ClientAuthConfig, IdpRoleMapping and
+//! OAuthClient.
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/auth/operations/events.go`): every event here has
+//! source `platform:admin` and type `platform:admin:{aggregate}:{action}`,
+//! and each payload carries exactly Go's `ToDataJSON` fields.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
+
+/// Metadata on subject `platform.{aggregate}.{id}`, group
+/// `platform:{aggregate}:{id}`.
+fn metadata(ctx: &ExecutionContext, event_type: &str, aggregate: &str, id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.{}.{}", aggregate, id),
+        format!("platform:{}:{}", aggregate, id),
+    )
+}
+
 // ── AnchorDomain Events ──────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnchorDomainCreated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub anchor_domain_id: String,
-    pub domain: String,
-}
-
-impl_domain_event!(AnchorDomainCreated);
-
-impl AnchorDomainCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:anchor-domain:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.anchordomain.{}", id),
-                format!("platform:anchordomain:{}", id),
-            ),
-            anchor_domain_id: id.to_string(),
-            domain: domain.to_string(),
+macro_rules! anchor_domain_event {
+    ($(#[$doc:meta])* $name:ident, $event_type:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            #[serde(skip)]
+            pub metadata: EventMetadata,
+            pub anchor_domain_id: String,
+            pub domain: String,
         }
-    }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnchorDomainDeleted {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
+        impl_domain_event!($name);
 
-    pub anchor_domain_id: String,
-    pub domain: String,
-}
+        impl $name {
+            pub const EVENT_TYPE: &'static str = $event_type;
 
-impl_domain_event!(AnchorDomainDeleted);
-
-impl AnchorDomainDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:anchor-domain:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.anchordomain.{}", id),
-                format!("platform:anchordomain:{}", id),
-            ),
-            anchor_domain_id: id.to_string(),
-            domain: domain.to_string(),
+            pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
+                Self {
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "anchordomain", id),
+                    anchor_domain_id: id.to_string(),
+                    domain: domain.to_string(),
+                }
+            }
         }
-    }
+    };
 }
+
+anchor_domain_event!(
+    /// `{anchorDomainId, domain}`.
+    AnchorDomainCreated,
+    "platform:admin:anchor-domain:created"
+);
+anchor_domain_event!(
+    /// `{anchorDomainId, domain}`.
+    AnchorDomainUpdated,
+    "platform:admin:anchor-domain:updated"
+);
+anchor_domain_event!(
+    /// `{anchorDomainId, domain}`.
+    AnchorDomainDeleted,
+    "platform:admin:anchor-domain:deleted"
+);
 
 // ── ClientAuthConfig Events ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthConfigCreated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub auth_config_id: String,
-    pub email_domain: String,
-    pub config_type: String,
-}
-
-impl_domain_event!(AuthConfigCreated);
-
-impl AuthConfigCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:auth-config:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str, config_type: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.authconfig.{}", id),
-                format!("platform:authconfig:{}", id),
-            ),
-            auth_config_id: id.to_string(),
-            email_domain: email_domain.to_string(),
-            config_type: config_type.to_string(),
+macro_rules! auth_config_event {
+    ($(#[$doc:meta])* $name:ident, $event_type:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            #[serde(skip)]
+            pub metadata: EventMetadata,
+            pub auth_config_id: String,
+            pub email_domain: String,
         }
-    }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthConfigUpdated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
+        impl_domain_event!($name);
 
-    pub auth_config_id: String,
-    pub email_domain: String,
-}
+        impl $name {
+            pub const EVENT_TYPE: &'static str = $event_type;
 
-impl_domain_event!(AuthConfigUpdated);
-
-impl AuthConfigUpdated {
-    const EVENT_TYPE: &'static str = "platform:iam:auth-config:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.authconfig.{}", id),
-                format!("platform:authconfig:{}", id),
-            ),
-            auth_config_id: id.to_string(),
-            email_domain: email_domain.to_string(),
+            pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
+                Self {
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "authconfig", id),
+                    auth_config_id: id.to_string(),
+                    email_domain: email_domain.to_string(),
+                }
+            }
         }
-    }
+    };
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthConfigDeleted {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub auth_config_id: String,
-    pub email_domain: String,
-}
-
-impl_domain_event!(AuthConfigDeleted);
-
-impl AuthConfigDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:auth-config:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.authconfig.{}", id),
-                format!("platform:authconfig:{}", id),
-            ),
-            auth_config_id: id.to_string(),
-            email_domain: email_domain.to_string(),
-        }
-    }
-}
-
-// ── AnchorDomain update event ────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnchorDomainUpdated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub anchor_domain_id: String,
-    pub domain: String,
-}
-
-impl_domain_event!(AnchorDomainUpdated);
-
-impl AnchorDomainUpdated {
-    const EVENT_TYPE: &'static str = "platform:iam:anchor-domain:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
-
-    pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.anchordomain.{}", id),
-                format!("platform:anchordomain:{}", id),
-            ),
-            anchor_domain_id: id.to_string(),
-            domain: domain.to_string(),
-        }
-    }
-}
+auth_config_event!(
+    /// `{authConfigId, emailDomain}`.
+    AuthConfigCreated,
+    "platform:admin:auth-config:created"
+);
+auth_config_event!(
+    /// `{authConfigId, emailDomain}`.
+    AuthConfigUpdated,
+    "platform:admin:auth-config:updated"
+);
+auth_config_event!(
+    /// `{authConfigId, emailDomain}`.
+    AuthConfigDeleted,
+    "platform:admin:auth-config:deleted"
+);
 
 // ── IdpRoleMapping events ────────────────────────────────────────────────────
 
+/// `{mappingId, idpType, idpRoleName, platformRoleName}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdpRoleMappingCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
-    pub idp_role_mapping_id: String,
-    pub idp_role: String,
-    pub mapped_role: String,
+    pub mapping_id: String,
+    pub idp_type: String,
+    pub idp_role_name: String,
+    pub platform_role_name: String,
 }
 
 impl_domain_event!(IdpRoleMappingCreated);
 
 impl IdpRoleMappingCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:idp-role-mapping:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:idp-role-mapping:created";
 
-    pub fn new(ctx: &ExecutionContext, id: &str, idp_role: &str, mapped_role: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        id: &str,
+        idp_type: &str,
+        idp_role_name: &str,
+        platform_role_name: &str,
+    ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.idprolemapping.{}", id),
-                format!("platform:idprolemapping:{}", id),
-            ),
-            idp_role_mapping_id: id.to_string(),
-            idp_role: idp_role.to_string(),
-            mapped_role: mapped_role.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id),
+            mapping_id: id.to_string(),
+            idp_type: idp_type.to_string(),
+            idp_role_name: idp_role_name.to_string(),
+            platform_role_name: platform_role_name.to_string(),
         }
     }
 }
 
+/// `{mappingId, idpRoleName}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdpRoleMappingDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
-    pub idp_role_mapping_id: String,
+    pub mapping_id: String,
+    pub idp_role_name: String,
 }
 
 impl_domain_event!(IdpRoleMappingDeleted);
 
 impl IdpRoleMappingDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:idp-role-mapping:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    pub const EVENT_TYPE: &'static str = "platform:admin:idp-role-mapping:deleted";
 
-    pub fn new(ctx: &ExecutionContext, id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, id: &str, idp_role_name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.idprolemapping.{}", id),
-                format!("platform:idprolemapping:{}", id),
-            ),
-            idp_role_mapping_id: id.to_string(),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "idprolemapping", id),
+            mapping_id: id.to_string(),
+            idp_role_name: idp_role_name.to_string(),
         }
     }
 }
@@ -293,7 +193,7 @@ macro_rules! oauth_client_event {
         #[derive(Debug, Clone, Serialize, Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub struct $name {
-            #[serde(flatten)]
+            #[serde(skip)]
             pub metadata: EventMetadata,
 
             pub oauth_client_id: String,
@@ -303,20 +203,11 @@ macro_rules! oauth_client_event {
         impl_domain_event!($name);
 
         impl $name {
-            const EVENT_TYPE: &'static str = $event_type;
-            const SPEC_VERSION: &'static str = "1.0";
-            const SOURCE: &'static str = "platform:admin";
+            pub const EVENT_TYPE: &'static str = $event_type;
 
             pub fn new(ctx: &ExecutionContext, id: &str $(, $field: &str)*) -> Self {
                 Self {
-                    metadata: EventMetadata::from_ctx(
-                        ctx,
-                        Self::EVENT_TYPE,
-                        Self::SPEC_VERSION,
-                        Self::SOURCE,
-                        format!("platform.oauthclient.{}", id),
-                        format!("platform:oauthclient:{}", id),
-                    ),
+                    metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id),
                     oauth_client_id: id.to_string(),
                     $($field: $field.to_string(),)*
                 }
@@ -367,7 +258,7 @@ oauth_client_event!(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClientSecretRotated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
 
     pub oauth_client_id: String,
@@ -378,20 +269,11 @@ pub struct OAuthClientSecretRotated {
 impl_domain_event!(OAuthClientSecretRotated);
 
 impl OAuthClientSecretRotated {
-    const EVENT_TYPE: &'static str = "platform:admin:oauth-client:secret-rotated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:oauth-client:secret-rotated";
 
     pub fn new(ctx: &ExecutionContext, id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.oauthclient.{}", id),
-                format!("platform:oauthclient:{}", id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, "oauthclient", id),
             oauth_client_id: id.to_string(),
             previous_secret_expires_at: None,
         }
@@ -402,29 +284,10 @@ impl OAuthClientSecretRotated {
 mod tests {
     use super::*;
 
-    /// The payload keys an event serialises besides its flattened metadata.
+    /// The keys of an event's `data` payload.
     fn payload_keys<T: Serialize>(event: &T) -> Vec<String> {
-        const METADATA: &[&str] = &[
-            "event_id",
-            "event_type",
-            "spec_version",
-            "source",
-            "subject",
-            "time",
-            "execution_id",
-            "correlation_id",
-            "causation_id",
-            "principal_id",
-            "message_group",
-        ];
         let json = serde_json::to_value(event).unwrap();
-        let mut keys: Vec<String> = json
-            .as_object()
-            .unwrap()
-            .keys()
-            .filter(|k| !METADATA.contains(&k.as_str()))
-            .cloned()
-            .collect();
+        let mut keys: Vec<String> = json.as_object().unwrap().keys().cloned().collect();
         keys.sort();
         keys
     }
@@ -464,5 +327,27 @@ mod tests {
         assert_eq!(created.metadata.source, "platform:admin");
         assert_eq!(created.metadata.subject, "platform.oauthclient.oac_1");
         assert_eq!(created.metadata.message_group, "platform:oauthclient:oac_1");
+    }
+
+    #[test]
+    fn anchor_auth_config_and_mapping_events_are_go_shaped() {
+        let ctx = ExecutionContext::create("prn_actor");
+        let a = AnchorDomainCreated::new(&ctx, "anc_1", "acme.com");
+        assert_eq!(
+            a.metadata.event_type,
+            "platform:admin:anchor-domain:created"
+        );
+        assert_eq!(a.metadata.subject, "platform.anchordomain.anc_1");
+        assert_eq!(payload_keys(&a), ["anchorDomainId", "domain"]);
+        let c = AuthConfigDeleted::new(&ctx, "cac_1", "acme.com");
+        assert_eq!(c.metadata.event_type, "platform:admin:auth-config:deleted");
+        assert_eq!(payload_keys(&c), ["authConfigId", "emailDomain"]);
+        let m = IdpRoleMappingCreated::new(&ctx, "irm_1", "OIDC", "admins", "platform:admin");
+        assert_eq!(
+            payload_keys(&m),
+            ["idpRoleName", "idpType", "mappingId", "platformRoleName"]
+        );
+        let d = IdpRoleMappingDeleted::new(&ctx, "irm_1", "admins");
+        assert_eq!(payload_keys(&d), ["idpRoleName", "mappingId"]);
     }
 }

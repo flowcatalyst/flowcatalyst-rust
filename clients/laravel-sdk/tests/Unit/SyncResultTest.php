@@ -41,4 +41,19 @@ final class SyncResultTest extends TestCase
         self::assertSame('orders', $r->applicationCode);
         self::assertSame(['orders:role'], $r->syncedCodes);
     }
+
+    /** Owner decision 22 of 2026-09-25: a sync uses passwordHash only to create a user. */
+    public function test_reads_password_hash_ignored_and_defaults_to_empty(): void
+    {
+        $r = SyncResult::fromArray([
+            'created' => 0,
+            'updated' => 1,
+            'syncedEmails' => ['a@example.com'],
+            'passwordHashIgnored' => ['a@example.com'],
+        ]);
+        self::assertSame(['a@example.com'], $r->passwordHashIgnored);
+
+        $none = SyncResult::fromArray(['created' => 1, 'syncedEmails' => ['b@example.com']]);
+        self::assertSame([], $none->passwordHashIgnored, 'omitted when empty');
+    }
 }

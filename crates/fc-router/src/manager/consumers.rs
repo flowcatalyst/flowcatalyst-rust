@@ -1,24 +1,25 @@
 //! Consumer poll loop plus consumer-facing queries: liveness/health,
-//! broker connectivity, queue metrics, and restart-by-replacement.
+//! broker connectivity, queue metrics, the stalled-consumer watchdog
+//! (rebuild before retire), and the retirement of detached consumers.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use fc_common::{WarningCategory, WarningSeverity};
-use fc_queue::{QueueConsumer, QueueMetrics};
+use fc_queue::QueueMetrics;
 
-use super::QueueManager;
+use super::registry::is_stale;
+use super::{QueueManager, RestartRecord, RunningConsumer};
+use crate::health::ConsumerStatsProvider;
 
 /// Sleep for `d`, but race it against `token`. Returns `true` if the token
 /// was cancelled before `d` elapsed (caller should stop looping), `false`
-/// if the sleep completed normally. Used for the pacing sleeps in the
-/// consumer poll loop (backpressure, empty-poll, partial-batch, and error
-/// pauses) so a shutdown that lands mid-pause exits promptly instead of
-/// waiting out the rest of the sleep — across many consumers those pauses
-/// would otherwise add real seconds to shutdown latency.
+/// if the sleep completed normally.
 async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     tokio::select! {
         _ = tokio::time::sleep(d) => false,
@@ -26,305 +27,264 @@ async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     }
 }
 
-/// Park untimed on the manager's capacity-freed gate (G12,
-/// `docs/go-mirror/2026-09-06-go-fix-list.md`) until either it fires or
-/// `token` is cancelled. Returns `true` if cancelled first (caller should
-/// stop looping).
+/// Park untimed on the manager's capacity-freed gate (G12) until consumer
+/// `rc` has capacity again (Go: `awaitCapacity`) or `token` is cancelled.
+/// Returns `true` if cancelled first.
+///
+/// Wakes on the gate (a pool crossing back under capacity, a reconfigure, a
+/// new pool) and on the earliest of this consumer's deferrals coming due —
+/// nothing signals the gate when budget frees up that way.
 ///
 /// **Race-free by construction.** The `Notified` future is created (which
-/// captures the gate's current `notify_waiters()` call count) *before*
-/// `has_pool_capacity` is checked, and `tokio::sync::Notify` guarantees a
-/// `notify_waiters()` call is observed by a `Notified` as long as it
-/// happens after that `Notified` was created — whether or not it has been
-/// polled yet. So a pool that frees capacity between our last check and
-/// this call (however small that window) cannot be missed: either the
-/// re-check below already sees it, or the wait resolves immediately
-/// because the notification landed after `notified()` was created but
-/// before `.await` started. This is what closes the lost-wakeup race a
-/// bare re-poll-on-a-timer can't.
-async fn wait_for_capacity_or_cancel(manager: &QueueManager, token: &CancellationToken) -> bool {
-    let notified = manager.capacity_notify().notified();
-    if manager.has_pool_capacity() {
-        // Freed between the caller's check and here — don't wait at all.
-        return false;
-    }
-    tokio::select! {
-        _ = notified => false,
-        _ = token.cancelled() => true,
+/// captures the gate's current `notify_waiters()` call count) *before* the
+/// capacity check, and `tokio::sync::Notify` guarantees a `notify_waiters()`
+/// call is observed by a `Notified` created before it, whether or not it has
+/// been polled yet.
+async fn wait_for_capacity_or_cancel(
+    manager: &QueueManager,
+    rc: &RunningConsumer,
+    token: &CancellationToken,
+) -> bool {
+    loop {
+        let notified = manager.capacity_notify().notified();
+        if manager.has_capacity_for(rc) {
+            return false;
+        }
+        let due = rc.earliest_deferral();
+        tokio::select! {
+            _ = notified => {}
+            _ = async {
+                match due {
+                    Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = token.cancelled() => return true,
+        }
     }
 }
 
+/// What one bounded poll produced.
+enum PollOutcome {
+    Messages(Vec<fc_common::QueuedMessage>),
+    /// Nothing arrived. `waited` is true when the poll itself already spent
+    /// the whole poll timeout waiting (a blocking backend), so re-polling at
+    /// once is not a hot loop.
+    Empty {
+        waited: bool,
+    },
+    Stopped,
+    Error(String),
+    Cancelled,
+}
+
 impl QueueManager {
-    /// Spawn a poll task for a single consumer. Returns the JoinHandle.
-    /// Called from both `start()` (initial consumers) and `sync_queue_consumers`
-    /// (hot-added consumers).
+    /// One `poll()`, bounded by the poll timeout (Go: `consumerPollTimeout`)
+    /// and raced against the consumer's poll token.
     ///
-    /// **Why `self: &Arc<Self>`**: the spawned task captures
-    /// `manager = self.clone()` so it can call back into the manager for
-    /// the lifetime of the consumer. That clone needs the receiver to be
-    /// an `Arc`, not `&Self`.
+    /// A poll that runs out the timeout is, for a backend whose `poll()`
+    /// blocks by contract (NATS's standing subscription), simply an empty
+    /// poll — provided the backend still vouches for its broker link
+    /// (`last_broker_activity`); for every other backend, or a NATS
+    /// subscription that has died, it is a poll error (Go G13/G14).
+    async fn bounded_poll(&self, rc: &RunningConsumer) -> PollOutcome {
+        rc.polls_started.fetch_add(1, Ordering::SeqCst);
+        let outcome = tokio::select! {
+            _ = rc.stop_poll.cancelled() => PollOutcome::Cancelled,
+            res = tokio::time::timeout(self.poll_timeout, rc.consumer.poll(10)) => match res {
+                Ok(Ok(messages)) if messages.is_empty() => PollOutcome::Empty { waited: false },
+                Ok(Ok(messages)) => PollOutcome::Messages(messages),
+                Ok(Err(fc_queue::QueueError::Stopped)) => PollOutcome::Stopped,
+                Ok(Err(e)) => PollOutcome::Error(e.to_string()),
+                Err(_) => {
+                    let vouched = rc
+                        .consumer
+                        .last_broker_activity()
+                        .is_some_and(|t| t.elapsed() < self.poll_timeout);
+                    if vouched {
+                        PollOutcome::Empty { waited: true }
+                    } else {
+                        PollOutcome::Error(format!(
+                            "poll did not return within {:?}",
+                            self.poll_timeout
+                        ))
+                    }
+                }
+            },
+        };
+        rc.polls_returned.fetch_add(1, Ordering::SeqCst);
+        outcome
+    }
+
+    /// Spawn the poll loop for `rc` (Go: `runConsumer`). A second call for
+    /// the same instance is a no-op. The loop runs until `rc.stop_poll` is
+    /// cancelled (detach, manager shutdown) or the consumer reports
+    /// `Stopped`.
     ///
-    /// **Shutdown signalling.** `token` is a child of `self.shutdown`
-    /// (`CancellationToken`), level-triggered: `QueueManager::shutdown()`
-    /// cancelling the parent marks this child cancelled immediately, even
-    /// if the token was created (i.e. this task was hot-added via
-    /// `sync_queue_consumers`) *after* shutdown had already begun — unlike
-    /// the old `broadcast` channel, there is no "subscribed too late to see
-    /// the signal" window. Every pacing sleep in the loop below
-    /// (backpressure, empty-poll, partial-batch, error) races the token via
-    /// [`sleep_or_cancel`] so a shutdown mid-pause exits promptly instead of
-    /// waiting out the full sleep. `route_batch` itself is deliberately
-    /// **not** raced against cancellation — once a batch is accepted for
-    /// processing it must run to completion so messages are acked/nacked
-    /// rather than abandoned mid-poll.
+    /// The heartbeat (`rc.beat()`) is stamped on a SUCCESSFUL poll (empty or
+    /// not), while paused for capacity, and while paused for leadership —
+    /// never on a poll error, so a consumer that errors on every poll goes
+    /// stale and the watchdog rebuilds it (Go stamps only on success). A
+    /// consumer whose poll returns `Stopped` exits the loop and is left in
+    /// the registry with a stale heartbeat for the watchdog to rebuild.
+    ///
+    /// `route_batch` is not raced against cancellation: once a batch is
+    /// accepted it runs to completion so every message is acked or nacked.
     pub(super) fn spawn_consumer_poll_task(
         self: &Arc<Self>,
-        consumer: Arc<dyn QueueConsumer>,
+        rc: Arc<RunningConsumer>,
     ) -> tokio::task::JoinHandle<()> {
-        // Item 1 (router bench rig, 2026-09-07): refuse to spawn a second
-        // poll task for a queue that already has one running — see the
-        // `polling_consumer_ids` field doc for the full mechanism this
-        // guards against (production mode's `initial_sync()` and
-        // `QueueManager::start()` could each spawn one for the same
-        // queue) and for why the map is generation-tagged rather than a
-        // bare set (ABA safety against `restart_consumer`'s deliberate
-        // preemption). `Entry::and_modify`/`or_insert` is a single atomic
-        // check-and-set on this key's shard — no separate
-        // contains()-then-insert() race window. The no-op path still
-        // returns a `JoinHandle` (an already-finished trivial task) so
-        // every call site keeps working with the same return type.
-        let generation = self
-            .next_poll_task_generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        let mut already_running = false;
-        self.polling_consumer_ids
-            .entry(consumer.identifier().to_string())
-            .and_modify(|_| already_running = true)
-            .or_insert(generation);
-        if already_running {
-            warn!(
-                consumer = %consumer.identifier(),
-                "Refusing to spawn a second poll task for this queue — one is already running"
-            );
+        if rc.poll_task_started.swap(true, Ordering::SeqCst) {
+            debug!(consumer = %rc.identifier(), "Poll task already running for this consumer instance");
             return tokio::spawn(async {});
         }
+        self.wire_health_provider();
+        rc.beat();
 
         let manager = self.clone();
-        let token = self.shutdown.child_token();
-
         tokio::spawn(async move {
-            // R-36: this task is the SOURCE of consumer liveness — the
-            // health service only ever reads a snapshot of what's recorded
-            // here (`record_consumer_poll` below stamps last-seen; this
-            // flag says "meant to be polling"), so there is exactly one
-            // heartbeat, not a second copy that can drift from it. Flip on
-            // before the loop starts, and back off once it exits for any
-            // reason (shutdown, `QueueError::Stopped`, or a replacement
-            // spawned by `restart_consumer`) so a dead poll task is never
-            // reported as still running.
-            if let Some(ref health_service) = manager.health_service {
-                health_service.set_consumer_running(consumer.identifier(), true);
-                // Item 1/G13: register the live handle so the stall
-                // watchdog can consult `last_broker_activity()` while this
-                // task's poll is in flight (see `HealthService::last_alive`).
-                health_service.register_consumer(consumer.identifier(), consumer.clone());
-            }
-
-            let mut last_poll_end = Instant::now();
-            const STARVATION_THRESHOLD: Duration = Duration::from_secs(30);
-            // G12: gates the capacity pause's warning/resume log to once
-            // per transition rather than once per loop iteration.
+            let token = rc.stop_poll.clone();
+            let id = rc.identifier().to_string();
             let mut capacity_paused = false;
 
             loop {
-                // Detect thread/task starvation: warn if >30s between poll loops (Java: 30s)
-                let loop_gap = last_poll_end.elapsed();
-                if loop_gap > STARVATION_THRESHOLD {
-                    warn!(
-                        consumer = %consumer.identifier(),
-                        gap_seconds = loop_gap.as_secs(),
-                        "Task starvation detected: {}s between poll loops (threshold: {}s)",
-                        loop_gap.as_secs(),
-                        STARVATION_THRESHOLD.as_secs()
-                    );
+                if token.is_cancelled() {
+                    break;
                 }
 
-                // R-26/R-34: not the leader (standby losing/regaining
-                // leadership) — pause polling. In-flight deliveries and
-                // buffered group work are untouched; this only stops *new*
-                // messages from being pulled off the broker. Resumes as soon
-                // as `manager.is_leader()` flips back via
-                // `spawn_leadership_monitor`, no consumer rebuild needed.
+                // R-26/R-34 (owner ruling: losing leadership only pauses
+                // polling): in-flight work is untouched; only new intake
+                // stops. The heartbeat stays fresh — a paused consumer is
+                // not a stalled one.
                 if !manager.is_leader() {
-                    debug!(consumer = %consumer.identifier(), "Not leader — pausing poll");
-
-                    if let Some(ref health_service) = manager.health_service {
-                        health_service.record_consumer_poll(consumer.identifier());
-                    }
-
+                    rc.beat();
                     if sleep_or_cancel(&token, Duration::from_secs(2)).await {
-                        info!(consumer = %consumer.identifier(), "Consumer shutting down");
                         break;
                     }
                     continue;
                 }
 
-                // Backpressure (G12): if all pools are full, park untimed on
-                // the manager's capacity-freed gate instead of polling —
-                // never a fixed sleep, which starves the workers on a fast
-                // broker once the pools drain faster than the sleep lets
-                // the loop notice (docs/go-mirror/2026-09-06-go-fix-list.md
-                // G12). `capacity_paused` gates the warning/resume log to
-                // once per transition, not once per loop iteration.
-                if !manager.has_pool_capacity() {
+                // Backpressure (G12): park untimed on the capacity gate.
+                // A consumer paused for capacity is doing its job, so its
+                // heartbeat stays fresh (Go: the watchdog must not rebuild
+                // it — a rebuild used to strand the very buffers it waited
+                // on).
+                if !manager.has_capacity_for(&rc) {
                     if !capacity_paused {
                         capacity_paused = true;
-                        warn!(consumer = %consumer.identifier(), "All pools at capacity — pausing poll");
+                        warn!(consumer = %id, "Destination pools at capacity and deferral budget spent — pausing poll");
                         manager.warning_service.add_warning(
-                            WarningCategory::QueueHealth,
+                            WarningCategory::PoolHealth,
                             WarningSeverity::Warn,
                             format!(
-                                "Consumer [{}] paused — all pools at capacity",
-                                consumer.identifier()
+                                "Consumer [{}] paused — its destination pools are at capacity and {} deferrals are outstanding (budget {})",
+                                id,
+                                rc.deferrals_outstanding(Instant::now()),
+                                manager.deferral_budget
                             ),
                             "ConsumerLoop".to_string(),
                         );
-                    } else {
-                        debug!(consumer = %consumer.identifier(), "All pools at capacity — still paused");
                     }
-
-                    // A capacity wait is a deliberate pause, not a stall — record
-                    // liveness before pausing so the lifecycle health monitor's
-                    // "no poll recorded in 60s" check never misreads a run of
-                    // full pools as a dead consumer and kills a perfectly good
-                    // one (see `restart_consumer`'s doc comment for the history
-                    // here). `record_consumer_poll` only stamps a last-seen
-                    // `Instant` — it doesn't feed any poll-count metric — so
-                    // calling it on a non-poll iteration doesn't inflate
-                    // anything downstream.
-                    if let Some(ref health_service) = manager.health_service {
-                        health_service.record_consumer_poll(consumer.identifier());
-                    }
-
-                    if wait_for_capacity_or_cancel(&manager, &token).await {
-                        info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                    rc.beat();
+                    if wait_for_capacity_or_cancel(&manager, &rc, &token).await {
                         break;
                     }
                     continue;
                 } else if capacity_paused {
                     capacity_paused = false;
-                    info!(consumer = %consumer.identifier(), "Capacity returned; resuming poll");
+                    info!(consumer = %id, "Capacity returned; resuming poll");
                 }
 
-                tokio::select! {
-                    _ = token.cancelled() => {
-                        info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                let polled = manager.bounded_poll(&rc).await;
+                manager.report_rejected(&rc);
+                match polled {
+                    PollOutcome::Cancelled => break,
+                    PollOutcome::Messages(messages) => {
+                        rc.beat();
+                        if let Err(e) = manager.route_batch_from(messages, &rc).await {
+                            error!(error = %e, consumer = %id, "Error routing batch");
+                        }
+                        // G12: re-poll immediately after any batch.
+                    }
+                    PollOutcome::Empty { waited } => {
+                        rc.beat();
+                        if !waited && sleep_or_cancel(&token, Duration::from_secs(1)).await {
+                            break;
+                        }
+                    }
+                    PollOutcome::Stopped => {
+                        // The consumer will never poll again. Exit; the
+                        // entry stays registered with a heartbeat that now
+                        // goes stale, so the watchdog rebuilds it (Go).
+                        warn!(consumer = %id, "Consumer stopped; poll loop exiting for rebuild");
                         break;
                     }
-                    result = consumer.poll(10) => {
-                        last_poll_end = Instant::now();
-
-                        // Record consumer poll with health service
-                        if let Some(ref health_service) = manager.health_service {
-                            health_service.record_consumer_poll(consumer.identifier());
-                        }
-
-                        match result {
-                            Ok(messages) if messages.is_empty() => {
-                                // No messages — SQS long poll already waited up to 20s.
-                                // Brief pause before re-polling.
-                                if sleep_or_cancel(&token, Duration::from_secs(1)).await {
-                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
-                                    break;
-                                }
-                            }
-                            Ok(messages) => {
-                                if let Err(e) = manager.route_batch(messages, consumer.clone()).await {
-                                    error!(error = %e, "Error routing batch");
-                                }
-                                // G12: a partial batch re-polls immediately,
-                                // exactly like a full one — it never means
-                                // "the queue is draining, slow down"; the
-                                // broker may already have the next batch
-                                // ready, and a 500ms pause here holds the
-                                // loop back from work regardless of whether
-                                // that's true (owner ruling 2026-09-07, same
-                                // as the capacity-wait fix above).
-                            }
-                            Err(fc_queue::QueueError::Stopped) => {
-                                // The consumer was stopped (directly, or as
-                                // part of `restart_consumer` swapping in a
-                                // replacement) — `poll()` will keep returning
-                                // `Stopped` forever, so looping on it would
-                                // spin at 1s intervals reporting a dead
-                                // consumer as "just erroring". Exit instead;
-                                // whoever stopped this consumer is
-                                // responsible for spawning any replacement.
-                                info!(consumer = %consumer.identifier(), "consumer stopped — poll task exiting");
-                                break;
-                            }
-                            Err(e) => {
-                                error!(error = %e, consumer = %consumer.identifier(), "Error polling");
-                                if sleep_or_cancel(&token, Duration::from_secs(1)).await {
-                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
-                                    break;
-                                }
-                            }
+                    PollOutcome::Error(e) => {
+                        warn!(consumer = %id, error = %e, "Consumer poll error");
+                        if sleep_or_cancel(&token, Duration::from_secs(1)).await {
+                            break;
                         }
                     }
                 }
             }
-
-            // R-36: every exit path above falls out of the loop here — flip
-            // the liveness flag off so a stopped/replaced consumer stops
-            // reading as "meant to be polling" (see the doc comment above
-            // the `true` set at task start).
-            if let Some(ref health_service) = manager.health_service {
-                health_service.set_consumer_running(consumer.identifier(), false);
-                health_service.unregister_consumer(consumer.identifier());
-            }
-            // Mirror image of the guard at spawn time — release this id so
-            // a legitimate later spawn (e.g. `restart_consumer`'s
-            // replacement, after `old.stop()`) is not itself refused as a
-            // false-positive duplicate. Generation-checked (`remove_if`,
-            // not a bare `remove`): if `restart_consumer` already
-            // preempted this id (removed it and let a replacement spawn
-            // under a fresh generation) before this task noticed
-            // `Stopped` and got here, the current entry's generation
-            // no longer matches ours — leave the replacement's
-            // registration alone.
-            manager
-                .polling_consumer_ids
-                .remove_if(consumer.identifier(), |_, g| *g == generation);
+            debug!(consumer = %id, generation = rc.generation, "Poll loop exited");
         })
     }
 
-    /// Get list of all consumer identifiers
+    /// Raise a CONFIGURATION/ERROR warning for every message the consumer
+    /// removed at its parse boundary since the last poll (SQS deleted it,
+    /// NATS terminated it, Postgres quarantined it). Such a message is
+    /// never delivered, and the cause — a producer sending something this
+    /// router cannot read, such as an unsupported mediation type — is one
+    /// an operator can fix; Go warns on it (corpus case
+    /// `unsupported-mediation-type`). It used to be a log line only.
+    fn report_rejected(&self, rc: &RunningConsumer) {
+        for rejected in rc.consumer.take_rejected() {
+            error!(
+                queue = %rc.identifier(),
+                broker_message_id = ?rejected.broker_message_id,
+                reason = %rejected.reason,
+                "Malformed message removed from the queue without delivery"
+            );
+            self.warning_service.add_warning(
+                WarningCategory::Configuration,
+                WarningSeverity::Error,
+                format!(
+                    "Malformed message {} on queue {} removed without delivery: {}",
+                    rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
+                    rc.identifier(),
+                    rejected.reason
+                ),
+                "QueueManager".to_string(),
+            );
+        }
+    }
+
+    /// Point the health service at this manager for consumer liveness (Go:
+    /// `Health.SetConsumerStats(Manager)`). Idempotent; held weakly.
+    fn wire_health_provider(self: &Arc<Self>) {
+        if let Some(ref hs) = self.health_service {
+            let weak: Weak<Self> = Arc::downgrade(self);
+            let provider: Weak<dyn ConsumerStatsProvider> = weak;
+            hs.set_consumer_stats_provider(provider);
+        }
+    }
+
+    /// Registry keys (config queue names) of every active consumer.
     pub async fn consumer_ids(&self) -> Vec<String> {
-        self.consumers.read().await.keys().cloned().collect()
+        self.consumers.names()
     }
 
     /// Check broker connectivity by verifying all consumers report healthy.
-    /// Java: BrokerHealthService.checkBrokerConnectivity() pings the broker (SQS listQueues,
-    /// NATS connection state, ActiveMQ test connection). Returns false if any consumer
-    /// reports unhealthy, indicating the broker is unreachable.
     pub async fn check_broker_connectivity(&self) -> bool {
-        // Clone the Arcs and drop the read guard before iterating — keeps
-        // this consistent with every other consumers-read site in the file
-        // (see item 4 of the manager shutdown/lock convention), even though
-        // `is_healthy()` itself is synchronous today.
-        let consumers: Vec<Arc<dyn QueueConsumer>> = {
-            let guard = self.consumers.read().await;
-            if guard.is_empty() {
-                return true; // No consumers configured — nothing to check
-            }
-            guard.values().cloned().collect()
-        };
-        for consumer in consumers {
-            if !consumer.is_healthy() {
+        let consumers = self.consumers.active();
+        if consumers.is_empty() {
+            return true;
+        }
+        for rc in consumers {
+            if !rc.consumer.is_healthy() {
                 warn!(
-                    consumer = %consumer.identifier(),
+                    consumer = %rc.identifier(),
                     "Broker connectivity check failed: consumer unhealthy"
                 );
                 return false;
@@ -333,252 +293,307 @@ impl QueueManager {
         true
     }
 
-    /// Restart a specific consumer by ID — actually replaces it.
-    ///
-    /// Stops the existing consumer, asks the configured [`super::ConsumerFactory`]
-    /// to build a fresh one from the queue's last-known `QueueConfig`, swaps
-    /// the replacement into `consumers`, and spawns a new poll task for it
-    /// (see [`Self::spawn_consumer_poll_task`], which now exits promptly on
-    /// `QueueError::Stopped` rather than looping on it forever). Returns
-    /// `true` only if a live replacement ends up running.
-    ///
-    /// **Why `self: &Arc<Self>`**: it calls `spawn_consumer_poll_task`, which
-    /// needs an `Arc` clone to hand to the spawned task.
-    ///
-    /// **`consumer_id` is resolved as an identifier first (item 2, router
-    /// bench rig, 2026-09-07).** The stall watchdog
-    /// (`LifecycleManager`/`HealthService::get_stalled_consumers`) and the
-    /// ack/nack resolution path (G10) both key by `Consumer::identifier()`
-    /// — the broker-native identity (`consumers_by_id`) — which can differ
-    /// from the config queue name `consumers`/`queue_configs` use as their
-    /// key (NATS: `<stream>/<consumer>` vs an operator-chosen queue name;
-    /// Postgres/SQS happen to use the queue name as their `identifier()`
-    /// too, which is exactly why this mismatch only ever showed up against
-    /// NATS on the bench rig). Passing an identifier-keyed id straight into
-    /// a name-keyed `self.consumers.get(consumer_id)` silently missed for
-    /// NATS ("Consumer not found for restart") — the watchdog detected a
-    /// real (or, pre-Item-1, false-positive) stall and then could never
-    /// actually restart it. This resolves `old` through `consumers_by_id`
-    /// first, falling back to the name-keyed `consumers` map for a caller
-    /// that already knows the registry key (e.g. an operator-driven restart
-    /// by config name, or existing tests), then finds the matching registry
-    /// key by identity so `consumers`/`queue_configs` — which only ever
-    /// know the name — get updated correctly regardless of which key space
-    /// the caller passed in.
-    ///
-    /// **No factory / no stored config → no-op, not a stop.** Building a
-    /// replacement requires both a [`super::ConsumerFactory`] and a `QueueConfig`
-    /// for this id. If either is missing, this deliberately does **not**
-    /// stop the existing consumer — stopping it with nothing to replace it
-    /// is exactly the bug this method used to have (the old body called
-    /// `consumer.stop()` and returned `true` with a comment saying "a new
-    /// poll loop will need to be started externally", which nothing ever
-    /// did — the consumer just died in place). Instead it logs a warning,
-    /// records a `ConsumerHealth` warning, and returns `false`.
-    ///
-    /// **Factory failure → self-healing via the next reload.** If
-    /// `create_consumer` errors, the dead entry is removed from `consumers`
-    /// but its `queue_configs` entry is deliberately left in place. The next
-    /// `reload_config` → `sync_queue_consumers` pass computes "new" queues
-    /// as config entries not already present in `consumers` (see that
-    /// method's step (c)) — since this id is now missing from `consumers`
-    /// but still present in the caller's config, it gets recreated through
-    /// the ordinary hot-add path instead of being permanently stranded by a
-    /// single transient factory failure.
-    pub async fn restart_consumer(self: &Arc<Self>, consumer_id: &str) -> bool {
-        // Serialise against `apply_config` / `reload_config`, which hold
-        // `pool_configs.write()` for their whole duration (see that field's
-        // doc comment — it doubles as the reload lock). Held across the
-        // awaits below on purpose: without it, a health-triggered restart
-        // racing a reload that removes this very queue could stop the old
-        // consumer, then swap a fresh one into `consumers` *after* the
-        // reload removed it — resurrecting a queue the config just dropped.
-        // Nothing on the hot path takes this lock, so the only thing this
-        // can wait on is an in-flight reload.
-        let _reload_guard = self.pool_configs.read().await;
-
-        // Item 2: resolve by identifier first — this is the key space the
-        // stall watchdog and G10's ack/nack resolution both use — falling
-        // back to a direct name-keyed lookup for a caller that already
-        // knows the registry key. Brief read locks — clone the Arc and
-        // drop the guards before any `.await` (same discipline as
-        // `sync_queue_consumers`).
-        let old = {
-            let by_id = self.consumers_by_id.read().await;
-            if let Some(c) = by_id.get(consumer_id).cloned() {
-                Some(c)
-            } else {
-                drop(by_id);
-                self.consumers.read().await.get(consumer_id).cloned()
-            }
+    /// Build a replacement for `old` from its queue config, bounded by the
+    /// rebuild timeout. `None` (with the reason logged) when it can't be
+    /// built.
+    async fn build_replacement(
+        &self,
+        old: &RunningConsumer,
+    ) -> Result<Arc<RunningConsumer>, String> {
+        let (Some(factory), Some(cfg)) = (self.consumer_factory.as_ref(), old.queue_config.clone())
+        else {
+            return Err(
+                "no consumer factory and/or queue config to build a replacement".to_string(),
+            );
         };
-        let Some(old) = old else {
+        match tokio::time::timeout(self.rebuild_timeout, factory.create_consumer(&cfg)).await {
+            Ok(Ok(consumer)) => {
+                Ok(self.new_running_consumer(consumer, old.name.clone(), Some(cfg)))
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err(format!(
+                "build did not finish within {:?}",
+                self.rebuild_timeout
+            )),
+        }
+    }
+
+    /// Swap `new` in for `old` and detach `old` (Go: build-then-swap in
+    /// `RestartStalledConsumers`). Returns false — and discards `new` —
+    /// when `old` is no longer the registered instance.
+    async fn swap_in(
+        self: &Arc<Self>,
+        old: &Arc<RunningConsumer>,
+        new: Arc<RunningConsumer>,
+    ) -> bool {
+        if !self.consumers.replace_if_current(old, new.clone()) {
+            new.stop_poll.cancel();
+            new.consumer.stop().await;
+            return false;
+        }
+        self.detach_consumer(old.clone()).await;
+        self.spawn_consumer_poll_task(new);
+        true
+    }
+
+    /// Stop `rc` polling and move it to the detaching list: its in-flight
+    /// messages still resolve it for ack/nack until
+    /// [`Self::retire_detached_consumers`] finds nothing left that it
+    /// polled (X-11 / R-26/R-49). Every backend keeps ack/nack working
+    /// after `stop()`, which here only ends intake.
+    pub(super) async fn detach_consumer(&self, rc: Arc<RunningConsumer>) {
+        rc.stop_poll.cancel();
+        rc.consumer.stop().await;
+        self.consumers.detach(rc);
+    }
+
+    /// Rebuild one consumer now (operator/test entry point), resolved by
+    /// identifier or registry name. Builds the replacement FIRST: a build
+    /// that fails leaves the existing consumer running untouched and returns
+    /// `false` (Go: "a rebuild that fails or hangs can never leave the queue
+    /// with no consumer at all").
+    pub async fn restart_consumer(self: &Arc<Self>, consumer_id: &str) -> bool {
+        let _reload_guard = self.pool_configs.read().await;
+        let Some(old) = self
+            .consumers
+            .get_by_id(consumer_id)
+            .or_else(|| self.consumers.get(consumer_id))
+        else {
             warn!(consumer_id = %consumer_id, "Consumer not found for restart");
             return false;
         };
-
-        // The registry key `self.consumers`/`self.queue_configs` actually
-        // use for this consumer may not be `consumer_id` itself (see
-        // above) — resolve it by identity (`Arc::ptr_eq`) rather than
-        // assuming `consumer_id` doubles as that key.
-        let registry_key = {
-            let guard = self.consumers.read().await;
-            guard
-                .iter()
-                .find(|(_, v)| Arc::ptr_eq(v, &old))
-                .map(|(k, _)| k.clone())
-        };
-        let Some(registry_key) = registry_key else {
-            warn!(
-                consumer_id = %consumer_id,
-                identifier = %old.identifier(),
-                "Consumer resolved by identifier but missing from the name-keyed registry — cannot restart"
-            );
-            return false;
-        };
-
-        // Brief read lock — clone the stored QueueConfig, if any.
-        let queue_config = {
-            let guard = self.queue_configs.read().await;
-            guard.get(&registry_key).cloned()
-        };
-
-        let (factory, queue_config) = match (self.consumer_factory.as_ref(), queue_config) {
-            (Some(factory), Some(cfg)) => (factory, cfg),
-            _ => {
+        match self.build_replacement(&old).await {
+            Ok(new) => {
+                let swapped = self.swap_in(&old, new).await;
+                if swapped {
+                    info!(consumer_id = %consumer_id, "Consumer restarted with a fresh instance");
+                }
+                swapped
+            }
+            Err(e) => {
                 warn!(
                     consumer_id = %consumer_id,
-                    "Cannot restart consumer: no consumer factory and/or stored queue \
-                     config available to build a replacement — restart is unsupported \
-                     without both, leaving the existing consumer running"
+                    error = %e,
+                    "Could not build a replacement consumer; leaving the existing one in place"
                 );
                 self.warning_service.add_warning(
                     WarningCategory::ConsumerHealth,
                     WarningSeverity::Warn,
                     format!(
-                        "Restart requested for consumer [{}] but no consumer factory/config \
-                         is available to build a replacement — restart unsupported here",
-                        consumer_id
-                    ),
-                    "QueueManager".to_string(),
-                );
-                return false;
-            }
-        };
-
-        info!(consumer_id = %consumer_id, "Restarting consumer: stopping old instance");
-        // Stopping this makes its poll task observe `QueueError::Stopped` on
-        // its next poll and exit on its own (see (b) in spawn_consumer_poll_task).
-        old.stop().await;
-        let old_identifier = old.identifier().to_string();
-
-        // Item 1: deliberate preemption of `spawn_consumer_poll_task`'s
-        // duplicate guard. `old.stop()` only flips a flag — the old poll
-        // task notices `Stopped` and exits (removing its own guard entry)
-        // on its *own* next loop iteration, which for some backends can
-        // be seconds away, not synchronously here. Without this explicit
-        // removal, spawning the replacement below could be refused as a
-        // false-positive "already running" duplicate of the very consumer
-        // this call just stopped. Safe against the old task's own delayed
-        // cleanup clobbering the replacement's registration: that cleanup
-        // is generation-checked (`remove_if` in `spawn_consumer_poll_task`)
-        // and the replacement always spawns under a fresh generation.
-        self.polling_consumer_ids.remove(&old_identifier);
-
-        match factory.create_consumer(&queue_config).await {
-            Ok(new_consumer) => {
-                // Brief write lock — swap in the replacement. Also keeps
-                // the identifier-keyed resolution index (G10) in lockstep:
-                // the replacement's own `identifier()` may equal the old
-                // one (same broker-native identity, e.g. NATS's
-                // `<stream>/<consumer>` reprovisioned unchanged) or differ,
-                // so the old identifier key is dropped explicitly rather
-                // than relying on the new insert to overwrite it.
-                {
-                    let mut guard = self.consumers.write().await;
-                    guard.insert(registry_key.clone(), new_consumer.clone());
-                    let mut by_id = self.consumers_by_id.write().await;
-                    by_id.remove(&old_identifier);
-                    by_id.insert(new_consumer.identifier().to_string(), new_consumer.clone());
-                }
-                self.spawn_consumer_poll_task(new_consumer);
-                info!(consumer_id = %consumer_id, registry_key = %registry_key, "Consumer restarted with a fresh instance");
-                true
-            }
-            Err(e) => {
-                error!(
-                    consumer_id = %consumer_id,
-                    error = %e,
-                    "Failed to create replacement consumer during restart"
-                );
-                self.warning_service.add_warning(
-                    WarningCategory::ConsumerHealth,
-                    WarningSeverity::Critical,
-                    format!(
-                        "Failed to create replacement consumer for [{}] during restart: {}",
+                        "Restart of consumer [{}] failed; the existing consumer is left in place: {}",
                         consumer_id, e
                     ),
                     "QueueManager".to_string(),
                 );
-                // Remove the dead entry from `consumers` (and its
-                // identifier-keyed mirror — the old consumer is stopped,
-                // it must not stay resolvable) but leave `queue_configs`
-                // alone — see the self-healing note above.
-                let mut guard = self.consumers.write().await;
-                guard.remove(&registry_key);
-                self.consumers_by_id.write().await.remove(&old_identifier);
                 false
             }
         }
     }
 
-    /// Check if a consumer is healthy
+    /// Rebuild every consumer whose heartbeat is older than `threshold`
+    /// (Go: `RestartStalledConsumers`). Returns how many were replaced.
+    ///
+    /// - Nothing happens once polling has been stopped for shutdown.
+    /// - The replacement is built first (bounded by the rebuild timeout)
+    ///   and swapped in only if the stalled instance is still the
+    ///   registered one AND still stalled; only then is the old one
+    ///   detached. A failed build leaves the existing entry in place, and
+    ///   its failures count toward CRITICAL escalation (after 10).
+    /// - Consumers paused for capacity or leadership keep their heartbeat
+    ///   fresh and are never candidates.
+    /// - `restart_delay` separates consecutive rebuilds in one sweep.
+    /// - A consumer's attempt count is forgotten only once it has been quiet
+    ///   for three thresholds, so one that flaps between restarts still
+    ///   escalates.
+    pub async fn restart_stalled_consumers(
+        self: &Arc<Self>,
+        threshold: Duration,
+        restart_delay: Duration,
+        cancel: &CancellationToken,
+    ) -> usize {
+        if threshold.is_zero() || self.polling_stopped.load(Ordering::SeqCst) {
+            return 0;
+        }
+        let _reload_guard = self.pool_configs.read().await;
+
+        let stalled: Vec<Arc<RunningConsumer>> = self
+            .consumers
+            .active()
+            .into_iter()
+            .filter(|rc| {
+                rc.poll_task_started.load(Ordering::SeqCst) && is_stale(rc.last_poll(), threshold)
+            })
+            .collect();
+
+        {
+            let recovery_window = threshold * 3;
+            let stalled_names: std::collections::HashSet<&str> =
+                stalled.iter().map(|rc| rc.name.as_str()).collect();
+            self.restart_attempts.lock().retain(|name, rec| {
+                stalled_names.contains(name.as_str()) || rec.last.elapsed() <= recovery_window
+            });
+        }
+
+        let mut restarted = 0usize;
+        for (i, old) in stalled.iter().enumerate() {
+            let attempts = self
+                .restart_attempts
+                .lock()
+                .get(&old.name)
+                .map(|r| r.attempts)
+                .unwrap_or(0);
+            let severity = if attempts >= Self::CONSUMER_RESTART_CRITICAL_AFTER {
+                WarningSeverity::Critical
+            } else {
+                WarningSeverity::Warn
+            };
+            let cause = old.poll_state();
+            self.warning_service.add_warning(
+                WarningCategory::ConsumerHealth,
+                severity,
+                format!(
+                    "Consumer {} is stalled ({}), restart attempt {}",
+                    old.name,
+                    cause,
+                    attempts + 1
+                ),
+                "QueueManager".to_string(),
+            );
+            warn!(
+                queue = %old.name,
+                attempt = attempts + 1,
+                cause,
+                polls_started = old.polls_started.load(Ordering::SeqCst),
+                polls_returned = old.polls_returned.load(Ordering::SeqCst),
+                "Stalled consumer detected, attempting restart"
+            );
+
+            if i > 0 && sleep_or_cancel(cancel, restart_delay).await {
+                return restarted;
+            }
+
+            let new = match self.build_replacement(old).await {
+                Ok(new) => new,
+                Err(e) => {
+                    let n = self.bump_restart(&old.name);
+                    error!(
+                        queue = %old.name,
+                        attempt = n,
+                        error = %e,
+                        "Failed to rebuild stalled consumer; leaving the existing entry in place"
+                    );
+                    continue;
+                }
+            };
+
+            // Still stalled? A consumer that completed a poll while we were
+            // building has recovered; replacing it would only cancel its
+            // work.
+            if !is_stale(old.last_poll(), threshold) {
+                new.stop_poll.cancel();
+                new.consumer.stop().await;
+                info!(queue = %old.name, "Stalled consumer recovered before its restart; leaving it alone");
+                continue;
+            }
+            if self.swap_in(old, new).await {
+                self.bump_restart(&old.name);
+                restarted += 1;
+            }
+        }
+        restarted
+    }
+
+    fn bump_restart(&self, name: &str) -> u32 {
+        let mut attempts = self.restart_attempts.lock();
+        let rec = attempts.entry(name.to_string()).or_insert(RestartRecord {
+            attempts: 0,
+            last: Instant::now(),
+        });
+        rec.attempts += 1;
+        rec.last = Instant::now();
+        rec.attempts
+    }
+
+    /// Finish the teardown of detached consumers that nothing in the
+    /// pipeline still references (Go: `retireDetachedConsumers`): no
+    /// in-flight entry from their queue that started before they were
+    /// detached. The replacement's own traffic, which shares the queue
+    /// identifier, never holds a detached consumer up. Returns how many
+    /// were retired.
+    pub fn retire_detached_consumers(&self) -> usize {
+        let retired = self.consumers.take_retirable(|rc| {
+            let Some(detached_at) = rc.detached_at() else {
+                return true;
+            };
+            let id = rc.identifier();
+            !self
+                .in_pipeline
+                .iter()
+                .any(|e| e.value().queue_identifier == id && e.value().started_at < detached_at)
+        });
+        for rc in &retired {
+            info!(
+                queue = %rc.identifier(),
+                "Retired detached consumer; nothing that pre-dates its detach still references its queue"
+            );
+        }
+        retired.len()
+    }
+
+    /// Number of detached consumers not yet retired.
+    pub fn detaching_consumer_count(&self) -> usize {
+        self.consumers.detaching().len()
+    }
+
+    /// Whether a consumer (by registry name or identifier) reports its
+    /// broker connection healthy.
     pub async fn is_consumer_healthy(&self, consumer_id: &str) -> bool {
-        let consumers = self.consumers.read().await;
-        consumers
+        self.consumers
             .get(consumer_id)
-            .map(|c| c.is_healthy())
-            .unwrap_or(false)
+            .or_else(|| self.consumers.get_by_id(consumer_id))
+            .is_some_and(|rc| rc.consumer.is_healthy())
     }
 
     /// Get queue metrics from all consumers
     pub async fn get_queue_metrics(&self) -> Vec<QueueMetrics> {
-        // Snapshot before awaiting `get_metrics()` per consumer — this can
-        // be an SQS API call, and holding the read lock across it would
-        // stall reloads / other readers for however long the whole sweep
-        // takes.
-        let consumers: Vec<(String, Arc<dyn QueueConsumer>)> = {
-            let guard = self.consumers.read().await;
-            guard
-                .iter()
-                .map(|(id, c)| (id.clone(), c.clone()))
-                .collect()
-        };
+        let consumers = self.consumers.active();
         let mut metrics = Vec::with_capacity(consumers.len());
-
-        for (id, consumer) in consumers {
-            match consumer.get_metrics().await {
+        for rc in consumers {
+            match rc.consumer.get_metrics().await {
                 Ok(Some(m)) => metrics.push(m),
                 Ok(None) => {
-                    debug!(consumer_id = %id, "Consumer does not support metrics");
+                    debug!(consumer_id = %rc.name, "Consumer does not support metrics");
                 }
                 Err(e) => {
-                    warn!(consumer_id = %id, error = %e, "Failed to get queue metrics");
+                    warn!(consumer_id = %rc.name, error = %e, "Failed to get queue metrics");
                 }
             }
         }
-
         metrics
     }
 
-    /// Get counter metrics only (no SQS API call — instant atomic reads)
+    /// Get counter metrics only (no broker round trip — instant atomic reads)
     pub async fn get_queue_metrics_counters_only(&self) -> Vec<QueueMetrics> {
         self.consumers
-            .read()
-            .await
-            .values()
-            .filter_map(|consumer| consumer.get_counters())
+            .active()
+            .iter()
+            .filter_map(|rc| rc.consumer.get_counters())
             .collect()
+    }
+
+    /// Queue configs of the active consumers, by registry name.
+    pub fn queue_configs(&self) -> HashMap<String, fc_common::QueueConfig> {
+        self.consumers
+            .active()
+            .into_iter()
+            .filter_map(|rc| rc.queue_config.clone().map(|c| (rc.name.clone(), c)))
+            .collect()
+    }
+}
+
+impl ConsumerStatsProvider for QueueManager {
+    fn consumer_stats(&self) -> Vec<super::ConsumerStat> {
+        self.consumers.stats()
     }
 }
 
@@ -587,21 +602,49 @@ mod consumer_liveness_tests {
     use super::*;
     use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningService;
+    use crate::ConsumerFactory;
     use async_trait::async_trait;
     use fc_common::QueuedMessage;
-    use fc_queue::Result as QueueResult;
+    use fc_queue::{QueueConsumer, Result as QueueResult};
+    use std::sync::atomic::{AtomicBool, AtomicU32};
 
-    /// Never returns messages; `poll` just proves the task is alive.
-    struct IdleConsumer {
+    /// Never returns messages; counts polls; can be told to fail every poll
+    /// or to report `Stopped`.
+    struct TestConsumer {
         id: &'static str,
+        polls: AtomicU32,
+        fail: AtomicBool,
+        stopped: AtomicBool,
+    }
+
+    impl TestConsumer {
+        fn new(id: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                id,
+                polls: AtomicU32::new(0),
+                fail: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+            })
+        }
+        fn polls(&self) -> u32 {
+            self.polls.load(Ordering::SeqCst)
+        }
     }
 
     #[async_trait]
-    impl QueueConsumer for IdleConsumer {
+    impl QueueConsumer for TestConsumer {
         fn identifier(&self) -> &str {
             self.id
         }
         async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            self.polls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            if self.stopped.load(Ordering::SeqCst) {
+                return Err(fc_queue::QueueError::Stopped);
+            }
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(fc_queue::QueueError::NotConnected);
+            }
             Ok(vec![])
         }
         async fn ack(&self, _: &str) -> QueueResult<()> {
@@ -616,10 +659,45 @@ mod consumer_liveness_tests {
         fn is_healthy(&self) -> bool {
             true
         }
-        async fn stop(&self) {}
+        async fn stop(&self) {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
     }
 
-    fn manager_with_health() -> (Arc<QueueManager>, Arc<crate::health::HealthService>) {
+    /// Hands out pre-built consumers, or fails while `fail` is set.
+    struct QueueFactory {
+        next: parking_lot::Mutex<Vec<Arc<TestConsumer>>>,
+        fail: AtomicBool,
+        builds: AtomicU32,
+    }
+
+    #[async_trait]
+    impl ConsumerFactory for QueueFactory {
+        async fn create_consumer(
+            &self,
+            _config: &fc_common::QueueConfig,
+        ) -> crate::Result<Arc<dyn QueueConsumer>> {
+            self.builds.fetch_add(1, Ordering::SeqCst);
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(crate::RouterError::ConsumerBuild("broker down".into()));
+            }
+            let c = self.next.lock().pop().expect("no consumer queued");
+            Ok(c as Arc<dyn QueueConsumer>)
+        }
+    }
+
+    fn queue_config(name: &str) -> fc_common::QueueConfig {
+        fc_common::QueueConfig {
+            name: name.to_string(),
+            uri: format!("test://{name}"),
+            connections: 1,
+            visibility_timeout: 30,
+        }
+    }
+
+    fn manager_with(
+        factory: Option<Arc<QueueFactory>>,
+    ) -> (Arc<QueueManager>, Arc<crate::health::HealthService>) {
         let health_service = Arc::new(crate::health::HealthService::new(
             crate::health::HealthServiceConfig {
                 consumer_stall_threshold_secs: 60,
@@ -627,176 +705,285 @@ mod consumer_liveness_tests {
             },
             Arc::new(WarningService::default()),
         ));
-        let manager = Arc::new(
-            QueueManager::builder(HttpMediatorConfig::dev())
-                .health_service(health_service.clone())
-                .build(),
-        );
-        (manager, health_service)
+        let mut b = QueueManager::builder(HttpMediatorConfig::dev())
+            .health_service(health_service.clone())
+            .rebuild_timeout(Duration::from_secs(2));
+        if let Some(f) = factory {
+            b = b.consumer_factory(f);
+        }
+        (Arc::new(b.build()), health_service)
+    }
+
+    async fn register_and_start(
+        manager: &Arc<QueueManager>,
+        c: Arc<TestConsumer>,
+    ) -> Arc<RunningConsumer> {
+        manager.add_consumer(c.clone()).await;
+        let rc = manager.consumers.get(c.id).unwrap();
+        manager.spawn_consumer_poll_task(rc.clone());
+        rc
+    }
+
+    /// A message the backend removed at its parse boundary raises a
+    /// CONFIGURATION/ERROR warning (Go warns; corpus
+    /// `unsupported-mediation-type`).
+    #[tokio::test]
+    async fn malformed_messages_removed_by_the_backend_raise_a_config_error() {
+        struct Rejecting {
+            log: fc_queue::RejectedLog,
+        }
+        #[async_trait]
+        impl QueueConsumer for Rejecting {
+            fn identifier(&self) -> &str {
+                "rejecting"
+            }
+            async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+                self.log.record(
+                    Some("m-1".to_string()),
+                    "unknown variant `SMTP`, expected `HTTP`",
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            fn take_rejected(&self) -> Vec<fc_queue::RejectedMessage> {
+                self.log.take()
+            }
+            async fn stop(&self) {}
+        }
+        let (manager, _hs) = manager_with(None);
+        let c = Arc::new(Rejecting {
+            log: fc_queue::RejectedLog::default(),
+        });
+        manager.add_consumer(c).await;
+        let rc = manager.consumers.get("rejecting").unwrap();
+        manager.spawn_consumer_poll_task(rc);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let warnings = manager
+            .warning_service
+            .get_warnings_by_category(WarningCategory::Configuration);
+        assert!(!warnings.is_empty());
+        assert_eq!(warnings[0].severity, WarningSeverity::Error);
+        assert!(warnings[0].message.contains("SMTP"));
+        manager.shutdown().await;
     }
 
     /// A leadership-paused consumer must never read as stalled: the poll
-    /// loop's "not leader" branch keeps calling `record_consumer_poll`
-    /// (manager.rs, `spawn_consumer_poll_task`) specifically so this holds.
+    /// loop's "not leader" branch keeps the heartbeat fresh.
     #[tokio::test]
     async fn leadership_paused_consumer_is_not_reported_as_stalled() {
-        let (manager, health_service) = manager_with_health();
+        let (manager, health_service) = manager_with(None);
         manager.set_leader(false);
+        let c = TestConsumer::new("paused");
+        let rc = register_and_start(&manager, c.clone()).await;
+        rc.set_last_poll(Instant::now() - Duration::from_secs(120));
 
-        let consumer = Arc::new(IdleConsumer { id: "paused" });
-        let handle = manager.spawn_consumer_poll_task(consumer);
-
-        // Give the task a couple of "not leader" iterations to run.
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        assert!(
-            health_service.is_consumer_healthy("paused"),
-            "a leadership-paused consumer is deliberately idle, not stalled"
-        );
-        assert!(
-            !health_service
-                .get_stalled_consumers()
-                .contains(&"paused".to_string()),
-            "a leadership-paused consumer must not show up as stalled"
-        );
+        assert_eq!(c.polls(), 0, "a non-leader must not poll");
+        assert!(health_service.is_consumer_healthy("paused"));
+        assert!(health_service.get_stalled_consumers().is_empty());
 
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
         assert!(
             !health_service.is_consumer_healthy("paused"),
-            "set_consumer_running(false) must run once the poll task exits"
+            "a shut-down manager has no running consumers"
         );
     }
 
-    /// The full lifecycle: `set_consumer_running` flips true when the poll
-    /// task starts and false once it exits, bracketing the task exactly —
-    /// this is what lets `is_consumer_healthy`/`get_stalled_consumers`
-    /// reflect a real consumer instead of an empty map (R-36's "zero
-    /// production call sites" gap).
+    /// Health reads liveness from the manager (Go: `ConsumerStats`): a
+    /// registered, polling consumer is healthy; once the manager drops it,
+    /// health says so — there is no second copy that a stale poll task's
+    /// exit could erase or keep alive.
     #[tokio::test]
-    async fn consumer_running_flag_brackets_the_poll_tasks_lifetime() {
-        let (manager, health_service) = manager_with_health();
-
-        let consumer = Arc::new(IdleConsumer { id: "lifecycle" });
-        let handle = manager.spawn_consumer_poll_task(consumer);
-
+    async fn health_reads_consumer_liveness_from_the_manager() {
+        let (manager, health_service) = manager_with(None);
+        let c = TestConsumer::new("lifecycle");
+        register_and_start(&manager, c.clone()).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(health_service.is_consumer_healthy("lifecycle"));
+        assert!(manager.is_consumer_healthy("lifecycle").await);
 
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
-
-        assert!(
-            !health_service.is_consumer_healthy("lifecycle"),
-            "an exited poll task must no longer read as running"
-        );
+        assert!(!health_service.is_consumer_healthy("lifecycle"));
     }
 
-    /// Never returns messages; counts every `poll()` call so a test can
-    /// tell whether this specific consumer instance was ever actually
-    /// polled — as opposed to merely being registered somewhere.
-    struct CountingIdleConsumer {
-        id: &'static str,
-        poll_calls: Arc<std::sync::atomic::AtomicU32>,
-    }
-
-    #[async_trait]
-    impl QueueConsumer for CountingIdleConsumer {
-        fn identifier(&self) -> &str {
-            self.id
-        }
-        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
-            self.poll_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            // A real broker poll never returns instantly forever — avoid
-            // spinning this test's runtime hot while still polling
-            // repeatedly enough to prove liveness within the test's own
-            // short window.
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            Ok(vec![])
-        }
-        async fn ack(&self, _: &str) -> QueueResult<()> {
-            Ok(())
-        }
-        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
-            Ok(())
-        }
-        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
-            Ok(())
-        }
-        fn is_healthy(&self) -> bool {
-            true
-        }
-        async fn stop(&self) {}
-    }
-
-    /// Item 1 (router bench rig, 2026-09-07): reproduces the exact shape
-    /// of the bug at the unit level — two *different* `QueueConsumer`
-    /// instances that happen to share an `identifier()` (exactly what
-    /// happened when `main.rs` built a second, independent `PostgresQueue`
-    /// for a queue `sync_queue_consumers` had already spawned a poller
-    /// for) must never both end up polling. The second
-    /// `spawn_consumer_poll_task` call for that id must be a no-op.
-    ///
-    /// Pins: (1) the second call's `JoinHandle` finishes promptly (it's a
-    /// trivial already-done task, not a second live poller) instead of
-    /// running indefinitely like a real poll loop would; (2) the second
-    /// consumer's `poll()` is never called, ever — only the first
-    /// consumer's counter moves.
-    ///
-    /// Mutant check (removed the `polling_consumer_ids.insert(...)` guard
-    /// — i.e. `spawn_consumer_poll_task` unconditionally spawns, the
-    /// pre-fix behaviour — confirmed by hand while implementing this fix,
-    /// then restored): assertion (2) fails immediately — `counter_b`
-    /// climbs above 0 just like `counter_a`, proving a second poller
-    /// really did run.
+    /// Go stamps the heartbeat only on a SUCCESSFUL poll: a consumer that
+    /// errors on every poll must go stale (and so be rebuilt), not look
+    /// alive because each error still stamped it.
     #[tokio::test]
-    async fn spawning_a_second_poll_task_for_the_same_id_is_a_no_op() {
-        let (manager, _health_service) = manager_with_health();
+    async fn poll_errors_do_not_stamp_the_heartbeat() {
+        let (manager, health_service) = manager_with(None);
+        let c = TestConsumer::new("erroring");
+        c.fail.store(true, Ordering::SeqCst);
+        let rc = register_and_start(&manager, c.clone()).await;
+        let stale = Instant::now() - Duration::from_secs(120);
+        rc.set_last_poll(stale);
 
-        let counter_a = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let counter_b = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let consumer_a = Arc::new(CountingIdleConsumer {
-            id: "dup-queue",
-            poll_calls: counter_a.clone(),
-        });
-        let consumer_b = Arc::new(CountingIdleConsumer {
-            id: "dup-queue",
-            poll_calls: counter_b.clone(),
-        });
-
-        let handle_a = manager.spawn_consumer_poll_task(consumer_a);
-        let handle_b = manager.spawn_consumer_poll_task(consumer_b);
-
-        // The second, duplicate spawn must be a no-op task that finishes
-        // essentially immediately — a real poll loop never returns on its
-        // own.
-        tokio::time::timeout(Duration::from_millis(200), handle_b)
-            .await
-            .expect(
-                "the second spawn_consumer_poll_task call for an id \
-                     already being polled must return promptly, not run \
-                     forever like a real poller",
-            )
-            .expect("the no-op task must not panic");
-
-        // Give consumer A's real poll loop several iterations.
         tokio::time::sleep(Duration::from_millis(100)).await;
-
+        assert!(c.polls() > 0, "the loop must keep polling");
         assert!(
-            counter_a.load(std::sync::atomic::Ordering::SeqCst) > 0,
-            "the first (legitimate) spawn's consumer must actually be polling"
+            rc.last_poll() <= stale + Duration::from_millis(1),
+            "an errored poll must not refresh the heartbeat"
         );
         assert_eq!(
-            counter_b.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "the second, duplicate spawn's consumer must never be polled — \
-             exactly the router-bench-rig race (two independent pollers \
-             for the same queue_name)"
+            health_service.get_stalled_consumers(),
+            vec!["erroring".to_string()]
         );
 
+        // Recovery: the next successful poll stamps it.
+        c.fail.store(false, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(health_service.is_consumer_healthy("erroring"));
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle_a).await;
+    }
+
+    /// Adding a second instance under the same name replaces the first: the
+    /// first stops being polled (it is detached, still resolvable for acks),
+    /// so two instances never poll one queue.
+    #[tokio::test]
+    async fn second_instance_for_a_name_replaces_the_first() {
+        let (manager, _hs) = manager_with(None);
+        let a = TestConsumer::new("dup-queue");
+        let b = TestConsumer::new("dup-queue");
+        register_and_start(&manager, a.clone()).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        register_and_start(&manager, b.clone()).await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        let a_polls = a.polls();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            a.polls() <= a_polls + 1,
+            "the replaced instance must stop polling"
+        );
+        assert!(b.polls() > 0, "the new instance must poll");
+        assert_eq!(manager.detaching_consumer_count(), 1);
+        // Spawning the same instance twice is a no-op.
+        let rc = manager.consumers.get("dup-queue").unwrap();
+        let h = manager.spawn_consumer_poll_task(rc);
+        tokio::time::timeout(Duration::from_millis(200), h)
+            .await
+            .expect("second spawn for a running instance is a no-op")
+            .unwrap();
+        manager.shutdown().await;
+    }
+
+    /// H9/H10 (Go `RestartStalledConsumers`): a consumer whose poll loop
+    /// exited on `Stopped` is left registered with a stale heartbeat and
+    /// rebuilt by the watchdog — build first, swap, then detach the old one.
+    #[tokio::test]
+    async fn watchdog_rebuilds_a_consumer_whose_loop_exited() {
+        let replacement = TestConsumer::new("q1");
+        let factory = Arc::new(QueueFactory {
+            next: parking_lot::Mutex::new(vec![replacement.clone()]),
+            fail: AtomicBool::new(false),
+            builds: AtomicU32::new(0),
+        });
+        let (manager, _hs) = manager_with(Some(factory.clone()));
+        let original = TestConsumer::new("q1");
+        let rc =
+            manager.new_running_consumer(original.clone(), "q1".into(), Some(queue_config("q1")));
+        manager.consumers.insert(rc.clone());
+        manager.spawn_consumer_poll_task(rc.clone());
+
+        // The broker side of the consumer dies: poll returns Stopped.
+        original.stopped.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let polls_after_exit = original.polls();
+        rc.set_last_poll(Instant::now() - Duration::from_secs(120));
+
+        let token = CancellationToken::new();
+        let n = manager
+            .restart_stalled_consumers(Duration::from_secs(60), Duration::ZERO, &token)
+            .await;
+        assert_eq!(n, 1);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(replacement.polls() > 0, "the replacement must be polling");
+        assert_eq!(original.polls(), polls_after_exit);
+        let current = manager.consumers.get("q1").unwrap();
+        assert_ne!(current.generation, rc.generation);
+        assert_eq!(manager.detaching_consumer_count(), 1);
+        // Nothing in flight from the old one: the reaper retires it.
+        assert_eq!(manager.retire_detached_consumers(), 1);
+        manager.shutdown().await;
+    }
+
+    /// A failed rebuild leaves the existing entry in place (Go: build
+    /// before retire), and the attempts escalate to CRITICAL after 10.
+    #[tokio::test]
+    async fn failed_rebuild_keeps_the_existing_consumer_and_escalates() {
+        let factory = Arc::new(QueueFactory {
+            next: parking_lot::Mutex::new(vec![]),
+            fail: AtomicBool::new(true),
+            builds: AtomicU32::new(0),
+        });
+        let (manager, _hs) = manager_with(Some(factory.clone()));
+        let original = TestConsumer::new("q2");
+        let rc =
+            manager.new_running_consumer(original.clone(), "q2".into(), Some(queue_config("q2")));
+        manager.consumers.insert(rc.clone());
+        rc.poll_task_started.store(true, Ordering::SeqCst);
+
+        let token = CancellationToken::new();
+        for _ in 0..11 {
+            rc.set_last_poll(Instant::now() - Duration::from_secs(120));
+            let n = manager
+                .restart_stalled_consumers(Duration::from_secs(60), Duration::ZERO, &token)
+                .await;
+            assert_eq!(n, 0);
+        }
+        assert_eq!(factory.builds.load(Ordering::SeqCst), 11);
+        assert_eq!(
+            manager.consumers.get("q2").unwrap().generation,
+            rc.generation,
+            "a failed rebuild must leave the existing consumer registered"
+        );
+        assert!(
+            manager.warning_service.critical_count() > 0,
+            "a consumer that cannot be rebuilt escalates to CRITICAL"
+        );
+        // restart_consumer (operator) has the same contract.
+        assert!(!manager.restart_consumer("q2").await);
+        assert_eq!(
+            manager.consumers.get("q2").unwrap().generation,
+            rc.generation
+        );
+    }
+
+    /// H10: a consumer paused for capacity keeps a fresh heartbeat, so the
+    /// watchdog never "restarts" it (a restart used to strand the buffers it
+    /// was waiting on, and a new PgPool leaked on every restart).
+    #[tokio::test]
+    async fn watchdog_skips_consumers_with_a_fresh_heartbeat() {
+        let factory = Arc::new(QueueFactory {
+            next: parking_lot::Mutex::new(vec![]),
+            fail: AtomicBool::new(false),
+            builds: AtomicU32::new(0),
+        });
+        let (manager, _hs) = manager_with(Some(factory.clone()));
+        let c = TestConsumer::new("q3");
+        let rc = manager.new_running_consumer(c, "q3".into(), Some(queue_config("q3")));
+        manager.consumers.insert(rc.clone());
+        rc.poll_task_started.store(true, Ordering::SeqCst);
+        rc.beat();
+        let token = CancellationToken::new();
+        let n = manager
+            .restart_stalled_consumers(Duration::from_secs(60), Duration::ZERO, &token)
+            .await;
+        assert_eq!(n, 0);
+        assert_eq!(factory.builds.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -808,6 +995,7 @@ mod g12_capacity_gate_tests {
     use fc_common::{
         BatchMessage, MediationOutcome, MediationType, Message, MessageCallback, PoolConfig,
     };
+    use fc_queue::QueueConsumer;
 
     /// Resolves every mediation instantly with a bare 200 — these tests
     /// care about queue-capacity crossing timing, never about mediation
@@ -861,7 +1049,9 @@ mod g12_capacity_gate_tests {
     /// and race-free.
     async fn manager_with_saturated_pool() -> Arc<QueueManager> {
         let manager = Arc::new(
-            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator)).build(),
+            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator))
+                .deferral_budget(1)
+                .build(),
         );
         let pool_config = PoolConfig {
             code: "TEST".to_string(),
@@ -882,6 +1072,76 @@ mod g12_capacity_gate_tests {
             "pool must read as full immediately after saturating it"
         );
         manager
+    }
+
+    /// A consumer whose last batch fed the saturated "TEST" pool and whose
+    /// deferral budget (1) is spent — so it must park.
+    fn parked_consumer(manager: &QueueManager) -> Arc<RunningConsumer> {
+        struct Nop;
+        #[async_trait]
+        impl QueueConsumer for Nop {
+            fn identifier(&self) -> &str {
+                "parked"
+            }
+            async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+        }
+        let rc = manager.new_running_consumer(Arc::new(Nop), "parked".into(), None);
+        rc.set_dest_pools(vec!["TEST".to_string()]);
+        rc.note_deferral(Instant::now() + Duration::from_secs(60));
+        assert!(!manager.has_capacity_for(&rc));
+        rc
+    }
+
+    /// Go's hasCapacityFor: with its destination pools full, a consumer
+    /// keeps polling (deferring what doesn't fit) while its deferral budget
+    /// lasts, parks once it is spent, and wakes when a deferral comes due.
+    #[tokio::test]
+    async fn capacity_gate_uses_destination_pools_and_the_deferral_budget() {
+        let manager = manager_with_saturated_pool().await;
+        let rc = manager.new_running_consumer(
+            Arc::new(PartialThenEmptyConsumer {
+                call_times: parking_lot::Mutex::new(vec![]),
+                second_call: Arc::new(tokio::sync::Notify::new()),
+            }),
+            "q".into(),
+            None,
+        );
+        rc.set_dest_pools(vec!["TEST".to_string()]);
+        assert!(
+            manager.has_capacity_for(&rc),
+            "budget not spent: keep polling"
+        );
+        rc.note_deferral(Instant::now() + Duration::from_millis(150));
+        assert!(
+            !manager.has_capacity_for(&rc),
+            "full and budget spent: park"
+        );
+
+        // Another pool with room elsewhere does not unpark it (Go judges by
+        // this queue's destinations, not "any pool has room").
+        manager.get_or_create_pool("OTHER", None).await.unwrap();
+        assert!(!manager.has_capacity_for(&rc));
+
+        // The deferral coming due frees budget and wakes the wait.
+        let token = CancellationToken::new();
+        let start = Instant::now();
+        assert!(!wait_for_capacity_or_cancel(&manager, &rc, &token).await);
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 
     /// G12: `wait_for_capacity_or_cancel` must resolve within 100ms of the
@@ -907,8 +1167,9 @@ mod g12_capacity_gate_tests {
         let manager = manager_with_saturated_pool().await;
         let token = CancellationToken::new();
 
+        let rc = parked_consumer(&manager);
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -932,9 +1193,10 @@ mod g12_capacity_gate_tests {
         let manager = manager_with_saturated_pool().await;
         let token = CancellationToken::new();
         token.cancel();
+        let rc = parked_consumer(&manager);
 
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -1040,7 +1302,9 @@ mod g12_capacity_gate_tests {
         });
 
         let waiting = second_call.notified();
-        let handle = manager.spawn_consumer_poll_task(consumer.clone());
+        manager.add_consumer(consumer.clone()).await;
+        let rc = manager.consumers.get("partial-then-empty").unwrap();
+        let handle = manager.spawn_consumer_poll_task(rc);
 
         tokio::time::timeout(Duration::from_secs(2), waiting)
             .await

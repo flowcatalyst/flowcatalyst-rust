@@ -34,7 +34,7 @@ use crate::auth::oidc_sync_service::OidcIdentity;
 use crate::email_domain_mapping::entity::ScopeType;
 use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::principal::operations::events::UserLoggedIn;
-use crate::shared::encryption_service::EncryptionService;
+use crate::shared::secret_ref::SecretResolver;
 use crate::usecase::ExecutionContext;
 use crate::UserScope;
 use crate::{
@@ -61,8 +61,10 @@ pub struct OidcLoginApiState {
     /// External base URL for callbacks (e.g., "https://platform.example.com")
     pub external_base_url: Option<String>,
     pub session_cookie: SessionCookieConfig,
-    /// Encryption service for decrypting stored secrets (OIDC client secrets, etc.)
-    pub encryption_service: Option<Arc<EncryptionService>>,
+    /// Opens a stored IdP client secret: an `encrypted:` value, `literal:`,
+    /// or a secret-manager reference such as `aws-sm://…`
+    /// (see [`crate::shared::secret_ref`]).
+    pub secret_resolver: Arc<SecretResolver>,
     /// Answers `passwordSetupRequired` on an internal check-domain (Go
     /// `withPasswordSetupRequired`). None: never set.
     pub password_setup_hint: Option<PasswordSetupHint>,
@@ -617,7 +619,7 @@ pub async fn oidc_callback(
         code,
         &login_state.code_verifier,
         &callback_url,
-        state.encryption_service.as_deref(),
+        &state.secret_resolver,
     )
     .await
     {
@@ -936,7 +938,7 @@ enum TokenExchangeError {
     #[error("No ID token in response")]
     MissingIdToken,
     #[error("Cannot use the IDP client secret: {0}")]
-    ClientSecret(#[source] crate::shared::encryption_service::EncryptionError),
+    ClientSecret(#[source] crate::shared::secret_ref::SecretRefError),
 }
 
 async fn exchange_code_for_tokens_from_idp(
@@ -944,7 +946,7 @@ async fn exchange_code_for_tokens_from_idp(
     code: &str,
     code_verifier: &str,
     callback_url: &str,
-    encryption_service: Option<&EncryptionService>,
+    secret_resolver: &SecretResolver,
 ) -> Result<TokenExchangeResponse, TokenExchangeError> {
     let issuer = idp
         .oidc_issuer_url
@@ -964,18 +966,24 @@ async fn exchange_code_for_tokens_from_idp(
         ("code_verifier", code_verifier),
     ];
 
-    // Decrypt the stored client secret. It must be an `encrypted:` reference
-    // and a key must be configured; otherwise the login fails rather than
-    // sending a stored value to the IDP as-is.
-    let client_secret = idp
+    // Open the stored client secret: an `encrypted:` value (needs the key),
+    // `literal:`, or a secret-manager reference resolved through its store
+    // (`aws-sm://…`). Anything else fails the login rather than sending a
+    // stored value to the IDP as-is. An empty value is no secret (a public
+    // client), as Go's resolveClientSecret.
+    let client_secret = match idp
         .oidc_client_secret_ref
         .as_deref()
-        .map(|stored| {
-            crate::shared::encryption_service::require_configured(encryption_service)
-                .and_then(|enc| enc.decrypt_ref(stored))
-        })
-        .transpose()
-        .map_err(TokenExchangeError::ClientSecret)?;
+        .filter(|s| !s.trim().is_empty())
+    {
+        Some(stored) => Some(
+            secret_resolver
+                .resolve(stored)
+                .await
+                .map_err(TokenExchangeError::ClientSecret)?,
+        ),
+        None => None,
+    };
     if let Some(ref secret) = client_secret {
         params.push(("client_secret", secret));
     }
@@ -1792,7 +1800,7 @@ pub(crate) async fn portal_verify_callback(
         code,
         code_verifier,
         &callback_url,
-        state.encryption_service.as_deref(),
+        &state.secret_resolver,
     )
     .await
     .map_err(|e| {

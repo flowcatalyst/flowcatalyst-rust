@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::{QueueConsumer, QueueError, QueueMetrics, Result};
+use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use fc_common::QueuedMessage;
 
 /// Configuration for the NATS JetStream consumer
@@ -51,9 +51,12 @@ pub struct NatsConfig {
     pub poll_timeout_ms: u64,
     /// Ack wait time in seconds before redelivery
     pub ack_wait_secs: u64,
-    /// Maximum number of delivery attempts before giving up
+    /// Maximum number of delivery attempts before the server gives up on a
+    /// message. `-1` (the default) is unlimited — see [`NatsConfig::default`].
     pub max_deliver: i64,
-    /// Maximum number of unacknowledged messages the consumer can have in-flight
+    /// Maximum number of unacknowledged messages the consumer can have
+    /// in-flight. `-1` (the default) is unlimited — see
+    /// [`NatsConfig::default`].
     pub max_ack_pending: i64,
     /// Stream storage type: "file" or "memory"
     pub storage: String,
@@ -76,8 +79,8 @@ impl NatsConfig {
     /// falls back to [`NatsConfig::default`]'s value for that field (same
     /// defaults the other routers ship: stream `FLOWCATALYST`, consumer
     /// `fc-router`, subject `flowcatalyst.>`, batch 10, poll timeout 20s,
-    /// ack-wait 120s, max-deliver 10, max-ack-pending 1000, storage file,
-    /// replicas 1, max-age 7d).
+    /// ack-wait 120s, max-deliver -1 (unlimited), max-ack-pending -1
+    /// (unlimited), storage file, replicas 1, max-age 7d).
     pub fn from_uri(uri: &str) -> Result<Self> {
         if !uri.starts_with("nats://") {
             return Err(QueueError::Config(format!("not a nats:// URI: {}", uri)));
@@ -155,6 +158,18 @@ impl NatsConfig {
     }
 }
 
+/// Defaults match Go's `nats.DefaultConfig`.
+///
+/// `max_deliver` and `max_ack_pending` are unlimited (`-1`), as Go's are
+/// (owner ruling 2026-09-22: "the router owns give-up"). The router releases
+/// work back to the broker on its own schedule — every capacity deferral and
+/// every nack spends one JetStream delivery — so a finite `max_deliver` turns
+/// a slow pool's backlog into messages the server silently stops
+/// redelivering. A message NAKed with a delay also stays ack-pending for the
+/// whole delay, so a finite `max_ack_pending` lets one deferred backlog
+/// suspend delivery for the entire stream. A cap can still be set per URI
+/// (`max-deliver=`, `max-ack-pending=`) where poison-message protection is
+/// wanted.
 impl Default for NatsConfig {
     fn default() -> Self {
         Self {
@@ -165,8 +180,8 @@ impl Default for NatsConfig {
             max_messages_per_poll: 10,
             poll_timeout_ms: 20_000, // Java default: 20 seconds
             ack_wait_secs: 120,      // Java default: 120 seconds
-            max_deliver: 10,         // Java default: 10 redeliveries
-            max_ack_pending: 1000,
+            max_deliver: -1,         // unlimited (Go; owner ruling 2026-09-22)
+            max_ack_pending: -1,     // unlimited (Go; owner ruling 2026-09-22)
             storage: "file".to_string(),
             replicas: 1,
             max_age_days: 7,
@@ -230,6 +245,232 @@ pub struct NatsQueueConsumer {
     /// time so a queue that has never delivered anything yet still reads
     /// as "recently alive" rather than a stale zero value.
     last_delivery: Arc<Mutex<Instant>>,
+    /// False from the moment the standing subscription ends or fails
+    /// terminally until a resubscribe succeeds (Go G14: `Queue.healthy`).
+    /// While false, [`QueueConsumer::last_broker_activity`] stops vouching
+    /// for the consumer, so the router's bounded poll reads a quiet
+    /// `poll()` as an error rather than an idle queue, and — if
+    /// resubscribing keeps failing — its stall watchdog rebuilds the whole
+    /// consumer.
+    subscription_healthy: Arc<AtomicBool>,
+    /// Messages terminated because their payload could not be decoded.
+    rejected: Arc<RejectedLog>,
+}
+
+/// Open the standing pull subscription with the options every
+/// (re)subscribe uses, so the initial subscribe and a later resubscribe can
+/// never drift apart (Go: the shared `resubscribe` closure).
+/// `max_messages_per_batch` matches the channel capacity — the client asks
+/// the server for at most one channel's worth of messages at a time;
+/// `heartbeat` matches `.messages()`'s own convenience-method default (15s)
+/// so an idle stream doesn't silently look dead.
+async fn open_subscription(
+    consumer: &PullConsumer,
+    batch_size: usize,
+) -> std::result::Result<
+    async_nats::jetstream::consumer::pull::Stream,
+    async_nats::jetstream::consumer::StreamError,
+> {
+    consumer
+        .stream()
+        .max_messages_per_batch(batch_size)
+        .heartbeat(Duration::from_secs(15))
+        .messages()
+        .await
+}
+
+/// Re-open the standing subscription after it died. The consumer's
+/// existence is confirmed on the server first: opening a pull subscription
+/// never checks it, so without this a deleted consumer would "resubscribe"
+/// successfully, read as healthy, and then wait for ever on pull requests
+/// nothing answers.
+async fn resubscribe(
+    consumer: &PullConsumer,
+    batch_size: usize,
+) -> std::result::Result<async_nats::jetstream::consumer::pull::Stream, QueueError> {
+    let mut probe = consumer.clone();
+    probe
+        .info()
+        .await
+        .map_err(|e| QueueError::nats("consumer info", e))?;
+    open_subscription(consumer, batch_size)
+        .await
+        .map_err(|e| QueueError::nats("open subscription", e))
+}
+
+/// Everything the background forwarding task owns.
+struct Forwarder {
+    stream: async_nats::jetstream::consumer::pull::Stream,
+    consumer: PullConsumer,
+    batch_size: usize,
+    stream_name: String,
+    consumer_name: String,
+    queue_id: String,
+    pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>>,
+    cancel: CancellationToken,
+    last_delivery: Arc<Mutex<Instant>>,
+    healthy: Arc<AtomicBool>,
+    rejected: Arc<RejectedLog>,
+    tx: mpsc::Sender<QueuedMessage>,
+}
+
+/// Is `err` from the standing subscription one it cannot recover from on
+/// its own? A consumer that was deleted, or a subscription the server
+/// refuses, needs a fresh subscription (Go: any non-heartbeat `Next` error
+/// triggers a resubscribe). A missed heartbeat or a failed pull request is
+/// re-issued by async-nats internally, so the loop just keeps draining.
+fn is_terminal_subscription_error(
+    err: &async_nats::jetstream::consumer::pull::MessagesError,
+) -> bool {
+    use async_nats::jetstream::consumer::pull::MessagesErrorKind;
+    matches!(
+        err.kind(),
+        MessagesErrorKind::ConsumerDeleted | MessagesErrorKind::PushBasedConsumer
+    )
+}
+
+/// The one task that drains the standing subscription into the bounded
+/// channel `poll()` reads.
+///
+/// When the subscription ends or fails terminally it is re-opened with
+/// capped exponential backoff (200ms → 5s) until that succeeds or the
+/// consumer is stopped — Go's `forward`/`resubscribeUntilHealthy`. It used
+/// to simply exit, which closed the channel, made every later `poll()`
+/// return `Stopped`, and left a consumer that would never deliver again.
+async fn forward(mut f: Forwarder) {
+    loop {
+        let next = tokio::select! {
+            _ = f.cancel.cancelled() => return,
+            n = f.stream.next() => n,
+        };
+
+        let js_msg = match next {
+            Some(Ok(msg)) => msg,
+            Some(Err(e)) if !is_terminal_subscription_error(&e) => {
+                // A transient protocol/connection error on one pull request
+                // — async-nats re-issues pull requests internally; log and
+                // keep draining.
+                warn!(
+                    consumer = %f.consumer_name,
+                    error = %e,
+                    "Error on NATS JetStream standing subscription"
+                );
+                continue;
+            }
+            ended => {
+                match ended {
+                    Some(Err(e)) => error!(
+                        consumer = %f.consumer_name,
+                        error = %e,
+                        "NATS JetStream standing subscription failed; resubscribing"
+                    ),
+                    _ => warn!(
+                        consumer = %f.consumer_name,
+                        "NATS JetStream standing subscription ended; resubscribing"
+                    ),
+                }
+                f.healthy.store(false, Ordering::SeqCst);
+                let mut backoff = Duration::from_millis(200);
+                loop {
+                    if f.cancel.is_cancelled() {
+                        return;
+                    }
+                    match resubscribe(&f.consumer, f.batch_size).await {
+                        Ok(stream) => {
+                            f.stream = stream;
+                            f.healthy.store(true, Ordering::SeqCst);
+                            info!(
+                                consumer = %f.consumer_name,
+                                "NATS resubscribed; subscription healthy again"
+                            );
+                            break;
+                        }
+                        Err(e) => {
+                            error!(
+                                consumer = %f.consumer_name,
+                                error = %e,
+                                backoff_ms = backoff.as_millis() as u64,
+                                "NATS resubscribe failed; retrying"
+                            );
+                            tokio::select! {
+                                _ = f.cancel.cancelled() => return,
+                                _ = tokio::time::sleep(backoff) => {}
+                            }
+                            backoff = (backoff * 2).min(Duration::from_secs(5));
+                        }
+                    }
+                }
+                continue;
+            }
+        };
+
+        let receipt_handle =
+            match NatsQueueConsumer::receipt_handle_from_message(&js_msg, &f.stream_name) {
+                Some(h) => h,
+                None => {
+                    warn!(
+                        consumer = %f.consumer_name,
+                        "Could not extract stream sequence from NATS message, skipping"
+                    );
+                    let _ = js_msg.ack_with(AckKind::Term).await;
+                    continue;
+                }
+            };
+
+        let message: fc_common::Message = match serde_json::from_slice(&js_msg.payload) {
+            Ok(m) => m,
+            Err(e) => {
+                error!(
+                    consumer = %f.consumer_name,
+                    error = %e,
+                    "Failed to parse NATS message payload, terminating message"
+                );
+                let seq = js_msg.info().ok().map(|i| i.stream_sequence.to_string());
+                f.rejected.record(seq, e.to_string());
+                let _ = js_msg.ack_with(AckKind::Term).await;
+                continue;
+            }
+        };
+
+        let broker_message_id = js_msg.info().ok().map(|info| {
+            NatsQueueConsumer::broker_message_id_from_sequence(
+                info.stream_sequence,
+                info.consumer_sequence,
+            )
+        });
+
+        // A redelivery replaces the pending entry: same stream sequence,
+        // but only the newest delivery can be acked.
+        f.pending_messages.insert(receipt_handle.clone(), js_msg);
+
+        // G13: a real message just arrived from the broker — stamp the
+        // liveness fallback the moment it did, not only once `poll()`
+        // eventually hands it to a caller.
+        if let Ok(mut guard) = f.last_delivery.lock() {
+            *guard = Instant::now();
+        }
+
+        let queued = QueuedMessage {
+            message,
+            receipt_handle,
+            broker_message_id,
+            queue_identifier: f.queue_id.clone(),
+        };
+
+        // Race the send against cancellation too — a `stop()` that lands
+        // while the channel is momentarily full (poll() not draining, e.g.
+        // mid-shutdown) must not block this task's exit.
+        tokio::select! {
+            _ = f.cancel.cancelled() => return,
+            res = f.tx.send(queued) => {
+                if res.is_err() {
+                    // Receiver dropped (consumer torn down) — nothing left
+                    // to feed.
+                    return;
+                }
+            }
+        }
+    }
 }
 
 impl NatsQueueConsumer {
@@ -300,23 +541,29 @@ impl NatsQueueConsumer {
             "JetStream stream ready"
         );
 
-        // Ensure durable consumer exists (create or get)
-        let consumer = stream
-            .get_or_create_consumer(
-                &config.consumer_name,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(config.consumer_name.clone()),
-                    ack_wait: Duration::from_secs(config.ack_wait_secs),
-                    max_deliver: config.max_deliver,
-                    max_ack_pending: config.max_ack_pending,
-                    filter_subject: config.subject.clone(),
-                    ..Default::default()
-                },
-            )
+        // Create the durable consumer, or UPDATE it if it already exists
+        // (Go: `CreateOrUpdateConsumer`). `get_or_create_consumer` returned
+        // an existing consumer untouched, so a consumer provisioned under
+        // the old finite defaults (max-deliver 10, max-ack-pending 1000)
+        // kept them for ever; create-or-update applies the configured
+        // limits to it on the next start.
+        let consumer: PullConsumer = stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                name: Some(config.consumer_name.clone()),
+                durable_name: Some(config.consumer_name.clone()),
+                ack_wait: Duration::from_secs(config.ack_wait_secs),
+                max_deliver: config.max_deliver,
+                max_ack_pending: config.max_ack_pending,
+                filter_subject: config.subject.clone(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| {
                 QueueError::nats(
-                    format!("Failed to get/create consumer '{}'", config.consumer_name),
+                    format!(
+                        "Failed to create/update consumer '{}'",
+                        config.consumer_name
+                    ),
                     e,
                 )
             })?;
@@ -344,11 +591,7 @@ impl NatsQueueConsumer {
         let stream_cancel = CancellationToken::new();
         let last_delivery = Arc::new(Mutex::new(Instant::now()));
 
-        let mut jetstream_stream = consumer
-            .stream()
-            .max_messages_per_batch(batch_size)
-            .heartbeat(Duration::from_secs(15))
-            .messages()
+        let jetstream_stream = open_subscription(&consumer, batch_size)
             .await
             .map_err(|e| {
                 QueueError::nats(
@@ -359,114 +602,23 @@ impl NatsQueueConsumer {
                     e,
                 )
             })?;
+        let subscription_healthy = Arc::new(AtomicBool::new(true));
+        let rejected = Arc::new(RejectedLog::default());
 
-        {
-            let stream_name = config.stream_name.clone();
-            let consumer_name = config.consumer_name.clone();
-            let queue_id = queue_id.clone();
-            let pending_messages = pending_messages.clone();
-            let cancel = stream_cancel.clone();
-            let last_delivery = last_delivery.clone();
-
-            tokio::spawn(async move {
-                loop {
-                    let next = tokio::select! {
-                        _ = cancel.cancelled() => break,
-                        n = jetstream_stream.next() => n,
-                    };
-
-                    let js_msg = match next {
-                        None => {
-                            debug!(
-                                consumer = %consumer_name,
-                                "NATS JetStream standing subscription ended"
-                            );
-                            break;
-                        }
-                        Some(Err(e)) => {
-                            // A transient protocol/connection error on one
-                            // pull request — the subscription keeps running
-                            // (async-nats re-issues pull requests
-                            // internally); log and keep draining.
-                            warn!(
-                                consumer = %consumer_name,
-                                error = %e,
-                                "Error on NATS JetStream standing subscription"
-                            );
-                            continue;
-                        }
-                        Some(Ok(msg)) => msg,
-                    };
-
-                    let receipt_handle =
-                        match NatsQueueConsumer::receipt_handle_from_message(&js_msg, &stream_name)
-                        {
-                            Some(h) => h,
-                            None => {
-                                warn!(
-                                    consumer = %consumer_name,
-                                    "Could not extract stream sequence from NATS message, skipping"
-                                );
-                                let _ = js_msg.ack_with(AckKind::Term).await;
-                                continue;
-                            }
-                        };
-
-                    let message: fc_common::Message = match serde_json::from_slice(&js_msg.payload)
-                    {
-                        Ok(m) => m,
-                        Err(e) => {
-                            error!(
-                                consumer = %consumer_name,
-                                error = %e,
-                                "Failed to parse NATS message payload, terminating message"
-                            );
-                            let _ = js_msg.ack_with(AckKind::Term).await;
-                            continue;
-                        }
-                    };
-
-                    let broker_message_id = js_msg.info().ok().map(|info| {
-                        NatsQueueConsumer::broker_message_id_from_sequence(
-                            info.stream_sequence,
-                            info.consumer_sequence,
-                        )
-                    });
-
-                    pending_messages.insert(receipt_handle.clone(), js_msg);
-
-                    // G13: a real message just arrived from the broker —
-                    // stamp the liveness fallback the moment it did, not
-                    // only once `poll()` eventually hands it to a caller.
-                    if let Ok(mut guard) = last_delivery.lock() {
-                        *guard = Instant::now();
-                    }
-
-                    let queued = QueuedMessage {
-                        message,
-                        receipt_handle,
-                        broker_message_id,
-                        queue_identifier: queue_id.clone(),
-                    };
-
-                    // Race the send against cancellation too — a `stop()`
-                    // that lands while the channel is momentarily full
-                    // (poll() not draining, e.g. mid-shutdown) must not
-                    // block this task's exit.
-                    tokio::select! {
-                        _ = cancel.cancelled() => break,
-                        res = tx.send(queued) => {
-                            if res.is_err() {
-                                // Receiver dropped (consumer being torn
-                                // down some other way) — nothing left to
-                                // feed.
-                                break;
-                            }
-                        }
-                    }
-                }
-            });
-        }
+        tokio::spawn(forward(Forwarder {
+            stream: jetstream_stream,
+            consumer: consumer.clone(),
+            batch_size,
+            stream_name: config.stream_name.clone(),
+            consumer_name: config.consumer_name.clone(),
+            queue_id: queue_id.clone(),
+            pending_messages: pending_messages.clone(),
+            cancel: stream_cancel.clone(),
+            last_delivery: last_delivery.clone(),
+            healthy: subscription_healthy.clone(),
+            rejected: rejected.clone(),
+            tx,
+        }));
 
         Ok(Self {
             config,
@@ -482,6 +634,8 @@ impl NatsQueueConsumer {
             total_nacked: AtomicU64::new(0),
             total_deferred: AtomicU64::new(0),
             last_delivery,
+            subscription_healthy,
+            rejected,
         })
     }
 
@@ -679,6 +833,17 @@ impl QueueConsumer for NatsQueueConsumer {
         Ok(())
     }
 
+    /// Go: `HonoursDelayedReturn() == false` for NATS — the stream is one
+    /// durable WorkQueue consumer with no per-group subject, so a
+    /// `NakWithDelay` never holds a delayed head's successors back.
+    fn honours_delayed_return(&self) -> bool {
+        false
+    }
+
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        self.rejected.take()
+    }
+
     fn is_healthy(&self) -> bool {
         if !self.running.load(Ordering::SeqCst) {
             return false;
@@ -691,7 +856,8 @@ impl QueueConsumer for NatsQueueConsumer {
         )
     }
 
-    /// G13: "now" for as long as the connection reads `Connected` — this
+    /// G13: "now" for as long as the connection reads `Connected` and the
+    /// standing subscription is healthy (G14) — this
     /// client exposes no positive per-heartbeat callback (only a negative
     /// `ErrorListener`-style alarm for a *missed* one), so the connection
     /// state itself, refreshed on every check, stands in as the positive
@@ -703,42 +869,42 @@ impl QueueConsumer for NatsQueueConsumer {
     /// stall watchdog still restarts it (G13's "never hides a real hang"
     /// requirement).
     fn last_broker_activity(&self) -> Option<Instant> {
-        if matches!(
-            self.client.connection_state(),
-            async_nats::connection::State::Connected
-        ) {
+        let subscribed =
+            self.running.load(Ordering::SeqCst) && self.subscription_healthy.load(Ordering::SeqCst);
+        if subscribed
+            && matches!(
+                self.client.connection_state(),
+                async_nats::connection::State::Connected
+            )
+        {
             Some(Instant::now())
         } else {
             self.last_delivery.lock().ok().map(|g| *g)
         }
     }
 
-    /// Item 2: cancelling `stream_cancel` stops the background
+    /// Stop INTAKE: cancelling `stream_cancel` stops the background
     /// subscription-draining task, which drops its channel `Sender` as it
-    /// exits — that closes the channel, so any `poll()` currently parked
-    /// on `receiver.recv()` (an untimed await) resolves to `None` and
-    /// returns `Err(QueueError::Stopped)` promptly rather than staying
-    /// blocked.
+    /// exits — that closes the channel, so any `poll()` currently parked on
+    /// `receiver.recv()` (an untimed await) resolves to `None` and returns
+    /// `Err(QueueError::Stopped)` promptly rather than staying blocked.
+    ///
+    /// Messages already handed out stay in `pending_messages`, and the
+    /// connection stays open until the consumer itself is dropped, so the
+    /// ack/nack of work still in flight when the consumer was stopped
+    /// still reaches the server. This used to clear `pending_messages`,
+    /// which failed every such ack: the work was then redelivered after
+    /// `ack_wait` (120s), by which time the router's duplicate guard had
+    /// long expired — a completed delivery sent a second time.
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         self.stream_cancel.cancel();
 
-        // Clear any pending messages that haven't been acked/nacked.
-        // They will be redelivered by the server after ack_wait expires.
         let pending_count = self.pending_messages.len();
-        self.pending_messages.clear();
-
-        if pending_count > 0 {
-            warn!(
-                consumer = %self.config.consumer_name,
-                pending_count = pending_count,
-                "Stopped with pending messages; they will be redelivered after ack_wait"
-            );
-        }
-
         info!(
             consumer = %self.config.consumer_name,
-            "NATS JetStream consumer stopped"
+            pending_count,
+            "NATS JetStream consumer stopped (in-flight messages can still be acked)"
         );
     }
 
@@ -787,8 +953,9 @@ mod tests {
         assert_eq!(config.max_messages_per_poll, 10);
         assert_eq!(config.poll_timeout_ms, 20_000); // Java: 20 seconds
         assert_eq!(config.ack_wait_secs, 120); // Java: 120 seconds
-        assert_eq!(config.max_deliver, 10); // Java: 10 redeliveries
-        assert_eq!(config.max_ack_pending, 1000);
+                                               // Go: unlimited (owner ruling 2026-09-22 — the router owns give-up).
+        assert_eq!(config.max_deliver, -1);
+        assert_eq!(config.max_ack_pending, -1);
         assert_eq!(config.storage, "file");
         assert_eq!(config.replicas, 1);
         assert_eq!(config.max_age_days, 7);

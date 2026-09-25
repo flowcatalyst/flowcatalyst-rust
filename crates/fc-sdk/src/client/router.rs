@@ -132,3 +132,92 @@ impl Router<'_> {
         resp.json().await.map_err(ClientError::Request)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A router stub that records each request's `Authorization` header.
+    async fn recording_router() -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let record = record.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&buf[..n]);
+                        let text = String::from_utf8_lossy(&request).to_string();
+                        let Some(head_end) = text.find("\r\n\r\n") else {
+                            continue;
+                        };
+                        let header = |name: &str| {
+                            text[..head_end].lines().find_map(|l| {
+                                let (k, v) = l.split_once(':')?;
+                                k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+                            })
+                        };
+                        let length: usize = header("content-length")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0);
+                        if request.len() < head_end + 4 + length {
+                            continue;
+                        }
+                        record
+                            .lock()
+                            .unwrap()
+                            .push(header("authorization").unwrap_or_default());
+                        let body = if text.starts_with("POST") {
+                            r#"{"m1":true}"#
+                        } else {
+                            r#"{"messageId":"m1","inPipeline":false}"#
+                        };
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                        return;
+                    }
+                });
+            }
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    /// Owner ruling 2 of 2026-09-25 (Java 714f3f2d): the router will verify
+    /// the platform bearer token, so both in-flight checks must carry the one
+    /// the client uses for the platform.
+    #[tokio::test]
+    async fn in_flight_checks_send_the_platform_bearer_token() {
+        let (router_url, seen) = recording_router().await;
+        let client = FlowCatalystClient::new("http://127.0.0.1:1")
+            .with_router_url(router_url)
+            .with_token("tok-1");
+
+        let single = client.router().in_pipeline("m1").await.unwrap();
+        assert!(!single.in_pipeline);
+        let batch = client
+            .router()
+            .in_pipeline_batch(&["m1".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(batch.get("m1"), Some(&true));
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["Bearer tok-1".to_string(), "Bearer tok-1".to_string()]
+        );
+    }
+}
