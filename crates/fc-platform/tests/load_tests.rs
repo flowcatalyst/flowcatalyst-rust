@@ -434,7 +434,7 @@ async fn test_api_batch_events_throughput() {
             .await
             .unwrap();
 
-        assert_eq!(response.status().as_u16(), 200, "Batch {} failed", batch);
+        assert_eq!(response.status().as_u16(), 201, "Batch {} failed", batch);
     }
     let elapsed = start.elapsed();
 

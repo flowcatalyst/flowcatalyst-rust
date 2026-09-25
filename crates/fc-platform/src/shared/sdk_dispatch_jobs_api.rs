@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{DefaultBodyLimit, State},
+    http::StatusCode,
     routing::post,
     Json, Router,
 };
@@ -41,20 +42,24 @@ async fn sdk_batch_create_dispatch_jobs(
     State(state): State<SdkDispatchJobsState>,
     auth: Authenticated,
     Json(req): Json<SdkBatchDispatchJobsRequest>,
-) -> Result<Json<BatchResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<BatchResponse>), PlatformError> {
     // Go shared/sdk/dispatch_jobs_batch.go:174: the batch-write permission,
     // checked before anything is read.
     checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
 
-    // Validate batch size
+    // As Go: an empty batch is an empty answer, and more than 1000 is refused.
     if req.items.is_empty() {
-        return Err(PlatformError::validation(
-            "Request body must contain at least one dispatch job",
+        return Ok((
+            StatusCode::OK,
+            Json(BatchResponse {
+                results: Vec::new(),
+            }),
         ));
     }
     if req.items.len() > 1000 {
-        return Err(PlatformError::validation(
-            "Batch size cannot exceed 1000 dispatch jobs",
+        return Err(PlatformError::bad_request_code(
+            "BATCH_TOO_LARGE",
+            "max 1000 items per batch",
         ));
     }
 
@@ -178,7 +183,8 @@ async fn sdk_batch_create_dispatch_jobs(
         })
         .collect();
 
-    Ok(Json(BatchResponse { results }))
+    // Go answers 201 for an accepted batch.
+    Ok((StatusCode::CREATED, Json(BatchResponse { results })))
 }
 
 pub fn sdk_dispatch_jobs_batch_router(state: SdkDispatchJobsState) -> Router {

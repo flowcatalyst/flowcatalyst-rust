@@ -430,7 +430,7 @@ async fn test_batch_events_via_api() {
 
     assert_eq!(
         status.as_u16(),
-        200,
+        201,
         "Expected 200 OK, got {} — body: {}",
         status,
         json
@@ -455,8 +455,8 @@ async fn test_batch_events_exceeds_limit() {
     let (app, auth_service) = build_test_router(&pool);
     let token = generate_ingest_token(&auth_service);
 
-    // Build a batch with 101 items (exceeds the 100-item limit)
-    let items: Vec<serde_json::Value> = (0..101)
+    // Build a batch with 1001 items (Go's limit is 1000)
+    let items: Vec<serde_json::Value> = (0..1001)
         .map(|i| {
             json!({
                 "type": format!("test:event:{}", i),
@@ -482,12 +482,10 @@ async fn test_batch_events_exceeds_limit() {
         .unwrap();
 
     let status = response.status();
-    assert_eq!(
-        status.as_u16(),
-        400,
-        "Expected 400 Bad Request for >100 items, got {}",
-        status
-    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(status.as_u16(), 400, "{json}");
+    assert_eq!(json["code"], "BATCH_TOO_LARGE", "{json}");
 }
 
 #[tokio::test]
@@ -507,18 +505,16 @@ async fn test_batch_dispatch_jobs_via_api() {
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(
                     serde_json::to_string(&json!({
-                        "jobs": [
+                        "items": [
                             {
                                 "code": "orders:fulfillment:shipment:shipped",
                                 "targetUrl": "https://example.com/webhook1",
-                                "payload": "{\"orderId\":\"1\"}",
-                                "serviceAccountId": "svc-test-001"
+                                "payload": "{\"orderId\":\"1\"}"
                             },
                             {
                                 "code": "orders:fulfillment:shipment:delivered",
                                 "targetUrl": "https://example.com/webhook2",
-                                "payload": "{\"orderId\":\"2\"}",
-                                "serviceAccountId": "svc-test-002"
+                                "payload": "{\"orderId\":\"2\"}"
                             }
                         ]
                     }))
@@ -534,17 +530,11 @@ async fn test_batch_dispatch_jobs_via_api() {
     let json: serde_json::Value = serde_json::from_slice(&body)
         .unwrap_or_else(|_| panic!("Failed to parse response body: {:?}", body));
 
-    assert_eq!(
-        status.as_u16(),
-        200,
-        "Expected 200 OK, got {} — body: {}",
-        status,
-        json
-    );
-    assert_eq!(json["count"], 2, "Response should report count=2");
-
-    let jobs = json["jobs"]
+    // Go: `{items}` in, 201 with `{results:[{id,status}]}` out.
+    assert_eq!(status.as_u16(), 201, "body: {json}");
+    let results = json["results"]
         .as_array()
-        .expect("Response should have a 'jobs' array");
-    assert_eq!(jobs.len(), 2, "Should have 2 job responses");
+        .expect("Response should have a 'results' array");
+    assert_eq!(results.len(), 2, "Should have 2 results: {json}");
+    assert!(results.iter().all(|r| r["status"] == "SUCCESS"), "{json}");
 }

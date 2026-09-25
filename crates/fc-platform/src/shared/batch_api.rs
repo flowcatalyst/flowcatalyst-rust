@@ -8,6 +8,7 @@
 
 use axum::{
     extract::{DefaultBodyLimit, State},
+    http::StatusCode,
     routing::post,
     Json, Router,
 };
@@ -185,12 +186,15 @@ async fn batch_events(
     State(state): State<SdkEventsState>,
     auth: Authenticated,
     Json(req): Json<BatchEventsRequest>,
-) -> Result<Json<BatchResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<BatchResponse>), PlatformError> {
     // Go event/api/api.go:137: the batch-write permission, checked before
     // anything is read.
     checks::require_permission(&auth.0, permissions::admin::BATCH_EVENTS_WRITE)?;
     if req.items.len() > 1000 {
-        return Err(PlatformError::validation("Maximum 1000 items per batch"));
+        return Err(PlatformError::bad_request_code(
+            "BATCH_TOO_LARGE",
+            "max 1000 items per batch",
+        ));
     }
 
     // Every distinct `clientCode` on items without a `clientId`, resolved in
@@ -302,7 +306,8 @@ async fn batch_events(
     // sender wants acknowledged (Go event/api/api.go:197-205).
     state.event_repo.insert_many(&inserted_events).await?;
 
-    Ok(Json(BatchResponse { results }))
+    // Go answers 201 for an accepted batch.
+    Ok((StatusCode::CREATED, Json(BatchResponse { results })))
 }
 
 pub fn sdk_events_batch_router(state: SdkEventsState) -> Router {

@@ -222,7 +222,7 @@ async fn ingest_routes_require_the_batch_write_permissions() {
         json!({"items": [event_item("x:y:z:created")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, body) = post(
         &app,
         "/api/dispatch-jobs/batch",
@@ -230,7 +230,7 @@ async fn ingest_routes_require_the_batch_write_permissions() {
         json!({"items": [job_item("x:y:z:job")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 // ── Decision #24: ingest tenancy ────────────────────────────────────────────
@@ -265,7 +265,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
         json!({"items": [event_item("t:a:b:single")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, body) = post(
         &app,
         "/api/dispatch-jobs/batch",
@@ -273,7 +273,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
         json!({"items": [job_item("t:a:b:single")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, body) = post(
         &app,
         "/api/events",
@@ -380,7 +380,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
         json!({"items": [named]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 
     // An anchor keeps today's behaviour: no client is platform-scoped, and
     // an unknown code leaves the event unlinked.
@@ -394,7 +394,7 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
         json!({"items": [unknown]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let (client_id,): (Option<String>,) =
         sqlx::query_as("SELECT client_id FROM msg_events WHERE type = 't:a:b:anchor'")
             .fetch_one(&app.pool)
@@ -426,7 +426,7 @@ async fn supplied_dispatch_job_ids_are_honoured_and_never_reused() {
         json!({"items": [with_id("0SUPPLIED0001", "t:j:a:first"), job_item("t:j:a:minted")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["results"][0]["id"], "0SUPPLIED0001");
     assert_ne!(body["results"][1]["id"], "0SUPPLIED0001");
     assert_eq!(
@@ -504,14 +504,14 @@ async fn supplied_event_ids_are_honoured_and_idempotent() {
             json!({"items": [item.clone()]}),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "attempt {attempt}: {body}");
+        assert_eq!(status, StatusCode::CREATED, "attempt {attempt}: {body}");
         assert_eq!(body["results"][0]["id"], "0EVENTSUPP001", "{body}");
         assert_eq!(body["results"][0]["status"], "SUCCESS", "{body}");
     }
     // Even with a different deduplication id, a stored id is not written twice.
     item["deduplicationId"] = json!("another");
     let (status, body) = post(&app, "/api/events/batch", &token, json!({"items": [item]})).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(
         count(
             &app,
@@ -561,7 +561,7 @@ async fn a_batched_dispatch_job_needs_no_service_account() {
         json!({"items": [laravel_item.clone()]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let (account,): (Option<String>,) = sqlx::query_as(
         "SELECT service_account_id FROM msg_dispatch_jobs WHERE code = 't:laravel:job:run'",
     )
@@ -622,14 +622,14 @@ async fn only_the_application_may_ingest_a_job_its_account_signs() {
         &[JOBS_WRITE],
     );
     let (status, body) = post_job(&app, &own, job_item("billing:invoice:sent")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let root = token_for(&app, &anchor_user(), &[JOBS_WRITE, permissions::ADMIN_ALL]);
     let (status, body) = post_job(&app, &root, job_item("billing:invoice:sent")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 
     // A prefix naming no application signs nothing, so it is not refused.
     let (status, body) = post_job(&app, &client_admin, job_item("nosuchapp:x:y")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 /// A non-anchor's job names only a subscription of its own client, and the
@@ -693,7 +693,7 @@ async fn a_job_signs_only_with_an_account_the_caller_may_use() {
 
     // Its own client's account is its to use.
     let (status, body) = post_job(&app, &client_admin, with_sub(&acme_sub)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 
     // An anchor may name any client's subscription and reaches every
     // client-linked account.
@@ -701,7 +701,7 @@ async fn a_job_signs_only_with_an_account_the_caller_may_use() {
     let mut job = with_sub(&shared_sub);
     job["clientId"] = json!(acme);
     let (status, body) = post_job(&app, &anchor, job).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 // ── S6: event ingest reach (ruling 17a) ─────────────────────────────────────
@@ -792,7 +792,7 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
             json!({"items": [event_item(billing_type)]}),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
     }
     assert_eq!(
         count(
@@ -811,7 +811,7 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
         json!({"items": [event_item("zzz:a:b:c")]}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
 }
 
 // ── S7: subscriptions and connections name only usable signers ──────────────

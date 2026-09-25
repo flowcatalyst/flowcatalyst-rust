@@ -498,7 +498,7 @@ pub async fn batch_create_events(
     State(state): State<EventsState>,
     auth: Authenticated,
     Json(req): Json<BatchCreateEventsRequest>,
-) -> Result<Json<BatchCreateResponse>, PlatformError> {
+) -> Result<(axum::http::StatusCode, Json<BatchCreateResponse>), PlatformError> {
     // The same ingest permission as `/api/events/batch` (Go registers one
     // handler for both).
     crate::shared::authorization_service::checks::require_permission(
@@ -609,12 +609,15 @@ pub async fn batch_create_events(
     let count = all_events.len();
     let event_responses: Vec<EventResponse> = all_events.into_iter().map(Into::into).collect();
 
-    Ok(Json(BatchCreateResponse {
-        events: event_responses,
-        count,
-        dispatch_job_count,
-        duplicate_count,
-    }))
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(BatchCreateResponse {
+            events: event_responses,
+            count,
+            dispatch_job_count,
+            duplicate_count,
+        }),
+    ))
 }
 
 /// Event summary for list endpoints (no payload data)

@@ -485,7 +485,7 @@ async fn hr_outbox_events_are_linked_to_their_client_by_code() {
         .await,
     )
     .await;
-    assert_eq!(status, 200, "{body}");
+    assert_eq!(status, 201, "{body}");
     let results = body["results"].as_array().unwrap();
     assert_eq!(results.len(), 3);
     assert!(results.iter().all(|r| r["status"] == "SUCCESS"), "{body}");
@@ -649,7 +649,7 @@ async fn replayed_events_are_stored_once_and_acknowledged() {
     ]});
     for attempt in 0..2 {
         let (status, body) = read_json(app.post("/api/events/batch", &token, &batch).await).await;
-        assert_eq!(status, 200, "attempt {attempt}: {body}");
+        assert_eq!(status, 201, "attempt {attempt}: {body}");
         let results = body["results"].as_array().unwrap();
         assert_eq!(results.len(), 3, "positional results: {body}");
         assert!(results.iter().all(|r| r["status"] == "SUCCESS"), "{body}");
@@ -670,7 +670,7 @@ async fn replayed_events_are_stored_once_and_acknowledged() {
             .await,
     )
     .await;
-    assert_eq!(status, 200);
+    assert_eq!(status, 201);
     let (dedup,): (Option<String>,) = sqlx::query_as(
         "SELECT deduplication_id FROM msg_events WHERE deduplication_id NOT LIKE '%-r_' AND type = 'hr:grading:grading-record:submitted'",
     )
