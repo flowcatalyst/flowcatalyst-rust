@@ -33,9 +33,28 @@ pub enum Mode {
 /// unknown keys and malformed entries, failing only when `runtime` or
 /// `entrypoint` is unreadable). A missing `manifest` reads as Jackson's
 /// missing node: not an object.
+///
+/// What the reader drops (or reads with a fallback) is logged at WARN,
+/// throttled to one line a minute (Java 892c711b): a live function must not
+/// lose a route or change its dispatch mode without a trace.
 fn read_manifest(node: Option<&Value>) -> Result<Manifest, String> {
+    static DROPPED_LOG: crate::log_throttle::LogThrottle =
+        crate::log_throttle::LogThrottle::new(std::time::Duration::from_secs(60));
     let root = node.map_or(JsonNode::Null, JsonNode::from);
-    Manifest::read_stored(&root).map_err(|e| e.to_string())
+    let (manifest, dropped) = Manifest::read_stored_reporting(&root).map_err(|e| e.to_string())?;
+    if !dropped.is_empty() {
+        if let Some(suppressed) = DROPPED_LOG.admit() {
+            for part in &dropped {
+                tracing::warn!(
+                    part = part.part,
+                    entry = %part.entry,
+                    suppressed_since_last = suppressed,
+                    "a stored function manifest part could not be read and was dropped"
+                );
+            }
+        }
+    }
+    Ok(manifest)
 }
 
 /// One readable entry of `functions`.

@@ -120,6 +120,8 @@ aws-sdk-secretsmanager = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 
 [dev-dependencies]
+# Log capture in unit tests.
+tracing-subscriber = { workspace = true }
 # The function host's webhook verifier: deliveries the platform signs must
 # pass it (tests/function_promote_golden_test.rs).
 fc-fnhost-core = { path = "../fc-fnhost-core" }
