@@ -174,7 +174,9 @@ async fn count(app: &TestApp, sql: &str) -> i64 {
 #[ignore = "requires Docker"]
 async fn ingest_routes_require_the_batch_write_permissions() {
     let app = TestApp::setup().await;
-    let none = token_for(&app, &anchor_user(), &[]);
+    // An unrelated permission, so the route's own check answers (a USER with
+    // none at all is refused earlier, NO_PLATFORM_ROLE).
+    let none = token_for(&app, &anchor_user(), &[permissions::admin::EVENT_READ]);
     let app_event_create = token_for(
         &app,
         &anchor_user(),
@@ -957,7 +959,11 @@ async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
 
     // A connection too: an anchor that is not the application may not put
     // the application's account on one.
-    let anchor = token_for(&app, &anchor_user(), &[]);
+    let anchor = token_for(
+        &app,
+        &anchor_user(),
+        &[permissions::admin::CONNECTION_CREATE],
+    );
     let (status, body) = post(
         &app,
         "/api/connections",

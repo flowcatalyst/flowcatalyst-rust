@@ -188,11 +188,16 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
     (router, auth_service)
 }
 
-/// Create an anchor-scoped principal and generate an access token for it.
+/// An anchor-scoped principal granted the client read permission (Go's
+/// `anchorWith(platform:admin:client:view)` on the client reads).
 fn generate_anchor_token(auth_service: &AuthService) -> String {
     let principal = Principal::new_user("admin@flowcatalyst.local", UserScope::Anchor);
     auth_service
-        .generate_access_token(&principal)
+        .generate_access_token_with_scope(
+            &principal,
+            &[fc_platform::permissions::admin::CLIENT_READ.to_string()],
+            None,
+        )
         .expect("Failed to generate access token")
 }
 

@@ -21,7 +21,8 @@ async fn harness_boots_and_serves_health() {
 #[ignore = "requires Docker"]
 async fn anchor_token_authorizes_list_clients() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    // Anchor reach and the client read permission (Go's anchorWith).
+    let token = app.anchor_admin_token().await;
     let resp = app.get("/api/clients", &token).await;
     // 200 OK with an empty list is fine; we just want to confirm auth
     // passes end-to-end.
