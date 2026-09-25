@@ -58,6 +58,8 @@ pub struct WebDeps {
     pub(crate) dispatch_pool_repo: Arc<fc_platform::DispatchPoolRepository>,
     pub(crate) oauth_client_repo: Arc<fc_platform::OAuthClientRepository>,
     pub(crate) application_client_config_repo: Arc<fc_platform::ApplicationClientConfigRepository>,
+    pub(crate) event_repo: Arc<fc_platform::EventRepository>,
+    pub(crate) dispatch_job_repo: Arc<fc_platform::DispatchJobRepository>,
 }
 
 impl WebDeps {
@@ -105,6 +107,8 @@ impl WebDeps {
             dispatch_pool_repo: repos.dispatch_pool_repo.clone(),
             oauth_client_repo: repos.oauth_client_repo.clone(),
             application_client_config_repo: repos.application_client_config_repo.clone(),
+            event_repo: repos.event_repo.clone(),
+            dispatch_job_repo: repos.dispatch_job_repo.clone(),
         }
     }
 }

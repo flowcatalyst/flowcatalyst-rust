@@ -1,7 +1,7 @@
 //! DispatchJob Repository — PostgreSQL via SQLx
 
 use crate::dispatch_job::entity::{
-    default_content_type, DispatchAttemptStatus, DispatchMetadata, ErrorType,
+    default_content_type, DispatchAttempt, DispatchAttemptStatus, DispatchMetadata, ErrorType,
 };
 use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::shared::enum_str::{corrupt_value, decode};
@@ -208,6 +208,54 @@ impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
 }
 
 // ─── Repository ──────────────────────────────────────────────────────────────
+
+/// A delivery attempt as read back from `msg_dispatch_job_attempts`.
+#[derive(Debug, Clone)]
+pub struct RecordedAttempt {
+    pub attempt: DispatchAttempt,
+    /// What was sent: Go's `RequestSummary` JSON (`signedBy`, `signature`,
+    /// `bearer`, `timestamp`, `headers`, `unsignedReason`, `target`).
+    pub request_info: Option<serde_json::Value>,
+}
+
+#[derive(sqlx::FromRow)]
+struct AttemptRow {
+    attempt_number: Option<i32>,
+    status: Option<String>,
+    response_code: Option<i32>,
+    response_body: Option<String>,
+    error_message: Option<String>,
+    error_type: Option<String>,
+    duration_millis: Option<i64>,
+    attempted_at: Option<DateTime<Utc>>,
+    completed_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    request_info: Option<serde_json::Value>,
+}
+
+impl From<AttemptRow> for RecordedAttempt {
+    fn from(r: AttemptRow) -> Self {
+        let success = r
+            .status
+            .as_deref()
+            .and_then(|s| s.parse::<DispatchAttemptStatus>().ok())
+            == Some(DispatchAttemptStatus::Success);
+        Self {
+            attempt: DispatchAttempt {
+                attempt_number: r.attempt_number.unwrap_or(0).max(0) as u32,
+                attempted_at: r.attempted_at.unwrap_or(r.created_at),
+                completed_at: r.completed_at,
+                duration_millis: r.duration_millis,
+                response_code: r.response_code.and_then(|c| u16::try_from(c).ok()),
+                response_body: r.response_body,
+                success,
+                error_message: r.error_message,
+                error_type: r.error_type.as_deref().and_then(|t| t.parse().ok()),
+            },
+            request_info: r.request_info,
+        }
+    }
+}
 
 /// One webhook delivery attempt, as recorded in `msg_dispatch_job_attempts`.
 #[derive(Debug, Clone, Copy)]
@@ -1172,6 +1220,22 @@ impl DispatchJobRepository {
     }
 
     // ── Attempt tracking ─────────────────────────────────────────────────
+
+    /// A job's recorded delivery attempts, oldest first, each with what was
+    /// sent (`request_info`, Go's `RequestSummary`). The job row itself
+    /// carries none: `find_by_id` leaves `DispatchJob::attempts` empty.
+    pub async fn find_attempts(&self, dispatch_job_id: &str) -> Result<Vec<RecordedAttempt>> {
+        let rows = sqlx::query_as::<_, AttemptRow>(
+            "SELECT attempt_number, status, response_code, response_body, error_message, \
+             error_type, duration_millis, attempted_at, completed_at, created_at, request_info \
+             FROM msg_dispatch_job_attempts WHERE dispatch_job_id = $1 \
+             ORDER BY created_at, attempt_number",
+        )
+        .bind(dispatch_job_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(RecordedAttempt::from).collect())
+    }
 
     /// Record one delivery attempt in `msg_dispatch_job_attempts` (Go
     /// `RecordAttempt`).

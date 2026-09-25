@@ -67,6 +67,46 @@ pub fn require_writable_client(
     }
 }
 
+/// The client filter of a read-model list (events, dispatch jobs), shared
+/// by the `/api` list handlers and the server-rendered `fc-web` UI:
+/// requested clients must each be reachable (else 403 `No access to
+/// client: …`); with none requested an anchor sees everything (an empty
+/// filter) and anyone else their explicit clients. `Ok(None)` means the
+/// caller reaches no client, so the list is empty.
+pub fn read_client_filter(
+    ctx: &AuthContext,
+    requested: Vec<String>,
+) -> Result<Option<Vec<String>>> {
+    if !requested.is_empty() {
+        for cid in &requested {
+            if !ctx.can_access_client(cid) {
+                return Err(PlatformError::forbidden(format!(
+                    "No access to client: {}",
+                    cid
+                )));
+            }
+        }
+        return Ok(Some(requested));
+    }
+    if ctx.is_anchor() {
+        return Ok(Some(requested));
+    }
+    let own = client_ids(ctx);
+    Ok((!own.is_empty()).then_some(own))
+}
+
+/// A single event or dispatch job is visible when it is platform-scoped or
+/// the caller can access its client; `what` names it in the refusal ("No
+/// access to this event").
+pub fn ensure_row_visible(ctx: &AuthContext, client_id: Option<&str>, what: &str) -> Result<()> {
+    match client_id {
+        Some(cid) if !ctx.can_access_client(cid) => Err(PlatformError::forbidden(format!(
+            "No access to this {what}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +122,30 @@ mod tests {
             Err(e) => e.to_string(),
             Ok(v) => panic!("expected a refusal, got {v:?}"),
         }
+    }
+
+    #[test]
+    fn read_lists_filter_by_the_callers_clients() {
+        let anchor = ctx(UserScope::Anchor, &["*"]);
+        assert_eq!(read_client_filter(&anchor, vec![]).unwrap(), Some(vec![]));
+        let c = ctx(UserScope::Client, &["clt_a"]);
+        assert_eq!(
+            read_client_filter(&c, vec![]).unwrap(),
+            Some(vec!["clt_a".to_string()])
+        );
+        assert_eq!(
+            read_client_filter(&c, vec!["clt_a".into()]).unwrap(),
+            Some(vec!["clt_a".to_string()])
+        );
+        assert!(read_client_filter(&c, vec!["clt_b".into()])
+            .unwrap_err()
+            .to_string()
+            .contains("No access to client: clt_b"));
+        let none = ctx(UserScope::Client, &[]);
+        assert_eq!(read_client_filter(&none, vec![]).unwrap(), None);
+        assert!(ensure_row_visible(&c, Some("clt_b"), "event").is_err());
+        assert!(ensure_row_visible(&c, Some("clt_a"), "event").is_ok());
+        assert!(ensure_row_visible(&c, None, "event").is_ok());
     }
 
     #[test]
