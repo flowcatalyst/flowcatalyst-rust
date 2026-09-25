@@ -13,32 +13,50 @@ class UpdateRoleRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Whether clients can manage this role
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var bool|null
      */
     protected $clientManaged;
     /**
-     * Description
-     *
      * @var string|null
      */
     protected $description;
     /**
-     * Display name
-     *
      * @var string|null
      */
     protected $displayName;
     /**
-     * Replace the role's permission set. Omit to leave permissions unchanged.
-     *
      * @var list<string>|null
      */
     protected $permissions;
     /**
-     * Whether clients can manage this role
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return bool|null
      */
     public function getClientManaged(): ?bool
@@ -46,8 +64,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this->clientManaged;
     }
     /**
-     * Whether clients can manage this role
-     *
      * @param bool|null $clientManaged
      *
      * @return self
@@ -59,8 +75,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Description
-     *
      * @return string|null
      */
     public function getDescription(): ?string
@@ -68,8 +82,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this->description;
     }
     /**
-     * Description
-     *
      * @param string|null $description
      *
      * @return self
@@ -81,8 +93,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Display name
-     *
      * @return string|null
      */
     public function getDisplayName(): ?string
@@ -90,8 +100,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this->displayName;
     }
     /**
-     * Display name
-     *
      * @param string|null $displayName
      *
      * @return self
@@ -103,8 +111,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Replace the role's permission set. Omit to leave permissions unchanged.
-     *
      * @return list<string>|null
      */
     public function getPermissions(): ?array
@@ -112,8 +118,6 @@ class UpdateRoleRequest extends \ArrayObject
         return $this->permissions;
     }
     /**
-     * Replace the role's permission set. Omit to leave permissions unchanged.
-     *
      * @param list<string>|null $permissions
      *
      * @return self

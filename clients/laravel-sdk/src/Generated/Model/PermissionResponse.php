@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class PermissionResponse extends \ArrayObject
+class PermissionResponse
 {
     /**
      * @var array
@@ -13,21 +13,15 @@ class PermissionResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
      * @var string|null
      */
-    protected $action;
+    protected $dollarSchema;
     /**
      * @var string|null
      */
-    protected $aggregate;
-    /**
-     * @var string|null
-     */
-    protected $application;
-    /**
-     * @var string|null
-     */
-    protected $context;
+    protected $category;
     /**
      * @var string|null
      */
@@ -35,77 +29,49 @@ class PermissionResponse extends \ArrayObject
     /**
      * @var string|null
      */
+    protected $name;
+    /**
+     * @var string|null
+     */
     protected $permission;
     /**
+     * A URL to the JSON Schema for this object.
+     *
      * @return string|null
      */
-    public function getAction(): ?string
+    public function getDollarSchema(): ?string
     {
-        return $this->action;
+        return $this->dollarSchema;
     }
     /**
-     * @param string|null $action
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
      *
      * @return self
      */
-    public function setAction(?string $action): self
+    public function setDollarSchema(?string $dollarSchema): self
     {
-        $this->initialized['action'] = true;
-        $this->action = $action;
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
         return $this;
     }
     /**
      * @return string|null
      */
-    public function getAggregate(): ?string
+    public function getCategory(): ?string
     {
-        return $this->aggregate;
+        return $this->category;
     }
     /**
-     * @param string|null $aggregate
+     * @param string|null $category
      *
      * @return self
      */
-    public function setAggregate(?string $aggregate): self
+    public function setCategory(?string $category): self
     {
-        $this->initialized['aggregate'] = true;
-        $this->aggregate = $aggregate;
-        return $this;
-    }
-    /**
-     * @return string|null
-     */
-    public function getApplication(): ?string
-    {
-        return $this->application;
-    }
-    /**
-     * @param string|null $application
-     *
-     * @return self
-     */
-    public function setApplication(?string $application): self
-    {
-        $this->initialized['application'] = true;
-        $this->application = $application;
-        return $this;
-    }
-    /**
-     * @return string|null
-     */
-    public function getContext(): ?string
-    {
-        return $this->context;
-    }
-    /**
-     * @param string|null $context
-     *
-     * @return self
-     */
-    public function setContext(?string $context): self
-    {
-        $this->initialized['context'] = true;
-        $this->context = $context;
+        $this->initialized['category'] = true;
+        $this->category = $category;
         return $this;
     }
     /**
@@ -124,6 +90,24 @@ class PermissionResponse extends \ArrayObject
     {
         $this->initialized['description'] = true;
         $this->description = $description;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getName(): ?string
+    {
+        return $this->name;
+    }
+    /**
+     * @param string|null $name
+     *
+     * @return self
+     */
+    public function setName(?string $name): self
+    {
+        $this->initialized['name'] = true;
+        $this->name = $name;
         return $this;
     }
     /**

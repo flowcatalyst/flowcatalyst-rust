@@ -49,6 +49,16 @@ class DefinitionRepository
     }
 
     /**
+     * Get all standalone permission definitions.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function permissions(): array
+    {
+        return $this->all()->permissions;
+    }
+
+    /**
      * Get all event type definitions.
      *
      * @return array<array<string, mixed>>
@@ -66,6 +76,16 @@ class DefinitionRepository
     public function subscriptions(): array
     {
         return $this->all()->subscriptions;
+    }
+
+    /**
+     * Get all connection definitions.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function connections(): array
+    {
+        return $this->all()->connections;
     }
 
     /**

@@ -11,10 +11,14 @@
  *     dispatcher's `http_timeout` (default 10s) — your handler should run
  *     async, not block the HTTP response.
  *
- * The runner enforces concurrency via an injected `LockProvider`. For
- * `concurrent: false` jobs (the platform doesn't enforce this — see
- * CLAUDE.md), the lock-key defaults to `scheduled-job:{jobCode}`; concurrent
- * fires return immediately without invoking the handler.
+ * The runner enforces concurrency via an injected `LockProvider`. The
+ * platform echoes each job definition's `concurrent` attribute in the
+ * envelope, and by default the runner locks exactly when the definition asks
+ * for it (`concurrent: false`, the definition default); the lock-key defaults
+ * to `scheduled-job:{jobCode}`, and contended fires return immediately
+ * without invoking the handler. The default `NoOpLockProvider` cannot
+ * actually block overlapping fires — wire a Redis/Postgres provider (a
+ * one-time warning is logged when a non-concurrent fire runs without one).
  */
 
 import type { ScheduledJobsResource } from "../resources/scheduled-jobs.js";
@@ -32,6 +36,11 @@ export interface ScheduledJobEnvelope {
 	payload?: unknown;
 	tracksCompletion: boolean;
 	timeoutSeconds?: number;
+	/**
+	 * Echo of the job definition's `concurrent` attribute. Absent on older
+	 * platforms — treated as `false` (lock), the safe direction.
+	 */
+	concurrent?: boolean;
 }
 
 /** Context passed to user handlers. */
@@ -48,7 +57,11 @@ export interface HandlerContext {
 export type Handler = (ctx: HandlerContext) => Promise<unknown>;
 
 export interface RunnerOptions {
-	/** Lock provider for `concurrent: false` jobs. Default `NoOpLockProvider`. */
+	/**
+	 * Lock provider for `concurrent: false` jobs. Default `NoOpLockProvider`,
+	 * which never blocks — wire `RedisLockProvider`/`PgLockProvider` for real
+	 * overlap protection across replicas.
+	 */
 	lockProvider?: LockProvider;
 	/**
 	 * Lock key derivation. Default: `scheduled-job:{jobCode}`. Override if you
@@ -56,10 +69,9 @@ export interface RunnerOptions {
 	 */
 	lockKey?: (envelope: ScheduledJobEnvelope) => string;
 	/**
-	 * Whether to enforce locking. Default: always lock. The platform doesn't
-	 * tell the SDK whether the job is `concurrent: false` (the envelope is
-	 * the same), so we treat ALL fires as needing a lock; consumers who don't
-	 * care can use `NoOpLockProvider`.
+	 * Whether to enforce locking. Default: follow the envelope's `concurrent`
+	 * attribute (lock unless the job definition allows overlap). An explicit
+	 * true/false overrides the attribute in both directions.
 	 */
 	enforceLock?: boolean;
 	/** Lock TTL in ms. Default 10 minutes. */
@@ -77,9 +89,10 @@ export class ScheduledJobRunner {
 	private readonly resource: ScheduledJobsResource;
 	private readonly lockProvider: LockProvider;
 	private readonly lockKey: (e: ScheduledJobEnvelope) => string;
-	private readonly enforceLock: boolean;
+	private readonly enforceLock: boolean | undefined;
 	private readonly lockTtlMs: number;
 	private readonly onError?: (err: unknown, e: ScheduledJobEnvelope) => void;
+	private warnedNoOpLock = false;
 
 	constructor(
 		_client: unknown,
@@ -90,7 +103,7 @@ export class ScheduledJobRunner {
 		this.lockProvider = options.lockProvider ?? new NoOpLockProvider();
 		this.lockKey =
 			options.lockKey ?? ((e) => `scheduled-job:${e.jobCode}`);
-		this.enforceLock = options.enforceLock ?? true;
+		this.enforceLock = options.enforceLock;
 		this.lockTtlMs = options.lockTtlMs ?? 10 * 60 * 1000;
 		this.onError = options.onError;
 	}
@@ -139,9 +152,19 @@ export class ScheduledJobRunner {
 		envelope: ScheduledJobEnvelope,
 		handler: Handler,
 	): Promise<void> {
+		const wantLock = this.enforceLock ?? !(envelope.concurrent ?? false);
 		let lock: { release: () => Promise<void> } | null = null;
 		try {
-			if (this.enforceLock) {
+			if (wantLock) {
+				if (
+					this.lockProvider instanceof NoOpLockProvider &&
+					!this.warnedNoOpLock
+				) {
+					this.warnedNoOpLock = true;
+					console.warn(
+						`[flowcatalyst] scheduled job '${envelope.jobCode}' wants overlap protection (concurrent: false) but the runner has no real LockProvider — overlapping fires will NOT be blocked. Pass a RedisLockProvider/PgLockProvider in RunnerOptions.lockProvider.`,
+					);
+				}
 				lock = await this.lockProvider.acquire(
 					this.lockKey(envelope),
 					this.lockTtlMs,
@@ -261,6 +284,8 @@ function validateEnvelope(
 			tracksCompletion: o["tracksCompletion"] as boolean,
 			timeoutSeconds:
 				typeof o["timeoutSeconds"] === "number" ? (o["timeoutSeconds"] as number) : undefined,
+			concurrent:
+				typeof o["concurrent"] === "boolean" ? (o["concurrent"] as boolean) : undefined,
 		},
 	};
 }

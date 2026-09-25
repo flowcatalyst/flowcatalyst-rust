@@ -1,9 +1,9 @@
 /**
  * Live example: a Fastify app authenticated by FlowCatalyst.
  *
- * Run against a local fc-dev:
+ * Run against a local fcdev:
  *
- *   1. Start fc-dev (e.g. `cargo run -p fc-dev` from the workspace root).
+ *   1. Start fcdev (e.g. `cargo run -p fcdev` from the workspace root).
  *   2. Register a confidential web client at FlowCatalyst with redirect URI
  *      `http://localhost:4000/auth/callback`. Copy the client id + secret.
  *   3. Generate a session secret:

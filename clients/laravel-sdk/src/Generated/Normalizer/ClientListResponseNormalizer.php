@@ -37,28 +37,27 @@ class ClientListResponseNormalizer implements DenormalizerInterface, NormalizerI
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clients', $data) && $data['clients'] !== null) {
             $values = [];
             foreach ($data['clients'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ClientResponse::class, 'json', $context);
             }
             $object->setClients($values);
-            unset($data['clients']);
         }
         elseif (\array_key_exists('clients', $data) && $data['clients'] === null) {
             $object->setClients(null);
         }
         if (\array_key_exists('total', $data) && $data['total'] !== null) {
             $object->setTotal($data['total']);
-            unset($data['total']);
         }
         elseif (\array_key_exists('total', $data) && $data['total'] === null) {
             $object->setTotal(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -71,11 +70,6 @@ class ClientListResponseNormalizer implements DenormalizerInterface, NormalizerI
         }
         $dataArray['clients'] = $values;
         $dataArray['total'] = $data->getTotal();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

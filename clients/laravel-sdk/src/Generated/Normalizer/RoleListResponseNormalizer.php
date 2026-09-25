@@ -37,28 +37,27 @@ class RoleListResponseNormalizer implements DenormalizerInterface, NormalizerInt
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('roles', $data) && $data['roles'] !== null) {
             $values = [];
             foreach ($data['roles'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\RoleResponse::class, 'json', $context);
             }
             $object->setRoles($values);
-            unset($data['roles']);
         }
         elseif (\array_key_exists('roles', $data) && $data['roles'] === null) {
             $object->setRoles(null);
         }
         if (\array_key_exists('total', $data) && $data['total'] !== null) {
             $object->setTotal($data['total']);
-            unset($data['total']);
         }
         elseif (\array_key_exists('total', $data) && $data['total'] === null) {
             $object->setTotal(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -71,11 +70,6 @@ class RoleListResponseNormalizer implements DenormalizerInterface, NormalizerInt
         }
         $dataArray['roles'] = $values;
         $dataArray['total'] = $data->getTotal();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

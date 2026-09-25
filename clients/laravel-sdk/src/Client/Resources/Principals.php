@@ -89,9 +89,20 @@ class Principals
     /**
      * Create a new user principal.
      *
-     * Pass `enforcePasswordComplexity: false` when your app enforces its
-     * own password policy and only the platform's 2-character minimum
-     * should apply.
+     * `enforcePasswordComplexity` is accepted but not currently enforced
+     * by the platform on this endpoint — a supplied password always runs
+     * the full complexity policy.
+     *
+     * Set `sendInvitation: false` on `$request` when your application is
+     * taking over the invitation email itself (suppresses both the
+     * "set your password" invite and the "account created" welcome). Set
+     * `returnInviteLink: true` to have the platform mint the 72-hour
+     * set-password link and return it as `$principal->inviteLink` instead
+     * of emailing it (passwordless INTERNAL users only; always suppresses
+     * the platform's own invite email). The returned link is a live
+     * bearer credential — never log it. Set `inviteRedirectUri` to send the
+     * invitee to your application (any absolute http(s) URL) after they
+     * set their password.
      */
     public function createUser(CreateUserRequest $request): Principal
     {
@@ -277,6 +288,34 @@ class Principals
                 ],
             ],
         );
+
+        return SyncResult::fromArray($response);
+    }
+
+    /**
+     * Sync users platform-wide — declarative upsert keyed on email, with NO
+     * application scope (`POST /api/principals/sync`).
+     *
+     * This is the application-less twin of {@see sync()}: use it when you are
+     * "just syncing users" — migrating accounts and (via
+     * {@see SyncPrincipalEntry::$passwordHash}) their existing password hashes —
+     * without nesting the call under an application. Users are global (matched
+     * by email), so an application code adds nothing here.
+     *
+     * Pure upsert: it never strips roles from unlisted users.
+     *
+     * @param SyncPrincipalEntry[] $users
+     */
+    public function syncUsers(array $users): SyncResult
+    {
+        $response = $this->client->request('POST', '/api/principals/sync', [
+            'json' => [
+                'principals' => array_map(
+                    fn(SyncPrincipalEntry $entry) => $entry->toArray(),
+                    $users,
+                ),
+            ],
+        ]);
 
         return SyncResult::fromArray($response);
     }

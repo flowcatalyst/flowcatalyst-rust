@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class OAuthClientResponse extends \ArrayObject
+class OAuthClientResponse
 {
     /**
      * @var array
@@ -13,6 +13,12 @@ class OAuthClientResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var bool|null
      */
     protected $active;
@@ -21,9 +27,17 @@ class OAuthClientResponse extends \ArrayObject
      */
     protected $allowedOrigins;
     /**
+     * @var bool|null
+     */
+    protected $apiAccess;
+    /**
      * @var list<string>|null
      */
     protected $applicationIds;
+    /**
+     * @var list<OAuthClientApplicationRef>|null
+     */
+    protected $applications;
     /**
      * @var string|null
      */
@@ -37,13 +51,9 @@ class OAuthClientResponse extends \ArrayObject
      */
     protected $clientType;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
-    /**
-     * @var string|null
-     */
-    protected $createdBy;
     /**
      * @var list<string>|null
      */
@@ -61,9 +71,25 @@ class OAuthClientResponse extends \ArrayObject
      */
     protected $pkceRequired;
     /**
+     * @var string|null
+     */
+    protected $portalAppId;
+    /**
+     * @var string|null
+     */
+    protected $portalClientId;
+    /**
      * @var list<string>|null
      */
     protected $postLogoutRedirectUris;
+    /**
+     * @var \DateTime|null
+     */
+    protected $previousSecretExpiresAt;
+    /**
+     * @var \DateTime|null
+     */
+    protected $previousSecretLastUsedAt;
     /**
      * @var list<string>|null
      */
@@ -73,9 +99,31 @@ class OAuthClientResponse extends \ArrayObject
      */
     protected $serviceAccountPrincipalId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return bool|null
      */
@@ -113,6 +161,24 @@ class OAuthClientResponse extends \ArrayObject
         return $this;
     }
     /**
+     * @return bool|null
+     */
+    public function getApiAccess(): ?bool
+    {
+        return $this->apiAccess;
+    }
+    /**
+     * @param bool|null $apiAccess
+     *
+     * @return self
+     */
+    public function setApiAccess(?bool $apiAccess): self
+    {
+        $this->initialized['apiAccess'] = true;
+        $this->apiAccess = $apiAccess;
+        return $this;
+    }
+    /**
      * @return list<string>|null
      */
     public function getApplicationIds(): ?array
@@ -128,6 +194,24 @@ class OAuthClientResponse extends \ArrayObject
     {
         $this->initialized['applicationIds'] = true;
         $this->applicationIds = $applicationIds;
+        return $this;
+    }
+    /**
+     * @return list<OAuthClientApplicationRef>|null
+     */
+    public function getApplications(): ?array
+    {
+        return $this->applications;
+    }
+    /**
+     * @param list<OAuthClientApplicationRef>|null $applications
+     *
+     * @return self
+     */
+    public function setApplications(?array $applications): self
+    {
+        $this->initialized['applications'] = true;
+        $this->applications = $applications;
         return $this;
     }
     /**
@@ -185,39 +269,21 @@ class OAuthClientResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
-        return $this;
-    }
-    /**
-     * @return string|null
-     */
-    public function getCreatedBy(): ?string
-    {
-        return $this->createdBy;
-    }
-    /**
-     * @param string|null $createdBy
-     *
-     * @return self
-     */
-    public function setCreatedBy(?string $createdBy): self
-    {
-        $this->initialized['createdBy'] = true;
-        $this->createdBy = $createdBy;
         return $this;
     }
     /**
@@ -293,6 +359,42 @@ class OAuthClientResponse extends \ArrayObject
         return $this;
     }
     /**
+     * @return string|null
+     */
+    public function getPortalAppId(): ?string
+    {
+        return $this->portalAppId;
+    }
+    /**
+     * @param string|null $portalAppId
+     *
+     * @return self
+     */
+    public function setPortalAppId(?string $portalAppId): self
+    {
+        $this->initialized['portalAppId'] = true;
+        $this->portalAppId = $portalAppId;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getPortalClientId(): ?string
+    {
+        return $this->portalClientId;
+    }
+    /**
+     * @param string|null $portalClientId
+     *
+     * @return self
+     */
+    public function setPortalClientId(?string $portalClientId): self
+    {
+        $this->initialized['portalClientId'] = true;
+        $this->portalClientId = $portalClientId;
+        return $this;
+    }
+    /**
      * @return list<string>|null
      */
     public function getPostLogoutRedirectUris(): ?array
@@ -308,6 +410,42 @@ class OAuthClientResponse extends \ArrayObject
     {
         $this->initialized['postLogoutRedirectUris'] = true;
         $this->postLogoutRedirectUris = $postLogoutRedirectUris;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getPreviousSecretExpiresAt(): ?\DateTime
+    {
+        return $this->previousSecretExpiresAt;
+    }
+    /**
+     * @param \DateTime|null $previousSecretExpiresAt
+     *
+     * @return self
+     */
+    public function setPreviousSecretExpiresAt(?\DateTime $previousSecretExpiresAt): self
+    {
+        $this->initialized['previousSecretExpiresAt'] = true;
+        $this->previousSecretExpiresAt = $previousSecretExpiresAt;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getPreviousSecretLastUsedAt(): ?\DateTime
+    {
+        return $this->previousSecretLastUsedAt;
+    }
+    /**
+     * @param \DateTime|null $previousSecretLastUsedAt
+     *
+     * @return self
+     */
+    public function setPreviousSecretLastUsedAt(?\DateTime $previousSecretLastUsedAt): self
+    {
+        $this->initialized['previousSecretLastUsedAt'] = true;
+        $this->previousSecretLastUsedAt = $previousSecretLastUsedAt;
         return $this;
     }
     /**
@@ -347,18 +485,18 @@ class OAuthClientResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

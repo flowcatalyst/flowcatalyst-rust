@@ -6,7 +6,7 @@ class DeleteWebauthnCredential extends \FlowCatalyst\Generated\Runtime\Client\Ba
 {
     protected $id;
     /**
-     * @param string $id Credential id (pkc_…)
+     * @param string $id
      */
     public function __construct(string $id)
     {
@@ -25,13 +25,15 @@ class DeleteWebauthnCredential extends \FlowCatalyst\Generated\Runtime\Client\Ba
     {
         return [[], null];
     }
+    public function getExtraHeaders(): array
+    {
+        return ['Accept' => ['application/json']];
+    }
     /**
      * {@inheritdoc}
      *
-     * @throws \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialUnauthorizedException
-     * @throws \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialNotFoundException
      *
-     * @return null
+     * @return null|\FlowCatalyst\Generated\Model\ErrorModel
      */
     protected function transformResponseBody(\Psr\Http\Message\ResponseInterface $response, \Symfony\Component\Serializer\SerializerInterface $serializer, ?string $contentType = null)
     {
@@ -40,11 +42,8 @@ class DeleteWebauthnCredential extends \FlowCatalyst\Generated\Runtime\Client\Ba
         if (204 === $status) {
             return null;
         }
-        if (401 === $status) {
-            throw new \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialUnauthorizedException($response);
-        }
-        if (404 === $status) {
-            throw new \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialNotFoundException($response);
+        if (mb_strpos(strtolower($contentType), 'application/json') !== false) {
+            return $serializer->deserialize($body, 'FlowCatalyst\Generated\Model\ErrorModel', 'json');
         }
     }
     public function getAuthenticationScopes(): array

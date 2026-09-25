@@ -110,23 +110,33 @@ run:
 
 # ─── SDKs ─────────────────────────────────────────────────────────────────
 
-# Regenerate every SDK from the live platform's OpenAPI spec.
 # Requires fc-dev (or fc-platform-server) to be serving on FC_API_PORT.
+#
+# The SDKs' generated clients (and their vendored openapi.json) are the
+# published ones, generated from the Go platform's spec. This platform's
+# spec still uses path-derived operationIds, so regenerating from it would
+# rename every generated class and break the published SDK API. Until its
+# operationIds match Go's (see docs/sdks.md), the SDK steps refuse to run
+# unless FC_SDK_REGEN_FROM_RUST_SPEC=1 (the frontend client is always
+# regenerated).
+# Regenerate every SDK from the live platform's OpenAPI spec
 regen-sdks:
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi >/dev/null \
         || (echo "✗ Platform not reachable at http://localhost:{{ FC_API_PORT }}/q/openapi — run 'just run' (or 'just dev') first."; exit 1)
-    @echo "▸ Refreshing OpenAPI snapshots from /q/openapi"
+    @echo "▸ Frontend generated client"
+    @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o frontend/openapi/openapi.json
+    cd frontend && pnpm api:generate
+    @[ "${FC_SDK_REGEN_FROM_RUST_SPEC:-}" = "1" ] \
+        || (echo "✗ Not regenerating the SDKs from this platform's spec: its operationIds differ from the published SDKs' (docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
+    @echo "▸ Refreshing SDK OpenAPI snapshots from /q/openapi"
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/typescript-sdk/openapi/openapi.json
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/laravel-sdk/openapi/openapi.json
-    @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o frontend/openapi/openapi.json
     @echo "▸ TypeScript SDK"
     cd clients/typescript-sdk && pnpm build
     @echo "▸ Laravel SDK"
     # XDEBUG_MODE=off — Homebrew's Xdebug defaults to step-debug mode and
     # silently blocks every CLI invocation waiting for a debugger on :9003.
     cd clients/laravel-sdk && XDEBUG_MODE=off php scripts/prepare-openapi.php && XDEBUG_MODE=off vendor/bin/jane-openapi generate --config-file=jane-openapi.php
-    @echo "▸ Frontend generated client"
-    cd frontend && pnpm api:generate
     @echo "✓ SDKs regenerated"
 
 # ─── Frontend ─────────────────────────────────────────────────────────────
@@ -383,59 +393,86 @@ release bump:
     echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst/actions/workflows/release-fc-dev.yml"
     echo "  Release:   https://github.com/flowcatalyst/flowcatalyst/releases/tag/fc-dev/v$new"
 
-# Cut a TypeScript SDK release. Bumps package.json, commits, tags
-# `typescript-sdk/vX.Y.Z`, and pushes. The split-typescript-sdk workflow
-# picks up the tag, mirrors clients/typescript-sdk/ to the standalone
-# repo, builds dist/, and re-tags as plain vX.Y.Z there.
+# ─── SDK releases ──────────────────────────────────────────────────────────
+#
+# The SDKs are released from this repo (see docs/sdks.md). Each SDK has a
+# VERSION file (the last released version) that continues the numbering of
+# the releases cut from flowcatalyst-go. A release bumps it, commits,
+# tags `<sdk>/vX.Y.Z`, and pushes; the split-*-sdk workflow picks the tag
+# up and mirrors the SDK to its standalone repo as plain `vX.Y.Z`.
+
+# Bumps VERSION + package.json, tags `typescript-sdk/vX.Y.Z`, pushes.
+# Cut a TypeScript SDK release (`patch`, `minor`, `major`, or `X.Y.Z`)
 release-ts-sdk bump:
     #!/usr/bin/env bash
     set -euo pipefail
     just _release-sdk ts "{{ bump }}"
 
-# Cut a Laravel SDK release. composer.json has no version field
-# (Packagist reads tags), so this only tags HEAD as
-# `laravel-sdk/vX.Y.Z` and pushes. The split-laravel-sdk workflow
-# mirrors clients/laravel-sdk/ to the standalone repo.
+# composer.json has no version field (Composer reads the tag), so this
+# bumps VERSION, tags `laravel-sdk/vX.Y.Z`, and pushes.
+# Cut a Laravel SDK release (`patch`, `minor`, `major`, or `X.Y.Z`)
 release-laravel-sdk bump:
     #!/usr/bin/env bash
     set -euo pipefail
     just _release-sdk laravel "{{ bump }}"
 
-# Shared SDK-release driver. `kind` is `ts` or `laravel`.
+# Bumps VERSION + pom.xml, tags `java-sdk/vX.Y.Z`, pushes. No workflow
+# publishes it yet (see docs/sdks.md).
+# Cut a Java SDK release (`patch`, `minor`, `major`, or `X.Y.Z`)
+release-java-sdk bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just _release-sdk java "{{ bump }}"
+
+# Shared SDK-release driver. `kind` is `ts`, `laravel` or `java`.
 [private]
 _release-sdk kind bump:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    manifest=""
+    manifest_pom=""
     case "{{ kind }}" in
         ts)      prefix="typescript-sdk"; manifest="clients/typescript-sdk/package.json" ;;
-        laravel) prefix="laravel-sdk";    manifest="" ;;
+        laravel) prefix="laravel-sdk" ;;
+        java)    prefix="java-sdk";       manifest_pom="clients/java-sdk/pom.xml" ;;
         *) echo "✗ unknown SDK kind: {{ kind }}" >&2; exit 1 ;;
     esac
+    version_file="clients/$prefix/VERSION"
 
     if [ -n "$(git status --porcelain)" ]; then
         echo "✗ Working tree is dirty. Commit or stash first." >&2
         git status --short
         exit 1
     fi
+    [ -f "$version_file" ] || { echo "✗ missing $version_file" >&2; exit 1; }
 
     clean_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+    file_version="$(tr -d '[:space:]' < "$version_file")"
 
-    # Source of truth: the highest existing $prefix/vX.Y.Z tag in this
-    # repo. The split workflows push these tags to the standalone repos
-    # as plain vX.Y.Z, so the monorepo tag is the canonical bump base.
-    current=$(git tag --list "$prefix/v*" \
+    # Highest existing $prefix/vX.Y.Z tag (plain semver only).
+    tag_version="$(git tag --list "$prefix/v*" \
         | sed "s|^$prefix/v||" \
         | awk -F. '/^[0-9]+\.[0-9]+\.[0-9]+$/ { printf "%010d%010d%010d %s\n", $1, $2, $3, $0 }' \
-        | sort -r \
-        | awk 'NR==1 {print $2}')
+        | sort -r | awk 'NR==1 {print $2}')"
 
-    if [ -z "$current" ]; then
-        # No prior release. Start from 0.0.0 so `patch` lands on 0.0.1.
-        current="0.0.0"
-        echo "  (no prior $prefix/v* tag found — bumping from 0.0.0)"
+    # Bump base = max(VERSION file, highest tag), so a hand-cut tag can never
+    # collide with the next computed bump.
+    current="$file_version"
+    if [ -n "$tag_version" ] && [[ "$file_version" =~ $clean_re ]] && [[ "$tag_version" =~ $clean_re ]]; then
+        current="$(printf '%s\n%s\n' "$file_version" "$tag_version" \
+            | awk -F. '{ printf "%010d%010d%010d %s\n", $1, $2, $3, $0 }' \
+            | sort -r | awk 'NR==1 {print $2}')"
     fi
 
+    case "{{ bump }}" in
+        patch|minor|major)
+            if [[ ! "$current" =~ $clean_re ]]; then
+                echo "✗ Cannot auto-bump '$current' (has a prerelease suffix). Pass an explicit X.Y.Z." >&2
+                exit 1
+            fi
+            ;;
+    esac
     case "{{ bump }}" in
         patch) new=$(echo "$current" | awk -F. -v OFS=. '{$3++; print}') ;;
         minor) new=$(echo "$current" | awk -F. -v OFS=. '{$2++; $3=0; print}') ;;
@@ -450,6 +487,10 @@ _release-sdk kind bump:
             ;;
     esac
 
+    if [ "$new" = "$current" ]; then
+        echo "✗ Computed version $new equals current. Nothing to bump." >&2
+        exit 1
+    fi
     if git rev-parse -q --verify "refs/tags/$prefix/v$new" >/dev/null; then
         echo "✗ Tag $prefix/v$new already exists." >&2
         exit 1
@@ -459,53 +500,63 @@ _release-sdk kind bump:
     echo "  $prefix: $current → $new"
     echo ""
 
-    # Update the manifest (TS only — Laravel composer.json has no version field).
+    printf '%s\n' "$new" > "$version_file"
+
+    # Keep package.json's version in lockstep (TS). POSIX [[:space:]] so this
+    # works on macOS BSD awk as well as gawk.
     if [ -n "$manifest" ]; then
-        # Replace the first top-level "version": "..." line. The TS
-        # package.json sorts version near the top; this is unique enough
-        # that a constrained pattern is safe. POSIX [[:space:]] (not \s)
-        # so this works on macOS BSD awk as well as gawk.
         awk -v new="$new" '
             /^[[:space:]]*"version":[[:space:]]*"[^"]+",?[[:space:]]*$/ && !done {
                 sub(/"version":[[:space:]]*"[^"]+"/, "\"version\": \"" new "\"")
                 done=1
             }
             {print}
-        ' "$manifest" > "$manifest.tmp"
-        mv "$manifest.tmp" "$manifest"
-
+        ' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
         if ! grep -q "\"version\": \"$new\"" "$manifest"; then
             echo "✗ Failed to update version in $manifest. Reverting." >&2
-            git checkout -- "$manifest"
+            git checkout -- "$version_file" "$manifest"
             exit 1
         fi
-
-        echo "Changes:"
-        git --no-pager diff --stat "$manifest"
-        echo ""
     fi
 
-    read -r -p "Commit, tag $prefix/v$new, and push? [y/N] " confirm || confirm="n"
+    # Keep the pom's own <version> (the first one) in lockstep (Java).
+    if [ -n "$manifest_pom" ]; then
+        awk -v new="$new" '
+            /<version>[^<]+<\/version>/ && !done {
+                sub(/<version>[^<]+<\/version>/, "<version>" new "</version>")
+                done=1
+            }
+            {print}
+        ' "$manifest_pom" > "$manifest_pom.tmp" && mv "$manifest_pom.tmp" "$manifest_pom"
+        if ! grep -q "<version>$new</version>" "$manifest_pom"; then
+            echo "✗ Failed to update version in $manifest_pom. Reverting." >&2
+            git checkout -- "$version_file" "$manifest_pom"
+            exit 1
+        fi
+    fi
+
+    git --no-pager diff --stat -- "$version_file" $manifest $manifest_pom
+    echo ""
+    echo "  Did you move the CHANGELOG's 'Unreleased' section under v$new?"
+    read -r -p "Commit '$prefix v$new', tag $prefix/v$new, and push? [y/N] " confirm || confirm="n"
     case "$confirm" in
         y|Y|yes|YES) ;;
         *)
             echo "Aborted. Reverting."
-            [ -n "$manifest" ] && git checkout -- "$manifest"
+            git checkout -- "$version_file" $manifest $manifest_pom
             exit 1
             ;;
     esac
 
-    if [ -n "$manifest" ]; then
-        git add "$manifest"
-        git commit -m "$prefix v$new"
-    fi
+    git add -- "$version_file" $manifest $manifest_pom
+    git commit -m "$prefix v$new"
     git tag "$prefix/v$new"
     git push origin HEAD "$prefix/v$new"
 
     echo ""
     echo "✓ Released $prefix v$new"
     echo ""
-    echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst/actions/workflows/split-$prefix.yml"
+    echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst-rust/actions/workflows/split-$prefix.yml"
 
 # ─── Tools ─────────────────────────────────────────────────────────────────
 

@@ -173,8 +173,11 @@ final class RoleDefinition
         }
 
         if (!empty($this->permissions)) {
+            // The roles-sync API expects a flat list of
+            // "app:context:aggregate:action" strings (not objects).
+            // toPermissionString() produces exactly that shape.
             $data['permissions'] = array_map(
-                fn(PermissionInput $p) => $p->toArray(),
+                fn(PermissionInput $p) => $p->toPermissionString(),
                 $this->permissions
             );
         }
@@ -195,8 +198,13 @@ final class RoleDefinition
     {
         $permissions = [];
         if (!empty($data['permissions'])) {
+            // Accept both the wire shape (string "app:context:aggregate:action",
+            // as emitted by toArray()) and the legacy object shape, so cached
+            // definitions round-trip regardless of which SDK version wrote them.
             $permissions = array_map(
-                fn(array $p) => PermissionInput::fromArray($p),
+                fn($p) => is_array($p)
+                    ? PermissionInput::fromArray($p)
+                    : PermissionInput::fromString((string) $p),
                 $data['permissions']
             );
         }

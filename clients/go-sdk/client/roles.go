@@ -7,14 +7,15 @@ import (
 
 // ─── Request DTOs ────────────────────────────────────────────────────
 
-// CreateRoleRequest — POST /api/roles.
+// CreateRoleRequest — POST /api/roles. ClientManaged is required by the
+// platform, so it is always sent (false included).
 type CreateRoleRequest struct {
 	ApplicationCode string   `json:"applicationCode"`
 	RoleName        string   `json:"roleName"`
 	DisplayName     string   `json:"displayName"`
 	Description     string   `json:"description,omitempty"`
 	Permissions     []string `json:"permissions,omitempty"`
-	ClientManaged   bool     `json:"clientManaged,omitempty"`
+	ClientManaged   bool     `json:"clientManaged"`
 }
 
 // UpdateRoleRequest — PUT /api/roles/{name}.
@@ -123,12 +124,14 @@ func (r *RolesResource) Delete(ctx context.Context, name string) error {
 }
 
 // ListForApplication — GET /api/roles/by-application/{applicationId}.
+// The platform answers a bare array of roles; it is returned wrapped in a
+// RoleListResponse (Total = number of roles).
 func (r *RolesResource) ListForApplication(ctx context.Context, applicationID string) (*RoleListResponse, error) {
-	var out RoleListResponse
-	if err := r.c.Get(ctx, "/api/roles/by-application/"+applicationID, &out); err != nil {
+	var roles []RoleResponse
+	if err := r.c.Get(ctx, "/api/roles/by-application/"+applicationID, &roles); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &RoleListResponse{Roles: roles, Total: uint64(len(roles))}, nil
 }
 
 // GrantPermission — POST /api/roles/{name}/permissions. Returns the updated role.

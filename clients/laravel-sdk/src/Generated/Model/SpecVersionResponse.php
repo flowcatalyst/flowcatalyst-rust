@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SpecVersionResponse extends \ArrayObject
+class SpecVersionResponse
 {
     /**
      * @var array
@@ -13,8 +13,10 @@ class SpecVersionResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Schema content (included for detail views)
-     *
+     * @var \DateTime|null
+     */
+    protected $createdAt;
+    /**
      * @var mixed|null
      */
     protected $schema;
@@ -23,14 +25,28 @@ class SpecVersionResponse extends \ArrayObject
      */
     protected $status;
     /**
-     * Version string (converted from u32 to "X.0" format for frontend compatibility)
-     *
      * @var string|null
      */
     protected $version;
     /**
-     * Schema content (included for detail views)
+     * @return \DateTime|null
+     */
+    public function getCreatedAt(): ?\DateTime
+    {
+        return $this->createdAt;
+    }
+    /**
+     * @param \DateTime|null $createdAt
      *
+     * @return self
+     */
+    public function setCreatedAt(?\DateTime $createdAt): self
+    {
+        $this->initialized['createdAt'] = true;
+        $this->createdAt = $createdAt;
+        return $this;
+    }
+    /**
      * @return mixed
      */
     public function getSchema()
@@ -38,8 +54,6 @@ class SpecVersionResponse extends \ArrayObject
         return $this->schema;
     }
     /**
-     * Schema content (included for detail views)
-     *
      * @param mixed $schema
      *
      * @return self
@@ -69,8 +83,6 @@ class SpecVersionResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Version string (converted from u32 to "X.0" format for frontend compatibility)
-     *
      * @return string|null
      */
     public function getVersion(): ?string
@@ -78,8 +90,6 @@ class SpecVersionResponse extends \ArrayObject
         return $this->version;
     }
     /**
-     * Version string (converted from u32 to "X.0" format for frontend compatibility)
-     *
      * @param string|null $version
      *
      * @return self

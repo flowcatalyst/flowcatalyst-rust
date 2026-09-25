@@ -16,12 +16,16 @@ final class SyncPrincipalEntry
 {
     /**
      * @param string[] $roles Role codes (without the app prefix — the platform adds it)
+     * @param string|null $passwordHash Already-hashed credential (bcrypt/argon2i),
+     *     stored verbatim by the platform so a migrated user keeps their password.
+     *     Null omits the field, leaving any existing password untouched.
      */
     public function __construct(
         public readonly string $email,
         public readonly string $name,
         public readonly array $roles = [],
         public readonly ?bool $active = null,
+        public readonly ?string $passwordHash = null,
     ) {}
 
     /**
@@ -36,6 +40,9 @@ final class SyncPrincipalEntry
         ];
         if ($this->active !== null) {
             $payload['active'] = $this->active;
+        }
+        if ($this->passwordHash !== null) {
+            $payload['passwordHash'] = $this->passwordHash;
         }
         return $payload;
     }

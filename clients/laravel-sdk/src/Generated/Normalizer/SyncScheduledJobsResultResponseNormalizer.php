@@ -37,9 +37,14 @@ class SyncScheduledJobsResultResponseNormalizer implements DenormalizerInterface
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
         }
         elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
             $object->setApplicationCode(null);
@@ -50,7 +55,6 @@ class SyncScheduledJobsResultResponseNormalizer implements DenormalizerInterface
                 $values[] = $value;
             }
             $object->setArchived($values);
-            unset($data['archived']);
         }
         elseif (\array_key_exists('archived', $data) && $data['archived'] === null) {
             $object->setArchived(null);
@@ -61,7 +65,6 @@ class SyncScheduledJobsResultResponseNormalizer implements DenormalizerInterface
                 $values_1[] = $value_1;
             }
             $object->setCreated($values_1);
-            unset($data['created']);
         }
         elseif (\array_key_exists('created', $data) && $data['created'] === null) {
             $object->setCreated(null);
@@ -72,15 +75,9 @@ class SyncScheduledJobsResultResponseNormalizer implements DenormalizerInterface
                 $values_2[] = $value_2;
             }
             $object->setUpdated($values_2);
-            unset($data['updated']);
         }
         elseif (\array_key_exists('updated', $data) && $data['updated'] === null) {
             $object->setUpdated(null);
-        }
-        foreach ($data as $key => $value_3) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_3;
-            }
         }
         return $object;
     }
@@ -103,11 +100,6 @@ class SyncScheduledJobsResultResponseNormalizer implements DenormalizerInterface
             $values_2[] = $value_2;
         }
         $dataArray['updated'] = $values_2;
-        foreach ($data as $key => $value_3) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_3;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

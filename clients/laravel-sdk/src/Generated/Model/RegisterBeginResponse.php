@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class RegisterBeginResponse extends \ArrayObject
+class RegisterBeginResponse
 {
     /**
      * @var array
@@ -13,42 +13,60 @@ class RegisterBeginResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * `PublicKeyCredentialCreationOptions` JSON for the browser.
+     * A URL to the JSON Schema for this object.
      *
-     * @var array<string, mixed>|null
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * @var mixed|null
      */
     protected $options;
     /**
-     * Opaque ceremony state token; pass back unchanged on `register/complete`.
-     *
      * @var string|null
      */
     protected $stateId;
     /**
-     * `PublicKeyCredentialCreationOptions` JSON for the browser.
+     * A URL to the JSON Schema for this object.
      *
-     * @return array<string, mixed>|null
+     * @return string|null
      */
-    public function getOptions(): ?iterable
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return mixed
+     */
+    public function getOptions()
     {
         return $this->options;
     }
     /**
-     * `PublicKeyCredentialCreationOptions` JSON for the browser.
-     *
-     * @param array<string, mixed>|null $options
+     * @param mixed $options
      *
      * @return self
      */
-    public function setOptions(?iterable $options): self
+    public function setOptions($options): self
     {
         $this->initialized['options'] = true;
         $this->options = $options;
         return $this;
     }
     /**
-     * Opaque ceremony state token; pass back unchanged on `register/complete`.
-     *
      * @return string|null
      */
     public function getStateId(): ?string
@@ -56,8 +74,6 @@ class RegisterBeginResponse extends \ArrayObject
         return $this->stateId;
     }
     /**
-     * Opaque ceremony state token; pass back unchanged on `register/complete`.
-     *
      * @param string|null $stateId
      *
      * @return self

@@ -37,12 +37,29 @@ class CreateEventTypeRequestNormalizer implements DenormalizerInterface, Normali
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('clientScoped', $data) && \is_int($data['clientScoped'])) {
+            $data['clientScoped'] = (bool) $data['clientScoped'];
+        }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clientId', $data) && $data['clientId'] !== null) {
             $object->setClientId($data['clientId']);
             unset($data['clientId']);
         }
         elseif (\array_key_exists('clientId', $data) && $data['clientId'] === null) {
             $object->setClientId(null);
+        }
+        if (\array_key_exists('clientScoped', $data) && $data['clientScoped'] !== null) {
+            $object->setClientScoped($data['clientScoped']);
+            unset($data['clientScoped']);
+        }
+        elseif (\array_key_exists('clientScoped', $data) && $data['clientScoped'] === null) {
+            $object->setClientScoped(null);
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
@@ -82,11 +99,14 @@ class CreateEventTypeRequestNormalizer implements DenormalizerInterface, Normali
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
+        if ($data->isInitialized('clientScoped') && null !== $data->getClientScoped()) {
+            $dataArray['clientScoped'] = $data->getClientScoped();
+        }
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['name'] = $data->getName();

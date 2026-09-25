@@ -37,69 +37,49 @@ class PermissionResponseNormalizer implements DenormalizerInterface, NormalizerI
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        if (\array_key_exists('action', $data) && $data['action'] !== null) {
-            $object->setAction($data['action']);
-            unset($data['action']);
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
         }
-        elseif (\array_key_exists('action', $data) && $data['action'] === null) {
-            $object->setAction(null);
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
         }
-        if (\array_key_exists('aggregate', $data) && $data['aggregate'] !== null) {
-            $object->setAggregate($data['aggregate']);
-            unset($data['aggregate']);
+        if (\array_key_exists('category', $data) && $data['category'] !== null) {
+            $object->setCategory($data['category']);
         }
-        elseif (\array_key_exists('aggregate', $data) && $data['aggregate'] === null) {
-            $object->setAggregate(null);
-        }
-        if (\array_key_exists('application', $data) && $data['application'] !== null) {
-            $object->setApplication($data['application']);
-            unset($data['application']);
-        }
-        elseif (\array_key_exists('application', $data) && $data['application'] === null) {
-            $object->setApplication(null);
-        }
-        if (\array_key_exists('context', $data) && $data['context'] !== null) {
-            $object->setContext($data['context']);
-            unset($data['context']);
-        }
-        elseif (\array_key_exists('context', $data) && $data['context'] === null) {
-            $object->setContext(null);
+        elseif (\array_key_exists('category', $data) && $data['category'] === null) {
+            $object->setCategory(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
+        if (\array_key_exists('name', $data) && $data['name'] !== null) {
+            $object->setName($data['name']);
+        }
+        elseif (\array_key_exists('name', $data) && $data['name'] === null) {
+            $object->setName(null);
+        }
         if (\array_key_exists('permission', $data) && $data['permission'] !== null) {
             $object->setPermission($data['permission']);
-            unset($data['permission']);
         }
         elseif (\array_key_exists('permission', $data) && $data['permission'] === null) {
             $object->setPermission(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $dataArray['action'] = $data->getAction();
-        $dataArray['aggregate'] = $data->getAggregate();
-        $dataArray['application'] = $data->getApplication();
-        $dataArray['context'] = $data->getContext();
-        $dataArray['description'] = $data->getDescription();
-        $dataArray['permission'] = $data->getPermission();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
+        if ($data->isInitialized('category') && null !== $data->getCategory()) {
+            $dataArray['category'] = $data->getCategory();
         }
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
+            $dataArray['description'] = $data->getDescription();
+        }
+        $dataArray['name'] = $data->getName();
+        $dataArray['permission'] = $data->getPermission();
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

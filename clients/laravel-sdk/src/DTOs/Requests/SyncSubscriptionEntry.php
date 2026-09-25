@@ -32,6 +32,14 @@ final class SyncSubscriptionEntry
         public readonly ?int $maxRetries = null,
         public readonly ?int $timeoutSeconds = null,
         public readonly bool $dataOnly = false,
+        // Stable across environments, unlike connectionId (a per-environment
+        // id). Prefer it; the platform resolves it to the local id.
+        public readonly ?string $connectionCode = null,
+        // True when `connectionCode` names a SHARED (application-less)
+        // connection rather than one owned by this application. Only sent
+        // when true — a bare code with this omitted means "this
+        // application's connection".
+        public readonly bool $sharedConnection = false,
     ) {}
 
     /**
@@ -54,6 +62,12 @@ final class SyncSubscriptionEntry
         }
         if ($this->connectionId !== null) {
             $payload['connectionId'] = $this->connectionId;
+        }
+        if ($this->connectionCode !== null) {
+            $payload['connectionCode'] = $this->connectionCode;
+        }
+        if ($this->sharedConnection) {
+            $payload['sharedConnection'] = true;
         }
         if ($this->dispatchPoolCode !== null) {
             $payload['dispatchPoolCode'] = $this->dispatchPoolCode;

@@ -15,9 +15,16 @@ final class DomainEventHelpers
 {
     private function __construct() {}
 
-    public static function generateId(): string
+    /**
+     * Generate an aggregate/entity id. Pass a short lowercase $prefix to get a
+     * branded id matching the platform convention (e.g. 'cmt' → `cmt_…`); omit
+     * it for a raw 13-char TSID.
+     */
+    public static function generateId(?string $prefix = null): string
     {
-        return TsidGenerator::generate();
+        return $prefix !== null && $prefix !== ''
+            ? TsidGenerator::generateWithPrefix($prefix)
+            : TsidGenerator::generate();
     }
 
     /** "orders.order.123" */

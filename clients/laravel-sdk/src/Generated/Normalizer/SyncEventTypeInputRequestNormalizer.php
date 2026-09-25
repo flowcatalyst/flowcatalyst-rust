@@ -39,29 +39,21 @@ class SyncEventTypeInputRequestNormalizer implements DenormalizerInterface, Norm
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -69,15 +61,10 @@ class SyncEventTypeInputRequestNormalizer implements DenormalizerInterface, Norm
     {
         $dataArray = [];
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['name'] = $data->getName();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

@@ -7,11 +7,14 @@
  *   GET /.well-known/openid-configuration  → discovery doc
  *   GET /.well-known/jwks.json             → JWKS for the issuer key
  *   GET /oauth/authorize                   → 302 to redirect_uri with `code`
- *   POST /oauth/token                      → signed access/refresh tokens
+ *   POST /oauth/token                      → signed access/refresh/id tokens
  *
- * Claim envelope matches FlowCatalyst's `AccessTokenClaims` (see
- * `crates/fc-platform/src/auth/auth_service.rs`) so the plugin's claim
- * extractor is exercised against the real shape — not a synthetic stand-in.
+ * Claim envelopes match FlowCatalyst's `AccessTokenClaims` and
+ * `IDTokenClaims` (see `internal/platform/auth/authservice`) so the plugin's
+ * claim extractor is exercised against the real shape — not a synthetic
+ * stand-in. By default no `id_token` is returned, which mirrors a
+ * `client_credentials`-shaped exchange; `signIdToken` + `setNextTokens`
+ * opt a test into the interactive shape.
  */
 
 import { createServer, type Server } from "node:http";
@@ -28,6 +31,7 @@ export interface IssuedTokens {
 	accessToken: string;
 	refreshToken: string;
 	expiresIn: number;
+	idToken?: string;
 }
 
 export interface MockIssuer {
@@ -38,6 +42,11 @@ export interface MockIssuer {
 	setNextTokens(tokens: IssuedTokens): void;
 	/** Convenience: build a signed access token matching FC's claim shape. */
 	signAccessToken(claims: Partial<TokenClaims> & { sub: string; name: string }): Promise<string>;
+	/**
+	 * Build a signed ID token matching FC's `IDTokenClaims`. `aud` defaults to
+	 * `clientId` — the relying party — not the platform API audience.
+	 */
+	signIdToken(claims: Partial<IdTokenClaims> & { sub: string }): Promise<string>;
 	/** Last code accepted at /oauth/token (for assertions). */
 	lastSeenCode(): string | null;
 	/** Last refresh_token grant body (for assertions). */
@@ -57,6 +66,21 @@ interface TokenClaims {
 	type: "USER" | "SERVICE";
 	scope: "ANCHOR" | "PARTNER" | "CLIENT";
 	name: string;
+	email?: string;
+	clients: string[];
+	roles: string[];
+	applications: string[];
+}
+
+interface IdTokenClaims {
+	sub: string;
+	iss: string;
+	aud: string;
+	exp: number;
+	iat: number;
+	type: "USER" | "SERVICE";
+	tier: "ANCHOR" | "PARTNER" | "CLIENT";
+	name?: string;
 	email?: string;
 	clients: string[];
 	roles: string[];
@@ -93,6 +117,25 @@ export async function startMockIssuer(): Promise<MockIssuer> {
 			clients: ["clt_test"],
 			roles: ["billing-admin"],
 			applications: ["billing"],
+			...claims,
+		};
+		return await new SignJWT(full as unknown as Record<string, unknown>)
+			.setProtectedHeader({ alg: "RS256", kid })
+			.sign(privateKey as KeyLike);
+	};
+
+	const signId = async (claims: Partial<IdTokenClaims> & { sub: string }) => {
+		const now = Math.floor(Date.now() / 1000);
+		const full: IdTokenClaims = {
+			iss: issuer,
+			aud: "test-client",
+			exp: now + 600,
+			iat: now,
+			type: "USER",
+			tier: "CLIENT",
+			clients: [],
+			roles: [],
+			applications: [],
 			...claims,
 		};
 		return await new SignJWT(full as unknown as Record<string, unknown>)
@@ -154,6 +197,7 @@ export async function startMockIssuer(): Promise<MockIssuer> {
 					refresh_token: issuedTokens.refreshToken,
 					token_type: "Bearer",
 					expires_in: issuedTokens.expiresIn,
+					...(issuedTokens.idToken ? { id_token: issuedTokens.idToken } : {}),
 				});
 			}
 			res.writeHead(404);
@@ -183,6 +227,7 @@ export async function startMockIssuer(): Promise<MockIssuer> {
 			issuedTokens = t;
 		},
 		signAccessToken: sign,
+		signIdToken: signId,
 		lastSeenCode: () => lastCode,
 		lastRefreshGrant: () => lastRefreshGrant,
 		setNextCode(c) {

@@ -9,25 +9,29 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiRolesResponse,
-	GetApiRolesByNameResponse,
-	GetApiRolesByCodeByCodeResponse,
-	PostApiRolesData,
-	PutApiRolesByNameData,
-	GetApiRolesByApplicationByApplicationIdResponse,
-	PostApiApplicationsByAppCodeRolesSyncData,
-	PostApiApplicationsByAppCodeRolesSyncResponse,
-	PaginationParams,
+	ListRolesResponse,
+	GetRoleResponse,
+	GetRoleByCodeResponse,
+	CreateRoleData,
+	UpdateRoleData,
+	GetRolesByApplicationResponse,
+	SyncRolesData,
+	SyncRolesResponse as SyncRolesResponseType,
 } from "../generated/types.gen.js";
 
-export type RoleListResponse = GetApiRolesResponse;
-export type RoleDto = GetApiRolesByNameResponse;
-export type RoleByCodeResponse = GetApiRolesByCodeByCodeResponse;
-export type CreateRoleRequest = PostApiRolesData["body"];
-export type UpdateRoleRequest = PutApiRolesByNameData["body"];
-export type RoleListByApplicationResponse =
-	GetApiRolesByApplicationByApplicationIdResponse;
-export type SyncRolesResponse = PostApiApplicationsByAppCodeRolesSyncResponse;
+/** Pagination params (page/size). Mirrors the previous generated shape. */
+export type PaginationParams = {
+	page?: number;
+	size?: number;
+};
+
+export type RoleListResponse = ListRolesResponse;
+export type RoleDto = GetRoleResponse;
+export type RoleByCodeResponse = GetRoleByCodeResponse;
+export type CreateRoleRequest = CreateRoleData["body"];
+export type UpdateRoleRequest = UpdateRoleData["body"];
+export type RoleListByApplicationResponse = GetRolesByApplicationResponse;
+export type SyncRolesResponse = SyncRolesResponseType;
 
 /**
  * Roles resource for managing role-based access control.
@@ -42,25 +46,24 @@ export class RolesResource {
 	/**
 	 * List all roles.
 	 */
-	list(pagination?: PaginationParams): ResultAsync<RoleListResponse, SdkError> {
+	list(_pagination?: PaginationParams): ResultAsync<RoleListResponse, SdkError> {
 		return this.client.request<RoleListResponse>((httpClient, headers) =>
-			sdk.getApiRoles({
+			sdk.listRoles({
 				client: httpClient,
 				headers,
-				query: { pagination: pagination ?? {} },
 			}),
 		);
 	}
 
 	/**
-	 * Get a role by name.
+	 * Get a role by name (code) or ID.
 	 */
 	get(roleName: string): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.getApiRolesByName({
+			sdk.getRole({
 				client: httpClient,
 				headers,
-				path: { roleName },
+				path: { id: roleName },
 			}),
 		);
 	}
@@ -70,7 +73,7 @@ export class RolesResource {
 	 */
 	getByCode(code: string): ResultAsync<RoleByCodeResponse, SdkError> {
 		return this.client.request<RoleByCodeResponse>((httpClient, headers) =>
-			sdk.getApiRolesByCodeByCode({
+			sdk.getRoleByCode({
 				client: httpClient,
 				headers,
 				path: { code },
@@ -83,7 +86,7 @@ export class RolesResource {
 	 */
 	create(data: CreateRoleRequest): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.postApiRoles({
+			sdk.createRole({
 				client: httpClient,
 				headers,
 				body: data,
@@ -99,10 +102,10 @@ export class RolesResource {
 		data: UpdateRoleRequest,
 	): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.putApiRolesByName({
+			sdk.updateRole({
 				client: httpClient,
 				headers,
-				path: { roleName },
+				path: { id: roleName },
 				body: data,
 			}),
 		);
@@ -113,10 +116,10 @@ export class RolesResource {
 	 */
 	delete(roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiRolesByName({
+			sdk.deleteRole({
 				client: httpClient,
 				headers,
-				path: { roleName },
+				path: { id: roleName },
 			}),
 		);
 	}
@@ -129,7 +132,7 @@ export class RolesResource {
 	): ResultAsync<RoleListByApplicationResponse, SdkError> {
 		return this.client.request<RoleListByApplicationResponse>(
 			(httpClient, headers) =>
-				sdk.getApiRolesByApplicationByApplicationId({
+				sdk.getRolesByApplication({
 					client: httpClient,
 					headers,
 					path: { applicationId },
@@ -145,7 +148,7 @@ export class RolesResource {
 		permission: string,
 	): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.postApiRolesByNamePermissions({
+			sdk.grantRolePermissionByBody({
 				client: httpClient,
 				headers,
 				path: { roleName },
@@ -162,7 +165,7 @@ export class RolesResource {
 		permission: string,
 	): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.deleteApiRolesByNamePermissionsByPermission({
+			sdk.revokeRolePermission({
 				client: httpClient,
 				headers,
 				path: { roleName, permission },
@@ -176,11 +179,11 @@ export class RolesResource {
 	 */
 	sync(
 		applicationCode: string,
-		roles: PostApiApplicationsByAppCodeRolesSyncData["body"]["roles"],
+		roles: SyncRolesData["body"]["roles"],
 		removeUnlisted = false,
 	): ResultAsync<SyncRolesResponse, SdkError> {
 		return this.client.request<SyncRolesResponse>((httpClient, headers) =>
-			sdk.postApiApplicationsByAppCodeRolesSync({
+			sdk.syncRoles({
 				client: httpClient,
 				headers,
 				path: { appCode: applicationCode },

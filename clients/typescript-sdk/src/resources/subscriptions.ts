@@ -9,28 +9,31 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiSubscriptionsResponse,
-	GetApiSubscriptionsByIdResponse,
-	PostApiSubscriptionsData,
-	PutApiSubscriptionsByIdData,
-	PostApiApplicationsByAppCodeSubscriptionsSyncData,
-	PostApiApplicationsByAppCodeSubscriptionsSyncResponse,
+	ListSubscriptionsResponse,
+	ListSubscriptionsData,
+	GetSubscriptionResponse,
+	CreateSubscriptionData,
+	UpdateSubscriptionData,
+	SyncSubscriptionsData,
+	SyncSubscriptionsResponse as SyncSubscriptionsResponseType,
 } from "../generated/types.gen.js";
 
-export type SubscriptionListResponse = GetApiSubscriptionsResponse;
-export type SubscriptionDto = GetApiSubscriptionsByIdResponse;
-export type CreateSubscriptionRequest = PostApiSubscriptionsData["body"];
-export type UpdateSubscriptionRequest =
-	PutApiSubscriptionsByIdData["body"];
-export type SyncSubscriptionsResponse =
-	PostApiApplicationsByAppCodeSubscriptionsSyncResponse;
+export type SubscriptionListResponse = ListSubscriptionsResponse;
+export type SubscriptionDto = GetSubscriptionResponse;
+export type CreateSubscriptionRequest = CreateSubscriptionData["body"];
+export type UpdateSubscriptionRequest = UpdateSubscriptionData["body"];
+export type SyncSubscriptionsResponse = SyncSubscriptionsResponseType;
 
 export interface SubscriptionFilters {
 	clientId?: string;
 	status?: string;
 }
 
-import type { PaginationParams } from "../generated/types.gen.js";
+/** Pagination params (page/size). Mirrors the previous generated shape. */
+export type PaginationParams = {
+	page?: number;
+	size?: number;
+};
 
 /**
  * Subscriptions resource for managing event subscriptions.
@@ -51,13 +54,13 @@ export class SubscriptionsResource {
 	): ResultAsync<SubscriptionListResponse, SdkError> {
 		return this.client.request<SubscriptionListResponse>(
 			(httpClient, headers) =>
-				sdk.getApiSubscriptions({
+				sdk.listSubscriptions({
 					client: httpClient,
 					headers,
 					query: {
-						pagination: pagination ?? {},
+						...pagination,
 						...filters,
-					},
+					} as ListSubscriptionsData["query"],
 				}),
 		);
 	}
@@ -67,7 +70,7 @@ export class SubscriptionsResource {
 	 */
 	get(id: string): ResultAsync<SubscriptionDto, SdkError> {
 		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.getApiSubscriptionsById({
+			sdk.getSubscription({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -82,7 +85,7 @@ export class SubscriptionsResource {
 		data: CreateSubscriptionRequest,
 	): ResultAsync<SubscriptionDto, SdkError> {
 		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.postApiSubscriptions({
+			sdk.createSubscription({
 				client: httpClient,
 				headers,
 				body: data,
@@ -98,7 +101,7 @@ export class SubscriptionsResource {
 		data: UpdateSubscriptionRequest,
 	): ResultAsync<SubscriptionDto, SdkError> {
 		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.putApiSubscriptionsById({
+			sdk.updateSubscription({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -112,7 +115,7 @@ export class SubscriptionsResource {
 	 */
 	delete(id: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiSubscriptionsById({
+			sdk.deleteSubscription({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -125,7 +128,7 @@ export class SubscriptionsResource {
 	 */
 	pause(id: string): ResultAsync<SubscriptionDto, SdkError> {
 		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.postApiSubscriptionsByIdPause({
+			sdk.pauseSubscription({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -138,7 +141,7 @@ export class SubscriptionsResource {
 	 */
 	resume(id: string): ResultAsync<SubscriptionDto, SdkError> {
 		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.postApiSubscriptionsByIdResume({
+			sdk.resumeSubscription({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -153,12 +156,12 @@ export class SubscriptionsResource {
 	 */
 	sync(
 		applicationCode: string,
-		subscriptions: PostApiApplicationsByAppCodeSubscriptionsSyncData["body"]["subscriptions"],
+		subscriptions: SyncSubscriptionsData["body"]["subscriptions"],
 		removeUnlisted = false,
 	): ResultAsync<SyncSubscriptionsResponse, SdkError> {
 		return this.client.request<SyncSubscriptionsResponse>(
 			(httpClient, headers) =>
-				sdk.postApiApplicationsByAppCodeSubscriptionsSync({
+				sdk.syncSubscriptions({
 					client: httpClient,
 					headers,
 					path: { appCode: applicationCode },

@@ -122,4 +122,66 @@ final class FlowCatalystUserTest extends TestCase
         $this->assertNull($p->email);
         $this->assertSame('prn_svc', $p->sub);
     }
+
+    /**
+     * The `applications` claim mirrors `clients`: "{id}:{code}" pairs, or the
+     * single "*" sentinel. Apps want ids, codes and the flag separately.
+     *
+     * @param array<int, string> $applications
+     */
+    private function withApplications(array $applications, ?bool $allApplications = null): FlowCatalystUser
+    {
+        $claims = [
+            'sub' => 'prn_x',
+            'name' => 'Tester',
+            'clients' => ['clt_a'],
+            'roles' => [],
+            'applications' => $applications,
+        ];
+        if ($allApplications !== null) {
+            $claims['all_applications'] = $allApplications;
+        }
+
+        return FlowCatalystUser::fromAccessTokenClaims($claims);
+    }
+
+    public function test_it_splits_application_id_code_pairs(): void
+    {
+        $user = $this->withApplications(['app_1:alpha', 'app_2:beta']);
+
+        $this->assertSame(['app_1', 'app_2'], $user->getApplications());
+        $this->assertSame(['alpha', 'beta'], $user->getApplicationCodes());
+        $this->assertFalse($user->hasAllApplications());
+    }
+
+    public function test_it_reads_the_wildcard_as_all_applications(): void
+    {
+        $user = $this->withApplications(['*']);
+
+        $this->assertTrue($user->hasAllApplications());
+        $this->assertSame([], $user->getApplications(), 'no restriction to enumerate');
+    }
+
+    public function test_it_still_accepts_bare_ids_from_a_pre_upgrade_token(): void
+    {
+        $user = $this->withApplications(['app_1', 'app_2']);
+
+        $this->assertSame(['app_1', 'app_2'], $user->getApplications());
+        $this->assertSame([], $user->getApplicationCodes());
+    }
+
+    public function test_it_honours_the_deprecated_all_applications_boolean(): void
+    {
+        $user = $this->withApplications([], true);
+
+        $this->assertTrue($user->hasAllApplications());
+    }
+
+    public function test_it_keeps_a_colon_inside_an_application_code(): void
+    {
+        $user = $this->withApplications(['app_1:a:b']);
+
+        $this->assertSame(['app_1'], $user->getApplications());
+        $this->assertSame(['a:b'], $user->getApplicationCodes());
+    }
 }

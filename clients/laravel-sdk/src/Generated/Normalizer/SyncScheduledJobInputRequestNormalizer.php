@@ -45,14 +45,12 @@ class SyncScheduledJobInputRequestNormalizer implements DenormalizerInterface, N
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('concurrent', $data) && $data['concurrent'] !== null) {
             $object->setConcurrent($data['concurrent']);
-            unset($data['concurrent']);
         }
         elseif (\array_key_exists('concurrent', $data) && $data['concurrent'] === null) {
             $object->setConcurrent(null);
@@ -63,71 +61,57 @@ class SyncScheduledJobInputRequestNormalizer implements DenormalizerInterface, N
                 $values[] = $value;
             }
             $object->setCrons($values);
-            unset($data['crons']);
         }
         elseif (\array_key_exists('crons', $data) && $data['crons'] === null) {
             $object->setCrons(null);
         }
         if (\array_key_exists('deliveryMaxAttempts', $data) && $data['deliveryMaxAttempts'] !== null) {
             $object->setDeliveryMaxAttempts($data['deliveryMaxAttempts']);
-            unset($data['deliveryMaxAttempts']);
         }
         elseif (\array_key_exists('deliveryMaxAttempts', $data) && $data['deliveryMaxAttempts'] === null) {
             $object->setDeliveryMaxAttempts(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
         }
         if (\array_key_exists('payload', $data) && $data['payload'] !== null) {
             $object->setPayload($data['payload']);
-            unset($data['payload']);
         }
         elseif (\array_key_exists('payload', $data) && $data['payload'] === null) {
             $object->setPayload(null);
         }
         if (\array_key_exists('targetUrl', $data) && $data['targetUrl'] !== null) {
             $object->setTargetUrl($data['targetUrl']);
-            unset($data['targetUrl']);
         }
         elseif (\array_key_exists('targetUrl', $data) && $data['targetUrl'] === null) {
             $object->setTargetUrl(null);
         }
         if (\array_key_exists('timeoutSeconds', $data) && $data['timeoutSeconds'] !== null) {
             $object->setTimeoutSeconds($data['timeoutSeconds']);
-            unset($data['timeoutSeconds']);
         }
         elseif (\array_key_exists('timeoutSeconds', $data) && $data['timeoutSeconds'] === null) {
             $object->setTimeoutSeconds(null);
         }
         if (\array_key_exists('timezone', $data) && $data['timezone'] !== null) {
             $object->setTimezone($data['timezone']);
-            unset($data['timezone']);
         }
         elseif (\array_key_exists('timezone', $data) && $data['timezone'] === null) {
             $object->setTimezone(null);
         }
         if (\array_key_exists('tracksCompletion', $data) && $data['tracksCompletion'] !== null) {
             $object->setTracksCompletion($data['tracksCompletion']);
-            unset($data['tracksCompletion']);
         }
         elseif (\array_key_exists('tracksCompletion', $data) && $data['tracksCompletion'] === null) {
             $object->setTracksCompletion(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -146,17 +130,17 @@ class SyncScheduledJobInputRequestNormalizer implements DenormalizerInterface, N
         if ($data->isInitialized('deliveryMaxAttempts') && null !== $data->getDeliveryMaxAttempts()) {
             $dataArray['deliveryMaxAttempts'] = $data->getDeliveryMaxAttempts();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['name'] = $data->getName();
         if ($data->isInitialized('payload') && null !== $data->getPayload()) {
             $dataArray['payload'] = $data->getPayload();
         }
-        if ($data->isInitialized('targetUrl')) {
+        if ($data->isInitialized('targetUrl') && null !== $data->getTargetUrl()) {
             $dataArray['targetUrl'] = $data->getTargetUrl();
         }
-        if ($data->isInitialized('timeoutSeconds')) {
+        if ($data->isInitialized('timeoutSeconds') && null !== $data->getTimeoutSeconds()) {
             $dataArray['timeoutSeconds'] = $data->getTimeoutSeconds();
         }
         if ($data->isInitialized('timezone') && null !== $data->getTimezone()) {
@@ -164,11 +148,6 @@ class SyncScheduledJobInputRequestNormalizer implements DenormalizerInterface, N
         }
         if ($data->isInitialized('tracksCompletion') && null !== $data->getTracksCompletion()) {
             $dataArray['tracksCompletion'] = $data->getTracksCompletion();
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
         }
         return $dataArray;
     }

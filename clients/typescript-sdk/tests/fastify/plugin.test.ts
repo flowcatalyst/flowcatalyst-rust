@@ -150,6 +150,15 @@ describe("Session flow", () => {
 		assert.ok(res.headers.get("location")?.startsWith("/auth/login"));
 	});
 
+	it("401s JSON (no redirect) when an XHR/fetch call misses the session", async () => {
+		const res = await fetch(`${appBase}/dashboard`, {
+			headers: { Accept: "application/json" },
+			redirect: "manual",
+		});
+		assert.equal(res.status, 401);
+		assert.deepEqual(await res.json(), { error: "unauthorized" });
+	});
+
 	it("full OIDC flow: login → callback → authenticated request → logout", async () => {
 		// 1. Hit /auth/login — expect 302 to issuer's /oauth/authorize and a state cookie.
 		issuer.setNextTokens({

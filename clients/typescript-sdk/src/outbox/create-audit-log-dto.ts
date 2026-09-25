@@ -29,6 +29,10 @@ export class CreateAuditLogDto {
 	readonly performedAt: Date | null;
 	readonly source: string | null;
 	readonly correlationId: string | null;
+	/** FlowCatalyst application (by code) this audit log belongs to; resolved to an application_id at ingest. */
+	readonly applicationCode: string | null;
+	/** FlowCatalyst client (by code) this audit log belongs to; resolved to a client_id at ingest. */
+	readonly clientCode: string | null;
 	readonly metadata: Record<string, string>;
 	readonly headers: Record<string, string>;
 
@@ -42,6 +46,8 @@ export class CreateAuditLogDto {
 		performedAt?: Date | null;
 		source?: string | null;
 		correlationId?: string | null;
+		applicationCode?: string | null;
+		clientCode?: string | null;
 		metadata?: Record<string, string>;
 		headers?: Record<string, string>;
 	}) {
@@ -54,6 +60,8 @@ export class CreateAuditLogDto {
 		this.performedAt = params.performedAt ?? null;
 		this.source = params.source ?? null;
 		this.correlationId = params.correlationId ?? null;
+		this.applicationCode = params.applicationCode ?? null;
+		this.clientCode = params.clientCode ?? null;
 		this.metadata = params.metadata ?? {};
 		this.headers = params.headers ?? {};
 	}
@@ -94,6 +102,16 @@ export class CreateAuditLogDto {
 		return new CreateAuditLogDto({ ...this.toParams(), correlationId });
 	}
 
+	/** Set the FlowCatalyst application (by code) this audit log belongs to. */
+	withApplicationCode(applicationCode: string): CreateAuditLogDto {
+		return new CreateAuditLogDto({ ...this.toParams(), applicationCode });
+	}
+
+	/** Set the FlowCatalyst client (by code) this audit log belongs to. */
+	withClientCode(clientCode: string): CreateAuditLogDto {
+		return new CreateAuditLogDto({ ...this.toParams(), clientCode });
+	}
+
 	withMetadata(metadata: Record<string, string>): CreateAuditLogDto {
 		return new CreateAuditLogDto({
 			...this.toParams(),
@@ -121,6 +139,8 @@ export class CreateAuditLogDto {
 			performedAt: (this.performedAt ?? new Date()).toISOString(),
 			source: this.source,
 			correlationId: this.correlationId,
+			applicationCode: this.applicationCode,
+			clientCode: this.clientCode,
 			metadata: Object.keys(this.metadata).length > 0 ? this.metadata : null,
 		});
 	}
@@ -136,6 +156,8 @@ export class CreateAuditLogDto {
 			performedAt: this.performedAt,
 			source: this.source,
 			correlationId: this.correlationId,
+			applicationCode: this.applicationCode,
+			clientCode: this.clientCode,
 			metadata: this.metadata,
 			headers: this.headers,
 		};

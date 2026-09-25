@@ -134,6 +134,10 @@ final class EventTypeDefinition
     public function toArray(): array
     {
         $data = [
+            // Full assembled code is what the sync API consumes
+            // (DefinitionSynchronizer reads $row['code']). The individual
+            // segments are kept for callers that introspect them.
+            'code' => $this->getCode(),
             'name' => $this->name,
             'application' => $this->application,
             'subdomain' => $this->subdomain,

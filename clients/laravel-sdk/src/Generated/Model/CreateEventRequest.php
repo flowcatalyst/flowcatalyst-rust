@@ -13,6 +13,12 @@ class CreateEventRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * Causation ID - the event that caused this event
      *
      * @var string|null
@@ -27,7 +33,7 @@ class CreateEventRequest extends \ArrayObject
     /**
      * Context data for filtering/searching
      *
-     * @var list<ContextDataDto>|null
+     * @var list<ContextEntryDTO>|null
      */
     protected $contextData;
     /**
@@ -72,6 +78,28 @@ class CreateEventRequest extends \ArrayObject
      * @var string|null
      */
     protected $subject;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * Causation ID - the event that caused this event
      *
@@ -119,7 +147,7 @@ class CreateEventRequest extends \ArrayObject
     /**
      * Context data for filtering/searching
      *
-     * @return list<ContextDataDto>|null
+     * @return list<ContextEntryDTO>|null
      */
     public function getContextData(): ?array
     {
@@ -128,7 +156,7 @@ class CreateEventRequest extends \ArrayObject
     /**
      * Context data for filtering/searching
      *
-     * @param list<ContextDataDto>|null $contextData
+     * @param list<ContextEntryDTO>|null $contextData
      *
      * @return self
      */

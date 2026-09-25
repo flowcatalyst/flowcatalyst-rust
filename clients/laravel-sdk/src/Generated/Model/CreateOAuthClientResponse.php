@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class CreateOAuthClientResponse extends \ArrayObject
+class CreateOAuthClientResponse
 {
     /**
      * @var array
@@ -13,22 +13,42 @@ class CreateOAuthClientResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * OAuth client response DTO
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var OAuthClientResponse|null
      */
     protected $client;
     /**
-     * Plaintext client secret. Only present on creation of CONFIDENTIAL
-     * clients. Capture this on the first response — the platform stores
-     * only the encrypted form and cannot return it again.
-     *
      * @var string|null
      */
     protected $clientSecret;
     /**
-     * OAuth client response DTO
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return OAuthClientResponse|null
      */
     public function getClient(): ?OAuthClientResponse
@@ -36,8 +56,6 @@ class CreateOAuthClientResponse extends \ArrayObject
         return $this->client;
     }
     /**
-     * OAuth client response DTO
-     *
      * @param OAuthClientResponse|null $client
      *
      * @return self
@@ -49,10 +67,6 @@ class CreateOAuthClientResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Plaintext client secret. Only present on creation of CONFIDENTIAL
-     * clients. Capture this on the first response — the platform stores
-     * only the encrypted form and cannot return it again.
-     *
      * @return string|null
      */
     public function getClientSecret(): ?string
@@ -60,14 +74,10 @@ class CreateOAuthClientResponse extends \ArrayObject
         return $this->clientSecret;
     }
     /**
-    * Plaintext client secret. Only present on creation of CONFIDENTIAL
-    clients. Capture this on the first response — the platform stores
-    only the encrypted form and cannot return it again.
-    *
-    * @param string|null $clientSecret
-    *
-    * @return self
-    */
+     * @param string|null $clientSecret
+     *
+     * @return self
+     */
     public function setClientSecret(?string $clientSecret): self
     {
         $this->initialized['clientSecret'] = true;

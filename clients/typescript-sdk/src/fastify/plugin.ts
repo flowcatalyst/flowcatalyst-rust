@@ -59,6 +59,28 @@ export interface FlowcatalystAuthOptions {
 	scope?: string;
 	/** Expected `aud` claim. Defaults to `flowcatalyst` (FC's default audience). */
 	expectedAudience?: string;
+	/**
+	 * Portal mode: this app is a PORTAL for a client's customers, so logins
+	 * enter through FlowCatalyst's portal identity plane
+	 * (`{baseUrl}/portal/authorize`) — a separate end-user population from
+	 * platform users, no platform SSO reuse, and no refresh tokens. Requires
+	 * the OAuth client's portal owner client to be set. The callback and
+	 * token exchange are unchanged; the id_token `sub` is the portal
+	 * identity id (`ptu_…`).
+	 */
+	portal?: boolean;
+	/**
+	 * Branded sign-in: the FlowCatalyst client identifier (URL-safe slug, e.g.
+	 * `"acme"`) whose login branding the sign-in pages should wear — logo,
+	 * colours, brand name and footer, as configured under Clients → Login
+	 * Branding. A per-request `?client=` on the login route overrides this.
+	 *
+	 * Purely cosmetic: it does not affect who may sign in or what they may
+	 * access, and an absent or unrecognised value falls back to the
+	 * platform-wide theme. Ignored in {@link portal} mode, which has its own
+	 * login surface.
+	 */
+	client?: string;
 	/** Local RBAC catalogue (role → permissions). Omit to skip permission checks. */
 	rbac?: RbacCatalogue;
 
@@ -129,13 +151,19 @@ const flowcatalystAuthImpl: FastifyPluginAsync<FlowcatalystAuthOptions> =
 		await ensureCookiePlugin(fastify);
 
 		const cookieAttrs = resolveCookieAttrs(opts.cookie);
-		const sessionStore =
+		const sessionStore: SessionStore =
 			opts.sessionStore ??
 			new CookieSessionStore({
 				cookieName: opts.cookie.name ?? DEFAULT_COOKIE_NAME,
 				secret: opts.cookie.secret,
 				cookieOptions: cookieAttrs,
 			});
+		// Wire any store-owned periodic maintenance (e.g. PgSessionStore's
+		// expired-row reap) to this plugin instance's lifecycle.
+		sessionStore.startReaper?.();
+		fastify.addHook("onClose", async () => {
+			sessionStore.close?.();
+		});
 
 		const routes = {
 			login: opts.routes?.login ?? DEFAULT_LOGIN,
@@ -148,6 +176,11 @@ const flowcatalystAuthImpl: FastifyPluginAsync<FlowcatalystAuthOptions> =
 			baseUrl: opts.baseUrl,
 			...(opts.expectedAudience !== undefined
 				? { expectedAudience: opts.expectedAudience }
+				: {}),
+			...(opts.portal
+				? {
+						authorizationEndpoint: `${opts.baseUrl.replace(/\/$/, "")}/portal/authorize`,
+					}
 				: {}),
 		});
 
@@ -167,6 +200,16 @@ const flowcatalystAuthImpl: FastifyPluginAsync<FlowcatalystAuthOptions> =
 		fastify.decorateRequest("principal", undefined);
 
 		fastify.addHook("onRequest", async (req, reply) => {
+			// First plane to authenticate the request wins. One app may register
+			// flowcatalystAuth twice (a root-context management plane plus an
+			// encapsulated portal plane); root-context hooks run on EVERY route,
+			// so without this guard the later-running instance clobbers a
+			// principal the route's own plane already resolved — e.g. an admin's
+			// management session overwriting the ptu_ portal principal on portal
+			// routes, which the app's membership gate then rejects as
+			// no_portal_access even though the portal login just succeeded.
+			if (req.principal) return;
+
 			// Bearer wins if present — APIs explicitly identifying themselves should
 			// never be silently downgraded to whatever session cookie the browser sent.
 			const bearer = readBearer(req);
@@ -218,17 +261,21 @@ const flowcatalystAuthImpl: FastifyPluginAsync<FlowcatalystAuthOptions> =
 
 		// ─── Routes ─────────────────────────────────────────────────────
 		fastify.get(routes.login, async (req, reply) => {
-			const returnTo = sanitizeReturnTo(
-				(req.query as Record<string, string | undefined>)[returnToParam],
-			);
+			const query = req.query as Record<string, string | undefined>;
+			const returnTo = sanitizeReturnTo(query[returnToParam]);
 			const bag = generateAuthCodeBag(returnTo);
 			const endpoints = await oidc.endpoints();
+			// Per-request ?client= wins over the configured default. Omitted in
+			// portal mode: login branding covers the platform sign-in pages
+			// only, never the portal identity plane.
+			const client = opts.portal ? undefined : (query["client"] ?? opts.client);
 			const url = await buildAuthorizeUrl({
 				endpoints,
 				clientId: opts.clientId,
 				redirectUri: resolveCallbackUrl(req, opts.publicBaseUrl, routes.callback),
 				scope,
 				bag,
+				...(client ? { client } : {}),
 			});
 			await stateCrypto.write(reply, bagToSession(bag));
 			return reply.redirect(url);
@@ -446,8 +493,12 @@ function bagToSession(
 			scope: "client",
 			name: "",
 			clients: [],
+			clientIds: [],
+			clientCodes: [],
 			roles: [],
 			applications: [],
+			applicationCodes: [],
+			allApplications: false,
 		},
 		tokens: { accessToken: "", accessTokenExpiresAt: 0 },
 		sessionData: { bag },

@@ -14,21 +14,26 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiProcessesResponse,
-	GetApiProcessesByIdResponse,
-	PostApiProcessesData,
-	PutApiProcessesByIdData,
-	PostApiApplicationsByAppCodeProcessesSyncData,
-	PostApiApplicationsByAppCodeProcessesSyncResponse,
-	PaginationParams,
+	ListProcessesResponse,
+	GetProcessResponse,
+	CreateProcessData,
+	UpdateProcessData,
+	SyncProcessesData,
+	SyncProcessesResponse as SyncProcessesResponseType,
+	ListProcessesData,
 } from "../generated/types.gen.js";
 
-export type ProcessListResponse = GetApiProcessesResponse;
-export type ProcessResponse = GetApiProcessesByIdResponse;
-export type CreateProcessRequest = PostApiProcessesData["body"];
-export type UpdateProcessRequest = PutApiProcessesByIdData["body"];
-export type SyncProcessesResponse =
-	PostApiApplicationsByAppCodeProcessesSyncResponse;
+/** Pagination params (page/size). Mirrors the previous generated shape. */
+export type PaginationParams = {
+	page?: number;
+	size?: number;
+};
+
+export type ProcessListResponse = ListProcessesResponse;
+export type ProcessResponse = GetProcessResponse;
+export type CreateProcessRequest = CreateProcessData["body"];
+export type UpdateProcessRequest = UpdateProcessData["body"];
+export type SyncProcessesResponse = SyncProcessesResponseType;
 
 export interface ProcessFilters {
 	status?: string;
@@ -53,13 +58,13 @@ export class ProcessesResource {
 		pagination?: PaginationParams,
 	): ResultAsync<ProcessListResponse, SdkError> {
 		return this.client.request<ProcessListResponse>((httpClient, headers) =>
-			sdk.getApiProcesses({
+			sdk.listProcesses({
 				client: httpClient,
 				headers,
 				query: {
-					pagination: pagination ?? {},
+					...pagination,
 					...filters,
-				},
+				} as ListProcessesData["query"],
 			}),
 		);
 	}
@@ -67,7 +72,7 @@ export class ProcessesResource {
 	/** Get a process by ID. */
 	get(id: string): ResultAsync<ProcessResponse, SdkError> {
 		return this.client.request<ProcessResponse>((httpClient, headers) =>
-			sdk.getApiProcessesById({
+			sdk.getProcess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -78,7 +83,7 @@ export class ProcessesResource {
 	/** Get a process by code (`{app}:{subdomain}:{process}`). */
 	getByCode(code: string): ResultAsync<ProcessResponse, SdkError> {
 		return this.client.request<ProcessResponse>((httpClient, headers) =>
-			sdk.getApiProcessesByCode({
+			sdk.getProcessByCode({
 				client: httpClient,
 				headers,
 				path: { code },
@@ -91,7 +96,7 @@ export class ProcessesResource {
 		data: CreateProcessRequest,
 	): ResultAsync<ProcessResponse, SdkError> {
 		return this.client.request<ProcessResponse>((httpClient, headers) =>
-			sdk.postApiProcesses({
+			sdk.createProcess({
 				client: httpClient,
 				headers,
 				body: data,
@@ -105,7 +110,7 @@ export class ProcessesResource {
 		data: UpdateProcessRequest,
 	): ResultAsync<ProcessResponse, SdkError> {
 		return this.client.request<ProcessResponse>((httpClient, headers) =>
-			sdk.putApiProcessesById({
+			sdk.updateProcess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -117,7 +122,7 @@ export class ProcessesResource {
 	/** Archive a process (soft-delete). */
 	archive(id: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiProcessesByIdArchive({
+			sdk.archiveProcess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -128,7 +133,7 @@ export class ProcessesResource {
 	/** Hard-delete a process. Only allowed once archived. */
 	delete(id: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiProcessesById({
+			sdk.deleteProcess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -145,11 +150,11 @@ export class ProcessesResource {
 	 */
 	sync(
 		applicationCode: string,
-		processes: PostApiApplicationsByAppCodeProcessesSyncData["body"]["processes"],
+		processes: SyncProcessesData["body"]["processes"],
 		removeUnlisted = false,
 	): ResultAsync<SyncProcessesResponse, SdkError> {
 		return this.client.request<SyncProcessesResponse>((httpClient, headers) =>
-			sdk.postApiApplicationsByAppCodeProcessesSync({
+			sdk.syncProcesses({
 				client: httpClient,
 				headers,
 				path: { appCode: applicationCode },

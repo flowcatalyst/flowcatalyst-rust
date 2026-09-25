@@ -37,17 +37,17 @@ class RegisterCompleteResponseNormalizer implements DenormalizerInterface, Norma
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('credentialId', $data) && $data['credentialId'] !== null) {
             $object->setCredentialId($data['credentialId']);
-            unset($data['credentialId']);
         }
         elseif (\array_key_exists('credentialId', $data) && $data['credentialId'] === null) {
             $object->setCredentialId(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -55,11 +55,6 @@ class RegisterCompleteResponseNormalizer implements DenormalizerInterface, Norma
     {
         $dataArray = [];
         $dataArray['credentialId'] = $data->getCredentialId();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

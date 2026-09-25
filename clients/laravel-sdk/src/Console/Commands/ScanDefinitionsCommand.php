@@ -41,8 +41,10 @@ class ScanDefinitionsCommand extends Command
             ['Type', 'Count'],
             [
                 ['Roles', count($definitions->roles)],
+                ['Permissions', count($definitions->permissions)],
                 ['Event Types', count($definitions->eventTypes)],
                 ['Subscriptions', count($definitions->subscriptions)],
+                ['Connections', count($definitions->connections)],
                 ['Dispatch Pools', count($definitions->dispatchPools)],
             ]
         );

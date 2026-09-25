@@ -5,10 +5,10 @@
  * Each returns a `preHandler` you attach per-route. The guards differ only
  * in what they accept and how they respond to missing/invalid credentials:
  *
- *   requireSession  — cookie only, redirects to /auth/login on miss
+ *   requireSession  — cookie only; redirects iff the request looks like a
+ *                     browser navigation (Accept: text/html), else 401 JSON
  *   requireBearer   — Bearer token only, 401 JSON on miss
- *   requireAuth     — either; redirects iff the request looks like a browser
- *                     navigation (Accept: text/html), else 401 JSON
+ *   requireAuth     — either; same content negotiation as requireSession
  */
 
 import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
@@ -36,9 +36,10 @@ async function deny(
 	reply: FastifyReply,
 	ctx: GuardContext,
 ): Promise<void> {
-	const wantsHtml = isHtmlNavigation(req);
-	const useRedirect =
-		kind === "session" || (kind === "any" && wantsHtml);
+	// Redirect only real browser navigations; XHR/fetch callers (SPAs probing
+	// a session endpoint) need the 401 — a silent 302 chain ends cross-origin
+	// at the platform's authorize URL, which fetch cannot follow.
+	const useRedirect = isHtmlNavigation(req) && kind !== "bearer";
 
 	if (useRedirect) {
 		const returnTo = encodeURIComponent(req.url);

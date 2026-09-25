@@ -1,18 +1,18 @@
 /**
  * Outbox types for transactional outbox pattern.
  *
- * Schema must match the Java outbox-processor's expected format.
- * The processor reads from these tables and manages status transitions.
+ * Schema must match the outbox poller's expected format.
+ * The poller reads from these tables and manages status transitions.
  */
 
 /** Message types supported by the outbox. */
 export type MessageType = "EVENT" | "DISPATCH_JOB" | "AUDIT_LOG";
 
 /**
- * Outbox status codes matching the Java outbox-processor.
+ * Outbox status codes matching the outbox poller.
  *
- * The processor uses SMALLINT status codes, NOT strings.
- * Only PENDING (0) is written by the SDK; all others are set by the processor.
+ * The wire contract uses SMALLINT status codes, NOT strings.
+ * Only PENDING (0) is written by the SDK; all others are set by the poller.
  */
 export const OutboxStatus = {
 	/** Waiting to be processed. */

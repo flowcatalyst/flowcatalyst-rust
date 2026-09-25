@@ -42,35 +42,30 @@ class SyncSubscriptionInputRequestNormalizer implements DenormalizerInterface, N
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('connectionId', $data) && $data['connectionId'] !== null) {
             $object->setConnectionId($data['connectionId']);
-            unset($data['connectionId']);
         }
         elseif (\array_key_exists('connectionId', $data) && $data['connectionId'] === null) {
             $object->setConnectionId(null);
         }
         if (\array_key_exists('dataOnly', $data) && $data['dataOnly'] !== null) {
             $object->setDataOnly($data['dataOnly']);
-            unset($data['dataOnly']);
         }
         elseif (\array_key_exists('dataOnly', $data) && $data['dataOnly'] === null) {
             $object->setDataOnly(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('dispatchPoolCode', $data) && $data['dispatchPoolCode'] !== null) {
             $object->setDispatchPoolCode($data['dispatchPoolCode']);
-            unset($data['dispatchPoolCode']);
         }
         elseif (\array_key_exists('dispatchPoolCode', $data) && $data['dispatchPoolCode'] === null) {
             $object->setDispatchPoolCode(null);
@@ -81,50 +76,39 @@ class SyncSubscriptionInputRequestNormalizer implements DenormalizerInterface, N
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\SyncSubscriptionEventTypeRequest::class, 'json', $context);
             }
             $object->setEventTypes($values);
-            unset($data['eventTypes']);
         }
         elseif (\array_key_exists('eventTypes', $data) && $data['eventTypes'] === null) {
             $object->setEventTypes(null);
         }
         if (\array_key_exists('maxRetries', $data) && $data['maxRetries'] !== null) {
             $object->setMaxRetries($data['maxRetries']);
-            unset($data['maxRetries']);
         }
         elseif (\array_key_exists('maxRetries', $data) && $data['maxRetries'] === null) {
             $object->setMaxRetries(null);
         }
         if (\array_key_exists('mode', $data) && $data['mode'] !== null) {
             $object->setMode($data['mode']);
-            unset($data['mode']);
         }
         elseif (\array_key_exists('mode', $data) && $data['mode'] === null) {
             $object->setMode(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
         }
         if (\array_key_exists('target', $data) && $data['target'] !== null) {
             $object->setTarget($data['target']);
-            unset($data['target']);
         }
         elseif (\array_key_exists('target', $data) && $data['target'] === null) {
             $object->setTarget(null);
         }
         if (\array_key_exists('timeoutSeconds', $data) && $data['timeoutSeconds'] !== null) {
             $object->setTimeoutSeconds($data['timeoutSeconds']);
-            unset($data['timeoutSeconds']);
         }
         elseif (\array_key_exists('timeoutSeconds', $data) && $data['timeoutSeconds'] === null) {
             $object->setTimeoutSeconds(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -132,16 +116,16 @@ class SyncSubscriptionInputRequestNormalizer implements DenormalizerInterface, N
     {
         $dataArray = [];
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('connectionId')) {
+        if ($data->isInitialized('connectionId') && null !== $data->getConnectionId()) {
             $dataArray['connectionId'] = $data->getConnectionId();
         }
         if ($data->isInitialized('dataOnly') && null !== $data->getDataOnly()) {
             $dataArray['dataOnly'] = $data->getDataOnly();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('dispatchPoolCode')) {
+        if ($data->isInitialized('dispatchPoolCode') && null !== $data->getDispatchPoolCode()) {
             $dataArray['dispatchPoolCode'] = $data->getDispatchPoolCode();
         }
         $values = [];
@@ -149,21 +133,16 @@ class SyncSubscriptionInputRequestNormalizer implements DenormalizerInterface, N
             $values[] = $this->normalizer->normalize($value, 'json', $context);
         }
         $dataArray['eventTypes'] = $values;
-        if ($data->isInitialized('maxRetries')) {
+        if ($data->isInitialized('maxRetries') && null !== $data->getMaxRetries()) {
             $dataArray['maxRetries'] = $data->getMaxRetries();
         }
-        if ($data->isInitialized('mode')) {
+        if ($data->isInitialized('mode') && null !== $data->getMode()) {
             $dataArray['mode'] = $data->getMode();
         }
         $dataArray['name'] = $data->getName();
         $dataArray['target'] = $data->getTarget();
-        if ($data->isInitialized('timeoutSeconds')) {
+        if ($data->isInitialized('timeoutSeconds') && null !== $data->getTimeoutSeconds()) {
             $dataArray['timeoutSeconds'] = $data->getTimeoutSeconds();
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
         }
         return $dataArray;
     }

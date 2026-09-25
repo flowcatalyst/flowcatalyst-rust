@@ -45,57 +45,45 @@ class ClientApplicationResponseNormalizer implements DenormalizerInterface, Norm
         }
         if (\array_key_exists('active', $data) && $data['active'] !== null) {
             $object->setActive($data['active']);
-            unset($data['active']);
         }
         elseif (\array_key_exists('active', $data) && $data['active'] === null) {
             $object->setActive(null);
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('enabledForClient', $data) && $data['enabledForClient'] !== null) {
             $object->setEnabledForClient($data['enabledForClient']);
-            unset($data['enabledForClient']);
         }
         elseif (\array_key_exists('enabledForClient', $data) && $data['enabledForClient'] === null) {
             $object->setEnabledForClient(null);
         }
         if (\array_key_exists('iconUrl', $data) && $data['iconUrl'] !== null) {
             $object->setIconUrl($data['iconUrl']);
-            unset($data['iconUrl']);
         }
         elseif (\array_key_exists('iconUrl', $data) && $data['iconUrl'] === null) {
             $object->setIconUrl(null);
         }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -104,20 +92,15 @@ class ClientApplicationResponseNormalizer implements DenormalizerInterface, Norm
         $dataArray = [];
         $dataArray['active'] = $data->getActive();
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['enabledForClient'] = $data->getEnabledForClient();
-        if ($data->isInitialized('iconUrl')) {
+        if ($data->isInitialized('iconUrl') && null !== $data->getIconUrl()) {
             $dataArray['iconUrl'] = $data->getIconUrl();
         }
         $dataArray['id'] = $data->getId();
         $dataArray['name'] = $data->getName();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

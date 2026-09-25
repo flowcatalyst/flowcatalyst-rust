@@ -250,7 +250,7 @@ class OutboxManager
     }
 
     /**
-     * Build an outbox message array matching the outbox-processor schema.
+     * Build an outbox message array matching the outbox poller's schema.
      *
      * Status is integer 0 (PENDING), not a string.
      * The processor manages all other status transitions.

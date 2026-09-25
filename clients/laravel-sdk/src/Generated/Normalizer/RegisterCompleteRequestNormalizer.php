@@ -37,12 +37,15 @@ class RegisterCompleteRequestNormalizer implements DenormalizerInterface, Normal
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('credential', $data) && $data['credential'] !== null) {
-            $values = new \ArrayObject([], \ArrayObject::ARRAY_AS_PROPS);
-            foreach ($data['credential'] as $key => $value) {
-                $values[$key] = $value;
-            }
-            $object->setCredential($values);
+            $object->setCredential($data['credential']);
             unset($data['credential']);
         }
         elseif (\array_key_exists('credential', $data) && $data['credential'] === null) {
@@ -62,9 +65,9 @@ class RegisterCompleteRequestNormalizer implements DenormalizerInterface, Normal
         elseif (\array_key_exists('stateId', $data) && $data['stateId'] === null) {
             $object->setStateId(null);
         }
-        foreach ($data as $key_1 => $value_1) {
-            if (preg_match('/.*/', (string) $key_1)) {
-                $object[$key_1] = $value_1;
+        foreach ($data as $key => $value) {
+            if (preg_match('/.*/', (string) $key)) {
+                $object[$key] = $value;
             }
         }
         return $object;
@@ -72,18 +75,14 @@ class RegisterCompleteRequestNormalizer implements DenormalizerInterface, Normal
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $values = [];
-        foreach ($data->getCredential() as $key => $value) {
-            $values[$key] = $value;
-        }
-        $dataArray['credential'] = $values;
-        if ($data->isInitialized('name')) {
+        $dataArray['credential'] = $data->getCredential();
+        if ($data->isInitialized('name') && null !== $data->getName()) {
             $dataArray['name'] = $data->getName();
         }
         $dataArray['stateId'] = $data->getStateId();
-        foreach ($data as $key_1 => $value_1) {
-            if (preg_match('/.*/', (string) $key_1)) {
-                $dataArray[$key_1] = $value_1;
+        foreach ($data as $key => $value) {
+            if (preg_match('/.*/', (string) $key)) {
+                $dataArray[$key] = $value;
             }
         }
         return $dataArray;

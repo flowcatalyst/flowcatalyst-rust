@@ -39,35 +39,30 @@ class SyncProcessInputRequestNormalizer implements DenormalizerInterface, Normal
         }
         if (\array_key_exists('body', $data) && $data['body'] !== null) {
             $object->setBody($data['body']);
-            unset($data['body']);
         }
         elseif (\array_key_exists('body', $data) && $data['body'] === null) {
             $object->setBody(null);
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('diagramType', $data) && $data['diagramType'] !== null) {
             $object->setDiagramType($data['diagramType']);
-            unset($data['diagramType']);
         }
         elseif (\array_key_exists('diagramType', $data) && $data['diagramType'] === null) {
             $object->setDiagramType(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
@@ -78,15 +73,9 @@ class SyncProcessInputRequestNormalizer implements DenormalizerInterface, Normal
                 $values[] = $value;
             }
             $object->setTags($values);
-            unset($data['tags']);
         }
         elseif (\array_key_exists('tags', $data) && $data['tags'] === null) {
             $object->setTags(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -97,10 +86,10 @@ class SyncProcessInputRequestNormalizer implements DenormalizerInterface, Normal
             $dataArray['body'] = $data->getBody();
         }
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('diagramType')) {
+        if ($data->isInitialized('diagramType') && null !== $data->getDiagramType()) {
             $dataArray['diagramType'] = $data->getDiagramType();
         }
         $dataArray['name'] = $data->getName();
@@ -110,11 +99,6 @@ class SyncProcessInputRequestNormalizer implements DenormalizerInterface, Normal
                 $values[] = $value;
             }
             $dataArray['tags'] = $values;
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
         }
         return $dataArray;
     }

@@ -1,5 +1,17 @@
 name: Split Laravel SDK
 
+# This repo is the SDKs' home (docs/owner-decisions-2026-09-25.md #11;
+# cutover steps in docs/sdks.md). Fires on `laravel-sdk/v*` (cut via
+# `just release-laravel-sdk patch`), splits clients/laravel-sdk/ out with
+# splitsh-lite, force-pushes it to the standalone flowcatalyst/laravel-sdk
+# repo (a pure source mirror), and tags it there as plain vX.Y.Z. Composer
+# reads the tag; apps install the package as a `vcs` repository.
+#
+# Only ONE source repo may push to the standalone repo: flowcatalyst-go's copy of
+# this workflow is disabled (`if: false`, 2026-09-24), and flowcatalyst-javalin's
+# copy must be disabled before the first release from here. Needs the
+# LARAVEL_SDK_TOKEN secret in this repo.
+
 on:
   push:
     tags:

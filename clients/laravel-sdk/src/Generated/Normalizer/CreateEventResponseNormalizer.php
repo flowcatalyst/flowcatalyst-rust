@@ -40,31 +40,29 @@ class CreateEventResponseNormalizer implements DenormalizerInterface, Normalizer
         if (\array_key_exists('isDuplicate', $data) && \is_int($data['isDuplicate'])) {
             $data['isDuplicate'] = (bool) $data['isDuplicate'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('dispatchJobCount', $data) && $data['dispatchJobCount'] !== null) {
             $object->setDispatchJobCount($data['dispatchJobCount']);
-            unset($data['dispatchJobCount']);
         }
         elseif (\array_key_exists('dispatchJobCount', $data) && $data['dispatchJobCount'] === null) {
             $object->setDispatchJobCount(null);
         }
         if (\array_key_exists('event', $data) && $data['event'] !== null) {
-            $object->setEvent($this->denormalizer->denormalize($data['event'], \FlowCatalyst\Generated\Model\EventResponse::class, 'json', $context));
-            unset($data['event']);
+            $object->setEvent($this->denormalizer->denormalize($data['event'], \FlowCatalyst\Generated\Model\CreatedEvent::class, 'json', $context));
         }
         elseif (\array_key_exists('event', $data) && $data['event'] === null) {
             $object->setEvent(null);
         }
         if (\array_key_exists('isDuplicate', $data) && $data['isDuplicate'] !== null) {
             $object->setIsDuplicate($data['isDuplicate']);
-            unset($data['isDuplicate']);
         }
         elseif (\array_key_exists('isDuplicate', $data) && $data['isDuplicate'] === null) {
             $object->setIsDuplicate(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -74,11 +72,6 @@ class CreateEventResponseNormalizer implements DenormalizerInterface, Normalizer
         $dataArray['dispatchJobCount'] = $data->getDispatchJobCount();
         $dataArray['event'] = $this->normalizer->normalize($data->getEvent(), 'json', $context);
         $dataArray['isDuplicate'] = $data->getIsDuplicate();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

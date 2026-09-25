@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SyncSubscriptionEventTypeRequest extends \ArrayObject
+class SyncSubscriptionEventTypeRequest
 {
     /**
      * @var array

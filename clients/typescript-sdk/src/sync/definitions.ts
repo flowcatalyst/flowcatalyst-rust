@@ -12,6 +12,67 @@
  */
 
 // ────────────────────────────────────────────────────────────────────────────
+// Permission
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A structured permission — the 4-part `<application>:<context>:<aggregate>:<action>`
+ * identity, defined once and linkable from any number of roles.
+ *
+ * `application` defaults to the application code of the `DefinitionSet` it's
+ * resolved against, so you don't repeat it on every permission:
+ *
+ * ```ts
+ * const ViewPosts = permission({ context: "posts", aggregate: "post", action: "view" });
+ * const EditPosts = permission({ context: "posts", aggregate: "post", action: "edit" });
+ *
+ * defineApplication("blog")
+ *   .withPermissions([ViewPosts, EditPosts])
+ *   .withRoles([{ name: "editor", permissions: [ViewPosts, EditPosts] }]);
+ * // → role "blog:editor" granting "blog:posts:post:view", "blog:posts:post:edit"
+ * ```
+ *
+ * FlowCatalyst has no standalone "create permission" — permissions reach the
+ * platform via the roles that grant them. The standalone catalogue is for
+ * documentation/reuse on the client side.
+ */
+export interface PermissionInput {
+	/** Application segment; defaults to the set's applicationCode when omitted */
+	application?: string;
+	context: string;
+	aggregate: string;
+	action: string;
+	description?: string;
+}
+
+/** Factory: build a reusable {@link PermissionInput}. */
+export function permission(input: PermissionInput): PermissionInput {
+	return input;
+}
+
+/**
+ * Resolve a {@link PermissionInput} (or an already-formatted string) to its
+ * full `application:context:aggregate:action` form, lower-cased.
+ *
+ * @throws when no application can be determined.
+ */
+export function permissionToString(
+	input: PermissionInput | string,
+	defaultApplication?: string,
+): string {
+	if (typeof input === "string") {
+		return input.toLowerCase();
+	}
+	const application = input.application ?? defaultApplication;
+	if (!application) {
+		throw new Error(
+			"permission requires an application: set `application` on the permission or build it against a DefinitionSet/application code.",
+		);
+	}
+	return `${application}:${input.context}:${input.aggregate}:${input.action}`.toLowerCase();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Role
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -22,9 +83,10 @@
  * under application `orders`, the role is persisted as `orders:admin`. Do
  * not include the prefix in `name` yourself — the platform adds it.
  *
- * Permissions follow the 4-part format `<domain>:<area>:<resource>:<action>`
- * (e.g. `orders:admin:shipment:cancel`). Wildcards are supported in any
- * position. See `docs/syncing-definitions.md` for the permission conventions.
+ * Permissions may be 4-part strings `<domain>:<area>:<resource>:<action>`
+ * (e.g. `orders:admin:shipment:cancel`) or {@link PermissionInput} factories
+ * (whose `application` defaults to the set's applicationCode). Wildcards are
+ * supported in any position. See `docs/syncing-definitions.md`.
  */
 export interface RoleDefinition {
 	/** Short name (no `<app>:` prefix — the platform adds it) */
@@ -32,8 +94,8 @@ export interface RoleDefinition {
 	/** Human-readable label */
 	displayName?: string;
 	description?: string;
-	/** Permission strings (4-part format) */
-	permissions?: string[];
+	/** Permission strings (4-part) and/or {@link PermissionInput} factories */
+	permissions?: Array<string | PermissionInput>;
 	/**
 	 * When true, client admins can assign this role to their own users.
 	 * When false, only platform admins can assign it.
@@ -64,6 +126,37 @@ export interface EventTypeDefinition {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Connection
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A connection declaration.
+ *
+ * A connection carries nothing environment-specific — the platform assigns
+ * the application's own provisioned service account itself, so one
+ * definition serves every environment. It exists purely so a subscription's
+ * `connectionCode` has something to resolve; connections are always synced
+ * BEFORE subscriptions in the same run so that resolution succeeds without a
+ * second sync.
+ */
+export interface ConnectionDefinition {
+	/** Unique connection code — stable across environments; what a subscription's `connectionCode` names */
+	code: string;
+	name: string;
+	description?: string;
+	/** Your own system's identifier for this connection */
+	externalId?: string;
+	/**
+	 * FlowCatalyst client (identifier slug — never an id; ids differ per
+	 * environment) this connection is scoped to. Omit for a global
+	 * connection. For a multi-tenant application, prefer scoping the whole
+	 * `DefinitionSet` with `.forClient(...)` instead of repeating this on
+	 * every row.
+	 */
+	client?: string;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Subscription
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -84,7 +177,7 @@ export interface SubscriptionEventTypeBinding {
  * A subscription declaration.
  *
  * The subscription describes a downstream consumer: where to deliver
- * (`target` URL or `connectionId` reference), which event types trigger it,
+ * (`target` URL, plus an optional `connectionCode`), which event types trigger it,
  * and how to handle failures.
  */
 export interface SubscriptionDefinition {
@@ -92,20 +185,53 @@ export interface SubscriptionDefinition {
 	code: string;
 	name: string;
 	description?: string;
-	/** Webhook URL where events are delivered */
+	/**
+	 * Where events are delivered. Either an absolute URL (sent verbatim), or
+	 * a path (e.g. `/webhooks/orders`) resolved at sync time against, in
+	 * order: the owning `DefinitionSet`'s `targetBaseUrl` (see
+	 * `.forClient()`), then the synchronizer's `subscriptionTargetBaseUrl`
+	 * option. There is no further fallback. A blank target, or a path with
+	 * no base available, fails that subscription's scope locally (naming
+	 * the subscription) rather than sending a partial list — under
+	 * `removeUnlisted` an omitted row would be deleted.
+	 */
 	target: string;
-	/** Pre-configured connection reference (alternative to `target`) */
+	/**
+	 * Code of the connection that delivers this subscription. Names a
+	 * connection owned by THIS application, unless `sharedConnection` is
+	 * set. Prefer it over `connectionId`: an id is minted per environment, a
+	 * code is the same everywhere.
+	 */
+	connectionCode?: string;
+	/**
+	 * Connection id. Environment-specific — use `connectionCode` in anything
+	 * that is synced to more than one environment.
+	 */
 	connectionId?: string;
+	/**
+	 * When true, `connectionCode` names a SHARED (application-less)
+	 * connection rather than one owned by this application. There is no
+	 * fallback between the two namespaces — the wrong one 404s rather than
+	 * silently resolving to the other connection's credentials.
+	 */
+	sharedConnection?: boolean;
 	/** Event types this subscription consumes */
 	eventTypes: SubscriptionEventTypeBinding[];
 	/** Dispatch pool code; falls back to the platform default when omitted */
 	dispatchPoolCode?: string;
-	/** Delivery mode; default IMMEDIATE */
+	/** Delivery mode; default NEXT_ON_ERROR */
 	mode?: SubscriptionMode;
 	maxRetries?: number;
 	timeoutSeconds?: number;
 	/** When true, only the event's `data` field is POSTed (no metadata envelope) */
 	dataOnly?: boolean;
+	/**
+	 * FlowCatalyst client (identifier slug — never an id) this subscription
+	 * is scoped to. Omit for a global subscription. For a multi-tenant
+	 * application, prefer scoping the whole `DefinitionSet` with
+	 * `.forClient(...)` instead of repeating this on every row.
+	 */
+	client?: string;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -181,8 +307,10 @@ export interface ProcessDefinition {
 /**
  * A scheduled-job declaration.
  *
- * `crons` accepts standard 5-field cron expressions; the platform's
- * scheduler evaluates them in `timezone` (defaults to UTC server-side).
+ * `crons` requires 6-field, seconds-first cron expressions (`sec min hour
+ * dom month dow`) — a standard 5-field cron passes validation but never
+ * fires. The platform's scheduler evaluates them in `timezone` (defaults
+ * to UTC server-side).
  *
  * `concurrent: true` lets the platform fire a new tick while a previous
  * invocation is still running — most apps want false. Use the SDK's
@@ -193,6 +321,9 @@ export interface ProcessDefinition {
  * the success signal" to "consumer POSTs back to
  * /api/scheduled-jobs/instances/{id}/complete when done", enabling
  * per-instance status tracking.
+ *
+ * `clientId` scopes the job to a client/tenant rather than the platform —
+ * omit it only for platform-wide jobs (anchor-only).
  */
 export interface ScheduledJobDefinition {
 	code: string;
@@ -207,6 +338,8 @@ export interface ScheduledJobDefinition {
 	deliveryMaxAttempts?: number;
 	/** Override the application's default callback URL for this job. */
 	targetUrl?: string;
+	/** Client/tenant that owns this job. Omit/null = platform-scoped (anchor only). */
+	clientId?: string | null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -217,7 +350,15 @@ export interface ScheduledJobDefinition {
 export interface DefinitionSet {
 	applicationCode: string;
 	roles?: RoleDefinition[];
+	/**
+	 * Standalone permission catalogue. Not pushed to the platform directly
+	 * (permissions ride up via the roles that grant them); declared for reuse
+	 * and documentation. `application` defaults to `applicationCode`.
+	 */
+	permissions?: PermissionInput[];
 	eventTypes?: EventTypeDefinition[];
+	/** Synced BEFORE subscriptions, so a subscription's `connectionCode` resolves in the same run. */
+	connections?: ConnectionDefinition[];
 	subscriptions?: SubscriptionDefinition[];
 	dispatchPools?: DispatchPoolDefinition[];
 	principals?: PrincipalDefinition[];
@@ -230,6 +371,20 @@ export interface DefinitionSet {
 	 * previously published version.
 	 */
 	openapiSpec?: unknown;
+	/**
+	 * The FlowCatalyst client (identifier slug — never an id) this whole set
+	 * is scoped to. Undefined = global (the default). Set via `.forClient()`
+	 * for a multi-tenant application's per-client set; a connection or
+	 * subscription row's own `client` wins over this.
+	 */
+	client?: string;
+	/**
+	 * Overrides the base URL a subscription's path-style target resolves
+	 * against, for THIS set only — a client-scoped set often has its own
+	 * host. Undefined falls back to the synchronizer's
+	 * `subscriptionTargetBaseUrl` option.
+	 */
+	targetBaseUrl?: string;
 }
 
 /**
@@ -259,8 +414,26 @@ export class DefinitionSetBuilder {
 		return this;
 	}
 
+	/**
+	 * Declare standalone permissions (reusable across roles). Their
+	 * `application` defaults to this set's applicationCode at build time.
+	 */
+	withPermissions(permissions: PermissionInput[]): this {
+		this.set.permissions = [...(this.set.permissions ?? []), ...permissions];
+		return this;
+	}
+
 	withEventTypes(eventTypes: EventTypeDefinition[]): this {
 		this.set.eventTypes = [...(this.set.eventTypes ?? []), ...eventTypes];
+		return this;
+	}
+
+	/**
+	 * Add connections to the set. Synced BEFORE subscriptions — a
+	 * subscription's `connectionCode` must resolve in the same run.
+	 */
+	withConnections(connections: ConnectionDefinition[]): this {
+		this.set.connections = [...(this.set.connections ?? []), ...connections];
 		return this;
 	}
 
@@ -269,6 +442,29 @@ export class DefinitionSetBuilder {
 			...(this.set.subscriptions ?? []),
 			...subscriptions,
 		];
+		return this;
+	}
+
+	/**
+	 * Scope this whole set to one FlowCatalyst client (identifier slug —
+	 * never an id, ids differ per environment). Every connection/subscription
+	 * added to this set that doesn't set its own `client` inherits this one.
+	 * The optional `targetBaseUrl` overrides the base URL a path-style
+	 * subscription target resolves against, for this set only — client-scoped
+	 * sets often have their own host.
+	 *
+	 * For a multi-tenant application (one codebase, many clients), build one
+	 * set per (application, client): `defineApplication(...)` alone for the
+	 * global set, `.forClient(...)` for each tenant. Sync every set together
+	 * with `DefinitionSynchronizer.syncGrouped()` so the platform sees
+	 * exactly one call per (application, client) scope, global first —
+	 * `sync()`/`syncAll()` do NOT merge multiple sets for the same
+	 * application, and calling them yourself with two sets for one scope
+	 * lets the second call delete what the first just created.
+	 */
+	forClient(client: string, targetBaseUrl?: string): this {
+		this.set.client = client;
+		this.set.targetBaseUrl = targetBaseUrl;
 		return this;
 	}
 
@@ -302,11 +498,63 @@ export class DefinitionSetBuilder {
 	}
 
 	build(): DefinitionSet {
-		return { ...this.set };
+		const app = this.set.applicationCode;
+		const resolved: DefinitionSet = { ...this.set };
+
+		// Resolve role permissions (PermissionInput | string) to full strings.
+		if (this.set.roles) {
+			resolved.roles = this.set.roles.map((role) =>
+				role.permissions
+					? {
+							...role,
+							permissions: role.permissions.map((p) =>
+								permissionToString(p, app),
+							),
+						}
+					: { ...role },
+			);
+		}
+
+		// Default the standalone catalogue's application segment.
+		if (this.set.permissions) {
+			resolved.permissions = this.set.permissions.map((p) => ({
+				...p,
+				application: p.application ?? app,
+			}));
+		}
+
+		return resolved;
 	}
 }
 
 /** Convenience: start building definitions for `applicationCode`. */
 export function defineApplication(applicationCode: string): DefinitionSetBuilder {
+	return new DefinitionSetBuilder(applicationCode);
+}
+
+/** Environment variable read by {@link defineApplicationFromEnv}. */
+export const APP_CODE_ENV = "FLOWCATALYST_APP_CODE";
+
+/**
+ * Start building definitions for the application named by
+ * `FLOWCATALYST_APP_CODE`, for apps that carry their code in the environment
+ * rather than in source.
+ *
+ * Throws when the variable is unset or empty — a missing application code
+ * would otherwise surface much later as a request to
+ * `/api/applications/undefined/…`.
+ *
+ * A codebase that owns several applications should call
+ * {@link defineApplication} once per application and pass the sets to
+ * `syncMany` — the set a definition belongs to *is* its application.
+ */
+export function defineApplicationFromEnv(): DefinitionSetBuilder {
+	const applicationCode =
+		typeof process !== "undefined" ? process.env?.[APP_CODE_ENV] : undefined;
+	if (!applicationCode) {
+		throw new Error(
+			`${APP_CODE_ENV} is not set — pass the application code to defineApplication() instead.`,
+		);
+	}
 	return new DefinitionSetBuilder(applicationCode);
 }

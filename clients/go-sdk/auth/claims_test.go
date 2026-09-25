@@ -91,3 +91,80 @@ func TestAuthContextDelegatesToClaims(t *testing.T) {
 	assert.Equal(t, []string{"admin"}, ctx.Roles())
 	assert.Equal(t, "eyJtoken", ctx.BearerToken())
 }
+
+// ─── Go's claim shape ───────────────────────────────────────────────────
+
+func goAPIToken(t *testing.T) auth.AccessTokenClaims {
+	t.Helper()
+	var c auth.AccessTokenClaims
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"iss": "https://fc.example.com", "sub": "prn_1", "aud": "flowcatalyst",
+		"exp": 9999999999, "iat": 1000000000, "nbf": 1000000000, "jti": "j1",
+		"type": "USER", "tier": "CLIENT",
+		"scope": "orders:order:read  orders:order:write",
+		"email": "u@example.com", "name": "U",
+		"clients": ["clt_a:acme", "clt_b"],
+		"roles": ["orders:viewer"],
+		"applications": ["app_1:orders", "app_2"],
+		"all_applications": false,
+		"token_use": "api"
+	}`), &c))
+	return c
+}
+
+func TestGoShapeTierAndScopeAreReadApart(t *testing.T) {
+	c := goAPIToken(t)
+	assert.Equal(t, "CLIENT", c.TenancyTier())
+	assert.False(t, c.IsAnchor())
+	assert.Equal(t, []string{"orders:order:read", "orders:order:write"}, c.GrantedPermissions())
+	assert.False(t, c.IsIdentityToken())
+}
+
+func TestGoShapeClientAndApplicationPairsMatchByID(t *testing.T) {
+	c := goAPIToken(t)
+	assert.True(t, c.HasClientAccess("clt_a"))
+	assert.True(t, c.HasClientAccess("clt_b"))
+	assert.False(t, c.HasClientAccess("acme"))
+	assert.False(t, c.HasClientAccess("clt_c"))
+	assert.Equal(t, []string{"clt_a", "clt_b"}, c.ClientIDList())
+	assert.True(t, c.HasApplicationAccess("app_1"))
+	assert.True(t, c.HasApplicationAccess("app_2"))
+	assert.False(t, c.HasApplicationAccess("app_3"))
+	assert.Equal(t, []string{"app_1", "app_2"}, c.ApplicationIDs())
+	assert.False(t, c.HasAllApplications())
+}
+
+func TestGoShapeAnchorAndAllApplications(t *testing.T) {
+	var c auth.AccessTokenClaims
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"sub": "prn_1", "type": "USER", "tier": "ANCHOR", "name": "A",
+		"clients": ["*"], "roles": [], "applications": ["*"], "all_applications": true
+	}`), &c))
+	assert.True(t, c.IsAnchor())
+	assert.Empty(t, c.GrantedPermissions())
+	assert.True(t, c.HasAllApplications())
+	assert.True(t, c.HasApplicationAccess("app_anything"))
+	assert.Empty(t, c.ApplicationIDs())
+}
+
+func TestGoShapeIdentityTokenCarriesNoAuthority(t *testing.T) {
+	var c auth.AccessTokenClaims
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"sub": "prn_1", "type": "USER", "tier": "PARTNER", "name": "P",
+		"clients": [], "roles": [], "applications": [], "all_applications": false,
+		"token_use": "identity"
+	}`), &c))
+	assert.True(t, c.IsIdentityToken())
+	assert.Equal(t, "PARTNER", c.TenancyTier())
+	assert.Empty(t, c.GrantedPermissions())
+}
+
+func TestLegacyScopeAsTierTokenStillReadsItsTier(t *testing.T) {
+	var c auth.AccessTokenClaims
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"sub": "prn_1", "type": "USER", "scope": "ANCHOR", "name": "L", "clients": ["*"]
+	}`), &c))
+	assert.Equal(t, "ANCHOR", c.TenancyTier())
+	assert.True(t, c.IsAnchor())
+	assert.Empty(t, c.GrantedPermissions())
+}

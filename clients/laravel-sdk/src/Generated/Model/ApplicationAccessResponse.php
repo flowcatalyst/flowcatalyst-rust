@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class ApplicationAccessResponse extends \ArrayObject
+class ApplicationAccessResponse
 {
     /**
      * @var array

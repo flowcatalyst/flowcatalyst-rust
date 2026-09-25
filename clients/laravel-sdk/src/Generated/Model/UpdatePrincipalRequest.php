@@ -13,45 +13,48 @@ class UpdatePrincipalRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Active status
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var bool|null
      */
     protected $active;
     /**
-     * Home client ID (required when scope is CLIENT, ignored otherwise).
-     * Changing client requires anchor.
+     * Optional; asserted against the stored email — a different value is rejected, not treated as a rename
      *
      * @var string|null
      */
-    protected $clientId;
+    protected $email;
     /**
-     * First name (for users)
-     *
-     * @var string|null
-     */
-    protected $firstName;
-    /**
-     * Last name (for users)
-     *
-     * @var string|null
-     */
-    protected $lastName;
-    /**
-     * Display name
-     *
      * @var string|null
      */
     protected $name;
     /**
-     * User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
+     * A URL to the JSON Schema for this object.
      *
-     * @var string|null
+     * @return string|null
      */
-    protected $scope;
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
     /**
-     * Active status
+     * A URL to the JSON Schema for this object.
      *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return bool|null
      */
     public function getActive(): ?bool
@@ -59,8 +62,6 @@ class UpdatePrincipalRequest extends \ArrayObject
         return $this->active;
     }
     /**
-     * Active status
-     *
      * @param bool|null $active
      *
      * @return self
@@ -72,76 +73,28 @@ class UpdatePrincipalRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Home client ID (required when scope is CLIENT, ignored otherwise).
-     * Changing client requires anchor.
+     * Optional; asserted against the stored email — a different value is rejected, not treated as a rename
      *
      * @return string|null
      */
-    public function getClientId(): ?string
+    public function getEmail(): ?string
     {
-        return $this->clientId;
+        return $this->email;
     }
     /**
-    * Home client ID (required when scope is CLIENT, ignored otherwise).
-    Changing client requires anchor.
-    *
-    * @param string|null $clientId
-    *
-    * @return self
-    */
-    public function setClientId(?string $clientId): self
-    {
-        $this->initialized['clientId'] = true;
-        $this->clientId = $clientId;
-        return $this;
-    }
-    /**
-     * First name (for users)
+     * Optional; asserted against the stored email — a different value is rejected, not treated as a rename
      *
-     * @return string|null
-     */
-    public function getFirstName(): ?string
-    {
-        return $this->firstName;
-    }
-    /**
-     * First name (for users)
-     *
-     * @param string|null $firstName
+     * @param string|null $email
      *
      * @return self
      */
-    public function setFirstName(?string $firstName): self
+    public function setEmail(?string $email): self
     {
-        $this->initialized['firstName'] = true;
-        $this->firstName = $firstName;
+        $this->initialized['email'] = true;
+        $this->email = $email;
         return $this;
     }
     /**
-     * Last name (for users)
-     *
-     * @return string|null
-     */
-    public function getLastName(): ?string
-    {
-        return $this->lastName;
-    }
-    /**
-     * Last name (for users)
-     *
-     * @param string|null $lastName
-     *
-     * @return self
-     */
-    public function setLastName(?string $lastName): self
-    {
-        $this->initialized['lastName'] = true;
-        $this->lastName = $lastName;
-        return $this;
-    }
-    /**
-     * Display name
-     *
      * @return string|null
      */
     public function getName(): ?string
@@ -149,8 +102,6 @@ class UpdatePrincipalRequest extends \ArrayObject
         return $this->name;
     }
     /**
-     * Display name
-     *
      * @param string|null $name
      *
      * @return self
@@ -159,28 +110,6 @@ class UpdatePrincipalRequest extends \ArrayObject
     {
         $this->initialized['name'] = true;
         $this->name = $name;
-        return $this;
-    }
-    /**
-     * User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
-     *
-     * @return string|null
-     */
-    public function getScope(): ?string
-    {
-        return $this->scope;
-    }
-    /**
-     * User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
-     *
-     * @param string|null $scope
-     *
-     * @return self
-     */
-    public function setScope(?string $scope): self
-    {
-        $this->initialized['scope'] = true;
-        $this->scope = $scope;
         return $this;
     }
 }

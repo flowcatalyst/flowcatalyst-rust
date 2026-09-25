@@ -1,4 +1,4 @@
-# fastify-app — live example against fc-dev
+# fastify-app — live example against fcdev
 
 A minimal Fastify app authenticated by FlowCatalyst's OIDC server +
 client-credentials tokens, using `@flowcatalyst/sdk/fastify`.
@@ -6,8 +6,8 @@ client-credentials tokens, using `@flowcatalyst/sdk/fastify`.
 ## Run
 
 ```bash
-# 1. Start fc-dev from the workspace root.
-cargo run -p fc-dev
+# 1. Start fcdev from the workspace root.
+cargo run -p fcdev
 
 # 2. Register a confidential web client at FlowCatalyst with redirect URI
 #    http://localhost:4000/auth/callback. Copy the client id + secret.

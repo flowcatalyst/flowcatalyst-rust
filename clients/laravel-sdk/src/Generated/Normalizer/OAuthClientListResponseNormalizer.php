@@ -37,21 +37,21 @@ class OAuthClientListResponseNormalizer implements DenormalizerInterface, Normal
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clients', $data) && $data['clients'] !== null) {
             $values = [];
             foreach ($data['clients'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\OAuthClientResponse::class, 'json', $context);
             }
             $object->setClients($values);
-            unset($data['clients']);
         }
         elseif (\array_key_exists('clients', $data) && $data['clients'] === null) {
             $object->setClients(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -63,11 +63,6 @@ class OAuthClientListResponseNormalizer implements DenormalizerInterface, Normal
             $values[] = $this->normalizer->normalize($value, 'json', $context);
         }
         $dataArray['clients'] = $values;
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

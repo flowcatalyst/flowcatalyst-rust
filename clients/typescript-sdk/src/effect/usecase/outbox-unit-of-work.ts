@@ -24,6 +24,13 @@ export interface OutboxUnitOfWorkOptions {
 	readonly auditEnabled?: boolean;
 	/** Principal ID used in audit logs when the event doesn't carry one. */
 	readonly fallbackPrincipalId?: string;
+	/**
+	 * FlowCatalyst application + client codes the emitted events / audit logs
+	 * belong to (client-centric platform; resolved at ingest). Audit carries
+	 * both; events carry the client code. Omitted when unset.
+	 */
+	readonly applicationCode?: string;
+	readonly clientCode?: string;
 }
 
 const parseJson = (json: string): Record<string, unknown> => {
@@ -37,7 +44,10 @@ const parseJson = (json: string): Record<string, unknown> => {
 	}
 };
 
-const toEventDto = <E extends DomainEvent>(event: E): CreateEventDto => {
+const toEventDto = <E extends DomainEvent>(
+	event: E,
+	clientCode?: string,
+): CreateEventDto => {
 	let dto = CreateEventDto.create(event.eventType, parseJson(event.toDataJson()))
 		.withSource(event.source)
 		.withSubject(event.subject)
@@ -53,6 +63,7 @@ const toEventDto = <E extends DomainEvent>(event: E): CreateEventDto => {
 			},
 		]);
 	if (event.causationId) dto = dto.withCausationId(event.causationId);
+	if (clientCode) dto = dto.withClientCode(clientCode);
 	return dto;
 };
 
@@ -60,6 +71,8 @@ const toAuditDto = <E extends DomainEvent>(
 	event: E,
 	command: unknown,
 	fallbackPrincipalId: string,
+	applicationCode?: string,
+	clientCode?: string,
 ): CreateAuditLogDto => {
 	const entityId = DomainEventUtils.extractEntityId(event.subject) ?? "";
 	const entityType = DomainEventUtils.extractAggregateType(event.subject);
@@ -68,12 +81,15 @@ const toAuditDto = <E extends DomainEvent>(
 		command && typeof command === "object"
 			? (command as Record<string, unknown>)
 			: { command };
-	return CreateAuditLogDto.create(entityType, entityId, operation)
+	let dto = CreateAuditLogDto.create(entityType, entityId, operation)
 		.withOperationData(operationData, auditMaskedFieldsOf(command))
 		.withPrincipalId(event.principalId || fallbackPrincipalId)
 		.withCorrelationId(event.correlationId)
 		.withSource(event.source)
 		.withPerformedAt(event.time);
+	if (applicationCode) dto = dto.withApplicationCode(applicationCode);
+	if (clientCode) dto = dto.withClientCode(clientCode);
+	return dto;
 };
 
 /**
@@ -94,6 +110,8 @@ export const layer = (
 ): Layer.Layer<UnitOfWork> => {
 	const auditEnabled = options?.auditEnabled ?? false;
 	const fallbackPrincipalId = options?.fallbackPrincipalId ?? "system";
+	const applicationCode = options?.applicationCode;
+	const clientCode = options?.clientCode;
 
 	const doCommit = <E extends DomainEvent>(
 		event: E,
@@ -103,10 +121,16 @@ export const layer = (
 		Effect.tryPromise({
 			try: async () => {
 				if (persist) await persist();
-				await outboxManager.createEvent(toEventDto(event));
+				await outboxManager.createEvent(toEventDto(event, clientCode));
 				if (auditEnabled) {
 					await outboxManager.createAuditLog(
-						toAuditDto(event, command, fallbackPrincipalId),
+						toAuditDto(
+							event,
+							command,
+							fallbackPrincipalId,
+							applicationCode,
+							clientCode,
+						),
 					);
 				}
 				return seal(event);

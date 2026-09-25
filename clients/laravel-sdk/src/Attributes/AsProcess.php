@@ -29,7 +29,8 @@ use Attribute;
  *
  * The application code is automatically added from your config when synced.
  * For example, if your app code is "orders", the process code becomes
- * "orders:fulfilment:shipment-flow".
+ * "orders:fulfilment:shipment-flow". Set `application:` to override it per
+ * definition (see the constructor).
  *
  * Code format: {application}:{subdomain}:{processName}
  */
@@ -44,6 +45,10 @@ final class AsProcess
      * @param string|null $description Short summary
      * @param string $diagramType Defaults to "mermaid"
      * @param string[] $tags Optional tags for grouping
+     * @param string|null $application Application code this process belongs to.
+     *        Overrides the global `application_code` / `application_map` during
+     *        sync — set it when one codebase defines processes for more than
+     *        one application. Null = resolve from the namespace map / default.
      */
     public function __construct(
         public readonly string $subdomain,
@@ -53,6 +58,7 @@ final class AsProcess
         public readonly ?string $description = null,
         public readonly string $diagramType = 'mermaid',
         public readonly array $tags = [],
+        public readonly ?string $application = null,
     ) {}
 
     /**

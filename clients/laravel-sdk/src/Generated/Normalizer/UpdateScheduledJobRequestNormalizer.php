@@ -43,6 +43,13 @@ class UpdateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
         if (\array_key_exists('tracksCompletion', $data) && \is_int($data['tracksCompletion'])) {
             $data['tracksCompletion'] = (bool) $data['tracksCompletion'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('concurrent', $data) && $data['concurrent'] !== null) {
             $object->setConcurrent($data['concurrent']);
             unset($data['concurrent']);
@@ -127,38 +134,38 @@ class UpdateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('concurrent')) {
+        if ($data->isInitialized('concurrent') && null !== $data->getConcurrent()) {
             $dataArray['concurrent'] = $data->getConcurrent();
         }
-        if ($data->isInitialized('crons')) {
+        if ($data->isInitialized('crons') && null !== $data->getCrons()) {
             $values = [];
             foreach ($data->getCrons() as $value) {
                 $values[] = $value;
             }
             $dataArray['crons'] = $values;
         }
-        if ($data->isInitialized('deliveryMaxAttempts')) {
+        if ($data->isInitialized('deliveryMaxAttempts') && null !== $data->getDeliveryMaxAttempts()) {
             $dataArray['deliveryMaxAttempts'] = $data->getDeliveryMaxAttempts();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('name')) {
+        if ($data->isInitialized('name') && null !== $data->getName()) {
             $dataArray['name'] = $data->getName();
         }
         if ($data->isInitialized('payload') && null !== $data->getPayload()) {
             $dataArray['payload'] = $data->getPayload();
         }
-        if ($data->isInitialized('targetUrl')) {
+        if ($data->isInitialized('targetUrl') && null !== $data->getTargetUrl()) {
             $dataArray['targetUrl'] = $data->getTargetUrl();
         }
-        if ($data->isInitialized('timeoutSeconds')) {
+        if ($data->isInitialized('timeoutSeconds') && null !== $data->getTimeoutSeconds()) {
             $dataArray['timeoutSeconds'] = $data->getTimeoutSeconds();
         }
-        if ($data->isInitialized('timezone')) {
+        if ($data->isInitialized('timezone') && null !== $data->getTimezone()) {
             $dataArray['timezone'] = $data->getTimezone();
         }
-        if ($data->isInitialized('tracksCompletion')) {
+        if ($data->isInitialized('tracksCompletion') && null !== $data->getTracksCompletion()) {
             $dataArray['tracksCompletion'] = $data->getTracksCompletion();
         }
         foreach ($data as $key => $value_1) {

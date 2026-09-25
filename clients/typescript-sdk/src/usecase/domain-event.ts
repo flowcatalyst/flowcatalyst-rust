@@ -7,7 +7,10 @@
  * an `ExecutionContext`.
  */
 
-import { generate as generateTsid } from "../outbox/tsid.js";
+import {
+	generate as generateTsid,
+	generateWithPrefix as generateTsidWithPrefix,
+} from "../outbox/tsid.js";
 import type { ExecutionContext } from "./execution-context.js";
 
 export interface DomainEvent {
@@ -36,8 +39,13 @@ export interface DomainEventBase {
 }
 
 export const DomainEvent = {
-	generateId(): string {
-		return generateTsid();
+	/**
+	 * Generate an aggregate/entity id. Pass a short lowercase `prefix` to get a
+	 * branded id matching the platform convention (e.g. `"cmt"` → `cmt_…`);
+	 * omit it for a raw 13-char TSID.
+	 */
+	generateId(prefix?: string): string {
+		return prefix ? generateTsidWithPrefix(prefix) : generateTsid();
 	},
 
 	subject(domain: string, aggregate: string, id: string): string {

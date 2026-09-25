@@ -13,26 +13,42 @@ class ResetPasswordRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * When false, the platform skips its password complexity rules
-     * (uppercase/lowercase/digit/special) and only enforces a 2-character
-     * minimum. Intended for SDK callers that apply their own policy.
-     * Defaults to true.
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var bool|null
      */
     protected $enforcePasswordComplexity;
     /**
-     * New password (min 8 characters)
-     *
      * @var string|null
      */
     protected $newPassword;
     /**
-     * When false, the platform skips its password complexity rules
-     * (uppercase/lowercase/digit/special) and only enforces a 2-character
-     * minimum. Intended for SDK callers that apply their own policy.
-     * Defaults to true.
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return bool|null
      */
     public function getEnforcePasswordComplexity(): ?bool
@@ -40,15 +56,10 @@ class ResetPasswordRequest extends \ArrayObject
         return $this->enforcePasswordComplexity;
     }
     /**
-    * When false, the platform skips its password complexity rules
-    (uppercase/lowercase/digit/special) and only enforces a 2-character
-    minimum. Intended for SDK callers that apply their own policy.
-    Defaults to true.
-    *
-    * @param bool|null $enforcePasswordComplexity
-    *
-    * @return self
-    */
+     * @param bool|null $enforcePasswordComplexity
+     *
+     * @return self
+     */
     public function setEnforcePasswordComplexity(?bool $enforcePasswordComplexity): self
     {
         $this->initialized['enforcePasswordComplexity'] = true;
@@ -56,8 +67,6 @@ class ResetPasswordRequest extends \ArrayObject
         return $this;
     }
     /**
-     * New password (min 8 characters)
-     *
      * @return string|null
      */
     public function getNewPassword(): ?string
@@ -65,8 +74,6 @@ class ResetPasswordRequest extends \ArrayObject
         return $this->newPassword;
     }
     /**
-     * New password (min 8 characters)
-     *
      * @param string|null $newPassword
      *
      * @return self

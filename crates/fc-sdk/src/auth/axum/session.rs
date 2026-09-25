@@ -24,6 +24,11 @@ use super::principal::AuthMechanism;
 pub struct PrincipalSnapshot {
     pub id: String,
     pub principal_type: String,
+    /// Tenancy tier. Absent from snapshots written before it existed, whose
+    /// `scope` then holds the tier (the claims' legacy fallback reads it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tier: String,
+    /// The token's space-delimited granted permissions.
     pub scope: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -32,6 +37,8 @@ pub struct PrincipalSnapshot {
     pub roles: Vec<String>,
     #[serde(default)]
     pub applications: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_applications: bool,
 }
 
 /// Tokens persisted in the session so the plugin can transparently refresh
@@ -232,12 +239,14 @@ mod tests {
             principal: PrincipalSnapshot {
                 id: "prn_x".into(),
                 principal_type: "USER".into(),
-                scope: "CLIENT".into(),
+                tier: "CLIENT".into(),
+                scope: String::new(),
                 name: "Test".into(),
                 email: None,
                 clients: vec!["clt_a".into()],
                 roles: vec!["r".into()],
                 applications: vec![],
+                all_applications: false,
             },
             tokens: SessionTokens {
                 access_token: "at".into(),

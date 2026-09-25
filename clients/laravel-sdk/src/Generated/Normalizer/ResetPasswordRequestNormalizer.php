@@ -40,6 +40,13 @@ class ResetPasswordRequestNormalizer implements DenormalizerInterface, Normalize
         if (\array_key_exists('enforcePasswordComplexity', $data) && \is_int($data['enforcePasswordComplexity'])) {
             $data['enforcePasswordComplexity'] = (bool) $data['enforcePasswordComplexity'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('enforcePasswordComplexity', $data) && $data['enforcePasswordComplexity'] !== null) {
             $object->setEnforcePasswordComplexity($data['enforcePasswordComplexity']);
             unset($data['enforcePasswordComplexity']);
@@ -64,7 +71,7 @@ class ResetPasswordRequestNormalizer implements DenormalizerInterface, Normalize
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('enforcePasswordComplexity')) {
+        if ($data->isInitialized('enforcePasswordComplexity') && null !== $data->getEnforcePasswordComplexity()) {
             $dataArray['enforcePasswordComplexity'] = $data->getEnforcePasswordComplexity();
         }
         $dataArray['newPassword'] = $data->getNewPassword();

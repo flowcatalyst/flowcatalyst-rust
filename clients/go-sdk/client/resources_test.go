@@ -306,12 +306,60 @@ func TestRolesGrantAndRevokePermission(t *testing.T) {
 }
 
 func TestRolesListForApplication(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"roles":[{"id":"rol_1","name":"orders:admin","shortName":"admin","displayName":"Admin","applicationCode":"orders","source":"PLATFORM","createdAt":"","updatedAt":""}],"total":1}`)
+	// The platform answers a bare array.
+	srv, seen := newMockSrv(t, `[{"id":"rol_1","name":"orders:admin","shortName":"admin","displayName":"Admin","applicationCode":"orders","source":"PLATFORM","createdAt":"","updatedAt":""}]`)
 	c := client.New(srv.URL)
 
 	r, err := c.Roles().ListForApplication(context.Background(), "app_1")
 	require.NoError(t, err)
 	assert.Equal(t, "/api/roles/by-application/app_1", seen.path)
 	require.Len(t, r.Roles, 1)
+	assert.Equal(t, uint64(1), r.Total)
 	assert.Equal(t, "orders:admin", r.Roles[0].Name)
+}
+
+func TestRolesCreateAlwaysSendsClientManaged(t *testing.T) {
+	srv, seen := newMockSrv(t, `{"id":"rol_1"}`)
+	c := client.New(srv.URL)
+
+	_, err := c.Roles().Create(context.Background(), &client.CreateRoleRequest{
+		ApplicationCode: "orders", RoleName: "viewer", DisplayName: "Viewer",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, seen.body, `"clientManaged":false`)
+}
+
+func TestScheduledJobsCreateAlwaysSendsRequiredFlags(t *testing.T) {
+	srv, seen := newMockSrv(t, `{"id":"sjb_1"}`)
+	c := client.New(srv.URL)
+
+	_, err := c.ScheduledJobs().Create(context.Background(), &client.CreateScheduledJobRequest{
+		Code: "nightly", Name: "Nightly", Crons: []string{"0 0 2 * * *"},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, seen.body, `"concurrent":false`)
+	assert.Contains(t, seen.body, `"tracksCompletion":false`)
+}
+
+func TestScheduledJobsListInstanceLogsReadsBareArray(t *testing.T) {
+	srv, seen := newMockSrv(t, `[{"id":"lg_1","instanceId":"sji_1","level":"INFO","message":"hi","createdAt":""}]`)
+	c := client.New(srv.URL)
+
+	out, err := c.ScheduledJobs().ListInstanceLogs(context.Background(), "sji_1")
+	require.NoError(t, err)
+	assert.Equal(t, "/api/scheduled-jobs/instances/sji_1/logs", seen.path)
+	require.Len(t, out.Logs, 1)
+	assert.Equal(t, "hi", out.Logs[0].Message)
+	assert.Equal(t, uint64(1), out.Total)
+}
+
+func TestScheduledJobsLogForInstanceDefaultsLevelToInfo(t *testing.T) {
+	srv, seen := newMockSrv(t, `{"id":"lg_1","instanceId":"sji_1","level":"INFO","message":"m","createdAt":""}`)
+	c := client.New(srv.URL)
+
+	req := &client.InstanceLogRequest{Message: "m"}
+	_, err := c.ScheduledJobs().LogForInstance(context.Background(), "sji_1", req)
+	require.NoError(t, err)
+	assert.Contains(t, seen.body, `"level":"INFO"`)
+	assert.Equal(t, client.LogLevel(""), req.Level, "the caller's request is not mutated")
 }

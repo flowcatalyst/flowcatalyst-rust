@@ -64,6 +64,7 @@ export type {
 	ForbiddenError,
 	ConflictError,
 	RateLimitError,
+	PartialFailureError,
 } from "./errors.js";
 export {
 	authError,
@@ -74,6 +75,8 @@ export {
 	conflictError,
 	rateLimitError,
 	mapHttpStatusToError,
+	partialFailureError,
+	isPartialFailureError,
 } from "./errors.js";
 
 // Resource classes
@@ -161,6 +164,20 @@ export type {
 // Re-export generated types for convenience
 export type * from "./generated/types.gen.js";
 
+// Generated operation functions. The portal-user surface is re-exported by
+// name (pass them to FlowCatalystClient.request(...)); the full generated
+// surface is available under the `api` namespace — a namespace export
+// rather than `export *` so generated names can never collide with (or be
+// silently dropped by) the package root's own exports.
+export {
+	ensurePortalUser,
+	listPortalUsers,
+	activatePortalUser,
+	deactivatePortalUser,
+	deletePortalUser,
+} from "./generated/sdk.gen.js";
+export * as api from "./generated/sdk.gen.js";
+
 // Outbox - transactional outbox pattern
 export { OutboxManager, OutboxStatus } from "./outbox/index.js";
 export type {
@@ -170,7 +187,7 @@ export type {
 	MessageType,
 } from "./outbox/index.js";
 export { CreateEventDto } from "./outbox/index.js";
-export { CreateDispatchJobDto } from "./outbox/index.js";
+export { CreateDispatchJobDto, type DispatchMode } from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export {
 	redactAuditData,
@@ -185,13 +202,17 @@ export type {
 	PgPoolClientLike,
 } from "./outbox/index.js";
 
-// UseCase / UnitOfWork — domain-driven write pattern with outbox dispatch.
+// Use-case envelope — domain-driven write pattern with outbox dispatch.
 // Exported as a namespace to avoid clashing with neverthrow's `Result` and the
 // HTTP `ValidationError`/`NotFoundError` types. Typical usage:
 //
 //   import { usecase } from "@flowcatalyst/sdk";
-//   class ShipOrderUseCase implements usecase.UseCase<ShipOrderCommand, OrderShipped> { ... }
+//   const shipOrder: usecase.Operation<ShipOrderCommand, OrderShipped> = {
+//     authorize: usecase.publicAuthorize,
+//     async execute(cmd, ctx) { ...; return usecase.Plan.save(order, orderRepo, event); },
+//   };
 //   const uow = new usecase.OutboxUnitOfWork({ outboxManager });
+//   const result = await usecase.run(uow, shipOrder, cmd, ctx);
 //
 export * as usecase from "./usecase/index.js";
 
@@ -207,3 +228,11 @@ export * as sync from "./sync/index.js";
 
 // Re-export neverthrow utilities for convenience
 export { ok, err, Result, ResultAsync } from "neverthrow";
+
+// Delivery-signature verification (scheduled-job firings + dispatch webhooks).
+export {
+	verifyDeliverySignature,
+	WebhookSignatureError,
+	type WebhookSignatureErrorCode,
+	type VerifyDeliverySignatureParams,
+} from "./webhook/signature.js";

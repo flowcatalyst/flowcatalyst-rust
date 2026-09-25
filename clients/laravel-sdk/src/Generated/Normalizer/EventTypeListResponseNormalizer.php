@@ -37,21 +37,21 @@ class EventTypeListResponseNormalizer implements DenormalizerInterface, Normaliz
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('items', $data) && $data['items'] !== null) {
             $values = [];
             foreach ($data['items'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\EventTypeResponse::class, 'json', $context);
             }
             $object->setItems($values);
-            unset($data['items']);
         }
         elseif (\array_key_exists('items', $data) && $data['items'] === null) {
             $object->setItems(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -63,11 +63,6 @@ class EventTypeListResponseNormalizer implements DenormalizerInterface, Normaliz
             $values[] = $this->normalizer->normalize($value, 'json', $context);
         }
         $dataArray['items'] = $values;
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

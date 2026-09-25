@@ -40,39 +40,33 @@ class SuccessResponseNormalizer implements DenormalizerInterface, NormalizerInte
         if (\array_key_exists('success', $data) && \is_int($data['success'])) {
             $data['success'] = (bool) $data['success'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('message', $data) && $data['message'] !== null) {
             $object->setMessage($data['message']);
-            unset($data['message']);
         }
         elseif (\array_key_exists('message', $data) && $data['message'] === null) {
             $object->setMessage(null);
         }
         if (\array_key_exists('success', $data) && $data['success'] !== null) {
             $object->setSuccess($data['success']);
-            unset($data['success']);
         }
         elseif (\array_key_exists('success', $data) && $data['success'] === null) {
             $object->setSuccess(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('message')) {
+        if ($data->isInitialized('message') && null !== $data->getMessage()) {
             $dataArray['message'] = $data->getMessage();
         }
         $dataArray['success'] = $data->getSuccess();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

@@ -9,33 +9,33 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiPrincipalsData,
-	GetApiPrincipalsResponse,
-	GetApiPrincipalsByIdResponse,
-	PostApiPrincipalsUsersData,
-	PutApiPrincipalsByIdData,
-	PostApiPrincipalsByIdResetPasswordData,
-	GetApiPrincipalsByIdRolesResponse,
-	GetApiPrincipalsByIdClientAccessResponse,
-	PostApiApplicationsByAppCodePrincipalsSyncData,
-	PostApiApplicationsByAppCodePrincipalsSyncResponse,
+	ListPrincipalsData,
+	ListPrincipalsResponse,
+	GetPrincipalResponse,
+	CreateUserData,
+	UpdatePrincipalData,
+	ResetPrincipalPasswordData,
+	ListPrincipalRolesResponse,
+	ListPrincipalClientAccessResponse,
+	SyncPrincipalsData,
+	SyncPrincipalsResponse as SyncPrincipalsResponseType,
+	SyncUsersData,
+	SyncUsersResponse as SyncUsersResponseType,
 } from "../generated/types.gen.js";
 
-export type PrincipalListResponse = GetApiPrincipalsResponse;
-export type PrincipalDto = GetApiPrincipalsByIdResponse;
-export type CreateUserRequest = PostApiPrincipalsUsersData["body"];
-export type UpdatePrincipalRequest = PutApiPrincipalsByIdData["body"];
-export type ResetPasswordRequest =
-	PostApiPrincipalsByIdResetPasswordData["body"];
-export type RoleListResponse = GetApiPrincipalsByIdRolesResponse;
-export type ClientAccessListResponse =
-	GetApiPrincipalsByIdClientAccessResponse;
-export type SyncPrincipalsResponse =
-	PostApiApplicationsByAppCodePrincipalsSyncResponse;
+export type PrincipalListResponse = ListPrincipalsResponse;
+export type PrincipalDto = GetPrincipalResponse;
+export type CreateUserRequest = CreateUserData["body"];
+export type UpdatePrincipalRequest = UpdatePrincipalData["body"];
+export type ResetPasswordRequest = ResetPrincipalPasswordData["body"];
+export type RoleListResponse = ListPrincipalRolesResponse;
+export type ClientAccessListResponse = ListPrincipalClientAccessResponse;
+export type SyncPrincipalsResponse = SyncPrincipalsResponseType;
+export type SyncUsersResponse = SyncUsersResponseType;
 
 // Derived from the generated query type so it stays in sync with the platform
 // spec automatically — adding a query param upstream surfaces here on regen.
-export type PrincipalFilters = GetApiPrincipalsData["query"];
+export type PrincipalFilters = ListPrincipalsData["query"];
 
 /**
  * Principals resource for managing users and service accounts.
@@ -54,7 +54,7 @@ export class PrincipalsResource {
 		filters?: PrincipalFilters,
 	): ResultAsync<PrincipalListResponse, SdkError> {
 		return this.client.request<PrincipalListResponse>((httpClient, headers) =>
-			sdk.getApiPrincipals({
+			sdk.listPrincipals({
 				client: httpClient,
 				headers,
 				query: filters,
@@ -67,7 +67,7 @@ export class PrincipalsResource {
 	 */
 	get(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.getApiPrincipalsById({
+			sdk.getPrincipal({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -85,7 +85,7 @@ export class PrincipalsResource {
 	 */
 	findByEmail(email: string): ResultAsync<PrincipalListResponse, SdkError> {
 		const needle = email.toLowerCase();
-		return this.list({ email }).map((response) => {
+		return this.list({ q: email }).map((response) => {
 			const principals = response.principals.filter(
 				(p) => (p.email ?? "").toLowerCase() === needle,
 			);
@@ -95,10 +95,35 @@ export class PrincipalsResource {
 
 	/**
 	 * Create a new user principal.
+	 *
+	 * `sendInvitation` (default true) controls whether the platform emails
+	 * the new user at all: a passwordless user gets the "set your password"
+	 * invite, a user created with a password gets the "account created"
+	 * welcome. Set to `false` when the calling application is taking over
+	 * the invitation itself — this suppresses BOTH emails.
+	 *
+	 * `returnInviteLink` (default false), when true, mints the 72-hour
+	 * "set your password" link and returns it as `inviteLink` on the
+	 * response instead of emailing it — only for a passwordless INTERNAL
+	 * user (a no-op, field absent, otherwise). `returnInviteLink: true`
+	 * ALWAYS suppresses the platform's own invite email, even when
+	 * `sendInvitation` is true or unset — the token can only be minted
+	 * once, so asking for the link back implies you're sending your own
+	 * email with it.
+	 *
+	 * `inviteLink` is a live 72-hour bearer credential — treat it exactly
+	 * like a password and never log it.
+	 *
+	 * `inviteRedirectUri` sends the invitee to your application once they
+	 * have set their password (and enrolled 2FA, if their domain requires
+	 * it) — any absolute http(s) URL, typically your app's own page, which
+	 * then starts sign-in as usual. It applies to both the platform-sent
+	 * invite email and `returnInviteLink`. A malformed value fails with
+	 * `INVITE_REDIRECT_URI_INVALID` and no user is created.
 	 */
 	createUser(data: CreateUserRequest): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiPrincipalsUsers({
+			sdk.createUser({
 				client: httpClient,
 				headers,
 				body: data,
@@ -114,7 +139,7 @@ export class PrincipalsResource {
 		data: UpdatePrincipalRequest,
 	): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.putApiPrincipalsById({
+			sdk.updatePrincipal({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -128,7 +153,7 @@ export class PrincipalsResource {
 	 */
 	activate(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiPrincipalsByIdActivate({
+			sdk.activatePrincipal({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -141,7 +166,7 @@ export class PrincipalsResource {
 	 */
 	deactivate(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiPrincipalsByIdDeactivate({
+			sdk.deactivatePrincipal({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -161,7 +186,7 @@ export class PrincipalsResource {
 		data: ResetPasswordRequest,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiPrincipalsByIdResetPassword({
+			sdk.resetPrincipalPassword({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -175,7 +200,7 @@ export class PrincipalsResource {
 	 */
 	getRoles(id: string): ResultAsync<RoleListResponse, SdkError> {
 		return this.client.request<RoleListResponse>((httpClient, headers) =>
-			sdk.getApiPrincipalsByIdRoles({
+			sdk.listPrincipalRoles({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -191,7 +216,7 @@ export class PrincipalsResource {
 	 */
 	addRole(id: string, roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiPrincipalsByIdRoles({
+			sdk.addPrincipalRole({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -205,7 +230,7 @@ export class PrincipalsResource {
 	 */
 	removeRole(id: string, roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiPrincipalsByIdRolesByRoleName({
+			sdk.removePrincipalRole({
 				client: httpClient,
 				headers,
 				path: { id, role: roleName },
@@ -221,7 +246,7 @@ export class PrincipalsResource {
 	 */
 	setRoles(id: string, roles: string[]): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.putApiPrincipalsByIdRoles({
+			sdk.assignPrincipalRoles({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -238,7 +263,7 @@ export class PrincipalsResource {
 	): ResultAsync<ClientAccessListResponse, SdkError> {
 		return this.client.request<ClientAccessListResponse>(
 			(httpClient, headers) =>
-				sdk.getApiPrincipalsByIdClientAccess({
+				sdk.listPrincipalClientAccess({
 					client: httpClient,
 					headers,
 					path: { id },
@@ -254,7 +279,7 @@ export class PrincipalsResource {
 		clientId: string,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiPrincipalsByIdClientAccess({
+			sdk.grantPrincipalClientAccess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -271,7 +296,7 @@ export class PrincipalsResource {
 		clientId: string,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiPrincipalsByIdClientAccessByClientId({
+			sdk.revokePrincipalClientAccess({
 				client: httpClient,
 				headers,
 				path: { id, clientId },
@@ -289,17 +314,41 @@ export class PrincipalsResource {
 	 */
 	sync(
 		applicationCode: string,
-		principals: PostApiApplicationsByAppCodePrincipalsSyncData["body"]["principals"],
+		principals: SyncPrincipalsData["body"]["principals"],
 		removeUnlisted = false,
 	): ResultAsync<SyncPrincipalsResponse, SdkError> {
 		return this.client.request<SyncPrincipalsResponse>(
 			(httpClient, headers) =>
-				sdk.postApiApplicationsByAppCodePrincipalsSync({
+				sdk.syncPrincipals({
 					client: httpClient,
 					headers,
 					path: { appCode: applicationCode },
 					body: { principals },
 					query: { removeUnlisted },
+				}),
+		);
+	}
+
+	/**
+	 * Sync users platform-wide — declarative upsert keyed on email, with NO
+	 * application scope (`POST /api/principals/sync`).
+	 *
+	 * The application-less twin of {@link sync}: use it to "just sync users" —
+	 * migrating accounts and (via each entry's `passwordHash`) their existing
+	 * password hashes — without nesting the call under an application. Users are
+	 * global, matched by email, so an application code adds nothing here.
+	 *
+	 * Pure upsert: roles are never stripped from unlisted users.
+	 */
+	syncUsers(
+		principals: SyncUsersData["body"]["principals"],
+	): ResultAsync<SyncUsersResponse, SdkError> {
+		return this.client.request<SyncUsersResponse>(
+			(httpClient, headers) =>
+				sdk.syncUsers({
+					client: httpClient,
+					headers,
+					body: { principals },
 				}),
 		);
 	}

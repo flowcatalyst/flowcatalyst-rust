@@ -1,0 +1,56 @@
+[
+  {
+    "name": "top-level password fields",
+    "input": {"email": "a@b.c", "password": "hunter2", "newPassword": "x", "currentPassword": "y"},
+    "masked": [],
+    "expected": {"email": "a@b.c", "password": "***", "newPassword": "***", "currentPassword": "***"}
+  },
+  {
+    "name": "a boolean named like a password field is kept",
+    "input": {"enforcePasswordComplexity": true, "passwordHash": "$2a$10$abc"},
+    "masked": [],
+    "expected": {"enforcePasswordComplexity": true, "passwordHash": "***"}
+  },
+  {
+    "name": "nested webhook credentials",
+    "input": {"code": "sa-1", "webhookCredentials": {"authType": "HMAC_SIGNATURE", "token": "tok", "username": "u", "password": "p", "headerName": "X-Key", "signingSecret": "s3", "signingAlgorithm": "HMAC_SHA256", "signatureHeader": "X-Sig"}},
+    "masked": [],
+    "expected": {"code": "sa-1", "webhookCredentials": {"authType": "HMAC_SIGNATURE", "token": "***", "username": "u", "password": "***", "headerName": "X-Key", "signingSecret": "***", "signingAlgorithm": "HMAC_SHA256", "signatureHeader": "X-Sig"}}
+  },
+  {
+    "name": "tokens, keys and secrets by name, any case",
+    "input": {"refreshToken": "r", "AUTH_TOKEN": "a", "clientSecret": "c", "oidcClientSecretRef": "enc:x", "apiKey": "k", "api_key": "k2", "privateKey": "pk", "Authorization": "Bearer z", "cookie": "fc_session=1", "passphrase": "pp"},
+    "masked": [],
+    "expected": {"refreshToken": "***", "AUTH_TOKEN": "***", "clientSecret": "***", "oidcClientSecretRef": "***", "apiKey": "***", "api_key": "***", "privateKey": "***", "Authorization": "***", "cookie": "***", "passphrase": "***"}
+  },
+  {
+    "name": "look-alikes that are not secrets are kept",
+    "input": {"credentialId": "cred-1", "tokenType": "Bearer", "signatureBundle": "{}", "keyId": "kid", "secretKeys": ["A", "B"]},
+    "masked": [],
+    "expected": {"credentialId": "cred-1", "tokenType": "Bearer", "signatureBundle": "{}", "keyId": "kid", "secretKeys": ["A", "B"]}
+  },
+  {
+    "name": "arrays of objects are walked",
+    "input": {"principals": [{"email": "a@b.c", "passwordHash": "h1"}, {"email": "d@e.f", "passwordHash": "h2"}]},
+    "masked": [],
+    "expected": {"principals": [{"email": "a@b.c", "passwordHash": "***"}, {"email": "d@e.f", "passwordHash": "***"}]}
+  },
+  {
+    "name": "null and absent values stay as they are",
+    "input": {"password": null, "token": ""},
+    "masked": [],
+    "expected": {"password": null, "token": "***"}
+  },
+  {
+    "name": "a command-declared mask hides a field the name rule would keep",
+    "input": {"applicationCode": "billing", "section": "api", "property": "key", "value": "sk_live_123", "valueType": "SECRET"},
+    "masked": ["value"],
+    "expected": {"applicationCode": "billing", "section": "api", "property": "key", "value": "***", "valueType": "SECRET"}
+  },
+  {
+    "name": "non-string secret-named values are masked too, except booleans and null",
+    "input": {"secret": 12345, "token": {"raw": "x"}, "password": ["a"]},
+    "masked": [],
+    "expected": {"secret": "***", "token": "***", "password": "***"}
+  }
+]

@@ -53,6 +53,28 @@ export type RateLimitError = {
 	retryAfterMs?: number;
 };
 
+/**
+ * A multi-step operation (currently: `DefinitionSynchronizer.sync()` /
+ * `syncGrouped()` / `syncAll()`) completed the whole call but one or more of
+ * its steps failed. Generic over the shape of "whatever succeeded" — a
+ * caller must not be forced to discard good work just because part of a
+ * batch failed, so the partial result rides on the error itself rather than
+ * being lost when the call fails loud.
+ *
+ * Deliberately NOT part of the base `SdkError` union: `partial` is only
+ * meaningfully typed per call site (e.g. `SyncResult` for `sync()`,
+ * `SyncResult[]` for `syncAll()`), and folding it into `SdkError` would
+ * either lose that typing (widen `partial` to `unknown` everywhere) or force
+ * every unrelated `SdkError` consumer to account for a variant it can't
+ * produce. Operations that can return this instead widen their own return
+ * type, e.g. `ResultAsync<SyncResult, SdkError | PartialFailureError<SyncResult>>`.
+ */
+export type PartialFailureError<T> = {
+	type: "partial_failure";
+	message: string;
+	partial: T;
+};
+
 /** Union of all SDK errors */
 export type SdkError =
 	| AuthenticationError
@@ -173,6 +195,28 @@ export const rateLimitError = (
 	message,
 	retryAfterMs,
 });
+
+/**
+ * Create a partial-failure error, carrying whatever succeeded so it isn't
+ * lost when the overall call reports failure. See {@link PartialFailureError}.
+ */
+export function partialFailureError<T>(
+	message: string,
+	partial: T,
+): PartialFailureError<T> {
+	return { type: "partial_failure", message, partial };
+}
+
+/** Narrow an error to a {@link PartialFailureError}, recovering its `partial` payload's type. */
+export function isPartialFailureError<T>(
+	error: unknown,
+): error is PartialFailureError<T> {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		(error as { type?: unknown }).type === "partial_failure"
+	);
+}
 
 /**
  * Map HTTP status code to appropriate error

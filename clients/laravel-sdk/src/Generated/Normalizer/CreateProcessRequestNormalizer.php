@@ -37,6 +37,13 @@ class CreateProcessRequestNormalizer implements DenormalizerInterface, Normalize
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('body', $data) && $data['body'] !== null) {
             $object->setBody($data['body']);
             unset($data['body']);
@@ -97,10 +104,10 @@ class CreateProcessRequestNormalizer implements DenormalizerInterface, Normalize
             $dataArray['body'] = $data->getBody();
         }
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('diagramType')) {
+        if ($data->isInitialized('diagramType') && null !== $data->getDiagramType()) {
             $dataArray['diagramType'] = $data->getDiagramType();
         }
         $dataArray['name'] = $data->getName();

@@ -1,6 +1,6 @@
 /**
- * Syncing FlowCatalyst definitions — roles, event types, subscriptions,
- * dispatch pools, principals.
+ * Syncing FlowCatalyst definitions — roles, event types, connections,
+ * subscriptions, dispatch pools, principals.
  *
  * Typical usage:
  *
@@ -25,11 +25,17 @@
  */
 
 export {
+	APP_CODE_ENV,
 	defineApplication,
+	defineApplicationFromEnv,
 	DefinitionSetBuilder,
+	permission,
+	permissionToString,
 	type DefinitionSet,
 	type RoleDefinition,
+	type PermissionInput,
 	type EventTypeDefinition,
+	type ConnectionDefinition,
 	type SubscriptionDefinition,
 	type SubscriptionEventTypeBinding,
 	type SubscriptionMode,
@@ -42,6 +48,8 @@ export {
 export {
 	DefinitionSynchronizer,
 	type SyncOptions,
+	type DefinitionSynchronizerOptions,
+	type DefinitionSyncError,
 } from "./definition-synchronizer.js";
 
 export {

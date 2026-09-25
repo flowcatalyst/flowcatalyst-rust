@@ -40,35 +40,33 @@ class AuditLogListResponseNormalizer implements DenormalizerInterface, Normalize
         if (\array_key_exists('hasMore', $data) && \is_int($data['hasMore'])) {
             $data['hasMore'] = (bool) $data['hasMore'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('auditLogs', $data) && $data['auditLogs'] !== null) {
             $values = [];
             foreach ($data['auditLogs'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\AuditLogResponse::class, 'json', $context);
             }
             $object->setAuditLogs($values);
-            unset($data['auditLogs']);
         }
         elseif (\array_key_exists('auditLogs', $data) && $data['auditLogs'] === null) {
             $object->setAuditLogs(null);
         }
         if (\array_key_exists('hasMore', $data) && $data['hasMore'] !== null) {
             $object->setHasMore($data['hasMore']);
-            unset($data['hasMore']);
         }
         elseif (\array_key_exists('hasMore', $data) && $data['hasMore'] === null) {
             $object->setHasMore(null);
         }
         if (\array_key_exists('nextCursor', $data) && $data['nextCursor'] !== null) {
             $object->setNextCursor($data['nextCursor']);
-            unset($data['nextCursor']);
         }
         elseif (\array_key_exists('nextCursor', $data) && $data['nextCursor'] === null) {
             $object->setNextCursor(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -81,13 +79,8 @@ class AuditLogListResponseNormalizer implements DenormalizerInterface, Normalize
         }
         $dataArray['auditLogs'] = $values;
         $dataArray['hasMore'] = $data->getHasMore();
-        if ($data->isInitialized('nextCursor')) {
+        if ($data->isInitialized('nextCursor') && null !== $data->getNextCursor()) {
             $dataArray['nextCursor'] = $data->getNextCursor();
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
         }
         return $dataArray;
     }

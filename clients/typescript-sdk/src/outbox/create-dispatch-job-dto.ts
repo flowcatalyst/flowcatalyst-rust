@@ -11,6 +11,16 @@
  *   .withTimeoutSeconds(60);
  * ```
  */
+import { assertQualifiedCode } from "./qualified-code.js";
+
+/**
+ * Ordering behavior within a message group.
+ * - IMMEDIATE: no ordering, jobs dispatch concurrently (platform default)
+ * - NEXT_ON_ERROR: FIFO per message group; a failed job is retried later but the group moves on
+ * - BLOCK_ON_ERROR: strict FIFO per message group; a failed job blocks the group until resolved
+ */
+export type DispatchMode = "IMMEDIATE" | "NEXT_ON_ERROR" | "BLOCK_ON_ERROR";
+
 export class CreateDispatchJobDto {
 	readonly source: string;
 	readonly code: string;
@@ -25,6 +35,7 @@ export class CreateDispatchJobDto {
 	readonly payloadContentType: string;
 	readonly dataOnly: boolean;
 	readonly messageGroup: string | null;
+	readonly mode: DispatchMode | null;
 	readonly sequence: number | null;
 	readonly timeoutSeconds: number;
 	readonly maxRetries: number;
@@ -34,6 +45,7 @@ export class CreateDispatchJobDto {
 	readonly idempotencyKey: string | null;
 	readonly externalId: string | null;
 	readonly connectionId: string | null;
+	readonly queue: string | null;
 
 	private constructor(params: {
 		source: string;
@@ -49,6 +61,7 @@ export class CreateDispatchJobDto {
 		payloadContentType?: string;
 		dataOnly?: boolean;
 		messageGroup?: string | null;
+		mode?: DispatchMode | null;
 		sequence?: number | null;
 		timeoutSeconds?: number;
 		maxRetries?: number;
@@ -58,6 +71,7 @@ export class CreateDispatchJobDto {
 		idempotencyKey?: string | null;
 		externalId?: string | null;
 		connectionId?: string | null;
+		queue?: string | null;
 	}) {
 		this.source = params.source;
 		this.code = params.code;
@@ -72,6 +86,7 @@ export class CreateDispatchJobDto {
 		this.payloadContentType = params.payloadContentType ?? "application/json";
 		this.dataOnly = params.dataOnly ?? true;
 		this.messageGroup = params.messageGroup ?? null;
+		this.mode = params.mode ?? null;
 		this.sequence = params.sequence ?? null;
 		this.timeoutSeconds = params.timeoutSeconds ?? 30;
 		this.maxRetries = params.maxRetries ?? 5;
@@ -81,11 +96,16 @@ export class CreateDispatchJobDto {
 		this.idempotencyKey = params.idempotencyKey ?? null;
 		this.externalId = params.externalId ?? null;
 		this.connectionId = params.connectionId ?? null;
+		this.queue = params.queue ?? null;
 	}
 
 	/**
 	 * Create a new dispatch job DTO.
 	 *
+	 * @param code - Fully qualified `application:subdomain:aggregate:action`
+	 *   code — the platform facets on its segments and resolves delivery
+	 *   signing credentials from the application segment; bare codes are
+	 *   rejected.
 	 * @param payload - The payload string. If you have an object, JSON.stringify it first.
 	 */
 	static create(
@@ -95,6 +115,7 @@ export class CreateDispatchJobDto {
 		payload: string | Record<string, unknown>,
 		dispatchPoolId: string,
 	): CreateDispatchJobDto {
+		assertQualifiedCode(code, "Dispatch job code");
 		return new CreateDispatchJobDto({
 			source,
 			code,
@@ -142,6 +163,11 @@ export class CreateDispatchJobDto {
 		return new CreateDispatchJobDto({ ...this.toParams(), messageGroup });
 	}
 
+	/** Ordering behavior within the message group; unset defaults to NEXT_ON_ERROR on the platform (in-sequence, moving on past a failure). */
+	withMode(mode: DispatchMode): CreateDispatchJobDto {
+		return new CreateDispatchJobDto({ ...this.toParams(), mode });
+	}
+
 	withSequence(sequence: number): CreateDispatchJobDto {
 		return new CreateDispatchJobDto({ ...this.toParams(), sequence });
 	}
@@ -178,6 +204,19 @@ export class CreateDispatchJobDto {
 		return new CreateDispatchJobDto({ ...this.toParams(), connectionId });
 	}
 
+	/**
+	 * The job's own dispatch priority: `DEFAULT` or `HIGH_PRIORITY`, matched
+	 * ignoring case. Unset stays absent — never silently defaulted — so "not
+	 * asked for" stays distinguishable from an explicit `DEFAULT`. Wins over
+	 * the target subscription's own priority at publish time when set.
+	 *
+	 * Not validated here: the platform rejects an invalid value, and
+	 * duplicating that check client-side would just be another place to drift.
+	 */
+	withQueue(queue: string): CreateDispatchJobDto {
+		return new CreateDispatchJobDto({ ...this.toParams(), queue });
+	}
+
 	/** Build the dispatch job payload for the outbox. Filters out null values. */
 	toPayload(): Record<string, unknown> {
 		return filterNulls({
@@ -194,6 +233,7 @@ export class CreateDispatchJobDto {
 			headers: Object.keys(this.headers).length > 0 ? this.headers : null,
 			dataOnly: this.dataOnly,
 			messageGroup: this.messageGroup,
+			mode: this.mode,
 			sequence: this.sequence,
 			timeoutSeconds: this.timeoutSeconds,
 			maxRetries: this.maxRetries,
@@ -203,6 +243,7 @@ export class CreateDispatchJobDto {
 			idempotencyKey: this.idempotencyKey,
 			externalId: this.externalId,
 			connectionId: this.connectionId,
+			queue: this.queue,
 		});
 	}
 
@@ -221,6 +262,7 @@ export class CreateDispatchJobDto {
 			payloadContentType: this.payloadContentType,
 			dataOnly: this.dataOnly,
 			messageGroup: this.messageGroup,
+			mode: this.mode,
 			sequence: this.sequence,
 			timeoutSeconds: this.timeoutSeconds,
 			maxRetries: this.maxRetries,
@@ -230,6 +272,7 @@ export class CreateDispatchJobDto {
 			idempotencyKey: this.idempotencyKey,
 			externalId: this.externalId,
 			connectionId: this.connectionId,
+			queue: this.queue,
 		};
 	}
 }

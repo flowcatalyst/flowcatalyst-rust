@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SubscriptionListResponse extends \ArrayObject
+class SubscriptionListResponse
 {
     /**
      * @var array
@@ -13,6 +13,12 @@ class SubscriptionListResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var list<SubscriptionResponse>|null
      */
     protected $subscriptions;
@@ -20,6 +26,28 @@ class SubscriptionListResponse extends \ArrayObject
      * @var int|null
      */
     protected $total;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return list<SubscriptionResponse>|null
      */

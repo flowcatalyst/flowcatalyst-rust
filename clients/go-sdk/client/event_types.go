@@ -34,7 +34,10 @@ type UpdateEventTypeRequest struct {
 
 // AddSchemaVersionRequest is the body for POST /api/event-types/{id}/versions.
 type AddSchemaVersionRequest struct {
-	Schema json.RawMessage `json:"schema"`
+	// Version is the spec version label (e.g. "1.1"). The Go platform
+	// requires it; a platform that assigns versions itself ignores it.
+	Version string          `json:"version,omitempty"`
+	Schema  json.RawMessage `json:"schema"`
 }
 
 // EventTypeResponse is the platform's event-type representation.

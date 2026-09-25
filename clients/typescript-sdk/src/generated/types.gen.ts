@@ -4,636 +4,806 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
-/**
- * Add note request (matches Java AddNoteRequest)
- */
+export type AccessListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<AccessResponse>;
+};
+
+export type AccessResponse = {
+    applicationCode: string;
+    canRead: boolean;
+    canWrite: boolean;
+    createdAt: string;
+    id: string;
+    roleCode: string;
+};
+
 export type AddNoteRequest = {
     /**
-     * Category of the note
+     * A URL to the JSON Schema for this object.
      */
+    readonly $schema?: string;
     category: string;
-    /**
-     * Note content
-     */
     text: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Add note response
- */
-export type AddNoteResponse = {
-    message: string;
-};
-
-/**
- * Add schema version request
- */
-export type AddSchemaVersionRequest = {
+export type AddOriginRequest = {
     /**
-     * JSON schema for this version
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    description?: string;
+    /**
+     * CORS-allowed origin (e.g. https://example.com)
+     */
+    origin: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AddRoleRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    role: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AddSchemaRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * JSON Schema document
      */
     schema: unknown;
+    /**
+     * Schema version (typically semver)
+     */
+    version: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Aggregates list response
- */
-export type AggregatesResponse = {
-    aggregates: Array<FilterOption>;
+export type AllowedOriginResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    id: string;
+    origin: string;
+    updatedAt: string;
 };
 
-/**
- * All filter options combined
- */
-export type AllFilterOptions = {
-    applications: Array<FilterOption>;
-    clients: Array<FilterOption>;
-    dispatchPools: Array<FilterOption>;
-    eventTypes: Array<FilterOption>;
-    subscriptions: Array<FilterOption>;
+export type AnchorDomainListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<AnchorDomainResponse>;
 };
 
-/**
- * Application access list response
- */
+export type AnchorDomainResponse = {
+    createdAt: string;
+    domain: string;
+    id: string;
+    updatedAt: string;
+};
+
+export type AppDocsGroup = {
+    applicationCode: string;
+    applicationName: string;
+    docs: Array<DocSummary>;
+};
+
 export type ApplicationAccessListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    allApplications: boolean;
     applications: Array<ApplicationAccessResponse>;
     total: number;
 };
 
-/**
- * Application access response
- */
 export type ApplicationAccessResponse = {
     applicationCode: string;
     applicationId: string;
     applicationName: string;
 };
 
-/**
- * Application IDs response
- */
-export type ApplicationIdsResponse = {
+export type ApplicationFilterListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationCodes: Array<string>;
+};
+
+export type ApplicationListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applications: Array<ApplicationResponse>;
+    total: number;
+};
+
+export type ApplicationLoginClientCredentials = {
+    clientType: string;
+    oauthClient: ApplicationOAuthClientCredentials;
+    redirectUris: Array<string>;
+};
+
+export type ApplicationOAuthClientCredentials = {
+    clientId: string;
+    clientSecret?: string;
+    id: string;
+};
+
+export type ApplicationProvisionLoginClientResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    loginClient: ApplicationLoginClientCredentials;
+    message: string;
+};
+
+export type ApplicationProvisionServiceAccountResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    message: string;
+    serviceAccount: ApplicationServiceAccountCredentials;
+};
+
+export type ApplicationResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    code: string;
+    createdAt: string;
+    defaultBaseUrl?: string;
+    description?: string;
+    hasLoginClient: boolean;
+    iconUrl?: string;
+    id: string;
+    logo?: string;
+    logoMimeType?: string;
+    name: string;
+    serviceAccountId?: string;
+    type: string;
+    updatedAt: string;
+    website?: string;
+};
+
+export type ApplicationRolesResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<string>;
+};
+
+export type ApplicationServiceAccountCredentials = {
+    name: string;
+    oauthClient: ApplicationOAuthClientCredentials;
+    principalId: string;
+};
+
+export type AssignApplicationAccessRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    allApplications?: boolean;
+    applicationIds: Array<string>;
+    [key: string]: unknown | string | boolean | Array<string> | undefined;
+};
+
+export type AssignPrincipalRolesRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type AssignRolesRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type AssignUnassignedBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AssignUnassignedResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    assigned: number;
+    portalAppCode: string;
+};
+
+export type AttachServiceAccountRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    serviceAccountCode: string;
+    serviceAccountId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AttemptDto = {
+    attemptNumber: number;
+    attemptedAt: string;
+    completedAt?: string;
+    durationMillis?: number;
+    errorMessage?: string;
+    errorType?: string;
+    responseBody?: string;
+    responseCode?: number;
+    success: boolean;
+};
+
+export type AuditLogApplicationIdsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     applicationIds: Array<string>;
 };
 
-/**
- * Application option for filter dropdown
- */
-export type ApplicationOption = {
-    code: string;
-    id: string;
-    name: string;
-};
-
-/**
- * Application options response
- */
-export type ApplicationOptionsResponse = {
-    options: Array<ApplicationOption>;
-};
-
-/**
- * Applications list response
- */
-export type ApplicationsResponse = {
-    applications: Array<FilterOption>;
-};
-
-/**
- * Assign role request
- */
-export type AssignRoleRequest = {
+export type AuditLogClientIdsResponse = {
     /**
-     * Client ID (optional, for client-scoped roles)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
+    readonly $schema?: string;
+    clientIds: Array<string>;
+};
+
+export type AuditLogEntityTypesResponse = {
     /**
-     * Role code
+     * A URL to the JSON Schema for this object.
      */
-    role: string;
+    readonly $schema?: string;
+    entityTypes: Array<string>;
 };
 
-/**
- * Audit log detail response (includes operation JSON)
- */
-export type AuditLogDetailResponse = {
-    applicationId?: string | null;
-    clientId?: string | null;
-    entityId?: string | null;
-    entityType: string;
-    id: string;
-    operation: string;
-    operationJson?: string | null;
-    performedAt: string;
-    principalId?: string | null;
-    principalName?: string | null;
-};
-
-/**
- * Cursor-paginated audit logs response. `aud_logs` grows unbounded, so we
- * keyset-paginate on `(performed_at, id) DESC` and never count.
- */
 export type AuditLogListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     auditLogs: Array<AuditLogResponse>;
     hasMore: boolean;
-    nextCursor?: string | null;
+    nextCursor?: string;
 };
 
-/**
- * Audit log response DTO (matches Java AuditLogDto)
- */
+export type AuditLogOperationsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    operations: Array<string>;
+};
+
 export type AuditLogResponse = {
-    applicationId?: string | null;
-    clientId?: string | null;
-    entityId?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationId?: string;
+    clientId?: string;
+    entityId: string;
     entityType: string;
     id: string;
     operation: string;
+    operationJson?: string;
     performedAt: string;
-    principalId?: string | null;
-    principalName?: string | null;
+    principalId?: string;
+    principalName?: string;
 };
 
-/**
- * Authentication method
- */
-export type AuthMethod = 'INTERNAL' | 'OIDC' | 'SAML';
+export type AuthConfigListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<AuthConfigResponse>;
+};
+
+export type AuthConfigResponse = {
+    additionalClientIds: Array<string>;
+    authProvider: string;
+    configType: string;
+    createdAt: string;
+    emailDomain: string;
+    grantedClientIds: Array<string>;
+    id: string;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant: boolean;
+    primaryClientId?: string;
+    updatedAt: string;
+};
 
 export type AuthenticateBeginRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     email: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * WebAuthn authentication challenge to hand to `navigator.credentials.get()`.
- * The shape is identical for known and unknown emails — see the enumeration
- * defence note in the source.
- */
 export type AuthenticateBeginResponse = {
-    options: {
-        [key: string]: unknown;
-    };
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    options: unknown;
     stateId: string;
 };
 
 export type AuthenticateCompleteRequest = {
     /**
-     * The `PublicKeyCredential` returned by `navigator.credentials.get()`.
+     * A URL to the JSON Schema for this object.
      */
-    credential: {
-        [key: string]: unknown;
-    };
+    readonly $schema?: string;
+    credential: unknown;
     stateId: string;
+    [key: string]: unknown | string | undefined;
 };
 
-export type AuthenticateCompleteResponse = {
-    email?: string | null;
-    name: string;
-    principalId: string;
-    roles: Array<string>;
+export type BatchEventItem = {
+    causationId?: string;
+    clientCode?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
+    data?: unknown;
+    deduplicationId?: string;
+    id?: string;
+    messageGroup?: string;
+    source?: string;
+    specVersion?: string;
+    subject?: string;
+    type?: string;
 };
 
-/**
- * Available application response (slim DTO)
- */
-export type AvailableApplicationResponse = {
-    active: boolean;
-    code: string;
-    description?: string | null;
+export type BatchRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<BatchEventItem>;
+    [key: string]: unknown | string | Array<BatchEventItem> | undefined;
+};
+
+export type BatchResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    results: Array<BatchResultItem>;
+};
+
+export type BatchResultItem = {
+    error?: string;
     id: string;
+    status: string;
+};
+
+export type BulkImportRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Client all imported users are created under
+     */
+    clientId: string;
+    users: Array<BulkImportUser>;
+    [key: string]: unknown | string | Array<BulkImportUser> | undefined;
+};
+
+export type BulkImportResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    created: number;
+    failed: number;
+    results: Array<BulkImportResult>;
+    skipped: number;
+};
+
+export type BulkImportResult = {
+    email: string;
+    message?: string;
+    row: number;
+    /**
+     * created | exists | dropped | error
+     */
+    status: string;
+};
+
+export type BulkImportUser = {
+    email: string;
     name: string;
-    type: string;
+    /**
+     * Role names to assign (pipe-separated in the CSV)
+     */
+    roles?: Array<string>;
 };
 
-/**
- * Available applications list response
- */
-export type AvailableApplicationsResponse = {
-    applications: Array<AvailableApplicationResponse>;
-    total: number;
-};
-
-/**
- * Batch assign roles request (for PUT /roles - declarative update)
- */
-export type BatchAssignRolesRequest = {
-    /**
-     * List of role codes to assign (replaces existing roles)
-     */
-    roles: Array<string>;
-};
-
-/**
- * Batch assign roles response (matches Java RolesAssignedResponse)
- */
-export type BatchAssignRolesResponse = {
-    /**
-     * Roles that were added
-     */
-    added: Array<string>;
-    /**
-     * Roles that were removed
-     */
-    removed: Array<string>;
-    /**
-     * Current role assignments after update
-     */
-    roles: Array<RoleAssignmentDto>;
-};
-
-/**
- * Batch create dispatch jobs request
- */
-export type BatchCreateDispatchJobsRequest = {
-    jobs: Array<CreateDispatchJobRequest>;
-};
-
-/**
- * Batch create dispatch jobs response
- */
-export type BatchCreateDispatchJobsResponse = {
-    count: number;
-    jobs: Array<DispatchJobResponse>;
-};
-
-/**
- * Batch create events request
- */
-export type BatchCreateEventsRequest = {
-    events: Array<CreateEventRequest>;
-};
-
-/**
- * Batch create response (matches Java BatchEventResponse)
- */
-export type BatchCreateResponse = {
-    /**
-     * Total number of events in response
-     */
-    count: number;
-    /**
-     * Number of dispatch jobs created for matching subscriptions
-     */
-    dispatchJobCount: number;
-    /**
-     * Number of events that were deduplicated (already existed)
-     */
-    duplicateCount: number;
-    /**
-     * All created events (new and deduplicated)
-     */
-    events: Array<EventResponse>;
-};
-
-/**
- * Check email domain response (matches Java EmailDomainCheckResponse)
- */
 export type CheckEmailDomainResponse = {
     /**
-     * When the user must pick a client, this is the allow-list to choose
-     * from. Empty when `requiresClientId` is false (no input needed) OR
-     * when there is no per-domain restriction (any active client is valid —
-     * the UI shows the full list it already fetches).
+     * A URL to the JSON Schema for this object.
      */
+    readonly $schema?: string;
     allowedClientIds: Array<string>;
-    /**
-     * Auth provider if configured (INTERNAL, OIDC)
-     */
-    authProvider?: string | null;
-    /**
-     * Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
-     * Derived from anchor domains + email_domain_mappings; unmapped domains
-     * default to CLIENT.
-     */
+    authMethod: string;
+    authProvider: string;
     derivedScope: string;
-    /**
-     * The domain that was checked
-     */
     domain: string;
-    /**
-     * Whether the email already exists
-     */
     emailExists: boolean;
-    /**
-     * Whether this domain has auth configuration
-     */
-    hasAuthConfig: boolean;
-    /**
-     * Informational message
-     */
-    info?: string | null;
-    /**
-     * Whether this is an anchor domain
-     */
+    hasIdpConfig: boolean;
+    idpIssuer?: string;
+    info: string | null;
     isAnchorDomain: boolean;
-    /**
-     * True when the create-user form must supply a `clientId`. False for
-     * anchor domains and for mappings that already pin a primary client.
-     */
+    loginUrl?: string;
     requiresClientId: boolean;
-    /**
-     * Warning message
-     */
-    warning?: string | null;
+    warning: string | null;
 };
 
-/**
- * Circuit breaker state
- */
-export type CircuitBreakerState = {
+export type ClientAccessGrantListResponse = {
     /**
-     * Failure count
+     * A URL to the JSON Schema for this object.
      */
-    failureCount: number;
-    /**
-     * Last failure time
-     */
-    lastFailure?: string | null;
-    /**
-     * Time until reset (if open)
-     */
-    resetAt?: string | null;
-    /**
-     * Current state (CLOSED, OPEN, HALF_OPEN)
-     */
-    state: string;
-    /**
-     * Success count since last failure
-     */
-    successCount: number;
-    /**
-     * Target identifier
-     */
-    target: string;
+    readonly $schema?: string;
+    grants: Array<ClientAccessGrantResponse>;
 };
 
-/**
- * Circuit breakers response
- */
-export type CircuitBreakersResponse = {
-    breakers: Array<CircuitBreakerState>;
-    totalClosed: number;
-    totalHalfOpen: number;
-    totalOpen: number;
-};
-
-/**
- * Client access grant response (matches Java ClientAccessGrantDto)
- */
 export type ClientAccessGrantResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     clientId: string;
-    expiresAt?: string | null;
+    expiresAt?: string;
     grantedAt: string;
     id: string;
 };
 
-/**
- * Client access list response
- */
-export type ClientAccessListResponse = {
-    grants: Array<ClientAccessGrantResponse>;
-};
-
-/**
- * Client application config response (matches Java ClientApplicationDto)
- */
 export type ClientApplicationResponse = {
-    /**
-     * Whether the application itself is active globally
-     */
     active: boolean;
-    /**
-     * Application code
-     */
     code: string;
-    /**
-     * Application description
-     */
-    description?: string | null;
-    /**
-     * Whether this application is enabled for this specific client
-     */
+    description?: string;
     enabledForClient: boolean;
-    /**
-     * Application icon URL
-     */
-    iconUrl?: string | null;
-    /**
-     * Application ID
-     */
+    iconUrl?: string;
     id: string;
-    /**
-     * Application display name
-     */
     name: string;
 };
 
-/**
- * Client applications list response
- */
 export type ClientApplicationsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     applications: Array<ClientApplicationResponse>;
     total: number;
 };
 
-/**
- * Client filter options response
- */
-export type ClientFilterOptions = {
-    clients: Array<FilterOption>;
+export type ClientAssociationRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Target client id, or "*" for anchor (all-client) access
+     */
+    clientId: string;
+    /**
+     * CHANGE_CLIENT | TO_PARTNER — required for a specific clientId, ignored for "*"
+     */
+    mode?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Client IDs response
- */
-export type ClientIdsResponse = {
-    clientIds: Array<string>;
+export type ClientConfigListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<ClientConfigResponse>;
 };
 
-/**
- * Client list response (matches Java ClientListResponse)
- */
+export type ClientConfigResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationId: string;
+    baseUrlOverride?: string;
+    clientId: string;
+    configJson?: unknown;
+    createdAt: string;
+    enabled: boolean;
+    id: string;
+    updatedAt: string;
+};
+
 export type ClientListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     clients: Array<ClientResponse>;
     total: number;
 };
 
-/**
- * Client response DTO (matches Java ClientDto)
- */
 export type ClientResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     createdAt: string;
     id: string;
     identifier: string;
     name: string;
+    notes: Array<NoteResponse>;
     status: string;
-    statusChangedAt?: string | null;
-    statusReason?: string | null;
+    statusChangedAt?: string;
+    statusReason?: string;
     updatedAt: string;
 };
 
-/**
- * Cluster member info
- */
-export type ClusterMember = {
-    healthy: boolean;
-    instanceId: string;
-    lastSeen: string;
-    role: string;
+export type CompleteInstanceRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    completionResult?: unknown;
+    completionStatus?: string;
+    /**
+     * SDK alias for completionResult
+     */
+    result?: unknown;
+    /**
+     * COMPLETED|FAILED|… (instance status) or SUCCESS|FAILURE (completion outcome)
+     */
+    status?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-export type CompletionStatusDto = 'SUCCESS' | 'FAILURE';
-
-/**
- * Config entry response (matches Java ConfigEntry)
- */
-export type ConfigEntryResponse = {
+export type ConfigEntryDto = {
     key: string;
     value: string;
 };
 
-/**
- * Context data for event filtering/searching
- */
-export type ContextDataDto = {
+export type ConfigListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<ConfigResponse>;
+};
+
+export type ConfigResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationCode: string;
+    clientId?: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    property: string;
+    scope: string;
+    section: string;
+    updatedAt: string;
+    value: string;
+    valueType: string;
+};
+
+export type ConnectionListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    connections: Array<ConnectionResponse>;
+    total: number;
+};
+
+export type ConnectionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    clientIdentifier?: string;
+    code: string;
+    createdAt: string;
+    description?: string;
+    externalId?: string;
+    id: string;
+    name: string;
+    serviceAccountId: string;
+    status: string;
+    updatedAt: string;
+};
+
+export type ContextEntryDto = {
     key: string;
     value: string;
 };
 
-/**
- * Create client request
- */
+export type CorsOriginListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    corsOrigins: Array<AllowedOriginResponse>;
+    total: number;
+};
+
+export type CreateAnchorDomainRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    domain: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateApplicationRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Application code (lowercase, alphanumeric, hyphens)
+     */
+    code: string;
+    defaultBaseUrl?: string;
+    description?: string;
+    iconUrl?: string;
+    /**
+     * Inline SVG logo content
+     */
+    logo?: string;
+    logoMimeType?: string;
+    name: string;
+    /**
+     * APPLICATION or INTEGRATION
+     */
+    type?: string;
+    website?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateAuthConfigRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    additionalClientIds?: Array<string>;
+    authProvider: string;
+    configType: string;
+    emailDomain: string;
+    grantedClientIds?: Array<string>;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant: boolean;
+    primaryClientId?: string;
+    [key: string]: unknown | string | Array<string> | Array<string> | boolean | undefined;
+};
+
 export type CreateClientRequest = {
     /**
-     * Unique identifier/slug (URL-safe)
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * URL-safe identifier (lowercase alphanumeric, hyphens)
      */
     identifier: string;
-    /**
-     * Human-readable name
-     */
     name: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Request to create a new dispatch job
- */
-export type CreateDispatchJobRequest = {
+export type CreateConnectionRequest = {
     /**
-     * Client ID
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
+    readonly $schema?: string;
+    clientId?: string;
     /**
-     * The event type or task code
+     * Connection code (lowercase, alphanumeric, hyphens)
+     */
+    code: string;
+    description?: string;
+    externalId?: string;
+    name: string;
+    serviceAccountId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateDispatchPoolRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    /**
+     * Pool code (lowercase, alphanumeric, hyphens)
      */
     code: string;
     /**
-     * Correlation ID for distributed tracing
+     * Max concurrent dispatches (default 10)
      */
-    correlationId?: string | null;
+    concurrency?: number;
+    description?: string;
+    name: string;
     /**
-     * If true, send raw payload only
+     * Messages per minute (nil = no rate limit)
      */
-    dataOnly?: boolean;
-    /**
-     * Rate limiting pool ID
-     */
-    dispatchPoolId?: string | null;
-    /**
-     * Source event ID (required for EVENT kind)
-     */
-    eventId?: string | null;
-    /**
-     * External reference ID
-     */
-    externalId?: string | null;
-    /**
-     * Idempotency key for deduplication
-     */
-    idempotencyKey?: string | null;
-    /**
-     * The kind of dispatch job (EVENT or TASK)
-     */
-    kind?: string | null;
-    /**
-     * Maximum retry attempts
-     */
-    maxRetries?: number | null;
-    /**
-     * Message group for FIFO ordering
-     */
-    messageGroup?: string | null;
-    /**
-     * Custom metadata
-     */
-    metadata?: {
-        [key: string]: string;
-    };
-    /**
-     * Dispatch mode for ordering
-     */
-    mode?: string | null;
-    /**
-     * Payload to deliver (JSON string)
-     */
-    payload: string;
-    /**
-     * Content type of payload
-     */
-    payloadContentType?: string | null;
-    /**
-     * Retry strategy
-     */
-    retryStrategy?: string | null;
-    /**
-     * Sequence number within message group
-     */
-    sequence?: number | null;
-    /**
-     * Service account for authentication
-     */
-    serviceAccountId: string;
-    /**
-     * Source system/application
-     */
-    source?: string | null;
-    /**
-     * CloudEvents-style subject/aggregate reference
-     */
-    subject?: string | null;
-    /**
-     * Subscription ID that created this job
-     */
-    subscriptionId?: string | null;
-    /**
-     * Target URL for webhook delivery
-     */
-    targetUrl: string;
-    /**
-     * Timeout in seconds for HTTP call
-     */
-    timeoutSeconds?: number | null;
+    rateLimit?: number;
+    [key: string]: unknown | string | number | undefined;
 };
 
-/**
- * Create event request
- */
 export type CreateEventRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     /**
      * Causation ID - the event that caused this event
      */
-    causationId?: string | null;
+    causationId?: string;
     /**
      * Client ID (optional, defaults to caller's client)
      */
-    clientId?: string | null;
+    clientId?: string;
     /**
      * Context data for filtering/searching
      */
-    contextData?: Array<ContextDataDto>;
+    contextData?: Array<ContextEntryDto>;
     /**
      * Correlation ID for request tracing
      */
-    correlationId?: string | null;
+    correlationId?: string;
     /**
      * Event payload data
      */
@@ -641,7 +811,7 @@ export type CreateEventRequest = {
     /**
      * Deduplication ID for exactly-once delivery
      */
-    deduplicationId?: string | null;
+    deduplicationId?: string;
     /**
      * Event type code (e.g., "orders:fulfillment:shipment:shipped")
      */
@@ -649,7 +819,7 @@ export type CreateEventRequest = {
     /**
      * Message group for FIFO ordering
      */
-    messageGroup?: string | null;
+    messageGroup?: string;
     /**
      * Event source URI
      */
@@ -657,1031 +827,1142 @@ export type CreateEventRequest = {
     /**
      * Event subject (optional context)
      */
-    subject?: string | null;
+    subject?: string;
+    [key: string]: unknown | string | Array<ContextEntryDto> | undefined;
 };
 
-/**
- * Create event response - includes deduplication info and dispatch job count
- */
 export type CreateEventResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     /**
      * Number of dispatch jobs created for matching subscriptions
      */
     dispatchJobCount: number;
-    event: EventResponse;
+    event: CreatedEvent;
     /**
      * True if this was a deduplicated request (event already existed)
      */
     isDuplicate: boolean;
 };
 
-/**
- * Create event type request
- */
 export type CreateEventTypeRequest = {
     /**
-     * Client ID (optional, null = anchor-level)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
+    readonly $schema?: string;
     /**
-     * Event type code (e.g., "orders:fulfillment:shipment:shipped")
-     * Format: {application}:{subdomain}:{aggregate}:{event}
+     * Optional client scope; absent means anchor-level
+     */
+    clientId?: string;
+    /**
+     * Events of this type are per-client
+     */
+    clientScoped?: boolean;
+    /**
+     * Event type code in application:subdomain:aggregate:event format
      */
     code: string;
+    description?: string;
     /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Human-readable name
+     * Human-readable event type name
      */
     name: string;
     /**
-     * Initial JSON schema
+     * Optional JSON Schema for the initial spec version
      */
     schema?: unknown;
+    [key: string]: unknown | string | boolean | undefined;
 };
 
-/**
- * Create OAuth client request
- */
+export type CreateIdentityProviderRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Email domains to route to this provider; mappings are created (or claimed from their current provider) in Email Domain management
+     */
+    allowedEmailDomains?: Array<string>;
+    /**
+     * Platform roles (by id) this provider may confer via role sync; empty = no restriction
+     */
+    allowedRoleIds?: Array<string>;
+    /**
+     * IDP code (e.g. internal, entra)
+     */
+    code: string;
+    /**
+     * Scope for email-domain mappings this request creates: ANCHOR (platform administrators) or CLIENT (requires primaryClientId). Required when the request creates a new mapping. Existing mappings keep their scope; with CLIENT the client is linked on any mapping that has no primary client yet.
+     */
+    mappingScope?: 'ANCHOR' | 'CLIENT';
+    /**
+     * Display name
+     */
+    name: string;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    /**
+     * Client to link on mappings that are new or not yet linked to a primary client
+     */
+    primaryClientId?: string;
+    /**
+     * Reconcile users' IDP_SYNC roles from the token's roles claim at login
+     */
+    syncRolesFromIdp?: boolean;
+    /**
+     * IDP type (INTERNAL or OIDC)
+     */
+    type: string;
+    [key: string]: unknown | string | Array<string> | Array<string> | 'ANCHOR' | 'CLIENT' | boolean | undefined;
+};
+
+export type CreateIdpRoleMappingRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    idpRoleName: string;
+    idpType: string;
+    platformRoleName: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateMappingRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    additionalClientIds?: Array<string>;
+    /**
+     * Permitted 2FA methods (TOTP, EMAIL_PIN). ≥1 required when require2fa is set.
+     */
+    allowed2faMethods?: Array<string>;
+    /**
+     * DNS-like email domain (e.g. example.com)
+     */
+    emailDomain: string;
+    grantedClientIds?: Array<string>;
+    identityProviderId: string;
+    primaryClientId?: string;
+    rememberDeviceDays?: number;
+    rememberDeviceEnabled?: boolean;
+    require2fa?: boolean;
+    requiredOidcTenantId?: string;
+    /**
+     * Scope of mapping (ANCHOR, PARTNER, CLIENT)
+     */
+    scopeType: string;
+    [key: string]: unknown | string | Array<string> | Array<string> | Array<string> | number | boolean | undefined;
+};
+
 export type CreateOAuthClientRequest = {
     /**
-     * Application IDs this client can access
+     * A URL to the JSON Schema for this object.
      */
+    readonly $schema?: string;
+    allowedOrigins?: Array<string>;
+    apiAccess?: boolean;
     applicationIds?: Array<string>;
-    /**
-     * OAuth client_id (public identifier). Auto-generated if not provided.
-     */
-    clientId?: string | null;
-    /**
-     * Human-readable name
-     */
     clientName: string;
     /**
-     * Client type (PUBLIC or CONFIDENTIAL)
+     * PUBLIC or CONFIDENTIAL
      */
-    clientType?: string | null;
-    /**
-     * Allowed grant types
-     */
+    clientType: string;
+    defaultScopes?: Array<string>;
     grantTypes?: Array<string>;
-    /**
-     * Whether PKCE is required
-     */
-    pkceRequired?: boolean | null;
-    /**
-     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
-     */
+    pkceRequired?: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
     postLogoutRedirectUris?: Array<string>;
-    /**
-     * Allowed redirect URIs
-     */
+    principalId?: string;
     redirectUris?: Array<string>;
+    [key: string]: unknown | string | Array<string> | boolean | Array<string> | Array<string> | Array<string> | Array<string> | Array<string> | undefined;
 };
 
-/**
- * Wrapper response from `POST /api/oauth-clients`. Includes the freshly
- * generated `client_secret` exactly once for confidential clients — it is
- * never retrievable afterwards.
- */
 export type CreateOAuthClientResponse = {
-    client: OAuthClientResponse;
     /**
-     * Plaintext client secret. Only present on creation of CONFIDENTIAL
-     * clients. Capture this on the first response — the platform stores
-     * only the encrypted form and cannot return it again.
+     * A URL to the JSON Schema for this object.
      */
-    clientSecret?: string | null;
+    readonly $schema?: string;
+    client: OAuthClientResponse;
+    clientSecret?: string;
+};
+
+export type CreatePortalAppRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    clientType?: 'CONFIDENTIAL' | 'PUBLIC';
+    code: string;
+    description?: string;
+    name: string;
+    redirectUris?: Array<string>;
+    [key: string]: unknown | string | 'CONFIDENTIAL' | 'PUBLIC' | Array<string> | undefined;
+};
+
+export type CreatePortalAppResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientSecret?: string;
+    clientType: string;
+    oauthClientId: string;
+    oauthClientRowId: string;
+    portalApp: PortalAppResponse;
+};
+
+export type CreatePrincipalRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    email: string;
+    idpType?: string;
+    inviteRedirectUri?: string;
+    name?: string;
+    password?: string;
+    returnInviteLink?: boolean;
+    /**
+     * Principal scope (ANCHOR, PARTNER, CLIENT)
+     */
+    scope: string;
+    sendInvitation?: boolean;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type CreatePrincipalResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    id: string;
+    inviteLink?: string;
 };
 
 export type CreateProcessRequest = {
     /**
-     * Diagram body (typically Mermaid source).
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Process documentation body
      */
     body?: string;
     /**
-     * Process code: {application}:{subdomain}:{process-name}
+     * Process code in application:subdomain:name format
      */
     code: string;
-    description?: string | null;
+    description?: string;
     /**
-     * Defaults to `mermaid` if unset.
+     * Diagram syntax (e.g. mermaid)
      */
-    diagramType?: string | null;
+    diagramType?: string;
     name: string;
     tags?: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
 };
 
-/**
- * Create role request
- */
 export type CreateRoleRequest = {
     /**
-     * Application code this role belongs to
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Application code (e.g. platform, iam)
      */
     applicationCode: string;
     /**
-     * Whether clients can manage this role
+     * Whether the role is managed at client scope
      */
-    clientManaged?: boolean;
+    clientManaged: boolean;
+    description?: string;
     /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Display name
+     * Human-readable role name
      */
     displayName: string;
     /**
-     * Initial permissions
+     * Permission codes assigned to the role
      */
     permissions?: Array<string>;
     /**
-     * Role name (will be combined with app code to form code)
+     * Role name within the application
      */
     roleName: string;
+    [key: string]: unknown | string | boolean | Array<string> | undefined;
 };
 
 export type CreateScheduledJobRequest = {
     /**
-     * None = platform-scoped (anchor only); Some = client-scoped.
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
+    readonly $schema?: string;
+    applicationId?: string;
+    clientId?: string;
     code: string;
-    concurrent?: boolean;
+    concurrent: boolean;
     crons: Array<string>;
     deliveryMaxAttempts?: number;
-    description?: string | null;
+    description?: string;
     name: string;
     payload?: unknown;
-    targetUrl?: string | null;
-    timeoutSeconds?: number | null;
+    targetUrl?: string;
+    timeoutSeconds?: number;
     timezone?: string;
-    tracksCompletion?: boolean;
+    tracksCompletion: boolean;
+    [key: string]: unknown | string | boolean | Array<string> | number | undefined;
 };
 
-/**
- * Create subscription request
- */
+export type CreateServiceAccountRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationId?: string;
+    clientIds?: Array<string>;
+    code: string;
+    description?: string;
+    name: string;
+    scope?: string;
+    webhookCredentials?: WebhookCredentialsDto;
+    [key: string]: unknown | string | Array<string> | WebhookCredentialsDto | undefined;
+};
+
+export type CreateServiceAccountResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    oauth: ServiceAccountOAuthSecrets;
+    principalId: string;
+    serviceAccount: ServiceAccountResponse;
+    webhook: ServiceAccountWebhookSecrets;
+};
+
 export type CreateSubscriptionRequest = {
     /**
-     * Client ID (optional, null = anchor-level)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
-    /**
-     * Unique code
-     */
+    readonly $schema?: string;
+    clientId?: string;
     code: string;
-    /**
-     * Connection ID (references msg_connections, optional)
-     */
-    connectionId?: string | null;
-    /**
-     * Send raw event data only
-     */
+    connectionId?: string;
+    customConfig?: Array<ConfigEntryDto>;
     dataOnly?: boolean;
+    delaySeconds?: number;
+    description?: string;
+    dispatchPoolId?: string;
     /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Dispatch pool ID for rate limiting
-     */
-    dispatchPoolId?: string | null;
-    /**
-     * Webhook endpoint URL
+     * http(s) URL delivery target
      */
     endpoint: string;
+    eventTypes?: Array<EventTypeBindingDto>;
+    maxAgeSeconds?: number;
+    maxRetries?: number;
     /**
-     * Event types to listen to
+     * Dispatch mode. Omitted means NEXT_ON_ERROR: a message group is delivered in sequence, one at a time, moving on past a failure. BLOCK_ON_ERROR stops the group at a failure instead; IMMEDIATE opts out of ordering entirely. Ordering applies only to messages that carry a message group.
      */
-    eventTypes?: Array<EventTypeBindingRequest>;
-    /**
-     * Maximum retry attempts
-     */
-    maxRetries?: number | null;
-    /**
-     * Dispatch mode
-     */
-    mode?: string | null;
-    /**
-     * Human-readable name
-     */
+    mode?: string;
     name: string;
     /**
-     * Service account ID for authentication
+     * Dispatch priority: DEFAULT or HIGH_PRIORITY (matched ignoring case). Selects which of the client's two dispatch queues jobs raised from this subscription publish to. Omitted or blank leaves it unset, which publishes as DEFAULT.
      */
-    serviceAccountId?: string | null;
-    /**
-     * Timeout in seconds
-     */
-    timeoutSeconds?: number | null;
+    queue?: string;
+    serviceAccountId?: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown | string | Array<ConfigEntryDto> | boolean | number | Array<EventTypeBindingDto> | undefined;
 };
 
-/**
- * Create user request (matches Java CreateUserRequest)
- */
 export type CreateUserRequest = {
     /**
-     * Client ID (for client-bound users)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
-    /**
-     * Email address
-     */
+    readonly $schema?: string;
+    clientId?: string;
     email: string;
-    /**
-     * When false, the platform skips its password complexity rules
-     * (uppercase/lowercase/digit/special) and only enforces a 2-character
-     * minimum. Intended for SDK callers that apply their own policy.
-     * Defaults to true.
-     */
-    enforcePasswordComplexity?: boolean | null;
-    /**
-     * Display name
-     */
+    enforcePasswordComplexity?: boolean;
+    inviteRedirectUri?: string;
     name: string;
-    /**
-     * Password (optional - only for internal auth users)
-     */
-    password?: string | null;
+    password?: string;
+    returnInviteLink?: boolean;
+    scope?: 'ANCHOR' | 'PARTNER' | 'CLIENT';
+    sendInvitation?: boolean;
+    [key: string]: unknown | string | boolean | 'ANCHOR' | 'PARTNER' | 'CLIENT' | undefined;
 };
 
-/**
- * Created response with ID
- */
+export type CreatedEvent = {
+    causationId?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
+    createdAt: string;
+    data: unknown;
+    deduplicationId?: string;
+    eventType: string;
+    id: string;
+    messageGroup?: string;
+    source: string;
+    specVersion: string;
+    subject?: string;
+    time: string;
+};
+
 export type CreatedResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     id: string;
 };
 
-export type CredentialSummary = {
-    createdAt: string;
-    id: string;
-    lastUsedAt?: string | null;
-    name?: string | null;
-};
-
-/**
- * Current user info response
- */
-export type CurrentUserResponse = {
+export type DeveloperUserListResponse = {
     /**
-     * Client ID (for CLIENT scope users)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
-    /**
-     * Accessible client IDs
-     */
-    clients: Array<string>;
-    /**
-     * Email address
-     */
-    email?: string | null;
-    /**
-     * Principal ID
-     */
-    id: string;
-    /**
-     * Display name
-     */
-    name: string;
-    /**
-     * Principal type (USER, SERVICE)
-     */
-    principalType: string;
-    /**
-     * Assigned roles
-     */
-    roles: Array<string>;
-    /**
-     * User scope (ANCHOR, PARTNER, CLIENT)
-     */
-    scope: string;
-};
-
-/**
- * Dashboard metrics response.
- *
- * `total_events` and `total_jobs` are **approximate** — read from
- * `pg_class.reltuples` (the planner's row estimate maintained by autovacuum/
- * ANALYZE). Within a few % of accurate; sub-millisecond regardless of row
- * count, where exact counts on `msg_events` / `msg_dispatch_jobs` would be a
- * non-starter at production scale.
- *
- * `jobs_by_status` was removed: migration 015 dropped the status index on
- * `msg_dispatch_jobs` (it's a write-optimized table; the read projection
- * has the index). Per-status counts are now full table scans, so they're
- * not surfaced here. If you need them, query the read projection directly.
- */
-export type DashboardMetrics = {
-    /**
-     * Active dispatch pools
-     */
-    activePools: number;
-    /**
-     * Active subscriptions
-     */
-    activeSubscriptions: number;
-    /**
-     * Events in last hour. Currently always 0 — needs a time-windowed
-     * counter on the projection or an external metrics store.
-     */
-    eventsLastHour: number;
-    /**
-     * System health
-     */
-    health: SystemHealth;
-    /**
-     * Approximate total events received (planner estimate).
-     */
-    totalEvents: number;
-    /**
-     * Approximate total dispatch jobs (planner estimate).
-     */
-    totalJobs: number;
-};
-
-/**
- * Dispatch attempt response DTO
- */
-export type DispatchAttemptResponse = {
-    attemptNumber: number;
-    attemptedAt: string;
-    completedAt?: string | null;
-    durationMillis?: number | null;
-    errorMessage?: string | null;
-    errorType?: string | null;
-    responseBody?: string | null;
-    responseCode?: number | null;
-    success: boolean;
-};
-
-/**
- * Filter options for dispatch jobs dropdowns — cascading filter support.
- * Matches the TS version: queries distinct values from the read projection.
- */
-export type DispatchJobFilterOptionsResponse = {
-    aggregates: Array<FilterOption>;
-    applications: Array<FilterOption>;
-    clients: Array<FilterOption>;
-    codes: Array<FilterOption>;
-    statuses: Array<FilterOption>;
-    subdomains: Array<FilterOption>;
-};
-
-/**
- * Dispatch job read projection response (matches Java DispatchJobReadResponse)
- */
-export type DispatchJobReadResponse = {
-    aggregate?: string | null;
-    application?: string | null;
-    attemptCount: number;
-    clientId?: string | null;
-    code: string;
-    completedAt?: string | null;
-    correlationId?: string | null;
-    createdAt: string;
-    dispatchPoolId?: string | null;
-    durationMillis?: number | null;
-    eventId?: string | null;
-    expiresAt?: string | null;
-    externalId?: string | null;
-    id: string;
-    idempotencyKey?: string | null;
-    isCompleted: boolean;
-    isTerminal: boolean;
-    kind: string;
-    lastAttemptAt?: string | null;
-    lastError?: string | null;
-    maxRetries: number;
-    messageGroup?: string | null;
-    mode: string;
-    projectedAt?: string | null;
-    protocol: string;
-    retryStrategy: string;
-    scheduledFor?: string | null;
-    sequence: number;
-    serviceAccountId?: string | null;
-    source?: string | null;
-    status: string;
-    subdomain?: string | null;
-    subject?: string | null;
-    subscriptionId?: string | null;
-    targetUrl: string;
-    timeoutSeconds: number;
-    updatedAt: string;
-};
-
-/**
- * Dispatch job response DTO (matches Java DispatchJobReadResponse)
- */
-export type DispatchJobResponse = {
-    attemptCount: number;
-    clientId?: string | null;
-    code: string;
-    completedAt?: string | null;
-    correlationId?: string | null;
-    createdAt: string;
-    dispatchPoolId?: string | null;
-    durationMillis?: number | null;
-    eventId?: string | null;
-    expiresAt?: string | null;
-    externalId?: string | null;
-    id: string;
-    idempotencyKey?: string | null;
-    isCompleted: boolean;
-    isTerminal: boolean;
-    kind: string;
-    lastAttemptAt?: string | null;
-    lastError?: string | null;
-    maxRetries: number;
-    messageGroup?: string | null;
-    mode: string;
-    protocol: string;
-    retryStrategy: string;
-    scheduledFor?: string | null;
-    sequence: number;
-    serviceAccountId?: string | null;
-    source?: string | null;
-    status: string;
-    subject?: string | null;
-    subscriptionId?: string | null;
-    targetUrl: string;
-    timeoutSeconds: number;
-    updatedAt: string;
-};
-
-/**
- * Dispatch jobs filter options response
- */
-export type DispatchJobsFilterOptions = {
-    clients: Array<FilterOption>;
-    eventTypes: Array<FilterOption>;
-    statuses: Array<FilterOption>;
-    subscriptions: Array<FilterOption>;
-};
-
-/**
- * Dispatch pool filter options response
- */
-export type DispatchPoolFilterOptions = {
-    dispatchPools: Array<FilterOption>;
-};
-
-/**
- * Domain check response
- */
-export type DomainCheckResponse = {
-    /**
-     * Authentication method for this domain
-     */
-    authMethod: AuthMethod;
-    /**
-     * Authorization URL if external IDP
-     */
-    authorizationUrl?: string | null;
-    /**
-     * The email domain
-     */
-    domain: string;
-    /**
-     * Provider ID if external IDP is required
-     */
-    providerId?: string | null;
-};
-
-/**
- * Enhanced metrics for a processing pool
- */
-export type EnhancedPoolMetrics = {
-    /**
-     * Metrics for the last 30 minutes
-     */
-    last30Min: WindowedMetrics;
-    /**
-     * Metrics for the last 5 minutes
-     */
-    last5Min: WindowedMetrics;
-    /**
-     * Processing time metrics (all time)
-     */
-    processingTime: ProcessingTimeMetrics;
-    /**
-     * Success rate (0.0 - 1.0)
-     */
-    successRate: number;
-    /**
-     * Total messages failed (all time)
-     */
-    totalFailure: number;
-    /**
-     * Total messages rate limited (all time)
-     */
-    totalRateLimited: number;
-    /**
-     * Total messages processed successfully (all time)
-     */
-    totalSuccess: number;
-};
-
-/**
- * Entity audit logs response
- */
-export type EntityAuditLogsResponse = {
-    auditLogs: Array<AuditLogResponse>;
-    entityId: string;
-    entityType: string;
+    readonly $schema?: string;
+    principals: Array<PrincipalResponse>;
     total: number;
 };
 
-/**
- * Entity types response
- */
-export type EntityTypesResponse = {
-    entityTypes: Array<string>;
+export type DispatchJobFilterOptionsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientIds: Array<string>;
+    codes: Array<string>;
+    dispatchPoolIds: Array<string>;
+    kinds: Array<string>;
+    statuses: Array<string>;
+    subscriptionIds: Array<string>;
 };
 
-export type ErrorResponse = {
+export type DispatchJobRead = {
+    aggregate?: string;
+    application?: string;
+    attemptCount: number;
+    clientId?: string;
+    clientIdentifier?: string;
+    code: string;
+    completedAt?: string;
+    correlationId?: string;
+    createdAt: string;
+    dispatchMode?: string;
+    eventId?: string;
+    id: string;
+    kind: string;
+    lastAttemptAt?: string;
+    mode: string;
+    priority?: number;
+    scheduledFor?: string;
+    source?: string;
+    status: string;
+    subdomain?: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    updatedAt: string;
+};
+
+export type DispatchJobResponse = {
     /**
-     * Machine-readable error code (e.g. ROLE_HAS_ASSIGNMENTS)
+     * A URL to the JSON Schema for this object.
      */
+    readonly $schema?: string;
+    attemptCount: number;
+    attempts?: Array<AttemptDto>;
+    clientId?: string;
+    code: string;
+    completedAt?: string;
+    correlationId?: string;
+    createdAt: string;
+    dataOnly: boolean;
+    dispatchPoolId?: string;
+    durationMillis?: number;
+    eventId?: string;
+    expiresAt?: string;
+    externalId?: string;
+    id: string;
+    idempotencyKey?: string;
+    kind: string;
+    lastAttemptAt?: string;
+    lastError?: string;
+    maxRetries: number;
+    messageGroup?: string;
+    metadata?: Array<MetadataDto>;
+    mode: string;
+    payload?: string;
+    payloadContentType: string;
+    protocol: string;
+    retryStrategy: string;
+    scheduledFor?: string;
+    schemaId?: string;
+    sequence: number;
+    serviceAccountId?: string;
+    source?: string;
+    status: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds: number;
+    updatedAt: string;
+};
+
+export type DispatchPoolListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    pools: Array<DispatchPoolResponse>;
+    total: number;
+};
+
+export type DispatchPoolResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    clientIdentifier?: string;
+    code: string;
+    concurrency: number;
+    createdAt: string;
+    description?: string;
+    id: string;
+    name: string;
+    rateLimit?: number;
+    status: string;
+    updatedAt: string;
+};
+
+export type DocListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applications: Array<AppDocsGroup>;
+    platform: Array<DocSummary>;
+};
+
+export type DocResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    content: string;
+    slug: string;
+    title: string;
+};
+
+export type DocSummary = {
+    slug: string;
+    title: string;
+};
+
+export type ErrorModel = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    details?: {
+        [key: string]: unknown;
+    };
     error: string;
-    /**
-     * Human-readable error message suitable for display
-     */
     message: string;
 };
 
-/**
- * Filter options for the events read model (cascading filters).
- * Clients are served by the canonical `/bff/filter-options/clients` endpoint,
- * so they aren't duplicated here.
- */
-export type EventFilterOptions = {
-    aggregates: Array<string>;
-    applications: Array<string>;
-    subdomains: Array<string>;
-    types: Array<string>;
+export type EventFilterOption = {
+    label: string;
+    value: string;
 };
 
-/**
- * Event read projection — CQRS read model, matches msg_events_read table
- */
-export type EventRead = {
-    aggregate?: string | null;
-    application?: string | null;
-    clientId?: string | null;
+export type EventFilterOptionsResponse = {
     /**
-     * Denormalized client name for display
+     * A URL to the JSON Schema for this object.
      */
-    clientName?: string | null;
-    correlationId?: string | null;
+    readonly $schema?: string;
+    applications: Array<EventFilterOption>;
+    eventTypes: Array<EventFilterOption>;
+    subdomains: Array<EventFilterOption>;
+};
+
+export type EventRead = {
+    aggregate?: string;
+    application?: string;
+    clientId?: string;
+    correlationId?: string;
     id: string;
-    messageGroup?: string | null;
+    messageGroup?: string;
     projectedAt: string;
     source: string;
-    subdomain?: string | null;
-    subject?: string | null;
+    subdomain?: string;
+    subject?: string;
     time: string;
     type: string;
 };
 
-/**
- * Event response DTO
- */
 export type EventResponse = {
-    causationId?: string | null;
-    clientId?: string | null;
-    contextData?: Array<ContextDataDto>;
-    correlationId?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    aggregate?: string;
+    application?: string;
+    causationId?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
     createdAt: string;
-    data: unknown;
-    deduplicationId?: string | null;
-    eventType: string;
+    data?: unknown;
+    deduplicationId: string;
     id: string;
-    messageGroup?: string | null;
+    messageGroup?: string;
+    projectedAt?: string;
     source: string;
     specVersion: string;
-    subject?: string | null;
+    subdomain?: string;
+    subject: string;
     time: string;
+    type: string;
 };
 
-/**
- * Event summary for list endpoints (no payload data)
- */
-export type EventSummaryResponse = {
-    clientId?: string | null;
-    correlationId?: string | null;
-    createdAt: string;
-    eventType: string;
-    id: string;
-    messageGroup?: string | null;
-    source: string;
-    specVersion: string;
-    subject?: string | null;
-    time: string;
-};
-
-/**
- * Event type binding request
- */
-export type EventTypeBindingRequest = {
-    /**
-     * Event type code (with optional wildcards)
-     */
+export type EventTypeBindingDto = {
     eventTypeCode: string;
-    /**
-     * Optional filter expression
-     */
-    filter?: string | null;
+    eventTypeId?: string;
+    filter?: string;
+    specVersion?: string;
 };
 
-/**
- * Event type binding response
- */
-export type EventTypeBindingResponse = {
-    eventTypeCode: string;
-    filter?: string | null;
-};
-
-/**
- * Event type filter options response
- */
-export type EventTypeFilterOptions = {
-    applications: Array<FilterOption>;
-    eventTypes: Array<FilterOption>;
-    subdomains: Array<FilterOption>;
-};
-
-/**
- * Event type list response (matches Java BffEventTypeListResponse)
- */
 export type EventTypeListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     items: Array<EventTypeResponse>;
 };
 
-/**
- * Event type response DTO (matches Java BffEventTypeResponse)
- */
 export type EventTypeResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     aggregate: string;
     application: string;
+    clientId?: string;
     code: string;
     createdAt: string;
-    description?: string | null;
-    event: string;
+    createdBy?: string;
+    description?: string;
+    eventName: string;
     id: string;
     name: string;
+    source: string;
     specVersions: Array<SpecVersionResponse>;
     status: string;
     subdomain: string;
     updatedAt: string;
 };
 
-/**
- * Events filter options response (for events list page)
- */
-export type EventsFilterOptions = {
-    applications: Array<FilterOption>;
-    clients: Array<FilterOption>;
-    eventTypes: Array<FilterOption>;
-    subdomains: Array<FilterOption>;
-};
-
-/**
- * A filter option with value and label (matches TS FilterOption)
- */
-export type FilterOption = {
-    label: string;
-    value: string;
-};
-
-export type FireRequest = {
-    correlationId?: string | null;
-};
-
-/**
- * Grant client access request
- */
-export type GrantClientAccessRequest = {
+export type FireNowRequest = {
     /**
-     * Client ID to grant access to
+     * A URL to the JSON Schema for this object.
      */
-    clientId: string;
+    readonly $schema?: string;
+    correlationId?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Grant permission request
- */
-export type GrantPermissionRequest = {
+export type FireNowResponse = {
     /**
-     * Permission to grant
+     * A URL to the JSON Schema for this object.
      */
-    permission: string;
-};
-
-/**
- * In-flight message info
- */
-export type InFlightMessage = {
-    attempt: number;
-    elapsedMs: number;
-    eventId?: string | null;
-    jobId: string;
-    messageGroup?: string | null;
-    poolId?: string | null;
-    startedAt: string;
-    targetUrl: string;
-};
-
-/**
- * In-flight messages response
- */
-export type InFlightMessagesResponse = {
-    byMessageGroup: {
-        [key: string]: number;
-    };
-    byPool: {
-        [key: string]: number;
-    };
-    messages: Array<InFlightMessage>;
-    totalInFlight: number;
-};
-
-export type InstanceCompleteRequest = {
-    result?: unknown;
-    status: CompletionStatusDto;
-};
-
-export type InstanceLogRequest = {
-    level?: LogLevelDto;
-    message: string;
-    metadata?: unknown;
-};
-
-export type InstanceLogResponse = {
-    createdAt: string;
+    readonly $schema?: string;
     id: string;
     instanceId: string;
-    level: string;
-    message: string;
-    metadata?: unknown;
+    scheduledJobId: string;
 };
 
-export type LogLevelDto = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-
-/**
- * Login request
- */
-export type LoginRequest = {
+export type GrantAccessRequest = {
     /**
-     * Email address
+     * A URL to the JSON Schema for this object.
      */
-    email: string;
-    /**
-     * Password
-     */
-    password: string;
-    /**
-     * Remember me (extends session duration)
-     */
-    rememberMe?: boolean;
+    readonly $schema?: string;
+    canWrite: boolean;
+    roleCode: string;
+    [key: string]: unknown | string | boolean | undefined;
 };
 
-/**
- * Login response - matches Java LoginResponse record
- */
-export type LoginResponse = {
+export type GrantClientAccessRequest = {
     /**
-     * Client ID (for CLIENT scope users)
+     * A URL to the JSON Schema for this object.
      */
-    clientId?: string | null;
-    /**
-     * Email address
-     */
-    email: string;
-    /**
-     * Display name
-     */
-    name: string;
-    /**
-     * Principal ID
-     */
-    principalId: string;
-    /**
-     * Assigned roles
-     */
-    roles: Array<string>;
-};
-
-/**
- * List response wrapper for `GET /api/oauth-clients`.
- */
-export type OAuthClientListResponse = {
-    clients: Array<OAuthClientResponse>;
-};
-
-/**
- * OAuth client response DTO
- */
-export type OAuthClientResponse = {
-    active: boolean;
-    allowedOrigins?: Array<string>;
-    applicationIds: Array<string>;
+    readonly $schema?: string;
     clientId: string;
-    clientName: string;
-    clientType: string;
-    createdAt: string;
-    createdBy?: string | null;
-    defaultScopes: Array<string>;
-    grantTypes: Array<string>;
-    id: string;
-    pkceRequired: boolean;
-    postLogoutRedirectUris?: Array<string>;
-    redirectUris: Array<string>;
-    serviceAccountPrincipalId?: string | null;
-    updatedAt: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Operations response
- */
-export type OperationsResponse = {
-    operations: Array<string>;
-};
-
-/**
- * Paginated response wrapper
- */
-export type PaginatedResponseScheduledJobInstanceResponse = {
-    data: Array<{
-        clientId?: string | null;
-        completedAt?: string | null;
-        completionResult?: unknown;
-        completionStatus?: string | null;
-        correlationId?: string | null;
-        createdAt: string;
-        deliveredAt?: string | null;
-        deliveryAttempts: number;
-        deliveryError?: string | null;
-        firedAt: string;
-        id: string;
-        jobCode: string;
-        scheduledFor?: string | null;
-        scheduledJobId: string;
-        status: string;
-        triggerKind: string;
-    }>;
-    page: number;
-    size: number;
-    total: number;
-    total_pages: number;
-};
-
-/**
- * Paginated response wrapper
- */
-export type PaginatedResponseScheduledJobResponse = {
-    data: Array<{
-        clientId?: string | null;
-        code: string;
-        concurrent: boolean;
-        createdAt: string;
-        createdBy?: string | null;
-        crons: Array<string>;
-        deliveryMaxAttempts: number;
-        description?: string | null;
-        /**
-         * Computed: true if any non-terminal instance currently exists.
-         */
-        hasActiveInstance: boolean;
-        id: string;
-        lastFiredAt?: string | null;
-        name: string;
-        payload?: unknown;
-        status: string;
-        targetUrl?: string | null;
-        timeoutSeconds?: number | null;
-        timezone: string;
-        tracksCompletion: boolean;
-        updatedAt: string;
-        updatedBy?: string | null;
-        version: number;
-    }>;
-    page: number;
-    size: number;
-    total: number;
-    total_pages: number;
-};
-
-export type PaginationParams = {
+export type GrantPermissionRequest = {
     /**
-     * Page number (1-based)
+     * A URL to the JSON Schema for this object.
      */
-    page?: number;
-    /**
-     * Page size. Aliases: limit, pageSize, page_size.
-     */
-    size?: number;
-};
-
-/**
- * Permission list response
- */
-export type PermissionListResponse = {
-    permissions: Array<PermissionResponse>;
-    total: number;
-};
-
-/**
- * Permission response
- */
-export type PermissionResponse = {
-    action: string;
-    aggregate: string;
-    application: string;
-    context: string;
-    description: string;
+    readonly $schema?: string;
     permission: string;
+    [key: string]: unknown | string | undefined;
 };
 
-export type PoolStats = {
-    active_workers: number;
-    concurrency: number;
-    is_rate_limited: boolean;
-    message_group_count: number;
-    metrics?: null | EnhancedPoolMetrics;
-    pool_code: string;
-    queue_capacity: number;
-    queue_size: number;
-    rate_limit_per_minute?: number | null;
-};
-
-/**
- * Pool statistics response (with enhanced metrics)
- */
-export type PoolStatsResponse = {
+export type IdentityProviderListResponse = {
     /**
-     * Aggregate success rate across all pools
+     * A URL to the JSON Schema for this object.
      */
-    aggregateSuccessRate: number;
-    /**
-     * Aggregate throughput (messages/sec) across all pools
-     */
-    aggregateThroughputPerSec: number;
-    pools: Array<PoolStats>;
-    totalActiveWorkers: number;
-    totalPools: number;
-    totalQueueSize: number;
-};
-
-/**
- * Principal list response (matches Java PrincipalListResponse)
- */
-export type PrincipalListResponse = {
-    principals: Array<PrincipalResponse>;
+    readonly $schema?: string;
+    identityProviders: Array<IdentityProviderResponse>;
     total: number;
 };
 
-/**
- * Principal response DTO (matches Java PrincipalDto)
- */
-export type PrincipalResponse = {
-    active: boolean;
-    clientId?: string | null;
+export type IdentityProviderResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Domains currently routed to this provider (derived from email-domain mappings)
+     */
+    allowedEmailDomains: Array<string>;
+    allowedRoleIds: Array<string>;
+    code: string;
     createdAt: string;
-    email?: string | null;
-    /**
-     * Granted client IDs (matches Java's Set<String>)
-     */
-    grantedClientIds: Array<string>;
+    hasClientSecret: boolean;
     id: string;
-    idpType?: string | null;
-    /**
-     * Whether user is an anchor domain user
-     */
-    isAnchorUser: boolean;
     name: string;
-    /**
-     * Role names (matches Java's Set<String>)
-     */
-    roles: Array<string>;
-    scope: string;
+    oidcClientId?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant: boolean;
+    syncRolesFromIdp: boolean;
     type: string;
     updatedAt: string;
 };
 
+export type IdpRoleMappingListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    items: Array<IdpRoleMappingResponse>;
+};
+
+export type IdpRoleMappingResponse = {
+    createdAt: string;
+    id: string;
+    idpRoleName: string;
+    idpType: string;
+    platformRoleName: string;
+    updatedAt: string;
+};
+
+export type LinkedOAuthClient = {
+    clientId: string;
+    clientName: string;
+    id: string;
+};
+
+export type ListOutputBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    requests: Array<RequestDto>;
+};
+
+export type LoginAttemptListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    hasMore: boolean;
+    items: Array<LoginAttemptResponse>;
+    nextCursor?: string;
+};
+
+export type LoginAttemptResponse = {
+    attemptType: string;
+    attemptedAt: string;
+    failureReason: string | null;
+    id: string;
+    identifier: string;
+    ipAddress: string | null;
+    outcome: string;
+    principalId: string | null;
+    userAgent: string | null;
+};
+
+export type MappingListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    mappings: Array<MappingResponse>;
+    total: number;
+};
+
+export type MappingResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    additionalClientIds: Array<string>;
+    allowed2faMethods: Array<string>;
+    createdAt: string;
+    emailDomain: string;
+    grantedClientIds: Array<string>;
+    id: string;
+    identityProviderId: string;
+    identityProviderName?: string;
+    primaryClientId?: string;
+    rememberDeviceDays: number;
+    rememberDeviceEnabled: boolean;
+    require2fa: boolean;
+    requiredOidcTenantId?: string;
+    scopeType: string;
+    updatedAt: string;
+};
+
+export type MetadataDto = {
+    key: string;
+    value: string;
+};
+
+export type MoveProviderRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Target identity provider id
+     */
+    identityProviderId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type MoveProviderResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    emailDomain: string;
+    fromIdentityProviderId: string;
+    mappingId: string;
+    toIdentityProviderId: string;
+    /**
+     * OIDC-provisioned users converted back to internal auth (0 when moving to an OIDC provider)
+     */
+    usersReset: number;
+};
+
+export type NoteResponse = {
+    addedAt: string;
+    addedBy?: string;
+    category: string;
+    text: string;
+};
+
+export type OAuthClientApplicationRef = {
+    id: string;
+    name: string;
+};
+
+export type OAuthClientListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clients: Array<OAuthClientResponse>;
+};
+
+export type OAuthClientResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    allowedOrigins: Array<string>;
+    apiAccess: boolean;
+    applicationIds: Array<string>;
+    applications: Array<OAuthClientApplicationRef>;
+    clientId: string;
+    clientName: string;
+    clientType: string;
+    createdAt: string;
+    defaultScopes: Array<string>;
+    grantTypes: Array<string>;
+    id: string;
+    pkceRequired: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
+    postLogoutRedirectUris: Array<string>;
+    previousSecretExpiresAt?: string;
+    previousSecretLastUsedAt?: string;
+    redirectUris: Array<string>;
+    serviceAccountPrincipalId?: string;
+    updatedAt: string;
+};
+
+export type OffsetPageScheduledJobInstanceResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    data: Array<ScheduledJobInstanceResponse>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
+};
+
+export type OffsetPageScheduledJobResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    data: Array<ScheduledJobResponse>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
+};
+
+export type PermissionListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    permissions: Array<PermissionResponse>;
+    total: number;
+};
+
+export type PermissionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    category?: string;
+    description?: string;
+    name: string;
+    permission: string;
+};
+
+export type PoolConfig = {
+    code: string;
+    concurrency: number;
+    rateLimitPerMinute?: number;
+};
+
+export type PortalAppListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    portalApps: Array<PortalAppResponse>;
+    unassignedUsers?: number;
+};
+
+export type PortalAppResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    clientId: string;
+    code: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    name: string;
+    oauthClients: Array<LinkedOAuthClient>;
+    updatedAt: string;
+    userCount: number;
+};
+
+export type PortalUserAppGrantBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    portalAppCode: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type PortalUserAppRef = {
+    code: string;
+    grantedAt: string;
+    id: string;
+    name: string;
+    source: string;
+};
+
+export type PortalUserClientBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type PortalUserListItem = {
+    apps: Array<PortalUserAppRef>;
+    createdAt: string;
+    email: string;
+    hasPassword: boolean;
+    identityId: string;
+    inviteExpiresAt?: string;
+    invitedAt?: string;
+    lastLoginAt?: string;
+    name: string;
+    source: string;
+    state: 'INVITED' | 'INVITE_EXPIRED' | 'ACTIVE' | 'SUSPENDED';
+    status: string;
+    updatedAt: string;
+};
+
+export type PortalUserListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    page: number;
+    portalUsers: Array<PortalUserListItem>;
+    size: number;
+    total: number;
+};
+
+export type PortalUserRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    email: string;
+    name?: string;
+    portalAppCode?: string;
+    redirectUri?: string;
+    returnInviteLink?: boolean;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type PortalUserResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    created: boolean;
+    hasPassword: boolean;
+    identityId: string;
+    inviteUrl?: string;
+    invited: boolean;
+    portalAppCode?: string;
+    ssoManaged?: boolean;
+    state: 'INVITED' | 'INVITE_EXPIRED' | 'ACTIVE' | 'SUSPENDED';
+};
+
+export type PrincipalAvailableApplication = {
+    code: string;
+    id: string;
+    name: string;
+};
+
+export type PrincipalAvailableApplicationsResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applications: Array<PrincipalAvailableApplication>;
+};
+
+export type PrincipalListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    principals: Array<PrincipalResponse>;
+    total: number;
+};
+
+export type PrincipalResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    clientId?: string;
+    createdAt: string;
+    developerCredentialUpdatedAt?: string;
+    email?: string;
+    grantedClientIds: Array<string>;
+    hasDeveloperCredential: boolean;
+    id: string;
+    idpType?: string;
+    inviteLink?: string;
+    isAnchorUser: boolean;
+    name: string;
+    roles: Array<string>;
+    scope: string;
+    twoFactorMethods?: Array<string>;
+    type: string;
+    updatedAt: string;
+};
+
+export type PrincipalRoleAssignmentDto = {
+    assignedAt: string;
+    assignmentSource: string;
+    id: string;
+    roleName: string;
+};
+
+export type PrincipalRoleListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<PrincipalRoleAssignmentDto>;
+};
+
+export type PrincipalVersionResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    updatedAt: string;
+};
+
 export type ProcessListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     items: Array<ProcessResponse>;
 };
 
 export type ProcessResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     application: string;
     body: string;
     code: string;
     createdAt: string;
-    description?: string | null;
+    createdBy?: string;
+    description?: string;
     diagramType: string;
     id: string;
     name: string;
@@ -1693,412 +1974,602 @@ export type ProcessResponse = {
     updatedAt: string;
 };
 
-/**
- * Processing time metrics with percentiles
- */
-export type ProcessingTimeMetrics = {
+export type ProvisionLoginClientRequest = {
     /**
-     * Average processing time in milliseconds
+     * A URL to the JSON Schema for this object.
      */
-    avgMs: number;
+    readonly $schema?: string;
+    allowedOrigins?: Array<string>;
     /**
-     * Maximum processing time in milliseconds
+     * PUBLIC (default) or CONFIDENTIAL
      */
-    maxMs: number;
-    /**
-     * Minimum processing time in milliseconds
-     */
-    minMs: number;
-    /**
-     * 50th percentile (median) in milliseconds
-     */
-    p50Ms: number;
-    /**
-     * 95th percentile in milliseconds
-     */
-    p95Ms: number;
-    /**
-     * 99th percentile in milliseconds
-     */
-    p99Ms: number;
-    /**
-     * Total samples collected
-     */
-    sampleCount: number;
+    clientType?: string;
+    redirectUris: Array<string>;
+    [key: string]: unknown | string | Array<string> | Array<string> | undefined;
 };
 
-/**
- * Refresh token request
- */
-export type RefreshTokenRequest = {
+export type PublicAllowedResponse = {
     /**
-     * The refresh token
+     * A URL to the JSON Schema for this object.
      */
-    refreshToken: string;
+    readonly $schema?: string;
+    origins: Array<string>;
 };
 
-/**
- * Regenerate secret response
- */
-export type RegenerateSecretResponse = {
-    /**
-     * The new plaintext client secret (shown once)
-     */
-    clientSecret: string;
+export type QueueConfig = {
+    connections: number;
+    queueName: string;
+    queueUri: string;
+    visibilityTimeout: number;
 };
 
-/**
- * Optional metadata for a passkey registration ceremony.
- */
+export type RawDispatchJobResponse = {
+    attemptCount: number;
+    attemptHistoryCount: number;
+    clientId?: string;
+    code: string;
+    completedAt?: string;
+    correlationId?: string;
+    createdAt: string;
+    dispatchPoolId?: string;
+    eventId?: string;
+    externalId?: string;
+    id: string;
+    idempotencyKey?: string;
+    kind: string;
+    lastError?: string;
+    maxRetries: number;
+    messageGroup?: string;
+    mode: string;
+    payloadContentType: string;
+    payloadLength: number;
+    protocol: string;
+    retryStrategy: string;
+    scheduledFor?: string;
+    sequence: number;
+    serviceAccountId?: string;
+    source?: string;
+    status: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds: number;
+    updatedAt: string;
+};
+
+export type RawEventResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    causationId?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
+    data?: unknown;
+    deduplicationId?: string;
+    eventType: string;
+    id: string;
+    messageGroup?: string;
+    source: string;
+    specVersion: string;
+    subject?: string;
+    time: string;
+};
+
+export type RegenerateAuthTokenResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    authToken?: string;
+    id: string;
+};
+
+export type RegenerateSigningSecretResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    id: string;
+    signingSecret?: string;
+};
+
 export type RegisterBeginRequest = {
     /**
-     * Display name shown in the authenticator UI (defaults to the user's name).
+     * A URL to the JSON Schema for this object.
      */
-    displayName?: string | null;
+    readonly $schema?: string;
+    displayName?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * WebAuthn registration challenge to hand to `navigator.credentials.create()`.
- */
 export type RegisterBeginResponse = {
     /**
-     * `PublicKeyCredentialCreationOptions` JSON for the browser.
+     * A URL to the JSON Schema for this object.
      */
-    options: {
-        [key: string]: unknown;
-    };
-    /**
-     * Opaque ceremony state token; pass back unchanged on `register/complete`.
-     */
+    readonly $schema?: string;
+    options: unknown;
     stateId: string;
 };
 
-/**
- * Browser's registration response, plus the ceremony state token.
- */
 export type RegisterCompleteRequest = {
     /**
-     * The `PublicKeyCredential` returned by `navigator.credentials.create()`.
+     * A URL to the JSON Schema for this object.
      */
-    credential: {
-        [key: string]: unknown;
-    };
-    /**
-     * User-supplied label (e.g. "Andrew's iPhone").
-     */
-    name?: string | null;
+    readonly $schema?: string;
+    credential: unknown;
+    name?: string;
     stateId: string;
+    [key: string]: unknown | string | undefined;
 };
 
 export type RegisterCompleteResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     credentialId: string;
 };
 
-/**
- * Reset password request
- */
-export type ResetPasswordRequest = {
-    /**
-     * When false, the platform skips its password complexity rules
-     * (uppercase/lowercase/digit/special) and only enforces a 2-character
-     * minimum. Intended for SDK callers that apply their own policy.
-     * Defaults to true.
-     */
-    enforcePasswordComplexity?: boolean | null;
-    /**
-     * New password (min 8 characters)
-     */
-    newPassword: string;
+export type RequestDto = {
+    clientId?: string;
+    createdAt: string;
+    email: string;
+    expiresAt: string;
+    id: string;
+    name: string;
+    principalId: string;
 };
 
-/**
- * Role assignment DTO (matches Java RoleAssignmentDto for GET /roles)
- */
+export type RequeueRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Dispatch job ids to reset to PENDING for re-dispatch
+     */
+    ids: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type RequeueResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    requeued: number;
+};
+
+export type ResetPasswordRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    enforcePasswordComplexity?: boolean;
+    newPassword: string;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
 export type RoleAssignmentDto = {
     assignedAt: string;
-    assignmentSource: string;
-    id: string;
+    assignedBy?: string;
+    assignmentSource?: string;
+    clientId?: string;
     roleName: string;
 };
 
-/**
- * Role list response (matches Java RoleListResponse)
- */
 export type RoleListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     roles: Array<RoleResponse>;
     total: number;
 };
 
-/**
- * Role response DTO (matches Java BffRoleResponse)
- */
+export type RolePermissionListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    permissions: Array<string>;
+};
+
 export type RoleResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     applicationCode: string;
+    applicationId?: string;
     clientManaged: boolean;
     createdAt: string;
-    description?: string | null;
+    description?: string;
     displayName: string;
     id: string;
     name: string;
     permissions: Array<string>;
-    shortName: string;
     source: string;
     updatedAt: string;
 };
 
-/**
- * Roles list response
- */
-export type RolesListResponse = {
-    roles: Array<RoleAssignmentDto>;
+export type RolesAssignedResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    added: Array<string>;
+    removed: Array<string>;
+    roles: Array<PrincipalRoleAssignmentDto>;
+};
+
+export type RotateOAuthClientSecretRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    graceSeconds?: number;
+    [key: string]: unknown | string | number | undefined;
+};
+
+export type RotateOAuthClientSecretResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId: string;
+    clientSecret?: string;
+    previousSecretExpiresAt?: string;
+};
+
+export type RouterConfig = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    processingPools: Array<PoolConfig>;
+    queues: Array<QueueConfig>;
+};
+
+export type ScheduledJobInstanceLogResponse = {
+    clientId?: string;
+    createdAt: string;
+    id: string;
+    instanceId: string;
+    level: string;
+    message: string;
+    metadata?: unknown;
+    scheduledJobId?: string;
 };
 
 export type ScheduledJobInstanceResponse = {
-    clientId?: string | null;
-    completedAt?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    completedAt?: string;
     completionResult?: unknown;
-    completionStatus?: string | null;
-    correlationId?: string | null;
+    completionStatus?: string;
+    correlationId?: string;
     createdAt: string;
-    deliveredAt?: string | null;
+    deliveredAt?: string;
     deliveryAttempts: number;
-    deliveryError?: string | null;
+    deliveryError?: string;
     firedAt: string;
     id: string;
     jobCode: string;
-    scheduledFor?: string | null;
+    scheduledFor?: string;
     scheduledJobId: string;
     status: string;
     triggerKind: string;
 };
 
 export type ScheduledJobResponse = {
-    clientId?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationId?: string;
+    clientId?: string;
     code: string;
     concurrent: boolean;
     createdAt: string;
-    createdBy?: string | null;
+    createdBy?: string;
     crons: Array<string>;
     deliveryMaxAttempts: number;
-    description?: string | null;
-    /**
-     * Computed: true if any non-terminal instance currently exists.
-     */
+    description?: string;
     hasActiveInstance: boolean;
     id: string;
-    lastFiredAt?: string | null;
+    lastFiredAt?: string;
     name: string;
     payload?: unknown;
     status: string;
-    targetUrl?: string | null;
-    timeoutSeconds?: number | null;
+    targetUrl?: string;
+    timeoutSeconds?: number;
     timezone: string;
     tracksCompletion: boolean;
     updatedAt: string;
-    updatedBy?: string | null;
+    updatedBy?: string;
     version: number;
 };
 
-/**
- * Set application access request (batch replace)
- */
-export type SetApplicationAccessRequest = {
+export type SearchClientRequest = {
     /**
-     * Application IDs to grant access to (replaces existing)
+     * A URL to the JSON Schema for this object.
      */
-    applicationIds: Array<string>;
+    readonly $schema?: string;
+    term: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Set application access result response
- */
+export type SendPasswordResetInputBody = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    reset2fa?: boolean;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type ServiceAccountListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    serviceAccounts: Array<ServiceAccountResponse>;
+    total: number;
+};
+
+export type ServiceAccountOAuthSecrets = {
+    clientId: string;
+    clientSecret: string;
+};
+
+export type ServiceAccountResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active: boolean;
+    applicationId?: string;
+    authType: string;
+    clientIds: Array<string>;
+    code: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    lastUsedAt?: string;
+    name: string;
+    principalId?: string;
+    roles: Array<string>;
+    scope?: string;
+    updatedAt: string;
+};
+
+export type ServiceAccountRoleListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<RoleAssignmentDto>;
+};
+
+export type ServiceAccountRolesAssignedResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    addedRoles: Array<string>;
+    removedRoles: Array<string>;
+    roles: Array<RoleAssignmentDto>;
+};
+
+export type ServiceAccountTokenResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    accessToken: string;
+    expiresIn: number;
+    scope?: string;
+    tokenType: string;
+};
+
+export type ServiceAccountWebhookSecrets = {
+    authToken: string;
+    signingSecret: string;
+};
+
 export type SetApplicationAccessResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     added: number;
+    allApplications: boolean;
     applications: Array<ApplicationAccessResponse>;
     removed: number;
 };
 
-/**
- * Schema version response (matches Java BffSpecVersionResponse)
- */
+export type SetDeveloperCredentialResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientSecret?: string;
+    id: string;
+};
+
+export type SetPropertyRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientId?: string;
+    description?: string;
+    value: string;
+    /**
+     * PLAIN or SECRET
+     */
+    valueType?: string;
+    [key: string]: unknown | string | undefined;
+};
+
 export type SpecVersionResponse = {
-    /**
-     * Schema content (included for detail views)
-     */
-    schema?: unknown;
+    createdAt: string;
+    schema: unknown;
     status: string;
-    /**
-     * Version string (converted from u32 to "X.0" format for frontend compatibility)
-     */
     version: string;
 };
 
-/**
- * Standby status response
- */
-export type StandbyStatus = {
-    /**
-     * Cluster members
-     */
-    clusterMembers: Array<ClusterMember>;
-    /**
-     * Instance ID
-     */
-    instanceId: string;
-    /**
-     * Whether this instance is the leader
-     */
-    isLeader: boolean;
-    /**
-     * Last heartbeat time
-     */
-    lastHeartbeat?: string | null;
-    /**
-     * Leader instance ID (if known)
-     */
-    leaderId?: string | null;
-    /**
-     * Current role (LEADER or STANDBY)
-     */
-    role: string;
-};
-
-/**
- * Status change request (for suspend/deactivate)
- */
 export type StatusChangeRequest = {
     /**
-     * Reason for the status change
+     * A URL to the JSON Schema for this object.
      */
+    readonly $schema?: string;
     reason: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Status change response
- */
 export type StatusChangeResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     message: string;
 };
 
-/**
- * Subdomains list response
- */
-export type SubdomainsResponse = {
-    subdomains: Array<FilterOption>;
-};
-
-/**
- * Subscription filter options response
- */
-export type SubscriptionFilterOptions = {
-    subscriptions: Array<FilterOption>;
-};
-
-/**
- * Subscription list response (matches Java SubscriptionListResponse)
- */
 export type SubscriptionListResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     subscriptions: Array<SubscriptionResponse>;
     total: number;
 };
 
-/**
- * Subscription response DTO (matches Java SubscriptionDto)
- */
 export type SubscriptionResponse = {
-    applicationCode?: string | null;
-    clientId?: string | null;
-    clientIdentifier?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationCode?: string;
+    clientId?: string;
+    clientIdentifier?: string;
     clientScoped: boolean;
     code: string;
-    connectionId?: string | null;
+    connectionId?: string;
     createdAt: string;
-    customConfig: Array<ConfigEntryResponse>;
+    createdBy?: string;
+    customConfig: Array<ConfigEntryDto>;
     dataOnly: boolean;
     delaySeconds: number;
-    description?: string | null;
-    dispatchPoolCode?: string | null;
-    dispatchPoolId?: string | null;
+    description?: string;
+    dispatchPoolCode?: string;
+    dispatchPoolId?: string;
     endpoint: string;
-    eventTypes: Array<EventTypeBindingResponse>;
+    eventTypes: Array<EventTypeBindingDto>;
     id: string;
     maxAgeSeconds: number;
     maxRetries: number;
     mode: string;
     name: string;
-    queue?: string | null;
+    queue?: string;
     sequence: number;
-    serviceAccountId?: string | null;
-    source?: string | null;
+    serviceAccountId?: string;
+    source: string;
     status: string;
     timeoutSeconds: number;
     updatedAt: string;
 };
 
-/**
- * Success response with optional message
- */
 export type SuccessResponse = {
-    message?: string | null;
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    message?: string;
     success: boolean;
 };
 
-/**
- * A single dispatch pool input for sync
- */
+export type SuspendClientRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    reason: string;
+    [key: string]: unknown | string | undefined;
+};
+
 export type SyncDispatchPoolInputRequest = {
     code: string;
     concurrency?: number;
-    description?: string | null;
+    description?: string;
     name: string;
     /**
-     * Optional. `None` / omitted = concurrency-only (no rate limit).
+     * Messages per minute; omit for concurrency-only
      */
-    rateLimit?: number | null;
+    rateLimit?: number;
 };
 
-/**
- * Sync dispatch pools request body
- */
 export type SyncDispatchPoolsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     pools: Array<SyncDispatchPoolInputRequest>;
+    [key: string]: unknown | string | Array<SyncDispatchPoolInputRequest> | undefined;
 };
 
-/**
- * A single event type input for sync
- */
+export type SyncDocInputRequest = {
+    /**
+     * The page body, Markdown (Mermaid fences render as diagrams)
+     */
+    content: string;
+    /**
+     * URL-safe page id, unique within the application (kebab-case)
+     */
+    slug: string;
+    title?: string;
+};
+
+export type SyncDocsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    docs: Array<SyncDocInputRequest>;
+    [key: string]: unknown | string | Array<SyncDocInputRequest> | undefined;
+};
+
 export type SyncEventTypeInputRequest = {
     /**
      * Full code (application:subdomain:aggregate:event)
      */
     code: string;
-    description?: string | null;
+    description?: string;
     name: string;
 };
 
-/**
- * Sync event types request body
- */
 export type SyncEventTypesRequest = {
-    eventTypes: Array<SyncEventTypeInputRequest>;
-};
-
-/**
- * Request body for syncing an application's OpenAPI document.
- * The spec is accepted as a raw JSON value; the platform reads `info.version`
- * to track versions and computes a diff against the prior CURRENT to populate
- * human-readable change notes.
- */
-export type SyncOpenApiSpecRequest = {
     /**
-     * The OpenAPI document (OpenAPI 3.x or Swagger 2.x).
+     * A URL to the JSON Schema for this object.
      */
-    spec: unknown;
+    readonly $schema?: string;
+    eventTypes: Array<SyncEventTypeInputRequest>;
+    [key: string]: unknown | string | Array<SyncEventTypeInputRequest> | undefined;
 };
 
 export type SyncOpenApiSpecResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
     applicationCode: string;
-    archivedPriorVersion?: string | null;
+    archivedPriorVersion?: string;
     hasBreaking: boolean;
     specId: string;
     status: string;
@@ -2106,12 +2577,186 @@ export type SyncOpenApiSpecResponse = {
     version: string;
 };
 
-/**
- * A single principal input for sync
- */
+export type SyncOpenapiRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * The OpenAPI document (OpenAPI 3.x or Swagger 2.x)
+     */
+    spec: unknown;
+    [key: string]: unknown | string | undefined;
+};
+
 export type SyncPrincipalInputRequest = {
     /**
-     * Whether the user is active (default: true)
+     * Whether the user is active (default true)
+     */
+    active?: boolean;
+    /**
+     * User's email address (unique identifier for matching)
+     */
+    email: string;
+    name: string;
+    /**
+     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim; migrated on first login
+     */
+    passwordHash?: string;
+    /**
+     * Role short names (prefixed with applicationCode)
+     */
+    roles?: Array<string>;
+};
+
+export type SyncPrincipalsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    principals: Array<SyncPrincipalInputRequest>;
+    [key: string]: unknown | string | Array<SyncPrincipalInputRequest> | undefined;
+};
+
+export type SyncProcessInputRequest = {
+    /**
+     * Diagram body (typically Mermaid source)
+     */
+    body?: string;
+    /**
+     * Full code (application:subdomain:process-name)
+     */
+    code: string;
+    description?: string;
+    diagramType?: string;
+    name: string;
+    tags?: Array<string>;
+};
+
+export type SyncProcessesByBodyRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Application code (carried in the body for /api/processes/sync)
+     */
+    applicationCode: string;
+    processes: Array<SyncProcessInputRequest>;
+    [key: string]: unknown | string | Array<SyncProcessInputRequest> | undefined;
+};
+
+export type SyncProcessesRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    processes: Array<SyncProcessInputRequest>;
+    [key: string]: unknown | string | Array<SyncProcessInputRequest> | undefined;
+};
+
+export type SyncResultResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationCode: string;
+    created: number;
+    deleted: number;
+    syncedCodes: Array<string>;
+    updated: number;
+};
+
+export type SyncRoleInputRequest = {
+    clientManaged?: boolean;
+    description?: string;
+    displayName?: string;
+    name: string;
+    permissions?: Array<string>;
+};
+
+export type SyncRolesRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    roles: Array<SyncRoleInputRequest>;
+    [key: string]: unknown | string | Array<SyncRoleInputRequest> | undefined;
+};
+
+export type SyncScheduledJobInputRequest = {
+    code: string;
+    concurrent?: boolean;
+    crons: Array<string>;
+    /**
+     * Default 3 when omitted
+     */
+    deliveryMaxAttempts?: number;
+    description?: string;
+    name: string;
+    payload?: unknown;
+    targetUrl?: string;
+    timeoutSeconds?: number;
+    /**
+     * IANA timezone (default UTC)
+     */
+    timezone?: string;
+    tracksCompletion?: boolean;
+};
+
+export type SyncScheduledJobsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    archiveUnlisted?: boolean;
+    clientId?: string;
+    jobs: Array<SyncScheduledJobInputRequest>;
+    [key: string]: unknown | string | boolean | Array<SyncScheduledJobInputRequest> | undefined;
+};
+
+export type SyncScheduledJobsResultResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    applicationCode: string;
+    archived: Array<string>;
+    created: Array<string>;
+    updated: Array<string>;
+};
+
+export type SyncSubscriptionEventTypeRequest = {
+    eventTypeCode: string;
+    filter?: string;
+};
+
+export type SyncSubscriptionInputRequest = {
+    code: string;
+    connectionId?: string;
+    dataOnly?: boolean;
+    description?: string;
+    dispatchPoolCode?: string;
+    eventTypes: Array<SyncSubscriptionEventTypeRequest>;
+    maxRetries?: number;
+    mode?: string;
+    name: string;
+    target: string;
+    timeoutSeconds?: number;
+};
+
+export type SyncSubscriptionsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    subscriptions: Array<SyncSubscriptionInputRequest>;
+    [key: string]: unknown | string | Array<SyncSubscriptionInputRequest> | undefined;
+};
+
+export type SyncUserInput = {
+    /**
+     * Whether the user is active (default true)
      */
     active?: boolean;
     /**
@@ -2123,47 +2768,1881 @@ export type SyncPrincipalInputRequest = {
      */
     name: string;
     /**
-     * Role short names to assign (prefixed with applicationCode)
+     * Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim; migrated on first login. Omit to leave any existing password untouched.
+     */
+    passwordHash?: string;
+    /**
+     * Role names to assign (SDK_SYNC source; replaces this source's prior set)
      */
     roles?: Array<string>;
 };
 
-/**
- * Sync principals request body
- */
-export type SyncPrincipalsRequest = {
-    principals: Array<SyncPrincipalInputRequest>;
+export type SyncUsersRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    principals: Array<SyncUserInput>;
+    [key: string]: unknown | string | Array<SyncUserInput> | undefined;
 };
 
-/**
- * A single process input for sync
- */
-export type SyncProcessInputRequest = {
+export type SyncUsersResponse = {
     /**
-     * Diagram body (typically Mermaid source).
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    created: number;
+    deleted: number;
+    syncedEmails: Array<string>;
+    updated: number;
+};
+
+export type UpdateAnchorDomainRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    domain: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type UpdateApplicationRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    defaultBaseUrl?: string;
+    description?: string;
+    iconUrl?: string;
+    logo?: string;
+    logoMimeType?: string;
+    name?: string;
+    website?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type UpdateAuthConfigRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    additionalClientIds?: Array<string>;
+    authProvider?: string;
+    grantedClientIds?: Array<string>;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    primaryClientId?: string;
+    [key: string]: unknown | string | Array<string> | Array<string> | boolean | undefined;
+};
+
+export type UpdateClientApplicationsRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    enabledApplicationIds: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type UpdateClientRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    name?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type UpdateConnectionRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    description?: string;
+    externalId?: string;
+    name: string;
+    status?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type UpdateDispatchPoolRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    concurrency?: number;
+    description?: string;
+    name?: string;
+    rateLimit?: number;
+    [key: string]: unknown | string | number | undefined;
+};
+
+export type UpdateEventTypeRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Events of this type are per-client; absent leaves it unchanged
+     */
+    clientScoped?: boolean;
+    description?: string;
+    name: string;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type UpdateIdentityProviderRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * Desired set of domains routed to this provider; additions are mapped/claimed, removals fall back to internal auth
+     */
+    allowedEmailDomains?: Array<string>;
+    allowedRoleIds?: Array<string>;
+    /**
+     * Scope for email-domain mappings this request creates: ANCHOR (platform administrators) or CLIENT (requires primaryClientId). Required when the request creates a new mapping. Existing mappings keep their scope; with CLIENT the client is linked on any mapping that has no primary client yet.
+     */
+    mappingScope?: 'ANCHOR' | 'CLIENT';
+    name?: string;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    /**
+     * Client to link on mappings that are new or not yet linked to a primary client
+     */
+    primaryClientId?: string;
+    syncRolesFromIdp?: boolean;
+    [key: string]: unknown | string | Array<string> | Array<string> | 'ANCHOR' | 'CLIENT' | boolean | undefined;
+};
+
+export type UpdateMappingRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    additionalClientIds?: Array<string>;
+    allowed2faMethods?: Array<string>;
+    grantedClientIds?: Array<string>;
+    primaryClientId?: string;
+    rememberDeviceDays?: number;
+    rememberDeviceEnabled?: boolean;
+    require2fa?: boolean;
+    requiredOidcTenantId?: string;
+    [key: string]: unknown | string | Array<string> | Array<string> | Array<string> | number | boolean | undefined;
+};
+
+export type UpdateOAuthClientRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    allowedOrigins?: Array<string>;
+    apiAccess?: boolean;
+    applicationIds?: Array<string>;
+    clientName?: string;
+    defaultScopes?: Array<string>;
+    grantTypes?: Array<string>;
+    pkceRequired?: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
+    postLogoutRedirectUris?: Array<string>;
+    redirectUris?: Array<string>;
+    [key: string]: unknown | string | Array<string> | boolean | Array<string> | Array<string> | Array<string> | Array<string> | Array<string> | undefined;
+};
+
+export type UpdatePortalAppRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active?: boolean;
+    clientId: string;
+    description?: string;
+    name?: string;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type UpdatePrincipalRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    active?: boolean;
+    /**
+     * Optional; asserted against the stored email — a different value is rejected, not treated as a rename
+     */
+    email?: string;
+    name?: string;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type UpdateProcessRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    body?: string;
+    description?: string;
+    diagramType?: string;
+    name?: string;
+    tags?: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type UpdateRoleRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientManaged?: boolean;
+    description?: string;
+    displayName?: string;
+    permissions?: Array<string>;
+    [key: string]: unknown | string | boolean | Array<string> | undefined;
+};
+
+export type UpdateScheduledJobRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    concurrent?: boolean;
+    crons?: Array<string>;
+    deliveryMaxAttempts?: number;
+    description?: string;
+    name?: string;
+    payload?: unknown;
+    targetUrl?: string;
+    timeoutSeconds?: number;
+    timezone?: string;
+    tracksCompletion?: boolean;
+    [key: string]: unknown | string | boolean | Array<string> | number | undefined;
+};
+
+export type UpdateServiceAccountRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    clientIds?: Array<string>;
+    description?: string;
+    name?: string;
+    scope?: string;
+    webhookCredentials?: WebhookCredentialsDto;
+    [key: string]: unknown | string | Array<string> | WebhookCredentialsDto | undefined;
+};
+
+export type UpdateSubscriptionRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    connectionId?: string;
+    customConfig?: Array<ConfigEntryDto>;
+    dataOnly?: boolean;
+    delaySeconds?: number;
+    description?: string;
+    dispatchPoolId?: string;
+    endpoint?: string;
+    eventTypes?: Array<EventTypeBindingDto>;
+    maxAgeSeconds?: number;
+    maxRetries?: number;
+    mode?: string;
+    name?: string;
+    /**
+     * Dispatch priority: DEFAULT or HIGH_PRIORITY (matched ignoring case). Omitted leaves the stored value alone; an explicit blank clears it, which publishes as DEFAULT.
+     */
+    queue?: string;
+    serviceAccountId?: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown | string | Array<ConfigEntryDto> | boolean | number | Array<EventTypeBindingDto> | undefined;
+};
+
+export type WebauthnAuthenticateCompleteResponse = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    email: string | null;
+    name: string;
+    principalId: string;
+    roles: Array<string>;
+};
+
+export type WebauthnCredentialSummary = {
+    createdAt: string;
+    id: string;
+    lastUsedAt?: string;
+    name?: string;
+};
+
+export type WebhookCredentialsDto = {
+    authType: string;
+    headerName?: string;
+    password?: string;
+    signatureHeader?: string;
+    signingAlgorithm?: string;
+    signingSecret?: string;
+    token?: string;
+    username?: string;
+};
+
+export type WriteInstanceLogRequest = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * DEBUG | INFO | WARN | ERROR
+     */
+    level: string;
+    message: string;
+    metadata?: unknown;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AccessListResponseWritable = {
+    items: Array<AccessResponse>;
+};
+
+export type AddNoteRequestWritable = {
+    category: string;
+    text: string;
+    [key: string]: unknown | string;
+};
+
+export type AddOriginRequestWritable = {
+    description?: string;
+    /**
+     * CORS-allowed origin (e.g. https://example.com)
+     */
+    origin: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type AddRoleRequestWritable = {
+    role: string;
+    [key: string]: unknown | string;
+};
+
+export type AddSchemaRequestWritable = {
+    /**
+     * JSON Schema document
+     */
+    schema: unknown;
+    /**
+     * Schema version (typically semver)
+     */
+    version: string;
+    [key: string]: unknown | string;
+};
+
+export type AllowedOriginResponseWritable = {
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    id: string;
+    origin: string;
+    updatedAt: string;
+};
+
+export type AnchorDomainListResponseWritable = {
+    items: Array<AnchorDomainResponse>;
+};
+
+export type ApplicationAccessListResponseWritable = {
+    allApplications: boolean;
+    applications: Array<ApplicationAccessResponse>;
+    total: number;
+};
+
+export type ApplicationFilterListResponseWritable = {
+    applicationCodes: Array<string>;
+};
+
+export type ApplicationListResponseWritable = {
+    applications: Array<ApplicationResponseWritable>;
+    total: number;
+};
+
+export type ApplicationProvisionLoginClientResponseWritable = {
+    loginClient: ApplicationLoginClientCredentials;
+    message: string;
+};
+
+export type ApplicationProvisionServiceAccountResponseWritable = {
+    message: string;
+    serviceAccount: ApplicationServiceAccountCredentials;
+};
+
+export type ApplicationResponseWritable = {
+    active: boolean;
+    code: string;
+    createdAt: string;
+    defaultBaseUrl?: string;
+    description?: string;
+    hasLoginClient: boolean;
+    iconUrl?: string;
+    id: string;
+    logo?: string;
+    logoMimeType?: string;
+    name: string;
+    serviceAccountId?: string;
+    type: string;
+    updatedAt: string;
+    website?: string;
+};
+
+export type ApplicationRolesResponseWritable = {
+    roles: Array<string>;
+};
+
+export type AssignApplicationAccessRequestWritable = {
+    allApplications?: boolean;
+    applicationIds: Array<string>;
+    [key: string]: unknown | boolean | Array<string> | undefined;
+};
+
+export type AssignPrincipalRolesRequestWritable = {
+    roles: Array<string>;
+    [key: string]: unknown | Array<string>;
+};
+
+export type AssignRolesRequestWritable = {
+    roles: Array<string>;
+    [key: string]: unknown | Array<string>;
+};
+
+export type AssignUnassignedBodyWritable = {
+    clientId: string;
+    [key: string]: unknown | string;
+};
+
+export type AssignUnassignedResponseWritable = {
+    assigned: number;
+    portalAppCode: string;
+};
+
+export type AttachServiceAccountRequestWritable = {
+    serviceAccountCode: string;
+    serviceAccountId: string;
+    [key: string]: unknown | string;
+};
+
+export type AuditLogApplicationIdsResponseWritable = {
+    applicationIds: Array<string>;
+};
+
+export type AuditLogClientIdsResponseWritable = {
+    clientIds: Array<string>;
+};
+
+export type AuditLogEntityTypesResponseWritable = {
+    entityTypes: Array<string>;
+};
+
+export type AuditLogListResponseWritable = {
+    auditLogs: Array<AuditLogResponseWritable>;
+    hasMore: boolean;
+    nextCursor?: string;
+};
+
+export type AuditLogOperationsResponseWritable = {
+    operations: Array<string>;
+};
+
+export type AuditLogResponseWritable = {
+    applicationId?: string;
+    clientId?: string;
+    entityId: string;
+    entityType: string;
+    id: string;
+    operation: string;
+    operationJson?: string;
+    performedAt: string;
+    principalId?: string;
+    principalName?: string;
+};
+
+export type AuthConfigListResponseWritable = {
+    items: Array<AuthConfigResponse>;
+};
+
+export type AuthenticateBeginRequestWritable = {
+    email: string;
+    [key: string]: unknown | string;
+};
+
+export type AuthenticateBeginResponseWritable = {
+    options: unknown;
+    stateId: string;
+};
+
+export type AuthenticateCompleteRequestWritable = {
+    credential: unknown;
+    stateId: string;
+    [key: string]: unknown | string;
+};
+
+export type BatchRequestWritable = {
+    items: Array<BatchEventItem>;
+    [key: string]: unknown | Array<BatchEventItem>;
+};
+
+export type BatchResponseWritable = {
+    results: Array<BatchResultItem>;
+};
+
+export type BulkImportRequestWritable = {
+    /**
+     * Client all imported users are created under
+     */
+    clientId: string;
+    users: Array<BulkImportUser>;
+    [key: string]: unknown | string | Array<BulkImportUser>;
+};
+
+export type BulkImportResponseWritable = {
+    created: number;
+    failed: number;
+    results: Array<BulkImportResult>;
+    skipped: number;
+};
+
+export type CheckEmailDomainResponseWritable = {
+    allowedClientIds: Array<string>;
+    authMethod: string;
+    authProvider: string;
+    derivedScope: string;
+    domain: string;
+    emailExists: boolean;
+    hasIdpConfig: boolean;
+    idpIssuer?: string;
+    info: string | null;
+    isAnchorDomain: boolean;
+    loginUrl?: string;
+    requiresClientId: boolean;
+    warning: string | null;
+};
+
+export type ClientAccessGrantListResponseWritable = {
+    grants: Array<ClientAccessGrantResponseWritable>;
+};
+
+export type ClientAccessGrantResponseWritable = {
+    clientId: string;
+    expiresAt?: string;
+    grantedAt: string;
+    id: string;
+};
+
+export type ClientApplicationsResponseWritable = {
+    applications: Array<ClientApplicationResponse>;
+    total: number;
+};
+
+export type ClientAssociationRequestWritable = {
+    /**
+     * Target client id, or "*" for anchor (all-client) access
+     */
+    clientId: string;
+    /**
+     * CHANGE_CLIENT | TO_PARTNER — required for a specific clientId, ignored for "*"
+     */
+    mode?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type ClientConfigListResponseWritable = {
+    items: Array<ClientConfigResponseWritable>;
+};
+
+export type ClientConfigResponseWritable = {
+    applicationId: string;
+    baseUrlOverride?: string;
+    clientId: string;
+    configJson?: unknown;
+    createdAt: string;
+    enabled: boolean;
+    id: string;
+    updatedAt: string;
+};
+
+export type ClientListResponseWritable = {
+    clients: Array<ClientResponseWritable>;
+    total: number;
+};
+
+export type ClientResponseWritable = {
+    createdAt: string;
+    id: string;
+    identifier: string;
+    name: string;
+    notes: Array<NoteResponse>;
+    status: string;
+    statusChangedAt?: string;
+    statusReason?: string;
+    updatedAt: string;
+};
+
+export type CompleteInstanceRequestWritable = {
+    completionResult?: unknown;
+    completionStatus?: string;
+    /**
+     * SDK alias for completionResult
+     */
+    result?: unknown;
+    /**
+     * COMPLETED|FAILED|… (instance status) or SUCCESS|FAILURE (completion outcome)
+     */
+    status?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type ConfigListResponseWritable = {
+    items: Array<ConfigResponseWritable>;
+};
+
+export type ConfigResponseWritable = {
+    applicationCode: string;
+    clientId?: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    property: string;
+    scope: string;
+    section: string;
+    updatedAt: string;
+    value: string;
+    valueType: string;
+};
+
+export type ConnectionListResponseWritable = {
+    connections: Array<ConnectionResponseWritable>;
+    total: number;
+};
+
+export type ConnectionResponseWritable = {
+    clientId?: string;
+    clientIdentifier?: string;
+    code: string;
+    createdAt: string;
+    description?: string;
+    externalId?: string;
+    id: string;
+    name: string;
+    serviceAccountId: string;
+    status: string;
+    updatedAt: string;
+};
+
+export type CorsOriginListResponseWritable = {
+    corsOrigins: Array<AllowedOriginResponseWritable>;
+    total: number;
+};
+
+export type CreateAnchorDomainRequestWritable = {
+    domain: string;
+    [key: string]: unknown | string;
+};
+
+export type CreateApplicationRequestWritable = {
+    /**
+     * Application code (lowercase, alphanumeric, hyphens)
+     */
+    code: string;
+    defaultBaseUrl?: string;
+    description?: string;
+    iconUrl?: string;
+    /**
+     * Inline SVG logo content
+     */
+    logo?: string;
+    logoMimeType?: string;
+    name: string;
+    /**
+     * APPLICATION or INTEGRATION
+     */
+    type?: string;
+    website?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateAuthConfigRequestWritable = {
+    additionalClientIds?: Array<string>;
+    authProvider: string;
+    configType: string;
+    emailDomain: string;
+    grantedClientIds?: Array<string>;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant: boolean;
+    primaryClientId?: string;
+    [key: string]: unknown | Array<string> | string | Array<string> | boolean | undefined;
+};
+
+export type CreateClientRequestWritable = {
+    /**
+     * URL-safe identifier (lowercase alphanumeric, hyphens)
+     */
+    identifier: string;
+    name: string;
+    [key: string]: unknown | string;
+};
+
+export type CreateConnectionRequestWritable = {
+    clientId?: string;
+    /**
+     * Connection code (lowercase, alphanumeric, hyphens)
+     */
+    code: string;
+    description?: string;
+    externalId?: string;
+    name: string;
+    serviceAccountId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type CreateDispatchPoolRequestWritable = {
+    clientId?: string;
+    /**
+     * Pool code (lowercase, alphanumeric, hyphens)
+     */
+    code: string;
+    /**
+     * Max concurrent dispatches (default 10)
+     */
+    concurrency?: number;
+    description?: string;
+    name: string;
+    /**
+     * Messages per minute (nil = no rate limit)
+     */
+    rateLimit?: number;
+    [key: string]: unknown | string | number | undefined;
+};
+
+export type CreateEventRequestWritable = {
+    /**
+     * Causation ID - the event that caused this event
+     */
+    causationId?: string;
+    /**
+     * Client ID (optional, defaults to caller's client)
+     */
+    clientId?: string;
+    /**
+     * Context data for filtering/searching
+     */
+    contextData?: Array<ContextEntryDto>;
+    /**
+     * Correlation ID for request tracing
+     */
+    correlationId?: string;
+    /**
+     * Event payload data
+     */
+    data: unknown;
+    /**
+     * Deduplication ID for exactly-once delivery
+     */
+    deduplicationId?: string;
+    /**
+     * Event type code (e.g., "orders:fulfillment:shipment:shipped")
+     */
+    eventType: string;
+    /**
+     * Message group for FIFO ordering
+     */
+    messageGroup?: string;
+    /**
+     * Event source URI
+     */
+    source: string;
+    /**
+     * Event subject (optional context)
+     */
+    subject?: string;
+    [key: string]: unknown | string | Array<ContextEntryDto> | undefined;
+};
+
+export type CreateEventResponseWritable = {
+    /**
+     * Number of dispatch jobs created for matching subscriptions
+     */
+    dispatchJobCount: number;
+    event: CreatedEvent;
+    /**
+     * True if this was a deduplicated request (event already existed)
+     */
+    isDuplicate: boolean;
+};
+
+export type CreateEventTypeRequestWritable = {
+    /**
+     * Optional client scope; absent means anchor-level
+     */
+    clientId?: string;
+    /**
+     * Events of this type are per-client
+     */
+    clientScoped?: boolean;
+    /**
+     * Event type code in application:subdomain:aggregate:event format
+     */
+    code: string;
+    description?: string;
+    /**
+     * Human-readable event type name
+     */
+    name: string;
+    /**
+     * Optional JSON Schema for the initial spec version
+     */
+    schema?: unknown;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type CreateIdentityProviderRequestWritable = {
+    /**
+     * Email domains to route to this provider; mappings are created (or claimed from their current provider) in Email Domain management
+     */
+    allowedEmailDomains?: Array<string>;
+    /**
+     * Platform roles (by id) this provider may confer via role sync; empty = no restriction
+     */
+    allowedRoleIds?: Array<string>;
+    /**
+     * IDP code (e.g. internal, entra)
+     */
+    code: string;
+    /**
+     * Scope for email-domain mappings this request creates: ANCHOR (platform administrators) or CLIENT (requires primaryClientId). Required when the request creates a new mapping. Existing mappings keep their scope; with CLIENT the client is linked on any mapping that has no primary client yet.
+     */
+    mappingScope?: 'ANCHOR' | 'CLIENT';
+    /**
+     * Display name
+     */
+    name: string;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    /**
+     * Client to link on mappings that are new or not yet linked to a primary client
+     */
+    primaryClientId?: string;
+    /**
+     * Reconcile users' IDP_SYNC roles from the token's roles claim at login
+     */
+    syncRolesFromIdp?: boolean;
+    /**
+     * IDP type (INTERNAL or OIDC)
+     */
+    type: string;
+    [key: string]: unknown | Array<string> | Array<string> | string | 'ANCHOR' | 'CLIENT' | boolean | undefined;
+};
+
+export type CreateIdpRoleMappingRequestWritable = {
+    idpRoleName: string;
+    idpType: string;
+    platformRoleName: string;
+    [key: string]: unknown | string;
+};
+
+export type CreateMappingRequestWritable = {
+    additionalClientIds?: Array<string>;
+    /**
+     * Permitted 2FA methods (TOTP, EMAIL_PIN). ≥1 required when require2fa is set.
+     */
+    allowed2faMethods?: Array<string>;
+    /**
+     * DNS-like email domain (e.g. example.com)
+     */
+    emailDomain: string;
+    grantedClientIds?: Array<string>;
+    identityProviderId: string;
+    primaryClientId?: string;
+    rememberDeviceDays?: number;
+    rememberDeviceEnabled?: boolean;
+    require2fa?: boolean;
+    requiredOidcTenantId?: string;
+    /**
+     * Scope of mapping (ANCHOR, PARTNER, CLIENT)
+     */
+    scopeType: string;
+    [key: string]: unknown | Array<string> | Array<string> | string | Array<string> | number | boolean | undefined;
+};
+
+export type CreateOAuthClientRequestWritable = {
+    allowedOrigins?: Array<string>;
+    apiAccess?: boolean;
+    applicationIds?: Array<string>;
+    clientName: string;
+    /**
+     * PUBLIC or CONFIDENTIAL
+     */
+    clientType: string;
+    defaultScopes?: Array<string>;
+    grantTypes?: Array<string>;
+    pkceRequired?: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
+    postLogoutRedirectUris?: Array<string>;
+    principalId?: string;
+    redirectUris?: Array<string>;
+    [key: string]: unknown | Array<string> | boolean | Array<string> | string | Array<string> | Array<string> | Array<string> | Array<string> | undefined;
+};
+
+export type CreateOAuthClientResponseWritable = {
+    client: OAuthClientResponseWritable;
+    clientSecret?: string;
+};
+
+export type CreatePortalAppRequestWritable = {
+    clientId: string;
+    clientType?: 'CONFIDENTIAL' | 'PUBLIC';
+    code: string;
+    description?: string;
+    name: string;
+    redirectUris?: Array<string>;
+    [key: string]: unknown | string | 'CONFIDENTIAL' | 'PUBLIC' | Array<string> | undefined;
+};
+
+export type CreatePortalAppResponseWritable = {
+    clientSecret?: string;
+    clientType: string;
+    oauthClientId: string;
+    oauthClientRowId: string;
+    portalApp: PortalAppResponseWritable;
+};
+
+export type CreatePrincipalRequestWritable = {
+    clientId?: string;
+    email: string;
+    idpType?: string;
+    inviteRedirectUri?: string;
+    name?: string;
+    password?: string;
+    returnInviteLink?: boolean;
+    /**
+     * Principal scope (ANCHOR, PARTNER, CLIENT)
+     */
+    scope: string;
+    sendInvitation?: boolean;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type CreatePrincipalResponseWritable = {
+    id: string;
+    inviteLink?: string;
+};
+
+export type CreateProcessRequestWritable = {
+    /**
+     * Process documentation body
      */
     body?: string;
     /**
-     * Full code (application:subdomain:process-name)
+     * Process code in application:subdomain:name format
      */
     code: string;
-    description?: string | null;
-    diagramType?: string | null;
+    description?: string;
+    /**
+     * Diagram syntax (e.g. mermaid)
+     */
+    diagramType?: string;
     name: string;
     tags?: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
 };
 
-/**
- * Sync processes request body
- */
-export type SyncProcessesRequest = {
+export type CreateRoleRequestWritable = {
+    /**
+     * Application code (e.g. platform, iam)
+     */
+    applicationCode: string;
+    /**
+     * Whether the role is managed at client scope
+     */
+    clientManaged: boolean;
+    description?: string;
+    /**
+     * Human-readable role name
+     */
+    displayName: string;
+    /**
+     * Permission codes assigned to the role
+     */
+    permissions?: Array<string>;
+    /**
+     * Role name within the application
+     */
+    roleName: string;
+    [key: string]: unknown | string | boolean | Array<string> | undefined;
+};
+
+export type CreateScheduledJobRequestWritable = {
+    applicationId?: string;
+    clientId?: string;
+    code: string;
+    concurrent: boolean;
+    crons: Array<string>;
+    deliveryMaxAttempts?: number;
+    description?: string;
+    name: string;
+    payload?: unknown;
+    targetUrl?: string;
+    timeoutSeconds?: number;
+    timezone?: string;
+    tracksCompletion: boolean;
+    [key: string]: unknown | string | boolean | Array<string> | number | undefined;
+};
+
+export type CreateServiceAccountRequestWritable = {
+    applicationId?: string;
+    clientIds?: Array<string>;
+    code: string;
+    description?: string;
+    name: string;
+    scope?: string;
+    webhookCredentials?: WebhookCredentialsDto;
+    [key: string]: unknown | string | Array<string> | WebhookCredentialsDto | undefined;
+};
+
+export type CreateServiceAccountResponseWritable = {
+    oauth: ServiceAccountOAuthSecrets;
+    principalId: string;
+    serviceAccount: ServiceAccountResponseWritable;
+    webhook: ServiceAccountWebhookSecrets;
+};
+
+export type CreateSubscriptionRequestWritable = {
+    clientId?: string;
+    code: string;
+    connectionId?: string;
+    customConfig?: Array<ConfigEntryDto>;
+    dataOnly?: boolean;
+    delaySeconds?: number;
+    description?: string;
+    dispatchPoolId?: string;
+    /**
+     * http(s) URL delivery target
+     */
+    endpoint: string;
+    eventTypes?: Array<EventTypeBindingDto>;
+    maxAgeSeconds?: number;
+    maxRetries?: number;
+    /**
+     * Dispatch mode. Omitted means NEXT_ON_ERROR: a message group is delivered in sequence, one at a time, moving on past a failure. BLOCK_ON_ERROR stops the group at a failure instead; IMMEDIATE opts out of ordering entirely. Ordering applies only to messages that carry a message group.
+     */
+    mode?: string;
+    name: string;
+    /**
+     * Dispatch priority: DEFAULT or HIGH_PRIORITY (matched ignoring case). Selects which of the client's two dispatch queues jobs raised from this subscription publish to. Omitted or blank leaves it unset, which publishes as DEFAULT.
+     */
+    queue?: string;
+    serviceAccountId?: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown | string | Array<ConfigEntryDto> | boolean | number | Array<EventTypeBindingDto> | undefined;
+};
+
+export type CreateUserRequestWritable = {
+    clientId?: string;
+    email: string;
+    enforcePasswordComplexity?: boolean;
+    inviteRedirectUri?: string;
+    name: string;
+    password?: string;
+    returnInviteLink?: boolean;
+    scope?: 'ANCHOR' | 'PARTNER' | 'CLIENT';
+    sendInvitation?: boolean;
+    [key: string]: unknown | string | boolean | 'ANCHOR' | 'PARTNER' | 'CLIENT' | undefined;
+};
+
+export type CreatedResponseWritable = {
+    id: string;
+};
+
+export type DeveloperUserListResponseWritable = {
+    principals: Array<PrincipalResponseWritable>;
+    total: number;
+};
+
+export type DispatchJobFilterOptionsResponseWritable = {
+    clientIds: Array<string>;
+    codes: Array<string>;
+    dispatchPoolIds: Array<string>;
+    kinds: Array<string>;
+    statuses: Array<string>;
+    subscriptionIds: Array<string>;
+};
+
+export type DispatchJobResponseWritable = {
+    attemptCount: number;
+    attempts?: Array<AttemptDto>;
+    clientId?: string;
+    code: string;
+    completedAt?: string;
+    correlationId?: string;
+    createdAt: string;
+    dataOnly: boolean;
+    dispatchPoolId?: string;
+    durationMillis?: number;
+    eventId?: string;
+    expiresAt?: string;
+    externalId?: string;
+    id: string;
+    idempotencyKey?: string;
+    kind: string;
+    lastAttemptAt?: string;
+    lastError?: string;
+    maxRetries: number;
+    messageGroup?: string;
+    metadata?: Array<MetadataDto>;
+    mode: string;
+    payload?: string;
+    payloadContentType: string;
+    protocol: string;
+    retryStrategy: string;
+    scheduledFor?: string;
+    schemaId?: string;
+    sequence: number;
+    serviceAccountId?: string;
+    source?: string;
+    status: string;
+    subject?: string;
+    subscriptionId?: string;
+    targetUrl: string;
+    timeoutSeconds: number;
+    updatedAt: string;
+};
+
+export type DispatchPoolListResponseWritable = {
+    pools: Array<DispatchPoolResponseWritable>;
+    total: number;
+};
+
+export type DispatchPoolResponseWritable = {
+    clientId?: string;
+    clientIdentifier?: string;
+    code: string;
+    concurrency: number;
+    createdAt: string;
+    description?: string;
+    id: string;
+    name: string;
+    rateLimit?: number;
+    status: string;
+    updatedAt: string;
+};
+
+export type DocListResponseWritable = {
+    applications: Array<AppDocsGroup>;
+    platform: Array<DocSummary>;
+};
+
+export type DocResponseWritable = {
+    content: string;
+    slug: string;
+    title: string;
+};
+
+export type ErrorModelWritable = {
+    details?: {
+        [key: string]: unknown;
+    };
+    error: string;
+    message: string;
+};
+
+export type EventFilterOptionsResponseWritable = {
+    applications: Array<EventFilterOption>;
+    eventTypes: Array<EventFilterOption>;
+    subdomains: Array<EventFilterOption>;
+};
+
+export type EventResponseWritable = {
+    aggregate?: string;
+    application?: string;
+    causationId?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
+    createdAt: string;
+    data?: unknown;
+    deduplicationId: string;
+    id: string;
+    messageGroup?: string;
+    projectedAt?: string;
+    source: string;
+    specVersion: string;
+    subdomain?: string;
+    subject: string;
+    time: string;
+    type: string;
+};
+
+export type EventTypeListResponseWritable = {
+    items: Array<EventTypeResponseWritable>;
+};
+
+export type EventTypeResponseWritable = {
+    aggregate: string;
+    application: string;
+    clientId?: string;
+    code: string;
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    eventName: string;
+    id: string;
+    name: string;
+    source: string;
+    specVersions: Array<SpecVersionResponse>;
+    status: string;
+    subdomain: string;
+    updatedAt: string;
+};
+
+export type FireNowRequestWritable = {
+    correlationId?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type FireNowResponseWritable = {
+    id: string;
+    instanceId: string;
+    scheduledJobId: string;
+};
+
+export type GrantAccessRequestWritable = {
+    canWrite: boolean;
+    roleCode: string;
+    [key: string]: unknown | boolean | string;
+};
+
+export type GrantClientAccessRequestWritable = {
+    clientId: string;
+    [key: string]: unknown | string;
+};
+
+export type GrantPermissionRequestWritable = {
+    permission: string;
+    [key: string]: unknown | string;
+};
+
+export type IdentityProviderListResponseWritable = {
+    identityProviders: Array<IdentityProviderResponseWritable>;
+    total: number;
+};
+
+export type IdentityProviderResponseWritable = {
+    /**
+     * Domains currently routed to this provider (derived from email-domain mappings)
+     */
+    allowedEmailDomains: Array<string>;
+    allowedRoleIds: Array<string>;
+    code: string;
+    createdAt: string;
+    hasClientSecret: boolean;
+    id: string;
+    name: string;
+    oidcClientId?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant: boolean;
+    syncRolesFromIdp: boolean;
+    type: string;
+    updatedAt: string;
+};
+
+export type IdpRoleMappingListResponseWritable = {
+    items: Array<IdpRoleMappingResponse>;
+};
+
+export type ListOutputBodyWritable = {
+    requests: Array<RequestDto>;
+};
+
+export type LoginAttemptListResponseWritable = {
+    hasMore: boolean;
+    items: Array<LoginAttemptResponse>;
+    nextCursor?: string;
+};
+
+export type MappingListResponseWritable = {
+    mappings: Array<MappingResponseWritable>;
+    total: number;
+};
+
+export type MappingResponseWritable = {
+    additionalClientIds: Array<string>;
+    allowed2faMethods: Array<string>;
+    createdAt: string;
+    emailDomain: string;
+    grantedClientIds: Array<string>;
+    id: string;
+    identityProviderId: string;
+    identityProviderName?: string;
+    primaryClientId?: string;
+    rememberDeviceDays: number;
+    rememberDeviceEnabled: boolean;
+    require2fa: boolean;
+    requiredOidcTenantId?: string;
+    scopeType: string;
+    updatedAt: string;
+};
+
+export type MoveProviderRequestWritable = {
+    /**
+     * Target identity provider id
+     */
+    identityProviderId: string;
+    [key: string]: unknown | string;
+};
+
+export type MoveProviderResponseWritable = {
+    emailDomain: string;
+    fromIdentityProviderId: string;
+    mappingId: string;
+    toIdentityProviderId: string;
+    /**
+     * OIDC-provisioned users converted back to internal auth (0 when moving to an OIDC provider)
+     */
+    usersReset: number;
+};
+
+export type OAuthClientListResponseWritable = {
+    clients: Array<OAuthClientResponseWritable>;
+};
+
+export type OAuthClientResponseWritable = {
+    active: boolean;
+    allowedOrigins: Array<string>;
+    apiAccess: boolean;
+    applicationIds: Array<string>;
+    applications: Array<OAuthClientApplicationRef>;
+    clientId: string;
+    clientName: string;
+    clientType: string;
+    createdAt: string;
+    defaultScopes: Array<string>;
+    grantTypes: Array<string>;
+    id: string;
+    pkceRequired: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
+    postLogoutRedirectUris: Array<string>;
+    previousSecretExpiresAt?: string;
+    previousSecretLastUsedAt?: string;
+    redirectUris: Array<string>;
+    serviceAccountPrincipalId?: string;
+    updatedAt: string;
+};
+
+export type OffsetPageScheduledJobInstanceResponseWritable = {
+    data: Array<ScheduledJobInstanceResponseWritable>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
+};
+
+export type OffsetPageScheduledJobResponseWritable = {
+    data: Array<ScheduledJobResponseWritable>;
+    page: number;
+    size: number;
+    total: number;
+    total_pages: number;
+};
+
+export type PermissionListResponseWritable = {
+    permissions: Array<PermissionResponseWritable>;
+    total: number;
+};
+
+export type PermissionResponseWritable = {
+    category?: string;
+    description?: string;
+    name: string;
+    permission: string;
+};
+
+export type PortalAppListResponseWritable = {
+    portalApps: Array<PortalAppResponseWritable>;
+    unassignedUsers?: number;
+};
+
+export type PortalAppResponseWritable = {
+    active: boolean;
+    clientId: string;
+    code: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    name: string;
+    oauthClients: Array<LinkedOAuthClient>;
+    updatedAt: string;
+    userCount: number;
+};
+
+export type PortalUserAppGrantBodyWritable = {
+    clientId: string;
+    portalAppCode: string;
+    [key: string]: unknown | string;
+};
+
+export type PortalUserClientBodyWritable = {
+    clientId: string;
+    [key: string]: unknown | string;
+};
+
+export type PortalUserListResponseWritable = {
+    page: number;
+    portalUsers: Array<PortalUserListItem>;
+    size: number;
+    total: number;
+};
+
+export type PortalUserRequestWritable = {
+    clientId: string;
+    email: string;
+    name?: string;
+    portalAppCode?: string;
+    redirectUri?: string;
+    returnInviteLink?: boolean;
+    [key: string]: unknown | string | boolean | undefined;
+};
+
+export type PortalUserResponseWritable = {
+    created: boolean;
+    hasPassword: boolean;
+    identityId: string;
+    inviteUrl?: string;
+    invited: boolean;
+    portalAppCode?: string;
+    ssoManaged?: boolean;
+    state: 'INVITED' | 'INVITE_EXPIRED' | 'ACTIVE' | 'SUSPENDED';
+};
+
+export type PrincipalAvailableApplicationsResponseWritable = {
+    applications: Array<PrincipalAvailableApplication>;
+};
+
+export type PrincipalListResponseWritable = {
+    principals: Array<PrincipalResponseWritable>;
+    total: number;
+};
+
+export type PrincipalResponseWritable = {
+    active: boolean;
+    clientId?: string;
+    createdAt: string;
+    developerCredentialUpdatedAt?: string;
+    email?: string;
+    grantedClientIds: Array<string>;
+    hasDeveloperCredential: boolean;
+    id: string;
+    idpType?: string;
+    inviteLink?: string;
+    isAnchorUser: boolean;
+    name: string;
+    roles: Array<string>;
+    scope: string;
+    twoFactorMethods?: Array<string>;
+    type: string;
+    updatedAt: string;
+};
+
+export type PrincipalRoleListResponseWritable = {
+    roles: Array<PrincipalRoleAssignmentDto>;
+};
+
+export type PrincipalVersionResponseWritable = {
+    updatedAt: string;
+};
+
+export type ProcessListResponseWritable = {
+    items: Array<ProcessResponseWritable>;
+};
+
+export type ProcessResponseWritable = {
+    application: string;
+    body: string;
+    code: string;
+    createdAt: string;
+    createdBy?: string;
+    description?: string;
+    diagramType: string;
+    id: string;
+    name: string;
+    processName: string;
+    source: string;
+    status: string;
+    subdomain: string;
+    tags: Array<string>;
+    updatedAt: string;
+};
+
+export type ProvisionLoginClientRequestWritable = {
+    allowedOrigins?: Array<string>;
+    /**
+     * PUBLIC (default) or CONFIDENTIAL
+     */
+    clientType?: string;
+    redirectUris: Array<string>;
+    [key: string]: unknown | Array<string> | string | Array<string> | undefined;
+};
+
+export type PublicAllowedResponseWritable = {
+    origins: Array<string>;
+};
+
+export type RawEventResponseWritable = {
+    causationId?: string;
+    clientId?: string;
+    contextData?: Array<ContextEntryDto>;
+    correlationId?: string;
+    data?: unknown;
+    deduplicationId?: string;
+    eventType: string;
+    id: string;
+    messageGroup?: string;
+    source: string;
+    specVersion: string;
+    subject?: string;
+    time: string;
+};
+
+export type RegenerateAuthTokenResponseWritable = {
+    authToken?: string;
+    id: string;
+};
+
+export type RegenerateSigningSecretResponseWritable = {
+    id: string;
+    signingSecret?: string;
+};
+
+export type RegisterBeginRequestWritable = {
+    displayName?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type RegisterBeginResponseWritable = {
+    options: unknown;
+    stateId: string;
+};
+
+export type RegisterCompleteRequestWritable = {
+    credential: unknown;
+    name?: string;
+    stateId: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type RegisterCompleteResponseWritable = {
+    credentialId: string;
+};
+
+export type RequeueRequestWritable = {
+    /**
+     * Dispatch job ids to reset to PENDING for re-dispatch
+     */
+    ids: Array<string>;
+    [key: string]: unknown | Array<string>;
+};
+
+export type RequeueResponseWritable = {
+    requeued: number;
+};
+
+export type ResetPasswordRequestWritable = {
+    enforcePasswordComplexity?: boolean;
+    newPassword: string;
+    [key: string]: unknown | boolean | string | undefined;
+};
+
+export type RoleListResponseWritable = {
+    roles: Array<RoleResponseWritable>;
+    total: number;
+};
+
+export type RolePermissionListResponseWritable = {
+    permissions: Array<string>;
+};
+
+export type RoleResponseWritable = {
+    applicationCode: string;
+    applicationId?: string;
+    clientManaged: boolean;
+    createdAt: string;
+    description?: string;
+    displayName: string;
+    id: string;
+    name: string;
+    permissions: Array<string>;
+    source: string;
+    updatedAt: string;
+};
+
+export type RolesAssignedResponseWritable = {
+    added: Array<string>;
+    removed: Array<string>;
+    roles: Array<PrincipalRoleAssignmentDto>;
+};
+
+export type RotateOAuthClientSecretRequestWritable = {
+    graceSeconds?: number;
+    [key: string]: unknown | number | undefined;
+};
+
+export type RotateOAuthClientSecretResponseWritable = {
+    clientId: string;
+    clientSecret?: string;
+    previousSecretExpiresAt?: string;
+};
+
+export type RouterConfigWritable = {
+    processingPools: Array<PoolConfig>;
+    queues: Array<QueueConfig>;
+};
+
+export type ScheduledJobInstanceResponseWritable = {
+    clientId?: string;
+    completedAt?: string;
+    completionResult?: unknown;
+    completionStatus?: string;
+    correlationId?: string;
+    createdAt: string;
+    deliveredAt?: string;
+    deliveryAttempts: number;
+    deliveryError?: string;
+    firedAt: string;
+    id: string;
+    jobCode: string;
+    scheduledFor?: string;
+    scheduledJobId: string;
+    status: string;
+    triggerKind: string;
+};
+
+export type ScheduledJobResponseWritable = {
+    applicationId?: string;
+    clientId?: string;
+    code: string;
+    concurrent: boolean;
+    createdAt: string;
+    createdBy?: string;
+    crons: Array<string>;
+    deliveryMaxAttempts: number;
+    description?: string;
+    hasActiveInstance: boolean;
+    id: string;
+    lastFiredAt?: string;
+    name: string;
+    payload?: unknown;
+    status: string;
+    targetUrl?: string;
+    timeoutSeconds?: number;
+    timezone: string;
+    tracksCompletion: boolean;
+    updatedAt: string;
+    updatedBy?: string;
+    version: number;
+};
+
+export type SearchClientRequestWritable = {
+    term: string;
+    [key: string]: unknown | string;
+};
+
+export type SendPasswordResetInputBodyWritable = {
+    reset2fa?: boolean;
+    [key: string]: unknown | boolean | undefined;
+};
+
+export type ServiceAccountListResponseWritable = {
+    serviceAccounts: Array<ServiceAccountResponseWritable>;
+    total: number;
+};
+
+export type ServiceAccountResponseWritable = {
+    active: boolean;
+    applicationId?: string;
+    authType: string;
+    clientIds: Array<string>;
+    code: string;
+    createdAt: string;
+    description?: string;
+    id: string;
+    lastUsedAt?: string;
+    name: string;
+    principalId?: string;
+    roles: Array<string>;
+    scope?: string;
+    updatedAt: string;
+};
+
+export type ServiceAccountRoleListResponseWritable = {
+    roles: Array<RoleAssignmentDto>;
+};
+
+export type ServiceAccountRolesAssignedResponseWritable = {
+    addedRoles: Array<string>;
+    removedRoles: Array<string>;
+    roles: Array<RoleAssignmentDto>;
+};
+
+export type ServiceAccountTokenResponseWritable = {
+    accessToken: string;
+    expiresIn: number;
+    scope?: string;
+    tokenType: string;
+};
+
+export type SetApplicationAccessResponseWritable = {
+    added: number;
+    allApplications: boolean;
+    applications: Array<ApplicationAccessResponse>;
+    removed: number;
+};
+
+export type SetDeveloperCredentialResponseWritable = {
+    clientSecret?: string;
+    id: string;
+};
+
+export type SetPropertyRequestWritable = {
+    clientId?: string;
+    description?: string;
+    value: string;
+    /**
+     * PLAIN or SECRET
+     */
+    valueType?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type StatusChangeRequestWritable = {
+    reason: string;
+    [key: string]: unknown | string;
+};
+
+export type StatusChangeResponseWritable = {
+    message: string;
+};
+
+export type SubscriptionListResponseWritable = {
+    subscriptions: Array<SubscriptionResponseWritable>;
+    total: number;
+};
+
+export type SubscriptionResponseWritable = {
+    applicationCode?: string;
+    clientId?: string;
+    clientIdentifier?: string;
+    clientScoped: boolean;
+    code: string;
+    connectionId?: string;
+    createdAt: string;
+    createdBy?: string;
+    customConfig: Array<ConfigEntryDto>;
+    dataOnly: boolean;
+    delaySeconds: number;
+    description?: string;
+    dispatchPoolCode?: string;
+    dispatchPoolId?: string;
+    endpoint: string;
+    eventTypes: Array<EventTypeBindingDto>;
+    id: string;
+    maxAgeSeconds: number;
+    maxRetries: number;
+    mode: string;
+    name: string;
+    queue?: string;
+    sequence: number;
+    serviceAccountId?: string;
+    source: string;
+    status: string;
+    timeoutSeconds: number;
+    updatedAt: string;
+};
+
+export type SuccessResponseWritable = {
+    message?: string;
+    success: boolean;
+};
+
+export type SuspendClientRequestWritable = {
+    reason: string;
+    [key: string]: unknown | string;
+};
+
+export type SyncDispatchPoolsRequestWritable = {
+    pools: Array<SyncDispatchPoolInputRequest>;
+    [key: string]: unknown | Array<SyncDispatchPoolInputRequest>;
+};
+
+export type SyncDocsRequestWritable = {
+    docs: Array<SyncDocInputRequest>;
+    [key: string]: unknown | Array<SyncDocInputRequest>;
+};
+
+export type SyncEventTypesRequestWritable = {
+    eventTypes: Array<SyncEventTypeInputRequest>;
+    [key: string]: unknown | Array<SyncEventTypeInputRequest>;
+};
+
+export type SyncOpenApiSpecResponseWritable = {
+    applicationCode: string;
+    archivedPriorVersion?: string;
+    hasBreaking: boolean;
+    specId: string;
+    status: string;
+    unchanged: boolean;
+    version: string;
+};
+
+export type SyncOpenapiRequestWritable = {
+    /**
+     * The OpenAPI document (OpenAPI 3.x or Swagger 2.x)
+     */
+    spec: unknown;
+    [key: string]: unknown;
+};
+
+export type SyncPrincipalsRequestWritable = {
+    principals: Array<SyncPrincipalInputRequest>;
+    [key: string]: unknown | Array<SyncPrincipalInputRequest>;
+};
+
+export type SyncProcessesByBodyRequestWritable = {
+    /**
+     * Application code (carried in the body for /api/processes/sync)
+     */
+    applicationCode: string;
     processes: Array<SyncProcessInputRequest>;
+    [key: string]: unknown | string | Array<SyncProcessInputRequest>;
 };
 
-/**
- * Sync result response (shared across all sync endpoints)
- */
-export type SyncResultResponse = {
+export type SyncProcessesRequestWritable = {
+    processes: Array<SyncProcessInputRequest>;
+    [key: string]: unknown | Array<SyncProcessInputRequest>;
+};
+
+export type SyncResultResponseWritable = {
     applicationCode: string;
     created: number;
     deleted: number;
@@ -2171,334 +4650,468 @@ export type SyncResultResponse = {
     updated: number;
 };
 
-/**
- * A single role input for sync
- */
-export type SyncRoleInputRequest = {
-    clientManaged?: boolean;
-    description?: string | null;
-    displayName?: string | null;
-    name: string;
-    permissions?: Array<string>;
-};
-
-/**
- * Sync roles request body
- */
-export type SyncRolesRequest = {
+export type SyncRolesRequestWritable = {
     roles: Array<SyncRoleInputRequest>;
+    [key: string]: unknown | Array<SyncRoleInputRequest>;
 };
 
-export type SyncScheduledJobInputRequest = {
-    code: string;
-    concurrent?: boolean;
-    crons: Array<string>;
-    deliveryMaxAttempts?: number;
-    description?: string | null;
-    name: string;
-    payload?: unknown;
-    targetUrl?: string | null;
-    timeoutSeconds?: number | null;
-    timezone?: string;
-    tracksCompletion?: boolean;
-};
-
-export type SyncScheduledJobsRequest = {
+export type SyncScheduledJobsRequestWritable = {
     archiveUnlisted?: boolean;
-    /**
-     * None = sync platform-scoped jobs (anchor only).
-     */
-    clientId?: string | null;
+    clientId?: string;
     jobs: Array<SyncScheduledJobInputRequest>;
+    [key: string]: unknown | boolean | string | Array<SyncScheduledJobInputRequest> | undefined;
 };
 
-export type SyncScheduledJobsResultResponse = {
+export type SyncScheduledJobsResultResponseWritable = {
     applicationCode: string;
     archived: Array<string>;
     created: Array<string>;
     updated: Array<string>;
 };
 
-/**
- * Event type binding for sync subscription input
- */
-export type SyncSubscriptionEventTypeRequest = {
-    eventTypeCode: string;
-    filter?: string | null;
-};
-
-/**
- * A single subscription input for sync
- */
-export type SyncSubscriptionInputRequest = {
-    code: string;
-    connectionId?: string | null;
-    dataOnly?: boolean;
-    description?: string | null;
-    dispatchPoolCode?: string | null;
-    eventTypes: Array<SyncSubscriptionEventTypeRequest>;
-    maxRetries?: number | null;
-    mode?: string | null;
-    name: string;
-    target: string;
-    timeoutSeconds?: number | null;
-};
-
-/**
- * Sync subscriptions request body
- */
-export type SyncSubscriptionsRequest = {
+export type SyncSubscriptionsRequestWritable = {
     subscriptions: Array<SyncSubscriptionInputRequest>;
+    [key: string]: unknown | Array<SyncSubscriptionInputRequest>;
 };
 
-/**
- * System health info
- */
-export type SystemHealth = {
-    cpuUsagePercent: number;
-    memoryUsedMb: number;
-    status: string;
-    uptimeSeconds: number;
+export type SyncUsersRequestWritable = {
+    principals: Array<SyncUserInput>;
+    [key: string]: unknown | Array<SyncUserInput>;
 };
 
-/**
- * Token refresh response
- */
-export type TokenRefreshResponse = {
-    /**
-     * New access token
-     */
-    accessToken: string;
-    /**
-     * Expiration time in seconds
-     */
-    expiresIn: number;
-    /**
-     * New refresh token (rotation)
-     */
-    refreshToken: string;
-    /**
-     * Token type (always "Bearer")
-     */
-    tokenType: string;
+export type SyncUsersResponseWritable = {
+    created: number;
+    deleted: number;
+    syncedEmails: Array<string>;
+    updated: number;
 };
 
-/**
- * Update client applications request (matches Java)
- */
-export type UpdateClientApplicationsRequest = {
-    /**
-     * List of application IDs to enable
-     */
+export type UpdateAnchorDomainRequestWritable = {
+    domain: string;
+    [key: string]: unknown | string;
+};
+
+export type UpdateApplicationRequestWritable = {
+    defaultBaseUrl?: string;
+    description?: string;
+    iconUrl?: string;
+    logo?: string;
+    logoMimeType?: string;
+    name?: string;
+    website?: string;
+    [key: string]: unknown | string | undefined;
+};
+
+export type UpdateAuthConfigRequestWritable = {
+    additionalClientIds?: Array<string>;
+    authProvider?: string;
+    grantedClientIds?: Array<string>;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    primaryClientId?: string;
+    [key: string]: unknown | Array<string> | string | Array<string> | boolean | undefined;
+};
+
+export type UpdateClientApplicationsRequestWritable = {
     enabledApplicationIds: Array<string>;
+    [key: string]: unknown | Array<string>;
 };
 
-/**
- * Update client request
- */
-export type UpdateClientRequest = {
-    /**
-     * Human-readable name
-     */
-    name?: string | null;
+export type UpdateClientRequestWritable = {
+    name?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Update event type request
- */
-export type UpdateEventTypeRequest = {
-    /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Human-readable name
-     */
-    name?: string | null;
+export type UpdateConnectionRequestWritable = {
+    description?: string;
+    externalId?: string;
+    name: string;
+    status?: string;
+    [key: string]: unknown | string | undefined;
 };
 
-/**
- * Update OAuth client request
- */
-export type UpdateOAuthClientRequest = {
-    /**
-     * Whether client is active
-     */
-    active?: boolean | null;
-    /**
-     * Allowed CORS origins
-     */
-    allowedOrigins?: Array<string> | null;
-    /**
-     * Application IDs this client can access
-     */
-    applicationIds?: Array<string> | null;
-    /**
-     * Human-readable name
-     */
-    clientName?: string | null;
-    /**
-     * Allowed grant types
-     */
-    grantTypes?: Array<string> | null;
-    /**
-     * Whether PKCE is required
-     */
-    pkceRequired?: boolean | null;
-    /**
-     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
-     */
-    postLogoutRedirectUris?: Array<string> | null;
-    /**
-     * Allowed redirect URIs
-     */
-    redirectUris?: Array<string> | null;
+export type UpdateDispatchPoolRequestWritable = {
+    concurrency?: number;
+    description?: string;
+    name?: string;
+    rateLimit?: number;
+    [key: string]: unknown | number | string | undefined;
 };
 
-/**
- * Update principal request
- */
-export type UpdatePrincipalRequest = {
+export type UpdateEventTypeRequestWritable = {
     /**
-     * Active status
+     * Events of this type are per-client; absent leaves it unchanged
      */
-    active?: boolean | null;
-    /**
-     * Home client ID (required when scope is CLIENT, ignored otherwise).
-     * Changing client requires anchor.
-     */
-    clientId?: string | null;
-    /**
-     * First name (for users)
-     */
-    firstName?: string | null;
-    /**
-     * Last name (for users)
-     */
-    lastName?: string | null;
-    /**
-     * Display name
-     */
-    name?: string | null;
-    /**
-     * User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
-     */
-    scope?: string | null;
+    clientScoped?: boolean;
+    description?: string;
+    name: string;
+    [key: string]: unknown | boolean | string | undefined;
 };
 
-export type UpdateProcessRequest = {
-    body?: string | null;
-    description?: string | null;
-    diagramType?: string | null;
-    name?: string | null;
-    tags?: Array<string> | null;
+export type UpdateIdentityProviderRequestWritable = {
+    /**
+     * Desired set of domains routed to this provider; additions are mapped/claimed, removals fall back to internal auth
+     */
+    allowedEmailDomains?: Array<string>;
+    allowedRoleIds?: Array<string>;
+    /**
+     * Scope for email-domain mappings this request creates: ANCHOR (platform administrators) or CLIENT (requires primaryClientId). Required when the request creates a new mapping. Existing mappings keep their scope; with CLIENT the client is linked on any mapping that has no primary client yet.
+     */
+    mappingScope?: 'ANCHOR' | 'CLIENT';
+    name?: string;
+    oidcClientId?: string;
+    oidcClientSecretRef?: string;
+    oidcIssuerPattern?: string;
+    oidcIssuerUrl?: string;
+    oidcMultiTenant?: boolean;
+    /**
+     * Client to link on mappings that are new or not yet linked to a primary client
+     */
+    primaryClientId?: string;
+    syncRolesFromIdp?: boolean;
+    [key: string]: unknown | Array<string> | Array<string> | 'ANCHOR' | 'CLIENT' | string | boolean | undefined;
 };
 
-/**
- * Update role request
- */
-export type UpdateRoleRequest = {
-    /**
-     * Whether clients can manage this role
-     */
-    clientManaged?: boolean | null;
-    /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Display name
-     */
-    displayName?: string | null;
-    /**
-     * Replace the role's permission set. Omit to leave permissions unchanged.
-     */
-    permissions?: Array<string> | null;
+export type UpdateMappingRequestWritable = {
+    additionalClientIds?: Array<string>;
+    allowed2faMethods?: Array<string>;
+    grantedClientIds?: Array<string>;
+    primaryClientId?: string;
+    rememberDeviceDays?: number;
+    rememberDeviceEnabled?: boolean;
+    require2fa?: boolean;
+    requiredOidcTenantId?: string;
+    [key: string]: unknown | Array<string> | Array<string> | Array<string> | string | number | boolean | undefined;
 };
 
-export type UpdateScheduledJobRequest = {
-    concurrent?: boolean | null;
-    crons?: Array<string> | null;
-    deliveryMaxAttempts?: number | null;
-    description?: string | null;
-    name?: string | null;
+export type UpdateOAuthClientRequestWritable = {
+    allowedOrigins?: Array<string>;
+    apiAccess?: boolean;
+    applicationIds?: Array<string>;
+    clientName?: string;
+    defaultScopes?: Array<string>;
+    grantTypes?: Array<string>;
+    pkceRequired?: boolean;
+    portalAppId?: string;
+    portalClientId?: string;
+    postLogoutRedirectUris?: Array<string>;
+    redirectUris?: Array<string>;
+    [key: string]: unknown | Array<string> | boolean | Array<string> | string | Array<string> | Array<string> | Array<string> | Array<string> | undefined;
+};
+
+export type UpdatePortalAppRequestWritable = {
+    active?: boolean;
+    clientId: string;
+    description?: string;
+    name?: string;
+    [key: string]: unknown | boolean | string | undefined;
+};
+
+export type UpdatePrincipalRequestWritable = {
+    active?: boolean;
+    /**
+     * Optional; asserted against the stored email — a different value is rejected, not treated as a rename
+     */
+    email?: string;
+    name?: string;
+    [key: string]: unknown | boolean | string | undefined;
+};
+
+export type UpdateProcessRequestWritable = {
+    body?: string;
+    description?: string;
+    diagramType?: string;
+    name?: string;
+    tags?: Array<string>;
+    [key: string]: unknown | string | Array<string> | undefined;
+};
+
+export type UpdateRoleRequestWritable = {
+    clientManaged?: boolean;
+    description?: string;
+    displayName?: string;
+    permissions?: Array<string>;
+    [key: string]: unknown | boolean | string | Array<string> | undefined;
+};
+
+export type UpdateScheduledJobRequestWritable = {
+    concurrent?: boolean;
+    crons?: Array<string>;
+    deliveryMaxAttempts?: number;
+    description?: string;
+    name?: string;
     payload?: unknown;
-    targetUrl?: string | null;
-    timeoutSeconds?: number | null;
-    timezone?: string | null;
-    tracksCompletion?: boolean | null;
+    targetUrl?: string;
+    timeoutSeconds?: number;
+    timezone?: string;
+    tracksCompletion?: boolean;
+    [key: string]: unknown | boolean | Array<string> | number | string | undefined;
 };
 
-/**
- * Update subscription request
- */
-export type UpdateSubscriptionRequest = {
-    /**
-     * Connection ID
-     */
-    connectionId?: string | null;
-    /**
-     * Description
-     */
-    description?: string | null;
-    /**
-     * Webhook endpoint URL
-     */
-    endpoint?: string | null;
-    /**
-     * Maximum retry attempts
-     */
-    maxRetries?: number | null;
-    /**
-     * Human-readable name
-     */
-    name?: string | null;
-    /**
-     * Timeout in seconds
-     */
-    timeoutSeconds?: number | null;
+export type UpdateServiceAccountRequestWritable = {
+    clientIds?: Array<string>;
+    description?: string;
+    name?: string;
+    scope?: string;
+    webhookCredentials?: WebhookCredentialsDto;
+    [key: string]: unknown | Array<string> | string | WebhookCredentialsDto | undefined;
 };
 
-/**
- * Time-windowed metrics
- */
-export type WindowedMetrics = {
+export type UpdateSubscriptionRequestWritable = {
+    connectionId?: string;
+    customConfig?: Array<ConfigEntryDto>;
+    dataOnly?: boolean;
+    delaySeconds?: number;
+    description?: string;
+    dispatchPoolId?: string;
+    endpoint?: string;
+    eventTypes?: Array<EventTypeBindingDto>;
+    maxAgeSeconds?: number;
+    maxRetries?: number;
+    mode?: string;
+    name?: string;
     /**
-     * Messages failed in this window
+     * Dispatch priority: DEFAULT or HIGH_PRIORITY (matched ignoring case). Omitted leaves the stored value alone; an explicit blank clears it, which publishes as DEFAULT.
      */
-    failureCount: number;
-    /**
-     * Processing time metrics for this window
-     */
-    processingTime: ProcessingTimeMetrics;
-    /**
-     * Messages rate limited in this window
-     */
-    rateLimitedCount: number;
-    /**
-     * Messages processed successfully in this window
-     */
-    successCount: number;
-    /**
-     * Success rate in this window (0.0 - 1.0)
-     */
-    successRate: number;
-    /**
-     * Throughput (messages per second)
-     */
-    throughputPerSec: number;
-    /**
-     * Window duration in seconds
-     */
-    windowDurationSecs: number;
-    /**
-     * Window start time
-     */
-    windowStart: string;
+    queue?: string;
+    serviceAccountId?: string;
+    timeoutSeconds?: number;
+    [key: string]: unknown | string | Array<ConfigEntryDto> | boolean | number | Array<EventTypeBindingDto> | undefined;
 };
 
-export type PostApiApplicationsByAppCodeDispatchPoolsSyncData = {
-    body: SyncDispatchPoolsRequest;
+export type WebauthnAuthenticateCompleteResponseWritable = {
+    email: string | null;
+    name: string;
+    principalId: string;
+    roles: Array<string>;
+};
+
+export type WriteInstanceLogRequestWritable = {
+    /**
+     * DEBUG | INFO | WARN | ERROR
+     */
+    level: string;
+    message: string;
+    metadata?: unknown;
+    [key: string]: unknown | string | undefined;
+};
+
+export type ListAnchorDomainsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/anchor-domains';
+};
+
+export type ListAnchorDomainsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListAnchorDomainsError = ListAnchorDomainsErrors[keyof ListAnchorDomainsErrors];
+
+export type ListAnchorDomainsResponses = {
+    /**
+     * OK
+     */
+    200: AnchorDomainListResponse;
+};
+
+export type ListAnchorDomainsResponse = ListAnchorDomainsResponses[keyof ListAnchorDomainsResponses];
+
+export type CreateAnchorDomainData = {
+    body: CreateAnchorDomainRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/anchor-domains';
+};
+
+export type CreateAnchorDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateAnchorDomainError = CreateAnchorDomainErrors[keyof CreateAnchorDomainErrors];
+
+export type CreateAnchorDomainResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateAnchorDomainResponse = CreateAnchorDomainResponses[keyof CreateAnchorDomainResponses];
+
+export type DeleteAnchorDomainData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/anchor-domains/{id}';
+};
+
+export type DeleteAnchorDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteAnchorDomainError = DeleteAnchorDomainErrors[keyof DeleteAnchorDomainErrors];
+
+export type DeleteAnchorDomainResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteAnchorDomainResponse = DeleteAnchorDomainResponses[keyof DeleteAnchorDomainResponses];
+
+export type UpdateAnchorDomainData = {
+    body: UpdateAnchorDomainRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/anchor-domains/{id}';
+};
+
+export type UpdateAnchorDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateAnchorDomainError = UpdateAnchorDomainErrors[keyof UpdateAnchorDomainErrors];
+
+export type UpdateAnchorDomainResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateAnchorDomainResponse = UpdateAnchorDomainResponses[keyof UpdateAnchorDomainResponses];
+
+export type ListApplicationsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        type?: string;
+        active?: string;
+    };
+    url: '/api/applications';
+};
+
+export type ListApplicationsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListApplicationsError = ListApplicationsErrors[keyof ListApplicationsErrors];
+
+export type ListApplicationsResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationListResponse;
+};
+
+export type ListApplicationsResponse = ListApplicationsResponses[keyof ListApplicationsResponses];
+
+export type CreateApplicationData = {
+    body: CreateApplicationRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/applications';
+};
+
+export type CreateApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateApplicationError = CreateApplicationErrors[keyof CreateApplicationErrors];
+
+export type CreateApplicationResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateApplicationResponse = CreateApplicationResponses[keyof CreateApplicationResponses];
+
+export type GetApplicationByCodeData = {
+    body?: never;
+    path: {
+        code: string;
+    };
+    query?: never;
+    url: '/api/applications/by-code/{code}';
+};
+
+export type GetApplicationByCodeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetApplicationByCodeError = GetApplicationByCodeErrors[keyof GetApplicationByCodeErrors];
+
+export type GetApplicationByCodeResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationResponse;
+};
+
+export type GetApplicationByCodeResponse = GetApplicationByCodeResponses[keyof GetApplicationByCodeResponses];
+
+export type ListApplicationRolesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/by-id/{id}/roles';
+};
+
+export type ListApplicationRolesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListApplicationRolesError = ListApplicationRolesErrors[keyof ListApplicationRolesErrors];
+
+export type ListApplicationRolesResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationRolesResponse;
+};
+
+export type ListApplicationRolesResponse = ListApplicationRolesResponses[keyof ListApplicationRolesResponses];
+
+export type SyncDispatchPoolsData = {
+    body: SyncDispatchPoolsRequestWritable;
     path: {
         /**
          * Application code
@@ -2507,31 +5120,63 @@ export type PostApiApplicationsByAppCodeDispatchPoolsSyncData = {
     };
     query?: {
         /**
-         * Archive pools not in list
+         * Archive pools not in the list
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/dispatch-pools/sync';
 };
 
-export type PostApiApplicationsByAppCodeDispatchPoolsSyncErrors = {
+export type SyncDispatchPoolsErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeDispatchPoolsSyncResponses = {
+export type SyncDispatchPoolsError = SyncDispatchPoolsErrors[keyof SyncDispatchPoolsErrors];
+
+export type SyncDispatchPoolsResponses = {
     /**
-     * Dispatch pools synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeDispatchPoolsSyncResponse = PostApiApplicationsByAppCodeDispatchPoolsSyncResponses[keyof PostApiApplicationsByAppCodeDispatchPoolsSyncResponses];
+export type SyncDispatchPoolsResponse = SyncDispatchPoolsResponses[keyof SyncDispatchPoolsResponses];
 
-export type PostApiApplicationsByAppCodeEventTypesSyncData = {
-    body: SyncEventTypesRequest;
+export type SyncAppDocsData = {
+    body: SyncDocsRequestWritable;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/docs/sync';
+};
+
+export type SyncAppDocsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SyncAppDocsError = SyncAppDocsErrors[keyof SyncAppDocsErrors];
+
+export type SyncAppDocsResponses = {
+    /**
+     * OK
+     */
+    200: SyncResultResponse;
+};
+
+export type SyncAppDocsResponse = SyncAppDocsResponses[keyof SyncAppDocsResponses];
+
+export type SyncEventTypesData = {
+    body: SyncEventTypesRequestWritable;
     path: {
         /**
          * Application code
@@ -2540,31 +5185,33 @@ export type PostApiApplicationsByAppCodeEventTypesSyncData = {
     };
     query?: {
         /**
-         * Remove API-sourced event types not in list
+         * Remove API-sourced event types not in the list
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/event-types/sync';
 };
 
-export type PostApiApplicationsByAppCodeEventTypesSyncErrors = {
+export type SyncEventTypesErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeEventTypesSyncResponses = {
+export type SyncEventTypesError = SyncEventTypesErrors[keyof SyncEventTypesErrors];
+
+export type SyncEventTypesResponses = {
     /**
-     * Event types synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeEventTypesSyncResponse = PostApiApplicationsByAppCodeEventTypesSyncResponses[keyof PostApiApplicationsByAppCodeEventTypesSyncResponses];
+export type SyncEventTypesResponse = SyncEventTypesResponses[keyof SyncEventTypesResponses];
 
-export type PostApiApplicationsByAppCodeOpenapiSyncData = {
-    body: SyncOpenApiSpecRequest;
+export type SyncOpenapiData = {
+    body: SyncOpenapiRequestWritable;
     path: {
         /**
          * Application code
@@ -2575,32 +5222,26 @@ export type PostApiApplicationsByAppCodeOpenapiSyncData = {
     url: '/api/applications/{appCode}/openapi/sync';
 };
 
-export type PostApiApplicationsByAppCodeOpenapiSyncErrors = {
+export type SyncOpenapiErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Forbidden
-     */
-    403: unknown;
-    /**
-     * Application not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeOpenapiSyncResponses = {
+export type SyncOpenapiError = SyncOpenapiErrors[keyof SyncOpenapiErrors];
+
+export type SyncOpenapiResponses = {
     /**
-     * OpenAPI spec synced
+     * OK
      */
     200: SyncOpenApiSpecResponse;
 };
 
-export type PostApiApplicationsByAppCodeOpenapiSyncResponse = PostApiApplicationsByAppCodeOpenapiSyncResponses[keyof PostApiApplicationsByAppCodeOpenapiSyncResponses];
+export type SyncOpenapiResponse = SyncOpenapiResponses[keyof SyncOpenapiResponses];
 
-export type PostApiApplicationsByAppCodePrincipalsSyncData = {
-    body: SyncPrincipalsRequest;
+export type SyncPrincipalsData = {
+    body: SyncPrincipalsRequestWritable;
     path: {
         /**
          * Application code
@@ -2609,35 +5250,33 @@ export type PostApiApplicationsByAppCodePrincipalsSyncData = {
     };
     query?: {
         /**
-         * Remove SDK_SYNC roles from unlisted principals
+         * Strip SDK_SYNC roles from unlisted principals
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/principals/sync';
 };
 
-export type PostApiApplicationsByAppCodePrincipalsSyncErrors = {
+export type SyncPrincipalsErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Application not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodePrincipalsSyncResponses = {
+export type SyncPrincipalsError = SyncPrincipalsErrors[keyof SyncPrincipalsErrors];
+
+export type SyncPrincipalsResponses = {
     /**
-     * Principals synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodePrincipalsSyncResponse = PostApiApplicationsByAppCodePrincipalsSyncResponses[keyof PostApiApplicationsByAppCodePrincipalsSyncResponses];
+export type SyncPrincipalsResponse = SyncPrincipalsResponses[keyof SyncPrincipalsResponses];
 
-export type PostApiApplicationsByAppCodeProcessesSyncData = {
-    body: SyncProcessesRequest;
+export type SyncProcessesData = {
+    body: SyncProcessesRequestWritable;
     path: {
         /**
          * Application code
@@ -2646,31 +5285,33 @@ export type PostApiApplicationsByAppCodeProcessesSyncData = {
     };
     query?: {
         /**
-         * Remove API-sourced processes not in list
+         * Remove API/CODE processes not in the list
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/processes/sync';
 };
 
-export type PostApiApplicationsByAppCodeProcessesSyncErrors = {
+export type SyncProcessesErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeProcessesSyncResponses = {
+export type SyncProcessesError = SyncProcessesErrors[keyof SyncProcessesErrors];
+
+export type SyncProcessesResponses = {
     /**
-     * Processes synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeProcessesSyncResponse = PostApiApplicationsByAppCodeProcessesSyncResponses[keyof PostApiApplicationsByAppCodeProcessesSyncResponses];
+export type SyncProcessesResponse = SyncProcessesResponses[keyof SyncProcessesResponses];
 
-export type PostApiApplicationsByAppCodeRolesSyncData = {
-    body: SyncRolesRequest;
+export type SyncRolesData = {
+    body: SyncRolesRequestWritable;
     path: {
         /**
          * Application code
@@ -2679,35 +5320,33 @@ export type PostApiApplicationsByAppCodeRolesSyncData = {
     };
     query?: {
         /**
-         * Remove SDK roles not in list
+         * Remove SDK roles not in the list
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/roles/sync';
 };
 
-export type PostApiApplicationsByAppCodeRolesSyncErrors = {
+export type SyncRolesErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Application not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeRolesSyncResponses = {
+export type SyncRolesError = SyncRolesErrors[keyof SyncRolesErrors];
+
+export type SyncRolesResponses = {
     /**
-     * Roles synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeRolesSyncResponse = PostApiApplicationsByAppCodeRolesSyncResponses[keyof PostApiApplicationsByAppCodeRolesSyncResponses];
+export type SyncRolesResponse = SyncRolesResponses[keyof SyncRolesResponses];
 
-export type PostApiApplicationsByAppCodeScheduledJobsSyncData = {
-    body: SyncScheduledJobsRequest;
+export type SyncScheduledJobsData = {
+    body: SyncScheduledJobsRequestWritable;
     path: {
         /**
          * Application code
@@ -2718,28 +5357,26 @@ export type PostApiApplicationsByAppCodeScheduledJobsSyncData = {
     url: '/api/applications/{appCode}/scheduled-jobs/sync';
 };
 
-export type PostApiApplicationsByAppCodeScheduledJobsSyncErrors = {
+export type SyncScheduledJobsErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Forbidden
-     */
-    403: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeScheduledJobsSyncResponses = {
+export type SyncScheduledJobsError = SyncScheduledJobsErrors[keyof SyncScheduledJobsErrors];
+
+export type SyncScheduledJobsResponses = {
     /**
-     * Scheduled jobs synced
+     * OK
      */
     200: SyncScheduledJobsResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeScheduledJobsSyncResponse = PostApiApplicationsByAppCodeScheduledJobsSyncResponses[keyof PostApiApplicationsByAppCodeScheduledJobsSyncResponses];
+export type SyncScheduledJobsResponse = SyncScheduledJobsResponses[keyof SyncScheduledJobsResponses];
 
-export type PostApiApplicationsByAppCodeSubscriptionsSyncData = {
-    body: SyncSubscriptionsRequest;
+export type SyncSubscriptionsData = {
+    body: SyncSubscriptionsRequestWritable;
     path: {
         /**
          * Application code
@@ -2748,905 +5385,2471 @@ export type PostApiApplicationsByAppCodeSubscriptionsSyncData = {
     };
     query?: {
         /**
-         * Remove API-sourced subscriptions not in list
+         * Remove API/CODE subscriptions not in the list
          */
         removeUnlisted?: boolean;
     };
     url: '/api/applications/{appCode}/subscriptions/sync';
 };
 
-export type PostApiApplicationsByAppCodeSubscriptionsSyncErrors = {
+export type SyncSubscriptionsErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Connection not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiApplicationsByAppCodeSubscriptionsSyncResponses = {
+export type SyncSubscriptionsError = SyncSubscriptionsErrors[keyof SyncSubscriptionsErrors];
+
+export type SyncSubscriptionsResponses = {
     /**
-     * Subscriptions synced
+     * OK
      */
     200: SyncResultResponse;
 };
 
-export type PostApiApplicationsByAppCodeSubscriptionsSyncResponse = PostApiApplicationsByAppCodeSubscriptionsSyncResponses[keyof PostApiApplicationsByAppCodeSubscriptionsSyncResponses];
+export type SyncSubscriptionsResponse = SyncSubscriptionsResponses[keyof SyncSubscriptionsResponses];
 
-export type GetApiAuditLogsData = {
+export type DeleteApplicationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}';
+};
+
+export type DeleteApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteApplicationError = DeleteApplicationErrors[keyof DeleteApplicationErrors];
+
+export type DeleteApplicationResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteApplicationResponse = DeleteApplicationResponses[keyof DeleteApplicationResponses];
+
+export type GetApplicationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}';
+};
+
+export type GetApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetApplicationError = GetApplicationErrors[keyof GetApplicationErrors];
+
+export type GetApplicationResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationResponse;
+};
+
+export type GetApplicationResponse = GetApplicationResponses[keyof GetApplicationResponses];
+
+export type UpdateApplicationData = {
+    body: UpdateApplicationRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}';
+};
+
+export type UpdateApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateApplicationError = UpdateApplicationErrors[keyof UpdateApplicationErrors];
+
+export type UpdateApplicationResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateApplicationResponse = UpdateApplicationResponses[keyof UpdateApplicationResponses];
+
+export type ActivateApplicationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/activate';
+};
+
+export type ActivateApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ActivateApplicationError = ActivateApplicationErrors[keyof ActivateApplicationErrors];
+
+export type ActivateApplicationResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationResponse;
+};
+
+export type ActivateApplicationResponse = ActivateApplicationResponses[keyof ActivateApplicationResponses];
+
+export type ListApplicationClientConfigsData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/clients';
+};
+
+export type ListApplicationClientConfigsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListApplicationClientConfigsError = ListApplicationClientConfigsErrors[keyof ListApplicationClientConfigsErrors];
+
+export type ListApplicationClientConfigsResponses = {
+    /**
+     * OK
+     */
+    200: ClientConfigListResponse;
+};
+
+export type ListApplicationClientConfigsResponse = ListApplicationClientConfigsResponses[keyof ListApplicationClientConfigsResponses];
+
+export type GetApplicationClientConfigData = {
+    body?: never;
+    path: {
+        id: string;
+        clientId: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/clients/{clientId}';
+};
+
+export type GetApplicationClientConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetApplicationClientConfigError = GetApplicationClientConfigErrors[keyof GetApplicationClientConfigErrors];
+
+export type GetApplicationClientConfigResponses = {
+    /**
+     * OK
+     */
+    200: ClientConfigResponse;
+};
+
+export type GetApplicationClientConfigResponse = GetApplicationClientConfigResponses[keyof GetApplicationClientConfigResponses];
+
+export type DisableApplicationForClientData = {
+    body?: never;
+    path: {
+        id: string;
+        clientId: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/clients/{clientId}/disable';
+};
+
+export type DisableApplicationForClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DisableApplicationForClientError = DisableApplicationForClientErrors[keyof DisableApplicationForClientErrors];
+
+export type DisableApplicationForClientResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DisableApplicationForClientResponse = DisableApplicationForClientResponses[keyof DisableApplicationForClientResponses];
+
+export type EnableApplicationForClientData = {
+    body?: never;
+    path: {
+        id: string;
+        clientId: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/clients/{clientId}/enable';
+};
+
+export type EnableApplicationForClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type EnableApplicationForClientError = EnableApplicationForClientErrors[keyof EnableApplicationForClientErrors];
+
+export type EnableApplicationForClientResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type EnableApplicationForClientResponse = EnableApplicationForClientResponses[keyof EnableApplicationForClientResponses];
+
+export type DeactivateApplicationData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/deactivate';
+};
+
+export type DeactivateApplicationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeactivateApplicationError = DeactivateApplicationErrors[keyof DeactivateApplicationErrors];
+
+export type DeactivateApplicationResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationResponse;
+};
+
+export type DeactivateApplicationResponse = DeactivateApplicationResponses[keyof DeactivateApplicationResponses];
+
+export type ProvisionApplicationLoginClientData = {
+    body: ProvisionLoginClientRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/provision-login-client';
+};
+
+export type ProvisionApplicationLoginClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ProvisionApplicationLoginClientError = ProvisionApplicationLoginClientErrors[keyof ProvisionApplicationLoginClientErrors];
+
+export type ProvisionApplicationLoginClientResponses = {
+    /**
+     * Created
+     */
+    201: ApplicationProvisionLoginClientResponse;
+};
+
+export type ProvisionApplicationLoginClientResponse = ProvisionApplicationLoginClientResponses[keyof ProvisionApplicationLoginClientResponses];
+
+export type ProvisionApplicationServiceAccountData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/provision-service-account';
+};
+
+export type ProvisionApplicationServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ProvisionApplicationServiceAccountError = ProvisionApplicationServiceAccountErrors[keyof ProvisionApplicationServiceAccountErrors];
+
+export type ProvisionApplicationServiceAccountResponses = {
+    /**
+     * Created
+     */
+    201: ApplicationProvisionServiceAccountResponse;
+};
+
+export type ProvisionApplicationServiceAccountResponse = ProvisionApplicationServiceAccountResponses[keyof ProvisionApplicationServiceAccountResponses];
+
+export type AttachApplicationServiceAccountData = {
+    body: AttachServiceAccountRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/applications/{id}/service-account';
+};
+
+export type AttachApplicationServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type AttachApplicationServiceAccountError = AttachApplicationServiceAccountErrors[keyof AttachApplicationServiceAccountErrors];
+
+export type AttachApplicationServiceAccountResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type AttachApplicationServiceAccountResponse = AttachApplicationServiceAccountResponses[keyof AttachApplicationServiceAccountResponses];
+
+export type ListAuditLogsData = {
     body?: never;
     path?: never;
     query?: {
         /**
-         * Opaque cursor returned by a previous page's `nextCursor`. Omit for
-         * the first page.
+         * Opaque cursor from a previous page's nextCursor
          */
         after?: string;
         /**
-         * Page size (default 50, capped at 200).
+         * Page size (default 50, capped at 200)
          */
         pageSize?: number;
-        /**
-         * Filter by entity type
-         */
         entityType?: string;
-        /**
-         * Filter by entity ID
-         */
         entityId?: string;
-        /**
-         * Filter by operation (Java calls this "operation", maps to action internally)
-         */
+        principalId?: string;
         operation?: string;
         /**
-         * Filter by principal ID
+         * CSV of application ids
          */
-        principalId?: string;
+        applicationIds?: string;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
     };
     url: '/api/audit-logs';
 };
 
-export type GetApiAuditLogsResponses = {
+export type ListAuditLogsErrors = {
     /**
-     * List of audit logs
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListAuditLogsError = ListAuditLogsErrors[keyof ListAuditLogsErrors];
+
+export type ListAuditLogsResponses = {
+    /**
+     * OK
      */
     200: AuditLogListResponse;
 };
 
-export type GetApiAuditLogsResponse = GetApiAuditLogsResponses[keyof GetApiAuditLogsResponses];
+export type ListAuditLogsResponse = ListAuditLogsResponses[keyof ListAuditLogsResponses];
 
-export type GetApiAuditLogsApplicationIdsData = {
+export type AuditLogApplicationIdsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/application-ids';
 };
 
-export type GetApiAuditLogsApplicationIdsResponses = {
+export type AuditLogApplicationIdsErrors = {
     /**
-     * List of distinct application IDs
+     * Error
      */
-    200: ApplicationIdsResponse;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsApplicationIdsResponse = GetApiAuditLogsApplicationIdsResponses[keyof GetApiAuditLogsApplicationIdsResponses];
+export type AuditLogApplicationIdsError = AuditLogApplicationIdsErrors[keyof AuditLogApplicationIdsErrors];
 
-export type GetApiAuditLogsClientIdsData = {
+export type AuditLogApplicationIdsResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogApplicationIdsResponse;
+};
+
+export type AuditLogApplicationIdsResponse2 = AuditLogApplicationIdsResponses[keyof AuditLogApplicationIdsResponses];
+
+export type AuditLogClientIdsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/client-ids';
 };
 
-export type GetApiAuditLogsClientIdsResponses = {
+export type AuditLogClientIdsErrors = {
     /**
-     * List of distinct client IDs
+     * Error
      */
-    200: ClientIdsResponse;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsClientIdsResponse = GetApiAuditLogsClientIdsResponses[keyof GetApiAuditLogsClientIdsResponses];
+export type AuditLogClientIdsError = AuditLogClientIdsErrors[keyof AuditLogClientIdsErrors];
 
-export type GetApiAuditLogsEntityTypesData = {
+export type AuditLogClientIdsResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogClientIdsResponse;
+};
+
+export type AuditLogClientIdsResponse2 = AuditLogClientIdsResponses[keyof AuditLogClientIdsResponses];
+
+export type AuditLogEntityTypesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/entity-types';
 };
 
-export type GetApiAuditLogsEntityTypesResponses = {
+export type AuditLogEntityTypesErrors = {
     /**
-     * List of distinct entity types
+     * Error
      */
-    200: EntityTypesResponse;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsEntityTypesResponse = GetApiAuditLogsEntityTypesResponses[keyof GetApiAuditLogsEntityTypesResponses];
+export type AuditLogEntityTypesError = AuditLogEntityTypesErrors[keyof AuditLogEntityTypesErrors];
 
-export type GetApiAuditLogsEntityByEntityTypeByEntityIdData = {
+export type AuditLogEntityTypesResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogEntityTypesResponse;
+};
+
+export type AuditLogEntityTypesResponse2 = AuditLogEntityTypesResponses[keyof AuditLogEntityTypesResponses];
+
+export type AuditLogsByEntityData = {
     body?: never;
     path: {
-        /**
-         * Entity type
-         */
         entityType: string;
-        /**
-         * Entity ID
-         */
         entityId: string;
     };
     query?: never;
     url: '/api/audit-logs/entity/{entityType}/{entityId}';
 };
 
-export type GetApiAuditLogsEntityByEntityTypeByEntityIdResponses = {
+export type AuditLogsByEntityErrors = {
     /**
-     * Audit logs for entity
+     * Error
      */
-    200: EntityAuditLogsResponse;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsEntityByEntityTypeByEntityIdResponse = GetApiAuditLogsEntityByEntityTypeByEntityIdResponses[keyof GetApiAuditLogsEntityByEntityTypeByEntityIdResponses];
+export type AuditLogsByEntityError = AuditLogsByEntityErrors[keyof AuditLogsByEntityErrors];
 
-export type GetApiAuditLogsOperationsData = {
+export type AuditLogsByEntityResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogListResponse;
+};
+
+export type AuditLogsByEntityResponse = AuditLogsByEntityResponses[keyof AuditLogsByEntityResponses];
+
+export type AuditLogOperationsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/operations';
 };
 
-export type GetApiAuditLogsOperationsResponses = {
+export type AuditLogOperationsErrors = {
     /**
-     * List of distinct operations
+     * Error
      */
-    200: OperationsResponse;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsOperationsResponse = GetApiAuditLogsOperationsResponses[keyof GetApiAuditLogsOperationsResponses];
+export type AuditLogOperationsError = AuditLogOperationsErrors[keyof AuditLogOperationsErrors];
 
-export type GetApiAuditLogsPrincipalByPrincipalIdData = {
+export type AuditLogOperationsResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogOperationsResponse;
+};
+
+export type AuditLogOperationsResponse2 = AuditLogOperationsResponses[keyof AuditLogOperationsResponses];
+
+export type AuditLogsByPrincipalData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         principalId: string;
     };
     query?: never;
     url: '/api/audit-logs/principal/{principalId}';
 };
 
-export type GetApiAuditLogsPrincipalByPrincipalIdResponses = {
+export type AuditLogsByPrincipalErrors = {
     /**
-     * Audit logs for principal
+     * Error
      */
-    200: Array<AuditLogResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsPrincipalByPrincipalIdResponse = GetApiAuditLogsPrincipalByPrincipalIdResponses[keyof GetApiAuditLogsPrincipalByPrincipalIdResponses];
+export type AuditLogsByPrincipalError = AuditLogsByPrincipalErrors[keyof AuditLogsByPrincipalErrors];
 
-export type GetApiAuditLogsRecentData = {
+export type AuditLogsByPrincipalResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogListResponse;
+};
+
+export type AuditLogsByPrincipalResponse = AuditLogsByPrincipalResponses[keyof AuditLogsByPrincipalResponses];
+
+export type ListAuditLogsRecentData = {
     body?: never;
     path?: never;
-    query?: never;
+    query?: {
+        /**
+         * Opaque cursor from a previous page's nextCursor
+         */
+        after?: string;
+        /**
+         * Page size (default 50, capped at 200)
+         */
+        pageSize?: number;
+        entityType?: string;
+        entityId?: string;
+        principalId?: string;
+        operation?: string;
+        /**
+         * CSV of application ids
+         */
+        applicationIds?: string;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
+    };
     url: '/api/audit-logs/recent';
 };
 
-export type GetApiAuditLogsRecentResponses = {
+export type ListAuditLogsRecentErrors = {
     /**
-     * Recent audit logs
+     * Error
      */
-    200: Array<AuditLogResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsRecentResponse = GetApiAuditLogsRecentResponses[keyof GetApiAuditLogsRecentResponses];
+export type ListAuditLogsRecentError = ListAuditLogsRecentErrors[keyof ListAuditLogsRecentErrors];
 
-export type GetApiAuditLogsByIdData = {
+export type ListAuditLogsRecentResponses = {
+    /**
+     * OK
+     */
+    200: AuditLogListResponse;
+};
+
+export type ListAuditLogsRecentResponse = ListAuditLogsRecentResponses[keyof ListAuditLogsRecentResponses];
+
+export type GetAuditLogData = {
     body?: never;
     path: {
-        /**
-         * Audit log ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/audit-logs/{id}';
 };
 
-export type GetApiAuditLogsByIdErrors = {
+export type GetAuditLogErrors = {
     /**
-     * Audit log not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiAuditLogsByIdResponses = {
+export type GetAuditLogError = GetAuditLogErrors[keyof GetAuditLogErrors];
+
+export type GetAuditLogResponses = {
     /**
-     * Audit log found
+     * OK
      */
-    200: AuditLogDetailResponse;
+    200: AuditLogResponse;
 };
 
-export type GetApiAuditLogsByIdResponse = GetApiAuditLogsByIdResponses[keyof GetApiAuditLogsByIdResponses];
+export type GetAuditLogResponse = GetAuditLogResponses[keyof GetAuditLogResponses];
 
-export type GetApiClientsData = {
+export type ListAuthConfigsData = {
     body?: never;
     path?: never;
-    query?: {
-        /**
-         * Page number
-         */
-        page?: number;
-        /**
-         * Items per page
-         */
-        limit?: number;
-        /**
-         * Filter by status
-         */
-        status?: string;
-    };
-    url: '/api/clients';
+    query?: never;
+    url: '/api/auth-configs';
 };
 
-export type GetApiClientsResponses = {
+export type ListAuthConfigsErrors = {
     /**
-     * List of clients
+     * Error
      */
-    200: ClientListResponse;
+    default: ErrorModel;
 };
 
-export type GetApiClientsResponse = GetApiClientsResponses[keyof GetApiClientsResponses];
+export type ListAuthConfigsError = ListAuthConfigsErrors[keyof ListAuthConfigsErrors];
 
-export type PostApiClientsData = {
-    body: CreateClientRequest;
+export type ListAuthConfigsResponses = {
+    /**
+     * OK
+     */
+    200: AuthConfigListResponse;
+};
+
+export type ListAuthConfigsResponse = ListAuthConfigsResponses[keyof ListAuthConfigsResponses];
+
+export type CreateAuthConfigData = {
+    body: CreateAuthConfigRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/auth-configs';
+};
+
+export type CreateAuthConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateAuthConfigError = CreateAuthConfigErrors[keyof CreateAuthConfigErrors];
+
+export type CreateAuthConfigResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateAuthConfigResponse = CreateAuthConfigResponses[keyof CreateAuthConfigResponses];
+
+export type DeleteAuthConfigData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/auth-configs/{id}';
+};
+
+export type DeleteAuthConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteAuthConfigError = DeleteAuthConfigErrors[keyof DeleteAuthConfigErrors];
+
+export type DeleteAuthConfigResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteAuthConfigResponse = DeleteAuthConfigResponses[keyof DeleteAuthConfigResponses];
+
+export type UpdateAuthConfigData = {
+    body: UpdateAuthConfigRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/auth-configs/{id}';
+};
+
+export type UpdateAuthConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateAuthConfigError = UpdateAuthConfigErrors[keyof UpdateAuthConfigErrors];
+
+export type UpdateAuthConfigResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateAuthConfigResponse = UpdateAuthConfigResponses[keyof UpdateAuthConfigResponses];
+
+export type ListClientsData = {
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/clients';
 };
 
-export type PostApiClientsErrors = {
+export type ListClientsErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate identifier
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsResponses = {
+export type ListClientsError = ListClientsErrors[keyof ListClientsErrors];
+
+export type ListClientsResponses = {
     /**
-     * Client created
+     * OK
+     */
+    200: ClientListResponse;
+};
+
+export type ListClientsResponse = ListClientsResponses[keyof ListClientsResponses];
+
+export type CreateClientData = {
+    body: CreateClientRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/clients';
+};
+
+export type CreateClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateClientError = CreateClientErrors[keyof CreateClientErrors];
+
+export type CreateClientResponses = {
+    /**
+     * Created
      */
     201: CreatedResponse;
 };
 
-export type PostApiClientsResponse = PostApiClientsResponses[keyof PostApiClientsResponses];
+export type CreateClientResponse = CreateClientResponses[keyof CreateClientResponses];
 
-export type GetApiClientsByIdentifierByIdentifierData = {
+export type GetClientByIdentifierData = {
     body?: never;
     path: {
-        /**
-         * Client identifier/slug
-         */
         identifier: string;
     };
     query?: never;
     url: '/api/clients/by-identifier/{identifier}';
 };
 
-export type GetApiClientsByIdentifierByIdentifierErrors = {
+export type GetClientByIdentifierErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiClientsByIdentifierByIdentifierResponses = {
+export type GetClientByIdentifierError = GetClientByIdentifierErrors[keyof GetClientByIdentifierErrors];
+
+export type GetClientByIdentifierResponses = {
     /**
-     * Client found
+     * OK
      */
     200: ClientResponse;
 };
 
-export type GetApiClientsByIdentifierByIdentifierResponse = GetApiClientsByIdentifierByIdentifierResponses[keyof GetApiClientsByIdentifierByIdentifierResponses];
+export type GetClientByIdentifierResponse = GetClientByIdentifierResponses[keyof GetClientByIdentifierResponses];
 
-export type GetApiClientsSearchData = {
+export type SearchClientsByQueryData = {
     body?: never;
     path?: never;
     query?: {
-        /**
-         * Search term
-         */
         q?: string;
     };
     url: '/api/clients/search';
 };
 
-export type GetApiClientsSearchResponses = {
+export type SearchClientsByQueryErrors = {
     /**
-     * Search results
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SearchClientsByQueryError = SearchClientsByQueryErrors[keyof SearchClientsByQueryErrors];
+
+export type SearchClientsByQueryResponses = {
+    /**
+     * OK
      */
     200: ClientListResponse;
 };
 
-export type GetApiClientsSearchResponse = GetApiClientsSearchResponses[keyof GetApiClientsSearchResponses];
+export type SearchClientsByQueryResponse = SearchClientsByQueryResponses[keyof SearchClientsByQueryResponses];
 
-export type DeleteApiClientsByIdData = {
+export type SearchClientsData = {
+    body: SearchClientRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/clients/search';
+};
+
+export type SearchClientsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SearchClientsError = SearchClientsErrors[keyof SearchClientsErrors];
+
+export type SearchClientsResponses = {
+    /**
+     * OK
+     */
+    200: ClientListResponse;
+};
+
+export type SearchClientsResponse = SearchClientsResponses[keyof SearchClientsResponses];
+
+export type DeleteClientData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}';
 };
 
-export type DeleteApiClientsByIdErrors = {
+export type DeleteClientErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiClientsByIdResponses = {
+export type DeleteClientError = DeleteClientErrors[keyof DeleteClientErrors];
+
+export type DeleteClientResponses = {
     /**
-     * Client deleted
+     * No Content
      */
     204: void;
 };
 
-export type DeleteApiClientsByIdResponse = DeleteApiClientsByIdResponses[keyof DeleteApiClientsByIdResponses];
+export type DeleteClientResponse = DeleteClientResponses[keyof DeleteClientResponses];
 
-export type GetApiClientsByIdData = {
+export type GetClientData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}';
 };
 
-export type GetApiClientsByIdErrors = {
+export type GetClientErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiClientsByIdResponses = {
+export type GetClientError = GetClientErrors[keyof GetClientErrors];
+
+export type GetClientResponses = {
     /**
-     * Client found
+     * OK
      */
     200: ClientResponse;
 };
 
-export type GetApiClientsByIdResponse = GetApiClientsByIdResponses[keyof GetApiClientsByIdResponses];
+export type GetClientResponse = GetClientResponses[keyof GetClientResponses];
 
-export type PutApiClientsByIdData = {
-    body: UpdateClientRequest;
+export type UpdateClientData = {
+    body: UpdateClientRequestWritable;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}';
 };
 
-export type PutApiClientsByIdErrors = {
+export type UpdateClientErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiClientsByIdResponses = {
+export type UpdateClientError = UpdateClientErrors[keyof UpdateClientErrors];
+
+export type UpdateClientResponses = {
     /**
-     * Client updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiClientsByIdResponse = PutApiClientsByIdResponses[keyof PutApiClientsByIdResponses];
+export type UpdateClientResponse = UpdateClientResponses[keyof UpdateClientResponses];
 
-export type PostApiClientsByIdActivateData = {
+export type ActivateClientData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/activate';
 };
 
-export type PostApiClientsByIdActivateErrors = {
+export type ActivateClientErrors = {
     /**
-     * Insufficient permissions
+     * Error
      */
-    403: unknown;
-    /**
-     * Client not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdActivateResponses = {
+export type ActivateClientError = ActivateClientErrors[keyof ActivateClientErrors];
+
+export type ActivateClientResponses = {
     /**
-     * Client activated
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiClientsByIdActivateResponse = PostApiClientsByIdActivateResponses[keyof PostApiClientsByIdActivateResponses];
+export type ActivateClientResponse = ActivateClientResponses[keyof ActivateClientResponses];
 
-export type GetApiClientsByIdApplicationsData = {
+export type GetClientApplicationsData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/applications';
 };
 
-export type GetApiClientsByIdApplicationsErrors = {
+export type GetClientApplicationsErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiClientsByIdApplicationsResponses = {
+export type GetClientApplicationsError = GetClientApplicationsErrors[keyof GetClientApplicationsErrors];
+
+export type GetClientApplicationsResponses = {
     /**
-     * Client applications
+     * OK
      */
     200: ClientApplicationsResponse;
 };
 
-export type GetApiClientsByIdApplicationsResponse = GetApiClientsByIdApplicationsResponses[keyof GetApiClientsByIdApplicationsResponses];
+export type GetClientApplicationsResponse = GetClientApplicationsResponses[keyof GetClientApplicationsResponses];
 
-export type PutApiClientsByIdApplicationsData = {
-    body: UpdateClientApplicationsRequest;
+export type UpdateClientApplicationsData = {
+    body: UpdateClientApplicationsRequestWritable;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/applications';
 };
 
-export type PutApiClientsByIdApplicationsErrors = {
+export type UpdateClientApplicationsErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiClientsByIdApplicationsResponses = {
+export type UpdateClientApplicationsError = UpdateClientApplicationsErrors[keyof UpdateClientApplicationsErrors];
+
+export type UpdateClientApplicationsResponses = {
     /**
-     * Applications updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiClientsByIdApplicationsResponse = PutApiClientsByIdApplicationsResponses[keyof PutApiClientsByIdApplicationsResponses];
+export type UpdateClientApplicationsResponse = UpdateClientApplicationsResponses[keyof UpdateClientApplicationsResponses];
 
-export type PostApiClientsByIdApplicationsByAppIdDisableData = {
+export type DisableClientApplicationData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
-        /**
-         * Application ID
-         */
         applicationId: string;
     };
     query?: never;
     url: '/api/clients/{id}/applications/{applicationId}/disable';
 };
 
-export type PostApiClientsByIdApplicationsByAppIdDisableErrors = {
+export type DisableClientApplicationErrors = {
     /**
-     * Client or application not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdApplicationsByAppIdDisableResponses = {
+export type DisableClientApplicationError = DisableClientApplicationErrors[keyof DisableClientApplicationErrors];
+
+export type DisableClientApplicationResponses = {
     /**
-     * Application disabled
+     * No Content
      */
     204: void;
 };
 
-export type PostApiClientsByIdApplicationsByAppIdDisableResponse = PostApiClientsByIdApplicationsByAppIdDisableResponses[keyof PostApiClientsByIdApplicationsByAppIdDisableResponses];
+export type DisableClientApplicationResponse = DisableClientApplicationResponses[keyof DisableClientApplicationResponses];
 
-export type PostApiClientsByIdApplicationsByAppIdEnableData = {
+export type EnableClientApplicationData = {
     body?: never;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
-        /**
-         * Application ID
-         */
         applicationId: string;
     };
     query?: never;
     url: '/api/clients/{id}/applications/{applicationId}/enable';
 };
 
-export type PostApiClientsByIdApplicationsByAppIdEnableErrors = {
+export type EnableClientApplicationErrors = {
     /**
-     * Client or application not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdApplicationsByAppIdEnableResponses = {
+export type EnableClientApplicationError = EnableClientApplicationErrors[keyof EnableClientApplicationErrors];
+
+export type EnableClientApplicationResponses = {
     /**
-     * Application enabled
+     * No Content
      */
     204: void;
 };
 
-export type PostApiClientsByIdApplicationsByAppIdEnableResponse = PostApiClientsByIdApplicationsByAppIdEnableResponses[keyof PostApiClientsByIdApplicationsByAppIdEnableResponses];
+export type EnableClientApplicationResponse = EnableClientApplicationResponses[keyof EnableClientApplicationResponses];
 
-export type PostApiClientsByIdDeactivateData = {
-    body: StatusChangeRequest;
+export type DeactivateClientData = {
+    body: StatusChangeRequestWritable;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/deactivate';
 };
 
-export type PostApiClientsByIdDeactivateErrors = {
+export type DeactivateClientErrors = {
     /**
-     * Insufficient permissions
+     * Error
      */
-    403: unknown;
-    /**
-     * Client not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdDeactivateResponses = {
+export type DeactivateClientError = DeactivateClientErrors[keyof DeactivateClientErrors];
+
+export type DeactivateClientResponses = {
     /**
-     * Client deactivated
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiClientsByIdDeactivateResponse = PostApiClientsByIdDeactivateResponses[keyof PostApiClientsByIdDeactivateResponses];
+export type DeactivateClientResponse = DeactivateClientResponses[keyof DeactivateClientResponses];
 
-export type PostApiClientsByIdNotesData = {
-    body: AddNoteRequest;
+export type AddClientNoteData = {
+    body: AddNoteRequestWritable;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/notes';
 };
 
-export type PostApiClientsByIdNotesErrors = {
+export type AddClientNoteErrors = {
     /**
-     * Client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdNotesResponses = {
+export type AddClientNoteError = AddClientNoteErrors[keyof AddClientNoteErrors];
+
+export type AddClientNoteResponses = {
     /**
-     * Note added
+     * OK
      */
-    200: AddNoteResponse;
+    200: StatusChangeResponse;
 };
 
-export type PostApiClientsByIdNotesResponse = PostApiClientsByIdNotesResponses[keyof PostApiClientsByIdNotesResponses];
+export type AddClientNoteResponse = AddClientNoteResponses[keyof AddClientNoteResponses];
 
-export type PostApiClientsByIdSuspendData = {
-    body: StatusChangeRequest;
+export type SuspendClientData = {
+    body: SuspendClientRequestWritable;
     path: {
-        /**
-         * Client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/clients/{id}/suspend';
 };
 
-export type PostApiClientsByIdSuspendErrors = {
+export type SuspendClientErrors = {
     /**
-     * Insufficient permissions
+     * Error
      */
-    403: unknown;
-    /**
-     * Client not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiClientsByIdSuspendResponses = {
+export type SuspendClientError = SuspendClientErrors[keyof SuspendClientErrors];
+
+export type SuspendClientResponses = {
     /**
-     * Client suspended
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiClientsByIdSuspendResponse = PostApiClientsByIdSuspendResponses[keyof PostApiClientsByIdSuspendResponses];
+export type SuspendClientResponse = SuspendClientResponses[keyof SuspendClientResponses];
 
-export type GetApiDispatchJobsData = {
+export type DeletePlatformConfigPropertyData = {
+    body?: never;
+    path: {
+        app: string;
+        section: string;
+        property: string;
+    };
+    query?: {
+        clientId?: string;
+    };
+    url: '/api/config/{app}/{section}/{property}';
+};
+
+export type DeletePlatformConfigPropertyErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeletePlatformConfigPropertyError = DeletePlatformConfigPropertyErrors[keyof DeletePlatformConfigPropertyErrors];
+
+export type DeletePlatformConfigPropertyResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeletePlatformConfigPropertyResponse = DeletePlatformConfigPropertyResponses[keyof DeletePlatformConfigPropertyResponses];
+
+export type GetPlatformConfigPropertyData = {
+    body?: never;
+    path: {
+        app: string;
+        section: string;
+        property: string;
+    };
+    query?: {
+        clientId?: string;
+    };
+    url: '/api/config/{app}/{section}/{property}';
+};
+
+export type GetPlatformConfigPropertyErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetPlatformConfigPropertyError = GetPlatformConfigPropertyErrors[keyof GetPlatformConfigPropertyErrors];
+
+export type GetPlatformConfigPropertyResponses = {
+    /**
+     * OK
+     */
+    200: ConfigResponse;
+};
+
+export type GetPlatformConfigPropertyResponse = GetPlatformConfigPropertyResponses[keyof GetPlatformConfigPropertyResponses];
+
+export type SetPlatformConfigPropertyData = {
+    body: SetPropertyRequestWritable;
+    path: {
+        app: string;
+        section: string;
+        property: string;
+    };
+    query?: {
+        clientId?: string;
+    };
+    url: '/api/config/{app}/{section}/{property}';
+};
+
+export type SetPlatformConfigPropertyErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SetPlatformConfigPropertyError = SetPlatformConfigPropertyErrors[keyof SetPlatformConfigPropertyErrors];
+
+export type SetPlatformConfigPropertyResponses = {
+    /**
+     * OK
+     */
+    200: ConfigResponse;
+};
+
+export type SetPlatformConfigPropertyResponse = SetPlatformConfigPropertyResponses[keyof SetPlatformConfigPropertyResponses];
+
+export type ListConnectionsData = {
     body?: never;
     path?: never;
     query?: {
+        status?: string;
+        clientId?: string;
+    };
+    url: '/api/connections';
+};
+
+export type ListConnectionsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListConnectionsError = ListConnectionsErrors[keyof ListConnectionsErrors];
+
+export type ListConnectionsResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionListResponse;
+};
+
+export type ListConnectionsResponse = ListConnectionsResponses[keyof ListConnectionsResponses];
+
+export type CreateConnectionData = {
+    body: CreateConnectionRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/connections';
+};
+
+export type CreateConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateConnectionError = CreateConnectionErrors[keyof CreateConnectionErrors];
+
+export type CreateConnectionResponses = {
+    /**
+     * Created
+     */
+    201: ConnectionResponse;
+};
+
+export type CreateConnectionResponse = CreateConnectionResponses[keyof CreateConnectionResponses];
+
+export type DeleteConnectionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connections/{id}';
+};
+
+export type DeleteConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteConnectionError = DeleteConnectionErrors[keyof DeleteConnectionErrors];
+
+export type DeleteConnectionResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteConnectionResponse = DeleteConnectionResponses[keyof DeleteConnectionResponses];
+
+export type GetConnectionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connections/{id}';
+};
+
+export type GetConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetConnectionError = GetConnectionErrors[keyof GetConnectionErrors];
+
+export type GetConnectionResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionResponse;
+};
+
+export type GetConnectionResponse = GetConnectionResponses[keyof GetConnectionResponses];
+
+export type UpdateConnectionData = {
+    body: UpdateConnectionRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connections/{id}';
+};
+
+export type UpdateConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateConnectionError = UpdateConnectionErrors[keyof UpdateConnectionErrors];
+
+export type UpdateConnectionResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateConnectionResponse = UpdateConnectionResponses[keyof UpdateConnectionResponses];
+
+export type ActivateConnectionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connections/{id}/activate';
+};
+
+export type ActivateConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ActivateConnectionError = ActivateConnectionErrors[keyof ActivateConnectionErrors];
+
+export type ActivateConnectionResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionResponse;
+};
+
+export type ActivateConnectionResponse = ActivateConnectionResponses[keyof ActivateConnectionResponses];
+
+export type PauseConnectionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/connections/{id}/pause';
+};
+
+export type PauseConnectionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PauseConnectionError = PauseConnectionErrors[keyof PauseConnectionErrors];
+
+export type PauseConnectionResponses = {
+    /**
+     * OK
+     */
+    200: ConnectionResponse;
+};
+
+export type PauseConnectionResponse = PauseConnectionResponses[keyof PauseConnectionResponses];
+
+export type ListDispatchJobsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        status?: string;
+        clientId?: string;
+        dispatchPoolId?: string;
+        subscriptionId?: string;
+        code?: string;
         /**
-         * Result size. Default 50, capped at 1000.
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
          */
         size?: number;
         /**
-         * Filter by event ID
-         */
-        eventId?: string;
-        /**
-         * Filter by correlation ID
-         */
-        correlationId?: string;
-        /**
-         * Filter by subscription ID
-         */
-        subscriptionId?: string;
-        /**
-         * Filter by client IDs (comma-separated)
+         * CSV of client ids
          */
         clientIds?: string;
         /**
-         * Filter by statuses (comma-separated)
+         * CSV of statuses
          */
         statuses?: string;
         /**
-         * Filter by application codes (comma-separated)
+         * CSV of application codes
          */
         applications?: string;
         /**
-         * Filter by subdomains (comma-separated)
+         * CSV of subdomains
          */
         subdomains?: string;
         /**
-         * Filter by aggregates (comma-separated)
+         * CSV of aggregates
          */
         aggregates?: string;
         /**
-         * Filter by codes (comma-separated)
+         * CSV of codes
          */
         codes?: string;
         /**
-         * Free-text search across code, subject, source
+         * Free-text source filter
          */
         source?: string;
+        /**
+         * createdAt.asc | createdAt.desc (default)
+         */
+        sort?: string;
     };
     url: '/api/dispatch-jobs';
 };
 
-export type GetApiDispatchJobsResponses = {
+export type ListDispatchJobsErrors = {
     /**
-     * List of dispatch jobs
+     * Error
      */
-    200: Array<DispatchJobReadResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsResponse = GetApiDispatchJobsResponses[keyof GetApiDispatchJobsResponses];
+export type ListDispatchJobsError = ListDispatchJobsErrors[keyof ListDispatchJobsErrors];
 
-export type PostApiDispatchJobsData = {
-    body: CreateDispatchJobRequest;
-    path?: never;
-    query?: never;
-    url: '/api/dispatch-jobs';
+export type ListDispatchJobsResponses = {
+    /**
+     * OK
+     */
+    200: Array<DispatchJobRead>;
 };
 
-export type PostApiDispatchJobsErrors = {
-    /**
-     * Invalid request
-     */
-    400: unknown;
-    /**
-     * No access to client
-     */
-    403: unknown;
-};
+export type ListDispatchJobsResponse = ListDispatchJobsResponses[keyof ListDispatchJobsResponses];
 
-export type PostApiDispatchJobsResponses = {
-    /**
-     * Dispatch job created
-     */
-    201: CreatedResponse;
-};
-
-export type PostApiDispatchJobsResponse = PostApiDispatchJobsResponses[keyof PostApiDispatchJobsResponses];
-
-export type GetApiDispatchJobsByEventByEventIdData = {
+export type DispatchJobsByEventAliasData = {
     body?: never;
     path: {
-        /**
-         * Event ID
-         */
         eventId: string;
     };
     query?: never;
     url: '/api/dispatch-jobs/by-event/{eventId}';
 };
 
-export type GetApiDispatchJobsByEventByEventIdResponses = {
+export type DispatchJobsByEventAliasErrors = {
     /**
-     * Dispatch jobs for event
+     * Error
      */
-    200: Array<DispatchJobResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsByEventByEventIdResponse = GetApiDispatchJobsByEventByEventIdResponses[keyof GetApiDispatchJobsByEventByEventIdResponses];
+export type DispatchJobsByEventAliasError = DispatchJobsByEventAliasErrors[keyof DispatchJobsByEventAliasErrors];
 
-export type GetApiDispatchJobsFilterOptionsData = {
+export type DispatchJobsByEventAliasResponses = {
+    /**
+     * OK
+     */
+    200: Array<DispatchJobRead>;
+};
+
+export type DispatchJobsByEventAliasResponse = DispatchJobsByEventAliasResponses[keyof DispatchJobsByEventAliasResponses];
+
+export type DispatchJobsByEventData = {
+    body?: never;
+    path: {
+        eventId: string;
+    };
+    query?: never;
+    url: '/api/dispatch-jobs/event/{eventId}';
+};
+
+export type DispatchJobsByEventErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DispatchJobsByEventError = DispatchJobsByEventErrors[keyof DispatchJobsByEventErrors];
+
+export type DispatchJobsByEventResponses = {
+    /**
+     * OK
+     */
+    200: Array<DispatchJobRead>;
+};
+
+export type DispatchJobsByEventResponse = DispatchJobsByEventResponses[keyof DispatchJobsByEventResponses];
+
+export type DispatchJobFilterOptionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/dispatch-jobs/filter-options';
 };
 
-export type GetApiDispatchJobsFilterOptionsResponses = {
+export type DispatchJobFilterOptionsErrors = {
     /**
-     * Filter options
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DispatchJobFilterOptionsError = DispatchJobFilterOptionsErrors[keyof DispatchJobFilterOptionsErrors];
+
+export type DispatchJobFilterOptionsResponses = {
+    /**
+     * OK
      */
     200: DispatchJobFilterOptionsResponse;
 };
 
-export type GetApiDispatchJobsFilterOptionsResponse = GetApiDispatchJobsFilterOptionsResponses[keyof GetApiDispatchJobsFilterOptionsResponses];
+export type DispatchJobFilterOptionsResponse2 = DispatchJobFilterOptionsResponses[keyof DispatchJobFilterOptionsResponses];
 
-export type GetApiDispatchJobsRawData = {
+export type ListDispatchJobsRawData = {
     body?: never;
     path?: never;
     query?: {
+        status?: string;
+        clientId?: string;
+        dispatchPoolId?: string;
+        subscriptionId?: string;
+        code?: string;
         /**
-         * Result size. Default 50, capped at 1000.
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
          */
         size?: number;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
+        /**
+         * CSV of statuses
+         */
+        statuses?: string;
+        /**
+         * CSV of application codes
+         */
+        applications?: string;
+        /**
+         * CSV of subdomains
+         */
+        subdomains?: string;
+        /**
+         * CSV of aggregates
+         */
+        aggregates?: string;
+        /**
+         * CSV of codes
+         */
+        codes?: string;
+        /**
+         * Free-text source filter
+         */
+        source?: string;
+        /**
+         * createdAt.asc | createdAt.desc (default)
+         */
+        sort?: string;
+    };
+    url: '/api/dispatch-jobs/list-raw';
+};
+
+export type ListDispatchJobsRawErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListDispatchJobsRawError = ListDispatchJobsRawErrors[keyof ListDispatchJobsRawErrors];
+
+export type ListDispatchJobsRawResponses = {
+    /**
+     * OK
+     */
+    200: Array<DispatchJobRead>;
+};
+
+export type ListDispatchJobsRawResponse = ListDispatchJobsRawResponses[keyof ListDispatchJobsRawResponses];
+
+export type ListDispatchJobsRawAliasData = {
+    body?: never;
+    path?: never;
+    query?: {
+        status?: string;
+        clientId?: string;
+        dispatchPoolId?: string;
+        subscriptionId?: string;
+        code?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
+         */
+        size?: number;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
+        /**
+         * CSV of statuses
+         */
+        statuses?: string;
+        /**
+         * CSV of application codes
+         */
+        applications?: string;
+        /**
+         * CSV of subdomains
+         */
+        subdomains?: string;
+        /**
+         * CSV of aggregates
+         */
+        aggregates?: string;
+        /**
+         * CSV of codes
+         */
+        codes?: string;
+        /**
+         * Free-text source filter
+         */
+        source?: string;
+        /**
+         * createdAt.asc | createdAt.desc (default)
+         */
+        sort?: string;
     };
     url: '/api/dispatch-jobs/raw';
 };
 
-export type GetApiDispatchJobsRawResponses = {
+export type ListDispatchJobsRawAliasErrors = {
     /**
-     * Raw dispatch jobs
+     * Error
      */
-    200: Array<DispatchJobResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsRawResponse = GetApiDispatchJobsRawResponses[keyof GetApiDispatchJobsRawResponses];
+export type ListDispatchJobsRawAliasError = ListDispatchJobsRawAliasErrors[keyof ListDispatchJobsRawAliasErrors];
 
-export type GetApiDispatchJobsByIdData = {
+export type ListDispatchJobsRawAliasResponses = {
+    /**
+     * OK
+     */
+    200: Array<DispatchJobRead>;
+};
+
+export type ListDispatchJobsRawAliasResponse = ListDispatchJobsRawAliasResponses[keyof ListDispatchJobsRawAliasResponses];
+
+export type RequeueDispatchJobsData = {
+    body: RequeueRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-jobs/requeue';
+};
+
+export type RequeueDispatchJobsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RequeueDispatchJobsError = RequeueDispatchJobsErrors[keyof RequeueDispatchJobsErrors];
+
+export type RequeueDispatchJobsResponses = {
+    /**
+     * OK
+     */
+    200: RequeueResponse;
+};
+
+export type RequeueDispatchJobsResponse = RequeueDispatchJobsResponses[keyof RequeueDispatchJobsResponses];
+
+export type GetDispatchJobData = {
     body?: never;
     path: {
-        /**
-         * Dispatch job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/dispatch-jobs/{id}';
 };
 
-export type GetApiDispatchJobsByIdErrors = {
+export type GetDispatchJobErrors = {
     /**
-     * Dispatch job not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsByIdResponses = {
+export type GetDispatchJobError = GetDispatchJobErrors[keyof GetDispatchJobErrors];
+
+export type GetDispatchJobResponses = {
     /**
-     * Dispatch job found
+     * OK
      */
     200: DispatchJobResponse;
 };
 
-export type GetApiDispatchJobsByIdResponse = GetApiDispatchJobsByIdResponses[keyof GetApiDispatchJobsByIdResponses];
+export type GetDispatchJobResponse = GetDispatchJobResponses[keyof GetDispatchJobResponses];
 
-export type GetApiDispatchJobsByIdAttemptsData = {
+export type ListDispatchJobAttemptsData = {
     body?: never;
     path: {
-        /**
-         * Dispatch job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/dispatch-jobs/{id}/attempts';
 };
 
-export type GetApiDispatchJobsByIdAttemptsErrors = {
+export type ListDispatchJobAttemptsErrors = {
     /**
-     * Dispatch job not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsByIdAttemptsResponses = {
+export type ListDispatchJobAttemptsError = ListDispatchJobAttemptsErrors[keyof ListDispatchJobAttemptsErrors];
+
+export type ListDispatchJobAttemptsResponses = {
     /**
-     * Attempts list returned
+     * OK
      */
-    200: Array<DispatchAttemptResponse>;
+    200: Array<AttemptDto>;
 };
 
-export type GetApiDispatchJobsByIdAttemptsResponse = GetApiDispatchJobsByIdAttemptsResponses[keyof GetApiDispatchJobsByIdAttemptsResponses];
+export type ListDispatchJobAttemptsResponse = ListDispatchJobAttemptsResponses[keyof ListDispatchJobAttemptsResponses];
 
-export type GetApiDispatchJobsByIdRawData = {
+export type CancelDispatchJobData = {
     body?: never;
     path: {
-        /**
-         * Dispatch job ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-jobs/{id}/cancel';
+};
+
+export type CancelDispatchJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CancelDispatchJobError = CancelDispatchJobErrors[keyof CancelDispatchJobErrors];
+
+export type CancelDispatchJobResponses = {
+    /**
+     * OK
+     */
+    200: DispatchJobResponse;
+};
+
+export type CancelDispatchJobResponse = CancelDispatchJobResponses[keyof CancelDispatchJobResponses];
+
+export type CompleteDispatchJobData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-jobs/{id}/complete';
+};
+
+export type CompleteDispatchJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CompleteDispatchJobError = CompleteDispatchJobErrors[keyof CompleteDispatchJobErrors];
+
+export type CompleteDispatchJobResponses = {
+    /**
+     * OK
+     */
+    200: DispatchJobResponse;
+};
+
+export type CompleteDispatchJobResponse = CompleteDispatchJobResponses[keyof CompleteDispatchJobResponses];
+
+export type GetDispatchJobRawData = {
+    body?: never;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/dispatch-jobs/{id}/raw';
 };
 
-export type GetApiDispatchJobsByIdRawErrors = {
+export type GetDispatchJobRawErrors = {
     /**
-     * Dispatch job not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiDispatchJobsByIdRawResponses = {
+export type GetDispatchJobRawError = GetDispatchJobRawErrors[keyof GetDispatchJobRawErrors];
+
+export type GetDispatchJobRawResponses = {
     /**
-     * Raw dispatch job data
+     * OK
+     */
+    200: DispatchJobResponse;
+};
+
+export type GetDispatchJobRawResponse = GetDispatchJobRawResponses[keyof GetDispatchJobRawResponses];
+
+export type ListDispatchPoolsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Filter by status (ACTIVE, SUSPENDED, ARCHIVED)
+         */
+        status?: string;
+        /**
+         * Filter by client id
+         */
+        clientId?: string;
+    };
+    url: '/api/dispatch-pools';
+};
+
+export type ListDispatchPoolsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListDispatchPoolsError = ListDispatchPoolsErrors[keyof ListDispatchPoolsErrors];
+
+export type ListDispatchPoolsResponses = {
+    /**
+     * OK
+     */
+    200: DispatchPoolListResponse;
+};
+
+export type ListDispatchPoolsResponse = ListDispatchPoolsResponses[keyof ListDispatchPoolsResponses];
+
+export type CreateDispatchPoolData = {
+    body: CreateDispatchPoolRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch-pools';
+};
+
+export type CreateDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateDispatchPoolError = CreateDispatchPoolErrors[keyof CreateDispatchPoolErrors];
+
+export type CreateDispatchPoolResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateDispatchPoolResponse = CreateDispatchPoolResponses[keyof CreateDispatchPoolResponses];
+
+export type DeleteDispatchPoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}';
+};
+
+export type DeleteDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteDispatchPoolError = DeleteDispatchPoolErrors[keyof DeleteDispatchPoolErrors];
+
+export type DeleteDispatchPoolResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteDispatchPoolResponse = DeleteDispatchPoolResponses[keyof DeleteDispatchPoolResponses];
+
+export type GetDispatchPoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}';
+};
+
+export type GetDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetDispatchPoolError = GetDispatchPoolErrors[keyof GetDispatchPoolErrors];
+
+export type GetDispatchPoolResponses = {
+    /**
+     * OK
+     */
+    200: DispatchPoolResponse;
+};
+
+export type GetDispatchPoolResponse = GetDispatchPoolResponses[keyof GetDispatchPoolResponses];
+
+export type UpdateDispatchPoolData = {
+    body: UpdateDispatchPoolRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}';
+};
+
+export type UpdateDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateDispatchPoolError = UpdateDispatchPoolErrors[keyof UpdateDispatchPoolErrors];
+
+export type UpdateDispatchPoolResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateDispatchPoolResponse = UpdateDispatchPoolResponses[keyof UpdateDispatchPoolResponses];
+
+export type ActivateDispatchPoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}/activate';
+};
+
+export type ActivateDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ActivateDispatchPoolError = ActivateDispatchPoolErrors[keyof ActivateDispatchPoolErrors];
+
+export type ActivateDispatchPoolResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type ActivateDispatchPoolResponse = ActivateDispatchPoolResponses[keyof ActivateDispatchPoolResponses];
+
+export type ArchiveDispatchPoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}/archive';
+};
+
+export type ArchiveDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ArchiveDispatchPoolError = ArchiveDispatchPoolErrors[keyof ArchiveDispatchPoolErrors];
+
+export type ArchiveDispatchPoolResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type ArchiveDispatchPoolResponse = ArchiveDispatchPoolResponses[keyof ArchiveDispatchPoolResponses];
+
+export type SuspendDispatchPoolData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/dispatch-pools/{id}/suspend';
+};
+
+export type SuspendDispatchPoolErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SuspendDispatchPoolError = SuspendDispatchPoolErrors[keyof SuspendDispatchPoolErrors];
+
+export type SuspendDispatchPoolResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type SuspendDispatchPoolResponse = SuspendDispatchPoolResponses[keyof SuspendDispatchPoolResponses];
+
+export type GetRouterConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/dispatch/router-config';
+};
+
+export type GetRouterConfigErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetRouterConfigError = GetRouterConfigErrors[keyof GetRouterConfigErrors];
+
+export type GetRouterConfigResponses = {
+    /**
+     * OK
+     */
+    200: RouterConfig;
+};
+
+export type GetRouterConfigResponse = GetRouterConfigResponses[keyof GetRouterConfigResponses];
+
+export type ListDocsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/docs';
+};
+
+export type ListDocsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListDocsError = ListDocsErrors[keyof ListDocsErrors];
+
+export type ListDocsResponses = {
+    /**
+     * OK
+     */
+    200: DocListResponse;
+};
+
+export type ListDocsResponse = ListDocsResponses[keyof ListDocsResponses];
+
+export type GetApplicationDocData = {
+    body?: never;
+    path: {
+        appCode: string;
+        slug: string;
+    };
+    query?: never;
+    url: '/api/docs/applications/{appCode}/{slug}';
+};
+
+export type GetApplicationDocErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetApplicationDocError = GetApplicationDocErrors[keyof GetApplicationDocErrors];
+
+export type GetApplicationDocResponses = {
+    /**
+     * OK
+     */
+    200: DocResponse;
+};
+
+export type GetApplicationDocResponse = GetApplicationDocResponses[keyof GetApplicationDocResponses];
+
+export type GetPlatformDocData = {
+    body?: never;
+    path: {
+        slug: string;
+    };
+    query?: never;
+    url: '/api/docs/platform/{slug}';
+};
+
+export type GetPlatformDocErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetPlatformDocError = GetPlatformDocErrors[keyof GetPlatformDocErrors];
+
+export type GetPlatformDocResponses = {
+    /**
+     * OK
+     */
+    200: DocResponse;
+};
+
+export type GetPlatformDocResponse = GetPlatformDocResponses[keyof GetPlatformDocResponses];
+
+export type ListEmailDomainMappingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/email-domain-mappings';
+};
+
+export type ListEmailDomainMappingsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListEmailDomainMappingsError = ListEmailDomainMappingsErrors[keyof ListEmailDomainMappingsErrors];
+
+export type ListEmailDomainMappingsResponses = {
+    /**
+     * OK
+     */
+    200: MappingListResponse;
+};
+
+export type ListEmailDomainMappingsResponse = ListEmailDomainMappingsResponses[keyof ListEmailDomainMappingsResponses];
+
+export type CreateEmailDomainMappingData = {
+    body: CreateMappingRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/email-domain-mappings';
+};
+
+export type CreateEmailDomainMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateEmailDomainMappingError = CreateEmailDomainMappingErrors[keyof CreateEmailDomainMappingErrors];
+
+export type CreateEmailDomainMappingResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateEmailDomainMappingResponse = CreateEmailDomainMappingResponses[keyof CreateEmailDomainMappingResponses];
+
+export type GetEmailDomainMappingByDomainData = {
+    body?: never;
+    path: {
+        /**
+         * Email domain to look up (e.g. example.com)
+         */
+        domain: string;
+    };
+    query?: never;
+    url: '/api/email-domain-mappings/by-domain/{domain}';
+};
+
+export type GetEmailDomainMappingByDomainErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetEmailDomainMappingByDomainError = GetEmailDomainMappingByDomainErrors[keyof GetEmailDomainMappingByDomainErrors];
+
+export type GetEmailDomainMappingByDomainResponses = {
+    /**
+     * OK
+     */
+    200: MappingResponse;
+};
+
+export type GetEmailDomainMappingByDomainResponse = GetEmailDomainMappingByDomainResponses[keyof GetEmailDomainMappingByDomainResponses];
+
+export type LookupEmailDomainMappingData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Email domain to look up (e.g. example.com)
+         */
+        domain?: string;
+    };
+    url: '/api/email-domain-mappings/lookup';
+};
+
+export type LookupEmailDomainMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type LookupEmailDomainMappingError = LookupEmailDomainMappingErrors[keyof LookupEmailDomainMappingErrors];
+
+export type LookupEmailDomainMappingResponses = {
+    /**
+     * OK
      */
     200: unknown;
 };
 
-export type GetApiEventTypesData = {
+export type DeleteEmailDomainMappingData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/email-domain-mappings/{id}';
+};
+
+export type DeleteEmailDomainMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteEmailDomainMappingError = DeleteEmailDomainMappingErrors[keyof DeleteEmailDomainMappingErrors];
+
+export type DeleteEmailDomainMappingResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteEmailDomainMappingResponse = DeleteEmailDomainMappingResponses[keyof DeleteEmailDomainMappingResponses];
+
+export type GetEmailDomainMappingData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/email-domain-mappings/{id}';
+};
+
+export type GetEmailDomainMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetEmailDomainMappingError = GetEmailDomainMappingErrors[keyof GetEmailDomainMappingErrors];
+
+export type GetEmailDomainMappingResponses = {
+    /**
+     * OK
+     */
+    200: MappingResponse;
+};
+
+export type GetEmailDomainMappingResponse = GetEmailDomainMappingResponses[keyof GetEmailDomainMappingResponses];
+
+export type UpdateEmailDomainMappingData = {
+    body: UpdateMappingRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/email-domain-mappings/{id}';
+};
+
+export type UpdateEmailDomainMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateEmailDomainMappingError = UpdateEmailDomainMappingErrors[keyof UpdateEmailDomainMappingErrors];
+
+export type UpdateEmailDomainMappingResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateEmailDomainMappingResponse = UpdateEmailDomainMappingResponses[keyof UpdateEmailDomainMappingResponses];
+
+export type MoveEmailDomainMappingProviderData = {
+    body: MoveProviderRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/email-domain-mappings/{id}/move-provider';
+};
+
+export type MoveEmailDomainMappingProviderErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type MoveEmailDomainMappingProviderError = MoveEmailDomainMappingProviderErrors[keyof MoveEmailDomainMappingProviderErrors];
+
+export type MoveEmailDomainMappingProviderResponses = {
+    /**
+     * OK
+     */
+    200: MoveProviderResponse;
+};
+
+export type MoveEmailDomainMappingProviderResponse = MoveEmailDomainMappingProviderResponses[keyof MoveEmailDomainMappingProviderResponses];
+
+export type ListEventTypesData = {
     body?: never;
     path?: never;
-    query: {
-        pagination: PaginationParams;
+    query?: {
         /**
-         * Filter by application
+         * Filter by application code
          */
         application?: string;
         /**
-         * Filter by client ID
+         * Filter by client id
          */
         clientId?: string;
         /**
-         * Filter by status
+         * Filter by status (CURRENT, ARCHIVED)
          */
         status?: string;
         /**
@@ -3661,47 +7864,54 @@ export type GetApiEventTypesData = {
     url: '/api/event-types';
 };
 
-export type GetApiEventTypesResponses = {
+export type ListEventTypesErrors = {
     /**
-     * List of event types
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListEventTypesError = ListEventTypesErrors[keyof ListEventTypesErrors];
+
+export type ListEventTypesResponses = {
+    /**
+     * OK
      */
     200: EventTypeListResponse;
 };
 
-export type GetApiEventTypesResponse = GetApiEventTypesResponses[keyof GetApiEventTypesResponses];
+export type ListEventTypesResponse = ListEventTypesResponses[keyof ListEventTypesResponses];
 
-export type PostApiEventTypesData = {
-    body: CreateEventTypeRequest;
+export type CreateEventTypeData = {
+    body: CreateEventTypeRequestWritable;
     path?: never;
     query?: never;
     url: '/api/event-types';
 };
 
-export type PostApiEventTypesErrors = {
+export type CreateEventTypeErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate code
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiEventTypesResponses = {
+export type CreateEventTypeError = CreateEventTypeErrors[keyof CreateEventTypeErrors];
+
+export type CreateEventTypeResponses = {
     /**
-     * Event type created
+     * Created
      */
     201: CreatedResponse;
 };
 
-export type PostApiEventTypesResponse = PostApiEventTypesResponses[keyof PostApiEventTypesResponses];
+export type CreateEventTypeResponse = CreateEventTypeResponses[keyof CreateEventTypeResponses];
 
-export type GetApiEventTypesByCodeByCodeData = {
+export type GetEventTypeByCodeData = {
     body?: never;
     path: {
         /**
-         * Event type code
+         * Event type code (e.g. platform:iam:user:created)
          */
         code: string;
     };
@@ -3709,83 +7919,56 @@ export type GetApiEventTypesByCodeByCodeData = {
     url: '/api/event-types/by-code/{code}';
 };
 
-export type GetApiEventTypesByCodeByCodeErrors = {
+export type GetEventTypeByCodeErrors = {
     /**
-     * Event type not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiEventTypesByCodeByCodeResponses = {
+export type GetEventTypeByCodeError = GetEventTypeByCodeErrors[keyof GetEventTypeByCodeErrors];
+
+export type GetEventTypeByCodeResponses = {
     /**
-     * Event type found
-     */
-    200: EventTypeResponse;
-};
-
-export type GetApiEventTypesByCodeByCodeResponse = GetApiEventTypesByCodeByCodeResponses[keyof GetApiEventTypesByCodeByCodeResponses];
-
-export type DeleteApiEventTypesByIdData = {
-    body?: never;
-    path: {
-        /**
-         * Event type ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/event-types/{id}';
-};
-
-export type DeleteApiEventTypesByIdErrors = {
-    /**
-     * Event type not found
-     */
-    404: unknown;
-};
-
-export type DeleteApiEventTypesByIdResponses = {
-    /**
-     * Event type archived
-     */
-    204: void;
-};
-
-export type DeleteApiEventTypesByIdResponse = DeleteApiEventTypesByIdResponses[keyof DeleteApiEventTypesByIdResponses];
-
-export type GetApiEventTypesByIdData = {
-    body?: never;
-    path: {
-        /**
-         * Event type ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/event-types/{id}';
-};
-
-export type GetApiEventTypesByIdErrors = {
-    /**
-     * Event type not found
-     */
-    404: unknown;
-};
-
-export type GetApiEventTypesByIdResponses = {
-    /**
-     * Event type found
+     * OK
      */
     200: EventTypeResponse;
 };
 
-export type GetApiEventTypesByIdResponse = GetApiEventTypesByIdResponses[keyof GetApiEventTypesByIdResponses];
+export type GetEventTypeByCodeResponse = GetEventTypeByCodeResponses[keyof GetEventTypeByCodeResponses];
 
-export type PutApiEventTypesByIdData = {
-    body: UpdateEventTypeRequest;
+export type DeleteEventTypeData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/event-types/{id}';
+};
+
+export type DeleteEventTypeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteEventTypeError = DeleteEventTypeErrors[keyof DeleteEventTypeErrors];
+
+export type DeleteEventTypeResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteEventTypeResponse = DeleteEventTypeResponses[keyof DeleteEventTypeResponses];
+
+export type GetEventTypeData = {
+    body?: never;
     path: {
         /**
-         * Event type ID
+         * Event type id (TSID)
          */
         id: string;
     };
@@ -3793,2382 +7976,4138 @@ export type PutApiEventTypesByIdData = {
     url: '/api/event-types/{id}';
 };
 
-export type PutApiEventTypesByIdErrors = {
+export type GetEventTypeErrors = {
     /**
-     * Event type not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiEventTypesByIdResponses = {
+export type GetEventTypeError = GetEventTypeErrors[keyof GetEventTypeErrors];
+
+export type GetEventTypeResponses = {
     /**
-     * Event type updated
+     * OK
+     */
+    200: EventTypeResponse;
+};
+
+export type GetEventTypeResponse = GetEventTypeResponses[keyof GetEventTypeResponses];
+
+export type UpdateEventTypeData = {
+    body: UpdateEventTypeRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/event-types/{id}';
+};
+
+export type UpdateEventTypeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateEventTypeError = UpdateEventTypeErrors[keyof UpdateEventTypeErrors];
+
+export type UpdateEventTypeResponses = {
+    /**
+     * No Content
      */
     204: void;
 };
 
-export type PutApiEventTypesByIdResponse = PutApiEventTypesByIdResponses[keyof PutApiEventTypesByIdResponses];
+export type UpdateEventTypeResponse = UpdateEventTypeResponses[keyof UpdateEventTypeResponses];
 
-export type PostApiEventTypesByIdSchemasData = {
-    body: AddSchemaVersionRequest;
+export type AddEventTypeSchemaData = {
+    body: AddSchemaRequestWritable;
     path: {
-        /**
-         * Event type ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/event-types/{id}/schemas';
+};
+
+export type AddEventTypeSchemaErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type AddEventTypeSchemaError = AddEventTypeSchemaErrors[keyof AddEventTypeSchemaErrors];
+
+export type AddEventTypeSchemaResponses = {
+    /**
+     * OK
+     */
+    200: EventTypeResponse;
+};
+
+export type AddEventTypeSchemaResponse = AddEventTypeSchemaResponses[keyof AddEventTypeSchemaResponses];
+
+export type AddEventTypeVersionData = {
+    body: AddSchemaRequestWritable;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/event-types/{id}/versions';
 };
 
-export type PostApiEventTypesByIdSchemasErrors = {
+export type AddEventTypeVersionErrors = {
     /**
-     * Event type not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiEventTypesByIdSchemasResponses = {
+export type AddEventTypeVersionError = AddEventTypeVersionErrors[keyof AddEventTypeVersionErrors];
+
+export type AddEventTypeVersionResponses = {
     /**
-     * Schema version added
+     * OK
      */
     200: EventTypeResponse;
 };
 
-export type PostApiEventTypesByIdSchemasResponse = PostApiEventTypesByIdSchemasResponses[keyof PostApiEventTypesByIdSchemasResponses];
+export type AddEventTypeVersionResponse = AddEventTypeVersionResponses[keyof AddEventTypeVersionResponses];
 
-export type GetApiEventsData = {
+export type ListEventsData = {
     body?: never;
     path?: never;
     query?: {
+        type?: string;
+        source?: string;
+        subject?: string;
+        clientId?: string;
+        principalId?: string;
+        correlationId?: string;
         /**
-         * Result size. Default 50, capped at 1000.
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
          */
         size?: number;
         /**
-         * Filter by client IDs (comma-separated)
+         * CSV of client ids
          */
         clientIds?: string;
         /**
-         * Filter by event types (comma-separated)
-         */
-        types?: string;
-        /**
-         * Filter by application codes (comma-separated)
+         * CSV of application codes
          */
         applications?: string;
         /**
-         * Filter by subdomains (comma-separated)
+         * CSV of subdomains
          */
         subdomains?: string;
         /**
-         * Filter by aggregates (comma-separated)
+         * CSV of aggregates
          */
         aggregates?: string;
         /**
-         * Filter by correlation ID
+         * CSV of event types
          */
-        correlationId?: string;
-        /**
-         * Free-text search across type, source, subject
-         */
-        source?: string;
+        types?: string;
     };
     url: '/api/events';
 };
 
-export type GetApiEventsResponses = {
+export type ListEventsErrors = {
     /**
-     * List of events
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListEventsError = ListEventsErrors[keyof ListEventsErrors];
+
+export type ListEventsResponses = {
+    /**
+     * OK
      */
     200: Array<EventRead>;
 };
 
-export type GetApiEventsResponse = GetApiEventsResponses[keyof GetApiEventsResponses];
+export type ListEventsResponse = ListEventsResponses[keyof ListEventsResponses];
 
-export type PostApiEventsData = {
-    body: CreateEventRequest;
+export type CreateEventData = {
+    body: CreateEventRequestWritable;
     path?: never;
     query?: never;
     url: '/api/events';
 };
 
-export type PostApiEventsErrors = {
+export type CreateEventErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * No access to client
-     */
-    403: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiEventsResponses = {
+export type CreateEventError = CreateEventErrors[keyof CreateEventErrors];
+
+export type CreateEventResponses = {
     /**
-     * Event already exists (idempotent)
-     */
-    200: CreateEventResponse;
-    /**
-     * Event created
+     * Created
      */
     201: CreateEventResponse;
 };
 
-export type PostApiEventsResponse = PostApiEventsResponses[keyof PostApiEventsResponses];
+export type CreateEventResponse2 = CreateEventResponses[keyof CreateEventResponses];
 
-export type GetApiEventsFilterOptionsData = {
+export type BatchIngestEventsData = {
+    body: BatchRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/events/batch';
+};
+
+export type BatchIngestEventsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type BatchIngestEventsError = BatchIngestEventsErrors[keyof BatchIngestEventsErrors];
+
+export type BatchIngestEventsResponses = {
+    /**
+     * Created
+     */
+    201: BatchResponse;
+};
+
+export type BatchIngestEventsResponse = BatchIngestEventsResponses[keyof BatchIngestEventsResponses];
+
+export type EventFilterOptionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/events/filter-options';
 };
 
-export type GetApiEventsFilterOptionsResponses = {
-    200: EventFilterOptions;
+export type EventFilterOptionsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiEventsFilterOptionsResponse = GetApiEventsFilterOptionsResponses[keyof GetApiEventsFilterOptionsResponses];
+export type EventFilterOptionsError = EventFilterOptionsErrors[keyof EventFilterOptionsErrors];
 
-export type GetApiEventsRawData = {
+export type EventFilterOptionsResponses = {
+    /**
+     * OK
+     */
+    200: EventFilterOptionsResponse;
+};
+
+export type EventFilterOptionsResponse2 = EventFilterOptionsResponses[keyof EventFilterOptionsResponses];
+
+export type ListEventsRawData = {
     body?: never;
     path?: never;
     query?: {
+        type?: string;
+        source?: string;
+        subject?: string;
+        clientId?: string;
+        principalId?: string;
+        correlationId?: string;
         /**
-         * Result size. Default 50, capped at 1000.
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
          */
         size?: number;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
+        /**
+         * CSV of application codes
+         */
+        applications?: string;
+        /**
+         * CSV of subdomains
+         */
+        subdomains?: string;
+        /**
+         * CSV of aggregates
+         */
+        aggregates?: string;
+        /**
+         * CSV of event types
+         */
+        types?: string;
+    };
+    url: '/api/events/list-raw';
+};
+
+export type ListEventsRawErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListEventsRawError = ListEventsRawErrors[keyof ListEventsRawErrors];
+
+export type ListEventsRawResponses = {
+    /**
+     * OK
+     */
+    200: Array<EventRead>;
+};
+
+export type ListEventsRawResponse = ListEventsRawResponses[keyof ListEventsRawResponses];
+
+export type ListEventsRawAliasData = {
+    body?: never;
+    path?: never;
+    query?: {
+        type?: string;
+        source?: string;
+        subject?: string;
+        clientId?: string;
+        principalId?: string;
+        correlationId?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        since?: string;
+        /**
+         * RFC3339 timestamp
+         */
+        until?: string;
+        limit?: number;
+        offset?: number;
+        /**
+         * Max rows (default 50, max 1000)
+         */
+        size?: number;
+        /**
+         * CSV of client ids
+         */
+        clientIds?: string;
+        /**
+         * CSV of application codes
+         */
+        applications?: string;
+        /**
+         * CSV of subdomains
+         */
+        subdomains?: string;
+        /**
+         * CSV of aggregates
+         */
+        aggregates?: string;
+        /**
+         * CSV of event types
+         */
+        types?: string;
     };
     url: '/api/events/raw';
 };
 
-export type GetApiEventsRawResponses = {
+export type ListEventsRawAliasErrors = {
     /**
-     * Raw events
+     * Error
      */
-    200: Array<EventSummaryResponse>;
+    default: ErrorModel;
 };
 
-export type GetApiEventsRawResponse = GetApiEventsRawResponses[keyof GetApiEventsRawResponses];
+export type ListEventsRawAliasError = ListEventsRawAliasErrors[keyof ListEventsRawAliasErrors];
 
-export type GetApiEventsByIdData = {
+export type ListEventsRawAliasResponses = {
+    /**
+     * OK
+     */
+    200: Array<EventRead>;
+};
+
+export type ListEventsRawAliasResponse = ListEventsRawAliasResponses[keyof ListEventsRawAliasResponses];
+
+export type GetEventData = {
     body?: never;
     path: {
-        /**
-         * Event ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/events/{id}';
 };
 
-export type GetApiEventsByIdErrors = {
+export type GetEventErrors = {
     /**
-     * Event not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiEventsByIdResponses = {
+export type GetEventError = GetEventErrors[keyof GetEventErrors];
+
+export type GetEventResponses = {
     /**
-     * Event found
+     * OK
      */
     200: EventResponse;
 };
 
-export type GetApiEventsByIdResponse = GetApiEventsByIdResponses[keyof GetApiEventsByIdResponses];
+export type GetEventResponse = GetEventResponses[keyof GetEventResponses];
 
-export type GetApiMonitoringCircuitBreakersData = {
+export type ListIdentityProvidersData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/monitoring/circuit-breakers';
+    url: '/api/identity-providers';
 };
 
-export type GetApiMonitoringCircuitBreakersResponses = {
+export type ListIdentityProvidersErrors = {
     /**
-     * Circuit breaker states
+     * Error
      */
-    200: CircuitBreakersResponse;
+    default: ErrorModel;
 };
 
-export type GetApiMonitoringCircuitBreakersResponse = GetApiMonitoringCircuitBreakersResponses[keyof GetApiMonitoringCircuitBreakersResponses];
+export type ListIdentityProvidersError = ListIdentityProvidersErrors[keyof ListIdentityProvidersErrors];
 
-export type GetApiMonitoringDashboardData = {
-    body?: never;
+export type ListIdentityProvidersResponses = {
+    /**
+     * OK
+     */
+    200: IdentityProviderListResponse;
+};
+
+export type ListIdentityProvidersResponse = ListIdentityProvidersResponses[keyof ListIdentityProvidersResponses];
+
+export type CreateIdentityProviderData = {
+    body: CreateIdentityProviderRequestWritable;
     path?: never;
     query?: never;
-    url: '/api/monitoring/dashboard';
+    url: '/api/identity-providers';
 };
 
-export type GetApiMonitoringDashboardResponses = {
+export type CreateIdentityProviderErrors = {
     /**
-     * Dashboard metrics
+     * Error
      */
-    200: DashboardMetrics;
+    default: ErrorModel;
 };
 
-export type GetApiMonitoringDashboardResponse = GetApiMonitoringDashboardResponses[keyof GetApiMonitoringDashboardResponses];
+export type CreateIdentityProviderError = CreateIdentityProviderErrors[keyof CreateIdentityProviderErrors];
 
-export type GetApiMonitoringInFlightMessagesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/monitoring/in-flight-messages';
-};
-
-export type GetApiMonitoringInFlightMessagesResponses = {
+export type CreateIdentityProviderResponses = {
     /**
-     * In-flight messages
+     * Created
      */
-    200: InFlightMessagesResponse;
+    201: IdentityProviderResponse;
 };
 
-export type GetApiMonitoringInFlightMessagesResponse = GetApiMonitoringInFlightMessagesResponses[keyof GetApiMonitoringInFlightMessagesResponses];
+export type CreateIdentityProviderResponse = CreateIdentityProviderResponses[keyof CreateIdentityProviderResponses];
 
-export type GetApiMonitoringPoolStatsData = {
+export type DeleteIdentityProviderData = {
     body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/monitoring/pool-stats';
-};
-
-export type GetApiMonitoringPoolStatsResponses = {
-    /**
-     * Pool statistics with enhanced metrics
-     */
-    200: PoolStatsResponse;
-};
-
-export type GetApiMonitoringPoolStatsResponse = GetApiMonitoringPoolStatsResponses[keyof GetApiMonitoringPoolStatsResponses];
-
-export type GetApiMonitoringStandbyStatusData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/api/monitoring/standby-status';
-};
-
-export type GetApiMonitoringStandbyStatusResponses = {
-    /**
-     * Standby status
-     */
-    200: StandbyStatus;
-};
-
-export type GetApiMonitoringStandbyStatusResponse = GetApiMonitoringStandbyStatusResponses[keyof GetApiMonitoringStandbyStatusResponses];
-
-export type GetApiOauthClientsData = {
-    body?: never;
-    path?: never;
-    query: {
-        pagination: PaginationParams;
-        /**
-         * Filter by active status
-         */
-        active?: boolean;
+    path: {
+        id: string;
     };
+    query?: never;
+    url: '/api/identity-providers/{id}';
+};
+
+export type DeleteIdentityProviderErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteIdentityProviderError = DeleteIdentityProviderErrors[keyof DeleteIdentityProviderErrors];
+
+export type DeleteIdentityProviderResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteIdentityProviderResponse = DeleteIdentityProviderResponses[keyof DeleteIdentityProviderResponses];
+
+export type GetIdentityProviderData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/identity-providers/{id}';
+};
+
+export type GetIdentityProviderErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetIdentityProviderError = GetIdentityProviderErrors[keyof GetIdentityProviderErrors];
+
+export type GetIdentityProviderResponses = {
+    /**
+     * OK
+     */
+    200: IdentityProviderResponse;
+};
+
+export type GetIdentityProviderResponse = GetIdentityProviderResponses[keyof GetIdentityProviderResponses];
+
+export type UpdateIdentityProviderData = {
+    body: UpdateIdentityProviderRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/identity-providers/{id}';
+};
+
+export type UpdateIdentityProviderErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateIdentityProviderError = UpdateIdentityProviderErrors[keyof UpdateIdentityProviderErrors];
+
+export type UpdateIdentityProviderResponses = {
+    /**
+     * OK
+     */
+    200: IdentityProviderResponse;
+};
+
+export type UpdateIdentityProviderResponse = UpdateIdentityProviderResponses[keyof UpdateIdentityProviderResponses];
+
+export type ListIdpRoleMappingsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/idp-role-mappings';
+};
+
+export type ListIdpRoleMappingsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListIdpRoleMappingsError = ListIdpRoleMappingsErrors[keyof ListIdpRoleMappingsErrors];
+
+export type ListIdpRoleMappingsResponses = {
+    /**
+     * OK
+     */
+    200: IdpRoleMappingListResponse;
+};
+
+export type ListIdpRoleMappingsResponse = ListIdpRoleMappingsResponses[keyof ListIdpRoleMappingsResponses];
+
+export type CreateIdpRoleMappingData = {
+    body: CreateIdpRoleMappingRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/idp-role-mappings';
+};
+
+export type CreateIdpRoleMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateIdpRoleMappingError = CreateIdpRoleMappingErrors[keyof CreateIdpRoleMappingErrors];
+
+export type CreateIdpRoleMappingResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type CreateIdpRoleMappingResponse = CreateIdpRoleMappingResponses[keyof CreateIdpRoleMappingResponses];
+
+export type DeleteIdpRoleMappingData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/idp-role-mappings/{id}';
+};
+
+export type DeleteIdpRoleMappingErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteIdpRoleMappingError = DeleteIdpRoleMappingErrors[keyof DeleteIdpRoleMappingErrors];
+
+export type DeleteIdpRoleMappingResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteIdpRoleMappingResponse = DeleteIdpRoleMappingResponses[keyof DeleteIdpRoleMappingResponses];
+
+export type ListLoginAttemptsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        attemptType?: string;
+        outcome?: string;
+        identifier?: string;
+        principalId?: string;
+        dateFrom?: string;
+        dateTo?: string;
+        after?: string;
+        pageSize?: number;
+    };
+    url: '/api/login-attempts';
+};
+
+export type ListLoginAttemptsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListLoginAttemptsError = ListLoginAttemptsErrors[keyof ListLoginAttemptsErrors];
+
+export type ListLoginAttemptsResponses = {
+    /**
+     * OK
+     */
+    200: LoginAttemptListResponse;
+};
+
+export type ListLoginAttemptsResponse = ListLoginAttemptsResponses[keyof ListLoginAttemptsResponses];
+
+export type ListOAuthClientsData = {
+    body?: never;
+    path?: never;
+    query?: never;
     url: '/api/oauth-clients';
 };
 
-export type GetApiOauthClientsResponses = {
+export type ListOAuthClientsErrors = {
     /**
-     * List of OAuth clients
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListOAuthClientsError = ListOAuthClientsErrors[keyof ListOAuthClientsErrors];
+
+export type ListOAuthClientsResponses = {
+    /**
+     * OK
      */
     200: OAuthClientListResponse;
 };
 
-export type GetApiOauthClientsResponse = GetApiOauthClientsResponses[keyof GetApiOauthClientsResponses];
+export type ListOAuthClientsResponse = ListOAuthClientsResponses[keyof ListOAuthClientsResponses];
 
-export type PostApiOauthClientsData = {
-    body: CreateOAuthClientRequest;
+export type CreateOAuthClientData = {
+    body: CreateOAuthClientRequestWritable;
     path?: never;
     query?: never;
     url: '/api/oauth-clients';
 };
 
-export type PostApiOauthClientsErrors = {
+export type CreateOAuthClientErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate client_id
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiOauthClientsResponses = {
+export type CreateOAuthClientError = CreateOAuthClientErrors[keyof CreateOAuthClientErrors];
+
+export type CreateOAuthClientResponses = {
     /**
-     * OAuth client created
+     * Created
      */
     201: CreateOAuthClientResponse;
 };
 
-export type PostApiOauthClientsResponse = PostApiOauthClientsResponses[keyof PostApiOauthClientsResponses];
+export type CreateOAuthClientResponse2 = CreateOAuthClientResponses[keyof CreateOAuthClientResponses];
 
-export type GetApiOauthClientsByClientIdData = {
+export type GetOAuthClientByClientIdData = {
     body?: never;
     path: {
-        /**
-         * OAuth client_id (public identifier)
-         */
         clientId: string;
     };
     query?: never;
     url: '/api/oauth-clients/by-client-id/{clientId}';
 };
 
-export type GetApiOauthClientsByClientIdErrors = {
+export type GetOAuthClientByClientIdErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiOauthClientsByClientIdResponses = {
+export type GetOAuthClientByClientIdError = GetOAuthClientByClientIdErrors[keyof GetOAuthClientByClientIdErrors];
+
+export type GetOAuthClientByClientIdResponses = {
     /**
-     * OAuth client found
-     */
-    200: OAuthClientResponse;
-};
-
-export type GetApiOauthClientsByClientIdResponse = GetApiOauthClientsByClientIdResponses[keyof GetApiOauthClientsByClientIdResponses];
-
-export type DeleteApiOauthClientsByIdData = {
-    body?: never;
-    path: {
-        /**
-         * OAuth client ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/oauth-clients/{id}';
-};
-
-export type DeleteApiOauthClientsByIdErrors = {
-    /**
-     * OAuth client not found
-     */
-    404: unknown;
-};
-
-export type DeleteApiOauthClientsByIdResponses = {
-    /**
-     * OAuth client deleted
-     */
-    204: void;
-};
-
-export type DeleteApiOauthClientsByIdResponse = DeleteApiOauthClientsByIdResponses[keyof DeleteApiOauthClientsByIdResponses];
-
-export type GetApiOauthClientsByIdData = {
-    body?: never;
-    path: {
-        /**
-         * OAuth client ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/oauth-clients/{id}';
-};
-
-export type GetApiOauthClientsByIdErrors = {
-    /**
-     * OAuth client not found
-     */
-    404: unknown;
-};
-
-export type GetApiOauthClientsByIdResponses = {
-    /**
-     * OAuth client found
+     * OK
      */
     200: OAuthClientResponse;
 };
 
-export type GetApiOauthClientsByIdResponse = GetApiOauthClientsByIdResponses[keyof GetApiOauthClientsByIdResponses];
+export type GetOAuthClientByClientIdResponse = GetOAuthClientByClientIdResponses[keyof GetOAuthClientByClientIdResponses];
 
-export type PutApiOauthClientsByIdData = {
-    body: UpdateOAuthClientRequest;
+export type DeleteOAuthClientData = {
+    body?: never;
     path: {
-        /**
-         * OAuth client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/oauth-clients/{id}';
 };
 
-export type PutApiOauthClientsByIdErrors = {
+export type DeleteOAuthClientErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiOauthClientsByIdResponses = {
+export type DeleteOAuthClientError = DeleteOAuthClientErrors[keyof DeleteOAuthClientErrors];
+
+export type DeleteOAuthClientResponses = {
     /**
-     * OAuth client updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiOauthClientsByIdResponse = PutApiOauthClientsByIdResponses[keyof PutApiOauthClientsByIdResponses];
+export type DeleteOAuthClientResponse = DeleteOAuthClientResponses[keyof DeleteOAuthClientResponses];
 
-export type PostApiOauthClientsActivateData = {
+export type GetOAuthClientData = {
     body?: never;
     path: {
-        /**
-         * OAuth client ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/oauth-clients/{id}';
+};
+
+export type GetOAuthClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetOAuthClientError = GetOAuthClientErrors[keyof GetOAuthClientErrors];
+
+export type GetOAuthClientResponses = {
+    /**
+     * OK
+     */
+    200: OAuthClientResponse;
+};
+
+export type GetOAuthClientResponse = GetOAuthClientResponses[keyof GetOAuthClientResponses];
+
+export type UpdateOAuthClientData = {
+    body: UpdateOAuthClientRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/oauth-clients/{id}';
+};
+
+export type UpdateOAuthClientErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateOAuthClientError = UpdateOAuthClientErrors[keyof UpdateOAuthClientErrors];
+
+export type UpdateOAuthClientResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateOAuthClientResponse = UpdateOAuthClientResponses[keyof UpdateOAuthClientResponses];
+
+export type ActivateOAuthClientData = {
+    body?: never;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/oauth-clients/{id}/activate';
 };
 
-export type PostApiOauthClientsActivateErrors = {
+export type ActivateOAuthClientErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiOauthClientsActivateResponses = {
+export type ActivateOAuthClientError = ActivateOAuthClientErrors[keyof ActivateOAuthClientErrors];
+
+export type ActivateOAuthClientResponses = {
     /**
-     * OAuth client activated
+     * OK
      */
     200: SuccessResponse;
 };
 
-export type PostApiOauthClientsActivateResponse = PostApiOauthClientsActivateResponses[keyof PostApiOauthClientsActivateResponses];
+export type ActivateOAuthClientResponse = ActivateOAuthClientResponses[keyof ActivateOAuthClientResponses];
 
-export type PostApiOauthClientsDeactivateData = {
+export type DeactivateOAuthClientData = {
     body?: never;
     path: {
-        /**
-         * OAuth client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/oauth-clients/{id}/deactivate';
 };
 
-export type PostApiOauthClientsDeactivateErrors = {
+export type DeactivateOAuthClientErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiOauthClientsDeactivateResponses = {
+export type DeactivateOAuthClientError = DeactivateOAuthClientErrors[keyof DeactivateOAuthClientErrors];
+
+export type DeactivateOAuthClientResponses = {
     /**
-     * OAuth client deactivated
+     * OK
      */
     200: SuccessResponse;
 };
 
-export type PostApiOauthClientsDeactivateResponse = PostApiOauthClientsDeactivateResponses[keyof PostApiOauthClientsDeactivateResponses];
+export type DeactivateOAuthClientResponse = DeactivateOAuthClientResponses[keyof DeactivateOAuthClientResponses];
 
-export type PostApiOauthClientsRegenerateSecretData = {
-    body?: never;
+export type RegenerateOAuthClientSecretData = {
+    body?: RotateOAuthClientSecretRequestWritable;
     path: {
-        /**
-         * OAuth client ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/oauth-clients/{id}/regenerate-secret';
 };
 
-export type PostApiOauthClientsRegenerateSecretErrors = {
+export type RegenerateOAuthClientSecretErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiOauthClientsRegenerateSecretResponses = {
+export type RegenerateOAuthClientSecretError = RegenerateOAuthClientSecretErrors[keyof RegenerateOAuthClientSecretErrors];
+
+export type RegenerateOAuthClientSecretResponses = {
     /**
-     * New client secret generated
+     * OK
      */
-    200: RegenerateSecretResponse;
+    200: RotateOAuthClientSecretResponse;
 };
 
-export type PostApiOauthClientsRegenerateSecretResponse = PostApiOauthClientsRegenerateSecretResponses[keyof PostApiOauthClientsRegenerateSecretResponses];
+export type RegenerateOAuthClientSecretResponse = RegenerateOAuthClientSecretResponses[keyof RegenerateOAuthClientSecretResponses];
 
-export type PostApiOauthClientsRotateSecretData = {
+export type RevokeOAuthClientPreviousSecretData = {
     body?: never;
     path: {
-        /**
-         * OAuth client ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/oauth-clients/{id}/revoke-previous-secret';
+};
+
+export type RevokeOAuthClientPreviousSecretErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RevokeOAuthClientPreviousSecretError = RevokeOAuthClientPreviousSecretErrors[keyof RevokeOAuthClientPreviousSecretErrors];
+
+export type RevokeOAuthClientPreviousSecretResponses = {
+    /**
+     * OK
+     */
+    200: SuccessResponse;
+};
+
+export type RevokeOAuthClientPreviousSecretResponse = RevokeOAuthClientPreviousSecretResponses[keyof RevokeOAuthClientPreviousSecretResponses];
+
+export type RotateOAuthClientSecretData = {
+    body?: RotateOAuthClientSecretRequestWritable;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/oauth-clients/{id}/rotate-secret';
 };
 
-export type PostApiOauthClientsRotateSecretErrors = {
+export type RotateOAuthClientSecretErrors = {
     /**
-     * OAuth client not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiOauthClientsRotateSecretResponses = {
+export type RotateOAuthClientSecretError = RotateOAuthClientSecretErrors[keyof RotateOAuthClientSecretErrors];
+
+export type RotateOAuthClientSecretResponses = {
     /**
-     * New client secret generated
+     * OK
      */
-    200: RegenerateSecretResponse;
+    200: RotateOAuthClientSecretResponse;
 };
 
-export type PostApiOauthClientsRotateSecretResponse = PostApiOauthClientsRotateSecretResponses[keyof PostApiOauthClientsRotateSecretResponses];
+export type RotateOAuthClientSecretResponse2 = RotateOAuthClientSecretResponses[keyof RotateOAuthClientSecretResponses];
 
-export type GetApiPrincipalsData = {
+export type RevokePlatformConfigAccessData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/platform-config/access/{id}';
+};
+
+export type RevokePlatformConfigAccessErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RevokePlatformConfigAccessError = RevokePlatformConfigAccessErrors[keyof RevokePlatformConfigAccessErrors];
+
+export type RevokePlatformConfigAccessResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type RevokePlatformConfigAccessResponse = RevokePlatformConfigAccessResponses[keyof RevokePlatformConfigAccessResponses];
+
+export type ListPlatformConfigPropertiesData = {
+    body?: never;
+    path: {
+        app: string;
+    };
+    query?: never;
+    url: '/api/platform-config/{app}';
+};
+
+export type ListPlatformConfigPropertiesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPlatformConfigPropertiesError = ListPlatformConfigPropertiesErrors[keyof ListPlatformConfigPropertiesErrors];
+
+export type ListPlatformConfigPropertiesResponses = {
+    /**
+     * OK
+     */
+    200: ConfigListResponse;
+};
+
+export type ListPlatformConfigPropertiesResponse = ListPlatformConfigPropertiesResponses[keyof ListPlatformConfigPropertiesResponses];
+
+export type ListPlatformConfigAccessData = {
+    body?: never;
+    path: {
+        app: string;
+    };
+    query?: never;
+    url: '/api/platform-config/{app}/access';
+};
+
+export type ListPlatformConfigAccessErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPlatformConfigAccessError = ListPlatformConfigAccessErrors[keyof ListPlatformConfigAccessErrors];
+
+export type ListPlatformConfigAccessResponses = {
+    /**
+     * OK
+     */
+    200: AccessListResponse;
+};
+
+export type ListPlatformConfigAccessResponse = ListPlatformConfigAccessResponses[keyof ListPlatformConfigAccessResponses];
+
+export type GrantPlatformConfigAccessData = {
+    body: GrantAccessRequestWritable;
+    path: {
+        app: string;
+    };
+    query?: never;
+    url: '/api/platform-config/{app}/access';
+};
+
+export type GrantPlatformConfigAccessErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GrantPlatformConfigAccessError = GrantPlatformConfigAccessErrors[keyof GrantPlatformConfigAccessErrors];
+
+export type GrantPlatformConfigAccessResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type GrantPlatformConfigAccessResponse = GrantPlatformConfigAccessResponses[keyof GrantPlatformConfigAccessResponses];
+
+export type ListCorsOriginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/platform/cors';
+};
+
+export type ListCorsOriginsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListCorsOriginsError = ListCorsOriginsErrors[keyof ListCorsOriginsErrors];
+
+export type ListCorsOriginsResponses = {
+    /**
+     * OK
+     */
+    200: CorsOriginListResponse;
+};
+
+export type ListCorsOriginsResponse = ListCorsOriginsResponses[keyof ListCorsOriginsResponses];
+
+export type AddCorsOriginData = {
+    body: AddOriginRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/platform/cors';
+};
+
+export type AddCorsOriginErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type AddCorsOriginError = AddCorsOriginErrors[keyof AddCorsOriginErrors];
+
+export type AddCorsOriginResponses = {
+    /**
+     * Created
+     */
+    201: CreatedResponse;
+};
+
+export type AddCorsOriginResponse = AddCorsOriginResponses[keyof AddCorsOriginResponses];
+
+export type PublicAllowedOriginsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/platform/cors/allowed';
+};
+
+export type PublicAllowedOriginsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type PublicAllowedOriginsError = PublicAllowedOriginsErrors[keyof PublicAllowedOriginsErrors];
+
+export type PublicAllowedOriginsResponses = {
+    /**
+     * OK
+     */
+    200: PublicAllowedResponse;
+};
+
+export type PublicAllowedOriginsResponse = PublicAllowedOriginsResponses[keyof PublicAllowedOriginsResponses];
+
+export type DeleteCorsOriginData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/platform/cors/{id}';
+};
+
+export type DeleteCorsOriginErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteCorsOriginError = DeleteCorsOriginErrors[keyof DeleteCorsOriginErrors];
+
+export type DeleteCorsOriginResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteCorsOriginResponse = DeleteCorsOriginResponses[keyof DeleteCorsOriginResponses];
+
+export type GetCorsOriginData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/platform/cors/{id}';
+};
+
+export type GetCorsOriginErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetCorsOriginError = GetCorsOriginErrors[keyof GetCorsOriginErrors];
+
+export type GetCorsOriginResponses = {
+    /**
+     * OK
+     */
+    200: AllowedOriginResponse;
+};
+
+export type GetCorsOriginResponse = GetCorsOriginResponses[keyof GetCorsOriginResponses];
+
+export type ListPortalAppsData = {
     body?: never;
     path?: never;
     query?: {
         /**
-         * Page number
+         * Tenant client whose portal apps to list (anchors may omit it for every client's)
          */
-        page?: number;
+        clientId?: string;
+    };
+    url: '/api/portal-apps';
+};
+
+export type ListPortalAppsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPortalAppsError = ListPortalAppsErrors[keyof ListPortalAppsErrors];
+
+export type ListPortalAppsResponses = {
+    /**
+     * OK
+     */
+    200: PortalAppListResponse;
+};
+
+export type ListPortalAppsResponse = ListPortalAppsResponses[keyof ListPortalAppsResponses];
+
+export type CreatePortalAppData = {
+    body: CreatePortalAppRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/portal-apps';
+};
+
+export type CreatePortalAppErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreatePortalAppError = CreatePortalAppErrors[keyof CreatePortalAppErrors];
+
+export type CreatePortalAppResponses = {
+    /**
+     * Created
+     */
+    201: CreatePortalAppResponse;
+};
+
+export type CreatePortalAppResponse2 = CreatePortalAppResponses[keyof CreatePortalAppResponses];
+
+export type DeletePortalAppData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: {
         /**
-         * Items per page
+         * Tenant client that owns the portal app
          */
-        limit?: number;
+        clientId?: string;
+    };
+    url: '/api/portal-apps/{id}';
+};
+
+export type DeletePortalAppErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeletePortalAppError = DeletePortalAppErrors[keyof DeletePortalAppErrors];
+
+export type DeletePortalAppResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type DeletePortalAppResponse = DeletePortalAppResponses[keyof DeletePortalAppResponses];
+
+export type UpdatePortalAppData = {
+    body: UpdatePortalAppRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/portal-apps/{id}';
+};
+
+export type UpdatePortalAppErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdatePortalAppError = UpdatePortalAppErrors[keyof UpdatePortalAppErrors];
+
+export type UpdatePortalAppResponses = {
+    /**
+     * OK
+     */
+    200: PortalAppResponse;
+};
+
+export type UpdatePortalAppResponse = UpdatePortalAppResponses[keyof UpdatePortalAppResponses];
+
+export type AssignUnassignedPortalUsersData = {
+    body: AssignUnassignedBodyWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/portal-apps/{id}/assign-unassigned';
+};
+
+export type AssignUnassignedPortalUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type AssignUnassignedPortalUsersError = AssignUnassignedPortalUsersErrors[keyof AssignUnassignedPortalUsersErrors];
+
+export type AssignUnassignedPortalUsersResponses = {
+    /**
+     * OK
+     */
+    200: AssignUnassignedResponse;
+};
+
+export type AssignUnassignedPortalUsersResponse = AssignUnassignedPortalUsersResponses[keyof AssignUnassignedPortalUsersResponses];
+
+export type ListPortalUsersData = {
+    body?: never;
+    path?: never;
+    query?: {
         /**
-         * Filter by type
+         * Tenant client whose portal identities to list
          */
-        type?: string;
+        clientId?: string;
         /**
-         * Filter by scope
-         */
-        scope?: string;
-        /**
-         * Filter by client ID
-         */
-        client_id?: string;
-        /**
-         * Exact email match (case-insensitive)
-         */
-        email?: string;
-        /**
-         * Search by name or email (substring)
+         * Prefix (TERM%) matched case-insensitively against email and name
          */
         q?: string;
         /**
-         * Filter by active status
+         * Only identities granted this portal app
          */
-        active?: boolean;
+        portalAppCode?: string;
         /**
-         * Filter by roles (comma-separated)
+         * Only identities granted no portal app (cannot be combined with portalAppCode)
+         */
+        unassigned?: boolean;
+        /**
+         * 0-based page index (default 0)
+         */
+        page?: number;
+        /**
+         * Page size (default 100, max 1000)
+         */
+        size?: number;
+    };
+    url: '/api/portal-users';
+};
+
+export type ListPortalUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPortalUsersError = ListPortalUsersErrors[keyof ListPortalUsersErrors];
+
+export type ListPortalUsersResponses = {
+    /**
+     * OK
+     */
+    200: PortalUserListResponse;
+};
+
+export type ListPortalUsersResponse = ListPortalUsersResponses[keyof ListPortalUsersResponses];
+
+export type EnsurePortalUserData = {
+    body: PortalUserRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/portal-users';
+};
+
+export type EnsurePortalUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type EnsurePortalUserError = EnsurePortalUserErrors[keyof EnsurePortalUserErrors];
+
+export type EnsurePortalUserResponses = {
+    /**
+     * OK
+     */
+    200: PortalUserResponse;
+};
+
+export type EnsurePortalUserResponse = EnsurePortalUserResponses[keyof EnsurePortalUserResponses];
+
+export type DeletePortalUserData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: {
+        /**
+         * Tenant client whose portal identity to delete
+         */
+        clientId?: string;
+    };
+    url: '/api/portal-users/{id}';
+};
+
+export type DeletePortalUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeletePortalUserError = DeletePortalUserErrors[keyof DeletePortalUserErrors];
+
+export type DeletePortalUserResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type DeletePortalUserResponse = DeletePortalUserResponses[keyof DeletePortalUserResponses];
+
+export type ActivatePortalUserData = {
+    body: PortalUserClientBodyWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/portal-users/{id}/activate';
+};
+
+export type ActivatePortalUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ActivatePortalUserError = ActivatePortalUserErrors[keyof ActivatePortalUserErrors];
+
+export type ActivatePortalUserResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type ActivatePortalUserResponse = ActivatePortalUserResponses[keyof ActivatePortalUserResponses];
+
+export type GrantPortalUserAppData = {
+    body: PortalUserAppGrantBodyWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/portal-users/{id}/apps';
+};
+
+export type GrantPortalUserAppErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GrantPortalUserAppError = GrantPortalUserAppErrors[keyof GrantPortalUserAppErrors];
+
+export type GrantPortalUserAppResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type GrantPortalUserAppResponse = GrantPortalUserAppResponses[keyof GrantPortalUserAppResponses];
+
+export type RevokePortalUserAppData = {
+    body?: never;
+    path: {
+        id: string;
+        portalAppCode: string;
+    };
+    query?: {
+        /**
+         * Tenant client that owns the portal identity and app
+         */
+        clientId?: string;
+    };
+    url: '/api/portal-users/{id}/apps/{portalAppCode}';
+};
+
+export type RevokePortalUserAppErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RevokePortalUserAppError = RevokePortalUserAppErrors[keyof RevokePortalUserAppErrors];
+
+export type RevokePortalUserAppResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type RevokePortalUserAppResponse = RevokePortalUserAppResponses[keyof RevokePortalUserAppResponses];
+
+export type DeactivatePortalUserData = {
+    body: PortalUserClientBodyWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/portal-users/{id}/deactivate';
+};
+
+export type DeactivatePortalUserErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeactivatePortalUserError = DeactivatePortalUserErrors[keyof DeactivatePortalUserErrors];
+
+export type DeactivatePortalUserResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type DeactivatePortalUserResponse = DeactivatePortalUserResponses[keyof DeactivatePortalUserResponses];
+
+export type ListPrincipalsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Filter by principal type (USER or SERVICE)
+         */
+        type?: string;
+        /**
+         * Filter to principals homed at, or granted access to, this client
+         */
+        clientId?: string;
+        /**
+         * Filter by active status (true/false); absent = both
+         */
+        active?: string;
+        /**
+         * Case-insensitive substring search across name and email
+         */
+        q?: string;
+        /**
+         * CSV of role names; matches principals holding any of them
          */
         roles?: string;
+        /**
+         * 0-based page index (default 0)
+         */
+        page?: number;
+        /**
+         * Page size; <=0 returns all matches (default: all)
+         */
+        pageSize?: number;
+        /**
+         * Sort key: name | email | createdAt (default createdAt)
+         */
+        sortField?: string;
+        /**
+         * Sort direction: asc | desc (default asc)
+         */
+        sortOrder?: string;
     };
     url: '/api/principals';
 };
 
-export type GetApiPrincipalsResponses = {
+export type ListPrincipalsErrors = {
     /**
-     * List of principals
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPrincipalsError = ListPrincipalsErrors[keyof ListPrincipalsErrors];
+
+export type ListPrincipalsResponses = {
+    /**
+     * OK
      */
     200: PrincipalListResponse;
 };
 
-export type GetApiPrincipalsResponse = GetApiPrincipalsResponses[keyof GetApiPrincipalsResponses];
+export type ListPrincipalsResponse = ListPrincipalsResponses[keyof ListPrincipalsResponses];
 
-export type GetApiPrincipalsCheckEmailDomainData = {
+export type CreatePrincipalData = {
+    body: CreatePrincipalRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/principals';
+};
+
+export type CreatePrincipalErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreatePrincipalError = CreatePrincipalErrors[keyof CreatePrincipalErrors];
+
+export type CreatePrincipalResponses = {
+    /**
+     * Created
+     */
+    201: CreatePrincipalResponse;
+};
+
+export type CreatePrincipalResponse2 = CreatePrincipalResponses[keyof CreatePrincipalResponses];
+
+export type BulkImportUsersData = {
+    body: BulkImportRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/principals/bulk-import';
+};
+
+export type BulkImportUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type BulkImportUsersError = BulkImportUsersErrors[keyof BulkImportUsersErrors];
+
+export type BulkImportUsersResponses = {
+    /**
+     * OK
+     */
+    200: BulkImportResponse;
+};
+
+export type BulkImportUsersResponse = BulkImportUsersResponses[keyof BulkImportUsersResponses];
+
+export type CheckPrincipalEmailDomainData = {
     body?: never;
     path?: never;
-    query: {
-        /**
-         * Email domain to check
-         */
-        domain: string;
+    query?: {
+        email?: string;
     };
     url: '/api/principals/check-email-domain';
 };
 
-export type GetApiPrincipalsCheckEmailDomainResponses = {
+export type CheckPrincipalEmailDomainErrors = {
     /**
-     * Domain check result
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CheckPrincipalEmailDomainError = CheckPrincipalEmailDomainErrors[keyof CheckPrincipalEmailDomainErrors];
+
+export type CheckPrincipalEmailDomainResponses = {
+    /**
+     * OK
      */
     200: CheckEmailDomainResponse;
 };
 
-export type GetApiPrincipalsCheckEmailDomainResponse = GetApiPrincipalsCheckEmailDomainResponses[keyof GetApiPrincipalsCheckEmailDomainResponses];
+export type CheckPrincipalEmailDomainResponse = CheckPrincipalEmailDomainResponses[keyof CheckPrincipalEmailDomainResponses];
 
-export type PostApiPrincipalsUsersData = {
-    body: CreateUserRequest;
+export type ListDeveloperUsersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/principals/developer-users';
+};
+
+export type ListDeveloperUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListDeveloperUsersError = ListDeveloperUsersErrors[keyof ListDeveloperUsersErrors];
+
+export type ListDeveloperUsersResponses = {
+    /**
+     * OK
+     */
+    200: DeveloperUserListResponse;
+};
+
+export type ListDeveloperUsersResponse = ListDeveloperUsersResponses[keyof ListDeveloperUsersResponses];
+
+export type SyncUsersData = {
+    body: SyncUsersRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/principals/sync';
+};
+
+export type SyncUsersErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SyncUsersError = SyncUsersErrors[keyof SyncUsersErrors];
+
+export type SyncUsersResponses = {
+    /**
+     * OK
+     */
+    200: SyncUsersResponse;
+};
+
+export type SyncUsersResponse2 = SyncUsersResponses[keyof SyncUsersResponses];
+
+export type CreateUserData = {
+    body: CreateUserRequestWritable;
     path?: never;
     query?: never;
     url: '/api/principals/users';
 };
 
-export type PostApiPrincipalsUsersErrors = {
+export type CreateUserErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate email
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsUsersResponses = {
+export type CreateUserError = CreateUserErrors[keyof CreateUserErrors];
+
+export type CreateUserResponses = {
     /**
-     * User created
+     * OK
      */
-    201: PrincipalResponse;
+    200: PrincipalResponse;
 };
 
-export type PostApiPrincipalsUsersResponse = PostApiPrincipalsUsersResponses[keyof PostApiPrincipalsUsersResponses];
+export type CreateUserResponse = CreateUserResponses[keyof CreateUserResponses];
 
-export type DeleteApiPrincipalsByIdData = {
+export type DeletePrincipalData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}';
 };
 
-export type DeleteApiPrincipalsByIdErrors = {
+export type DeletePrincipalErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiPrincipalsByIdResponses = {
+export type DeletePrincipalError = DeletePrincipalErrors[keyof DeletePrincipalErrors];
+
+export type DeletePrincipalResponses = {
     /**
-     * Principal deleted
+     * No Content
      */
     204: void;
 };
 
-export type DeleteApiPrincipalsByIdResponse = DeleteApiPrincipalsByIdResponses[keyof DeleteApiPrincipalsByIdResponses];
+export type DeletePrincipalResponse = DeletePrincipalResponses[keyof DeletePrincipalResponses];
 
-export type GetApiPrincipalsByIdData = {
+export type GetPrincipalData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}';
 };
 
-export type GetApiPrincipalsByIdErrors = {
+export type GetPrincipalErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiPrincipalsByIdResponses = {
+export type GetPrincipalError = GetPrincipalErrors[keyof GetPrincipalErrors];
+
+export type GetPrincipalResponses = {
     /**
-     * Principal found
+     * OK
      */
     200: PrincipalResponse;
 };
 
-export type GetApiPrincipalsByIdResponse = GetApiPrincipalsByIdResponses[keyof GetApiPrincipalsByIdResponses];
+export type GetPrincipalResponse = GetPrincipalResponses[keyof GetPrincipalResponses];
 
-export type PutApiPrincipalsByIdData = {
-    body: UpdatePrincipalRequest;
+export type UpdatePrincipalData = {
+    body: UpdatePrincipalRequestWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}';
 };
 
-export type PutApiPrincipalsByIdErrors = {
+export type UpdatePrincipalErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiPrincipalsByIdResponses = {
+export type UpdatePrincipalError = UpdatePrincipalErrors[keyof UpdatePrincipalErrors];
+
+export type UpdatePrincipalResponses = {
     /**
-     * Principal updated
+     * OK
      */
     200: PrincipalResponse;
 };
 
-export type PutApiPrincipalsByIdResponse = PutApiPrincipalsByIdResponses[keyof PutApiPrincipalsByIdResponses];
+export type UpdatePrincipalResponse = UpdatePrincipalResponses[keyof UpdatePrincipalResponses];
 
-export type PostApiPrincipalsByIdActivateData = {
+export type ActivatePrincipalData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/activate';
 };
 
-export type PostApiPrincipalsByIdActivateErrors = {
+export type ActivatePrincipalErrors = {
     /**
-     * Insufficient permissions
+     * Error
      */
-    403: unknown;
-    /**
-     * Principal not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdActivateResponses = {
+export type ActivatePrincipalError = ActivatePrincipalErrors[keyof ActivatePrincipalErrors];
+
+export type ActivatePrincipalResponses = {
     /**
-     * Principal activated
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiPrincipalsByIdActivateResponse = PostApiPrincipalsByIdActivateResponses[keyof PostApiPrincipalsByIdActivateResponses];
+export type ActivatePrincipalResponse = ActivatePrincipalResponses[keyof ActivatePrincipalResponses];
 
-export type GetApiPrincipalsByIdApplicationAccessData = {
+export type ListPrincipalApplicationAccessData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/application-access';
 };
 
-export type GetApiPrincipalsByIdApplicationAccessErrors = {
+export type ListPrincipalApplicationAccessErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiPrincipalsByIdApplicationAccessResponses = {
+export type ListPrincipalApplicationAccessError = ListPrincipalApplicationAccessErrors[keyof ListPrincipalApplicationAccessErrors];
+
+export type ListPrincipalApplicationAccessResponses = {
     /**
-     * Application access list
+     * OK
      */
     200: ApplicationAccessListResponse;
 };
 
-export type GetApiPrincipalsByIdApplicationAccessResponse = GetApiPrincipalsByIdApplicationAccessResponses[keyof GetApiPrincipalsByIdApplicationAccessResponses];
+export type ListPrincipalApplicationAccessResponse = ListPrincipalApplicationAccessResponses[keyof ListPrincipalApplicationAccessResponses];
 
-export type PutApiPrincipalsByIdApplicationAccessData = {
-    body: SetApplicationAccessRequest;
+export type AssignPrincipalApplicationAccessData = {
+    body: AssignApplicationAccessRequestWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/application-access';
 };
 
-export type PutApiPrincipalsByIdApplicationAccessErrors = {
+export type AssignPrincipalApplicationAccessErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiPrincipalsByIdApplicationAccessResponses = {
+export type AssignPrincipalApplicationAccessError = AssignPrincipalApplicationAccessErrors[keyof AssignPrincipalApplicationAccessErrors];
+
+export type AssignPrincipalApplicationAccessResponses = {
     /**
-     * Application access updated
+     * OK
      */
     200: SetApplicationAccessResponse;
 };
 
-export type PutApiPrincipalsByIdApplicationAccessResponse = PutApiPrincipalsByIdApplicationAccessResponses[keyof PutApiPrincipalsByIdApplicationAccessResponses];
+export type AssignPrincipalApplicationAccessResponse = AssignPrincipalApplicationAccessResponses[keyof AssignPrincipalApplicationAccessResponses];
 
-export type GetApiPrincipalsByIdAvailableApplicationsData = {
+export type ListPrincipalAvailableApplicationsData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/available-applications';
 };
 
-export type GetApiPrincipalsByIdAvailableApplicationsErrors = {
+export type ListPrincipalAvailableApplicationsErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiPrincipalsByIdAvailableApplicationsResponses = {
+export type ListPrincipalAvailableApplicationsError = ListPrincipalAvailableApplicationsErrors[keyof ListPrincipalAvailableApplicationsErrors];
+
+export type ListPrincipalAvailableApplicationsResponses = {
     /**
-     * Available applications
+     * OK
      */
-    200: AvailableApplicationsResponse;
+    200: PrincipalAvailableApplicationsResponse;
 };
 
-export type GetApiPrincipalsByIdAvailableApplicationsResponse = GetApiPrincipalsByIdAvailableApplicationsResponses[keyof GetApiPrincipalsByIdAvailableApplicationsResponses];
+export type ListPrincipalAvailableApplicationsResponse = ListPrincipalAvailableApplicationsResponses[keyof ListPrincipalAvailableApplicationsResponses];
 
-export type GetApiPrincipalsByIdClientAccessData = {
+export type ListPrincipalClientAccessData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/client-access';
 };
 
-export type GetApiPrincipalsByIdClientAccessErrors = {
+export type ListPrincipalClientAccessErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiPrincipalsByIdClientAccessResponses = {
+export type ListPrincipalClientAccessError = ListPrincipalClientAccessErrors[keyof ListPrincipalClientAccessErrors];
+
+export type ListPrincipalClientAccessResponses = {
     /**
-     * Client access grants
+     * OK
      */
-    200: ClientAccessListResponse;
+    200: ClientAccessGrantListResponse;
 };
 
-export type GetApiPrincipalsByIdClientAccessResponse = GetApiPrincipalsByIdClientAccessResponses[keyof GetApiPrincipalsByIdClientAccessResponses];
+export type ListPrincipalClientAccessResponse = ListPrincipalClientAccessResponses[keyof ListPrincipalClientAccessResponses];
 
-export type PostApiPrincipalsByIdClientAccessData = {
-    body: GrantClientAccessRequest;
+export type GrantPrincipalClientAccessData = {
+    body: GrantClientAccessRequestWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/client-access';
 };
 
-export type PostApiPrincipalsByIdClientAccessErrors = {
+export type GrantPrincipalClientAccessErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdClientAccessResponses = {
+export type GrantPrincipalClientAccessError = GrantPrincipalClientAccessErrors[keyof GrantPrincipalClientAccessErrors];
+
+export type GrantPrincipalClientAccessResponses = {
     /**
-     * Client access granted
+     * OK
      */
-    201: ClientAccessGrantResponse;
+    200: ClientAccessGrantResponse;
 };
 
-export type PostApiPrincipalsByIdClientAccessResponse = PostApiPrincipalsByIdClientAccessResponses[keyof PostApiPrincipalsByIdClientAccessResponses];
+export type GrantPrincipalClientAccessResponse = GrantPrincipalClientAccessResponses[keyof GrantPrincipalClientAccessResponses];
 
-export type DeleteApiPrincipalsByIdClientAccessByClientIdData = {
+export type RevokePrincipalClientAccessData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
-        /**
-         * Client ID to revoke
-         */
         clientId: string;
     };
     query?: never;
     url: '/api/principals/{id}/client-access/{clientId}';
 };
 
-export type DeleteApiPrincipalsByIdClientAccessByClientIdErrors = {
+export type RevokePrincipalClientAccessErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiPrincipalsByIdClientAccessByClientIdResponses = {
+export type RevokePrincipalClientAccessError = RevokePrincipalClientAccessErrors[keyof RevokePrincipalClientAccessErrors];
+
+export type RevokePrincipalClientAccessResponses = {
     /**
-     * Client access revoked
+     * No Content
      */
     204: void;
 };
 
-export type DeleteApiPrincipalsByIdClientAccessByClientIdResponse = DeleteApiPrincipalsByIdClientAccessByClientIdResponses[keyof DeleteApiPrincipalsByIdClientAccessByClientIdResponses];
+export type RevokePrincipalClientAccessResponse = RevokePrincipalClientAccessResponses[keyof RevokePrincipalClientAccessResponses];
 
-export type PostApiPrincipalsByIdDeactivateData = {
+export type SetPrincipalClientAssociationData = {
+    body: ClientAssociationRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/principals/{id}/client-association';
+};
+
+export type SetPrincipalClientAssociationErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SetPrincipalClientAssociationError = SetPrincipalClientAssociationErrors[keyof SetPrincipalClientAssociationErrors];
+
+export type SetPrincipalClientAssociationResponses = {
+    /**
+     * OK
+     */
+    200: PrincipalResponse;
+};
+
+export type SetPrincipalClientAssociationResponse = SetPrincipalClientAssociationResponses[keyof SetPrincipalClientAssociationResponses];
+
+export type DeactivatePrincipalData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/deactivate';
 };
 
-export type PostApiPrincipalsByIdDeactivateErrors = {
+export type DeactivatePrincipalErrors = {
     /**
-     * Insufficient permissions
+     * Error
      */
-    403: unknown;
-    /**
-     * Principal not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdDeactivateResponses = {
+export type DeactivatePrincipalError = DeactivatePrincipalErrors[keyof DeactivatePrincipalErrors];
+
+export type DeactivatePrincipalResponses = {
     /**
-     * Principal deactivated
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiPrincipalsByIdDeactivateResponse = PostApiPrincipalsByIdDeactivateResponses[keyof PostApiPrincipalsByIdDeactivateResponses];
+export type DeactivatePrincipalResponse = DeactivatePrincipalResponses[keyof DeactivatePrincipalResponses];
 
-export type PostApiPrincipalsByIdResetPasswordData = {
-    body: ResetPasswordRequest;
+export type RevokePrincipalDeveloperCredentialData = {
+    body?: never;
     path: {
-        /**
-         * Principal ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/principals/{id}/developer-credential';
+};
+
+export type RevokePrincipalDeveloperCredentialErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RevokePrincipalDeveloperCredentialError = RevokePrincipalDeveloperCredentialErrors[keyof RevokePrincipalDeveloperCredentialErrors];
+
+export type RevokePrincipalDeveloperCredentialResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type RevokePrincipalDeveloperCredentialResponse = RevokePrincipalDeveloperCredentialResponses[keyof RevokePrincipalDeveloperCredentialResponses];
+
+export type SetPrincipalDeveloperCredentialData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/principals/{id}/developer-credential';
+};
+
+export type SetPrincipalDeveloperCredentialErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SetPrincipalDeveloperCredentialError = SetPrincipalDeveloperCredentialErrors[keyof SetPrincipalDeveloperCredentialErrors];
+
+export type SetPrincipalDeveloperCredentialResponses = {
+    /**
+     * OK
+     */
+    200: SetDeveloperCredentialResponse;
+};
+
+export type SetPrincipalDeveloperCredentialResponse = SetPrincipalDeveloperCredentialResponses[keyof SetPrincipalDeveloperCredentialResponses];
+
+export type ResetPrincipalTwoFactorData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/principals/{id}/reset-2fa';
+};
+
+export type ResetPrincipalTwoFactorErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ResetPrincipalTwoFactorError = ResetPrincipalTwoFactorErrors[keyof ResetPrincipalTwoFactorErrors];
+
+export type ResetPrincipalTwoFactorResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type ResetPrincipalTwoFactorResponse = ResetPrincipalTwoFactorResponses[keyof ResetPrincipalTwoFactorResponses];
+
+export type ResetPrincipalPasswordData = {
+    body: ResetPasswordRequestWritable;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/reset-password';
 };
 
-export type PostApiPrincipalsByIdResetPasswordErrors = {
+export type ResetPrincipalPasswordErrors = {
     /**
-     * User is not internal auth or invalid password
+     * Error
      */
-    400: unknown;
-    /**
-     * Insufficient permissions
-     */
-    403: unknown;
-    /**
-     * Principal not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdResetPasswordResponses = {
+export type ResetPrincipalPasswordError = ResetPrincipalPasswordErrors[keyof ResetPrincipalPasswordErrors];
+
+export type ResetPrincipalPasswordResponses = {
     /**
-     * Password reset
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiPrincipalsByIdResetPasswordResponse = PostApiPrincipalsByIdResetPasswordResponses[keyof PostApiPrincipalsByIdResetPasswordResponses];
+export type ResetPrincipalPasswordResponse = ResetPrincipalPasswordResponses[keyof ResetPrincipalPasswordResponses];
 
-export type GetApiPrincipalsByIdRolesData = {
+export type ListPrincipalRolesData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/roles';
 };
 
-export type GetApiPrincipalsByIdRolesErrors = {
+export type ListPrincipalRolesErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiPrincipalsByIdRolesResponses = {
+export type ListPrincipalRolesError = ListPrincipalRolesErrors[keyof ListPrincipalRolesErrors];
+
+export type ListPrincipalRolesResponses = {
     /**
-     * List of roles
+     * OK
      */
-    200: RolesListResponse;
+    200: PrincipalRoleListResponse;
 };
 
-export type GetApiPrincipalsByIdRolesResponse = GetApiPrincipalsByIdRolesResponses[keyof GetApiPrincipalsByIdRolesResponses];
+export type ListPrincipalRolesResponse = ListPrincipalRolesResponses[keyof ListPrincipalRolesResponses];
 
-export type PostApiPrincipalsByIdRolesData = {
-    body: AssignRoleRequest;
+export type AddPrincipalRoleData = {
+    body: AddRoleRequestWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/roles';
 };
 
-export type PostApiPrincipalsByIdRolesErrors = {
+export type AddPrincipalRoleErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdRolesResponses = {
+export type AddPrincipalRoleError = AddPrincipalRoleErrors[keyof AddPrincipalRoleErrors];
+
+export type AddPrincipalRoleResponses = {
     /**
-     * Role assigned
+     * OK
      */
     200: PrincipalResponse;
 };
 
-export type PostApiPrincipalsByIdRolesResponse = PostApiPrincipalsByIdRolesResponses[keyof PostApiPrincipalsByIdRolesResponses];
+export type AddPrincipalRoleResponse = AddPrincipalRoleResponses[keyof AddPrincipalRoleResponses];
 
-export type PutApiPrincipalsByIdRolesData = {
-    body: BatchAssignRolesRequest;
+export type AssignPrincipalRolesData = {
+    body: AssignPrincipalRolesRequestWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/roles';
 };
 
-export type PutApiPrincipalsByIdRolesErrors = {
+export type AssignPrincipalRolesErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiPrincipalsByIdRolesResponses = {
+export type AssignPrincipalRolesError = AssignPrincipalRolesErrors[keyof AssignPrincipalRolesErrors];
+
+export type AssignPrincipalRolesResponses = {
     /**
-     * Roles updated
+     * OK
      */
-    200: BatchAssignRolesResponse;
+    200: RolesAssignedResponse;
 };
 
-export type PutApiPrincipalsByIdRolesResponse = PutApiPrincipalsByIdRolesResponses[keyof PutApiPrincipalsByIdRolesResponses];
+export type AssignPrincipalRolesResponse = AssignPrincipalRolesResponses[keyof AssignPrincipalRolesResponses];
 
-export type DeleteApiPrincipalsByIdRolesByRoleNameData = {
+export type RemovePrincipalRoleData = {
     body?: never;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
-        /**
-         * Role to remove
-         */
         role: string;
     };
     query?: never;
     url: '/api/principals/{id}/roles/{role}';
 };
 
-export type DeleteApiPrincipalsByIdRolesByRoleNameErrors = {
+export type RemovePrincipalRoleErrors = {
     /**
-     * Principal not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiPrincipalsByIdRolesByRoleNameResponses = {
+export type RemovePrincipalRoleError = RemovePrincipalRoleErrors[keyof RemovePrincipalRoleErrors];
+
+export type RemovePrincipalRoleResponses = {
     /**
-     * Role removed
+     * OK
      */
     200: PrincipalResponse;
 };
 
-export type DeleteApiPrincipalsByIdRolesByRoleNameResponse = DeleteApiPrincipalsByIdRolesByRoleNameResponses[keyof DeleteApiPrincipalsByIdRolesByRoleNameResponses];
+export type RemovePrincipalRoleResponse = RemovePrincipalRoleResponses[keyof RemovePrincipalRoleResponses];
 
-export type PostApiPrincipalsByIdSendPasswordResetData = {
-    body?: never;
+export type SendPrincipalPasswordResetData = {
+    body?: SendPasswordResetInputBodyWritable;
     path: {
-        /**
-         * Principal ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/principals/{id}/send-password-reset';
 };
 
-export type PostApiPrincipalsByIdSendPasswordResetErrors = {
+export type SendPrincipalPasswordResetErrors = {
     /**
-     * User is not eligible (OIDC, service account, or no email)
+     * Error
      */
-    400: unknown;
-    /**
-     * Insufficient permissions
-     */
-    403: unknown;
-    /**
-     * Principal not found
-     */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiPrincipalsByIdSendPasswordResetResponses = {
+export type SendPrincipalPasswordResetError = SendPrincipalPasswordResetErrors[keyof SendPrincipalPasswordResetErrors];
+
+export type SendPrincipalPasswordResetResponses = {
     /**
-     * Reset email queued
+     * OK
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiPrincipalsByIdSendPasswordResetResponse = PostApiPrincipalsByIdSendPasswordResetResponses[keyof PostApiPrincipalsByIdSendPasswordResetResponses];
+export type SendPrincipalPasswordResetResponse = SendPrincipalPasswordResetResponses[keyof SendPrincipalPasswordResetResponses];
 
-export type GetApiProcessesData = {
+export type GetPrincipalVersionData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/principals/{id}/version';
+};
+
+export type GetPrincipalVersionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetPrincipalVersionError = GetPrincipalVersionErrors[keyof GetPrincipalVersionErrors];
+
+export type GetPrincipalVersionResponses = {
+    /**
+     * OK
+     */
+    200: PrincipalVersionResponse;
+};
+
+export type GetPrincipalVersionResponse = GetPrincipalVersionResponses[keyof GetPrincipalVersionResponses];
+
+export type ListProcessesData = {
     body?: never;
     path?: never;
-    query: {
-        pagination: PaginationParams;
+    query?: {
         application?: string;
         subdomain?: string;
         status?: string;
-        search?: string;
     };
     url: '/api/processes';
 };
 
-export type GetApiProcessesResponses = {
+export type ListProcessesErrors = {
     /**
-     * List of processes
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListProcessesError = ListProcessesErrors[keyof ListProcessesErrors];
+
+export type ListProcessesResponses = {
+    /**
+     * OK
      */
     200: ProcessListResponse;
 };
 
-export type GetApiProcessesResponse = GetApiProcessesResponses[keyof GetApiProcessesResponses];
+export type ListProcessesResponse = ListProcessesResponses[keyof ListProcessesResponses];
 
-export type PostApiProcessesData = {
-    body: CreateProcessRequest;
+export type CreateProcessData = {
+    body: CreateProcessRequestWritable;
     path?: never;
     query?: never;
     url: '/api/processes';
 };
 
-export type PostApiProcessesErrors = {
+export type CreateProcessErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate code
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiProcessesResponses = {
+export type CreateProcessError = CreateProcessErrors[keyof CreateProcessErrors];
+
+export type CreateProcessResponses = {
     /**
-     * Process created
+     * Created
      */
     201: CreatedResponse;
 };
 
-export type PostApiProcessesResponse = PostApiProcessesResponses[keyof PostApiProcessesResponses];
+export type CreateProcessResponse = CreateProcessResponses[keyof CreateProcessResponses];
 
-export type GetApiProcessesByCodeData = {
+export type GetProcessByCodeData = {
     body?: never;
     path: {
-        /**
-         * Process code
-         */
         code: string;
     };
     query?: never;
     url: '/api/processes/by-code/{code}';
 };
 
-export type GetApiProcessesByCodeErrors = {
+export type GetProcessByCodeErrors = {
     /**
-     * Process not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiProcessesByCodeResponses = {
+export type GetProcessByCodeError = GetProcessByCodeErrors[keyof GetProcessByCodeErrors];
+
+export type GetProcessByCodeResponses = {
     /**
-     * Process found
-     */
-    200: ProcessResponse;
-};
-
-export type GetApiProcessesByCodeResponse = GetApiProcessesByCodeResponses[keyof GetApiProcessesByCodeResponses];
-
-export type DeleteApiProcessesByIdData = {
-    body?: never;
-    path: {
-        /**
-         * Process ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/processes/{id}';
-};
-
-export type DeleteApiProcessesByIdErrors = {
-    /**
-     * Process not found
-     */
-    404: unknown;
-};
-
-export type DeleteApiProcessesByIdResponses = {
-    /**
-     * Process deleted
-     */
-    204: void;
-};
-
-export type DeleteApiProcessesByIdResponse = DeleteApiProcessesByIdResponses[keyof DeleteApiProcessesByIdResponses];
-
-export type GetApiProcessesByIdData = {
-    body?: never;
-    path: {
-        /**
-         * Process ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/api/processes/{id}';
-};
-
-export type GetApiProcessesByIdErrors = {
-    /**
-     * Process not found
-     */
-    404: unknown;
-};
-
-export type GetApiProcessesByIdResponses = {
-    /**
-     * Process found
+     * OK
      */
     200: ProcessResponse;
 };
 
-export type GetApiProcessesByIdResponse = GetApiProcessesByIdResponses[keyof GetApiProcessesByIdResponses];
+export type GetProcessByCodeResponse = GetProcessByCodeResponses[keyof GetProcessByCodeResponses];
 
-export type PutApiProcessesByIdData = {
-    body: UpdateProcessRequest;
-    path: {
+export type SyncProcessesByBodyData = {
+    body: SyncProcessesByBodyRequestWritable;
+    path?: never;
+    query?: {
         /**
-         * Process ID
+         * Remove API/CODE processes not in the list
          */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/processes/sync';
+};
+
+export type SyncProcessesByBodyErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type SyncProcessesByBodyError = SyncProcessesByBodyErrors[keyof SyncProcessesByBodyErrors];
+
+export type SyncProcessesByBodyResponses = {
+    /**
+     * OK
+     */
+    200: SyncResultResponse;
+};
+
+export type SyncProcessesByBodyResponse = SyncProcessesByBodyResponses[keyof SyncProcessesByBodyResponses];
+
+export type DeleteProcessData = {
+    body?: never;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/processes/{id}';
 };
 
-export type PutApiProcessesByIdErrors = {
+export type DeleteProcessErrors = {
     /**
-     * Process not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiProcessesByIdResponses = {
+export type DeleteProcessError = DeleteProcessErrors[keyof DeleteProcessErrors];
+
+export type DeleteProcessResponses = {
     /**
-     * Process updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiProcessesByIdResponse = PutApiProcessesByIdResponses[keyof PutApiProcessesByIdResponses];
+export type DeleteProcessResponse = DeleteProcessResponses[keyof DeleteProcessResponses];
 
-export type PostApiProcessesByIdArchiveData = {
+export type GetProcessData = {
     body?: never;
     path: {
-        /**
-         * Process ID
-         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}';
+};
+
+export type GetProcessErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetProcessError = GetProcessErrors[keyof GetProcessErrors];
+
+export type GetProcessResponses = {
+    /**
+     * OK
+     */
+    200: ProcessResponse;
+};
+
+export type GetProcessResponse = GetProcessResponses[keyof GetProcessResponses];
+
+export type UpdateProcessData = {
+    body: UpdateProcessRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}';
+};
+
+export type UpdateProcessErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateProcessError = UpdateProcessErrors[keyof UpdateProcessErrors];
+
+export type UpdateProcessResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateProcessResponse = UpdateProcessResponses[keyof UpdateProcessResponses];
+
+export type ArchiveProcessData = {
+    body?: never;
+    path: {
         id: string;
     };
     query?: never;
     url: '/api/processes/{id}/archive';
 };
 
-export type PostApiProcessesByIdArchiveErrors = {
+export type ArchiveProcessErrors = {
     /**
-     * Process not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiProcessesByIdArchiveResponses = {
+export type ArchiveProcessError = ArchiveProcessErrors[keyof ArchiveProcessErrors];
+
+export type ArchiveProcessResponses = {
     /**
-     * Process archived
+     * No Content
      */
     204: void;
 };
 
-export type PostApiProcessesByIdArchiveResponse = PostApiProcessesByIdArchiveResponses[keyof PostApiProcessesByIdArchiveResponses];
+export type ArchiveProcessResponse = ArchiveProcessResponses[keyof ArchiveProcessResponses];
 
-export type GetApiRolesData = {
+export type ListResetApprovalsData = {
     body?: never;
     path?: never;
-    query: {
-        pagination: PaginationParams;
-        /**
-         * Filter by application code
-         */
-        applicationCode?: string;
-        /**
-         * Filter by source
-         */
-        source?: string;
-        /**
-         * Filter client-managed roles only
-         */
-        clientManaged?: boolean;
-    };
-    url: '/api/roles';
+    query?: never;
+    url: '/api/reset-approvals';
 };
 
-export type GetApiRolesResponses = {
+export type ListResetApprovalsErrors = {
     /**
-     * List of roles
+     * Error
      */
-    200: RoleListResponse;
+    default: ErrorModel;
 };
 
-export type GetApiRolesResponse = GetApiRolesResponses[keyof GetApiRolesResponses];
+export type ListResetApprovalsError = ListResetApprovalsErrors[keyof ListResetApprovalsErrors];
 
-export type PostApiRolesData = {
-    body: CreateRoleRequest;
+export type ListResetApprovalsResponses = {
+    /**
+     * OK
+     */
+    200: ListOutputBody;
+};
+
+export type ListResetApprovalsResponse = ListResetApprovalsResponses[keyof ListResetApprovalsResponses];
+
+export type ApproveResetApprovalData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/reset-approvals/{id}/approve';
+};
+
+export type ApproveResetApprovalErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ApproveResetApprovalError = ApproveResetApprovalErrors[keyof ApproveResetApprovalErrors];
+
+export type ApproveResetApprovalResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type ApproveResetApprovalResponse = ApproveResetApprovalResponses[keyof ApproveResetApprovalResponses];
+
+export type DenyResetApprovalData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/reset-approvals/{id}/deny';
+};
+
+export type DenyResetApprovalErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DenyResetApprovalError = DenyResetApprovalErrors[keyof DenyResetApprovalErrors];
+
+export type DenyResetApprovalResponses = {
+    /**
+     * OK
+     */
+    200: StatusChangeResponse;
+};
+
+export type DenyResetApprovalResponse = DenyResetApprovalResponses[keyof DenyResetApprovalResponses];
+
+export type ListRolesData = {
+    body?: never;
     path?: never;
     query?: never;
     url: '/api/roles';
 };
 
-export type PostApiRolesErrors = {
+export type ListRolesErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate role code
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiRolesResponses = {
+export type ListRolesError = ListRolesErrors[keyof ListRolesErrors];
+
+export type ListRolesResponses = {
     /**
-     * Role created
+     * OK
+     */
+    200: RoleListResponse;
+};
+
+export type ListRolesResponse = ListRolesResponses[keyof ListRolesResponses];
+
+export type CreateRoleData = {
+    body: CreateRoleRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/roles';
+};
+
+export type CreateRoleErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateRoleError = CreateRoleErrors[keyof CreateRoleErrors];
+
+export type CreateRoleResponses = {
+    /**
+     * Created
      */
     201: CreatedResponse;
 };
 
-export type PostApiRolesResponse = PostApiRolesResponses[keyof PostApiRolesResponses];
+export type CreateRoleResponse = CreateRoleResponses[keyof CreateRoleResponses];
 
-export type GetApiRolesByApplicationByApplicationIdData = {
+export type GetRolesByApplicationData = {
     body?: never;
     path: {
-        /**
-         * Application ID
-         */
         applicationId: string;
     };
     query?: never;
     url: '/api/roles/by-application/{applicationId}';
 };
 
-export type GetApiRolesByApplicationByApplicationIdResponses = {
+export type GetRolesByApplicationErrors = {
     /**
-     * Roles filtered by application ID
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetRolesByApplicationError = GetRolesByApplicationErrors[keyof GetRolesByApplicationErrors];
+
+export type GetRolesByApplicationResponses = {
+    /**
+     * OK
      */
     200: Array<RoleResponse>;
 };
 
-export type GetApiRolesByApplicationByApplicationIdResponse = GetApiRolesByApplicationByApplicationIdResponses[keyof GetApiRolesByApplicationByApplicationIdResponses];
+export type GetRolesByApplicationResponse = GetRolesByApplicationResponses[keyof GetRolesByApplicationResponses];
 
-export type GetApiRolesByCodeByCodeData = {
+export type GetRoleByCodeData = {
     body?: never;
     path: {
-        /**
-         * Role code
-         */
         code: string;
     };
     query?: never;
     url: '/api/roles/by-code/{code}';
 };
 
-export type GetApiRolesByCodeByCodeErrors = {
+export type GetRoleByCodeErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiRolesByCodeByCodeResponses = {
+export type GetRoleByCodeError = GetRoleByCodeErrors[keyof GetRoleByCodeErrors];
+
+export type GetRoleByCodeResponses = {
     /**
-     * Role found
+     * OK
      */
     200: RoleResponse;
 };
 
-export type GetApiRolesByCodeByCodeResponse = GetApiRolesByCodeByCodeResponses[keyof GetApiRolesByCodeByCodeResponses];
+export type GetRoleByCodeResponse = GetRoleByCodeResponses[keyof GetRoleByCodeResponses];
 
-export type GetApiRolesBySourceBySourceData = {
+export type GetRolesBySourceData = {
     body?: never;
     path: {
-        /**
-         * Role source (CODE, DATABASE, SDK)
-         */
         source: string;
     };
     query?: never;
     url: '/api/roles/by-source/{source}';
 };
 
-export type GetApiRolesBySourceBySourceErrors = {
+export type GetRolesBySourceErrors = {
     /**
-     * Invalid source
+     * Error
      */
-    400: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiRolesBySourceBySourceResponses = {
+export type GetRolesBySourceError = GetRolesBySourceErrors[keyof GetRolesBySourceErrors];
+
+export type GetRolesBySourceResponses = {
     /**
-     * Roles filtered by source
+     * OK
      */
     200: Array<RoleResponse>;
 };
 
-export type GetApiRolesBySourceBySourceResponse = GetApiRolesBySourceBySourceResponses[keyof GetApiRolesBySourceBySourceResponses];
+export type GetRolesBySourceResponse = GetRolesBySourceResponses[keyof GetRolesBySourceResponses];
 
-export type GetApiRolesFiltersApplicationsData = {
+export type GetRoleApplicationFiltersData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/roles/filters/applications';
 };
 
-export type GetApiRolesFiltersApplicationsResponses = {
+export type GetRoleApplicationFiltersErrors = {
     /**
-     * Application options
+     * Error
      */
-    200: ApplicationOptionsResponse;
+    default: ErrorModel;
 };
 
-export type GetApiRolesFiltersApplicationsResponse = GetApiRolesFiltersApplicationsResponses[keyof GetApiRolesFiltersApplicationsResponses];
+export type GetRoleApplicationFiltersError = GetRoleApplicationFiltersErrors[keyof GetRoleApplicationFiltersErrors];
 
-export type GetApiRolesPermissionsData = {
+export type GetRoleApplicationFiltersResponses = {
+    /**
+     * OK
+     */
+    200: ApplicationFilterListResponse;
+};
+
+export type GetRoleApplicationFiltersResponse = GetRoleApplicationFiltersResponses[keyof GetRoleApplicationFiltersResponses];
+
+export type ListPermissionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/roles/permissions';
 };
 
-export type GetApiRolesPermissionsResponses = {
+export type ListPermissionsErrors = {
     /**
-     * List of permissions
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListPermissionsError = ListPermissionsErrors[keyof ListPermissionsErrors];
+
+export type ListPermissionsResponses = {
+    /**
+     * OK
      */
     200: PermissionListResponse;
 };
 
-export type GetApiRolesPermissionsResponse = GetApiRolesPermissionsResponses[keyof GetApiRolesPermissionsResponses];
+export type ListPermissionsResponse = ListPermissionsResponses[keyof ListPermissionsResponses];
 
-export type GetApiRolesPermissionsByPermissionData = {
+export type DeletePermissionData = {
     body?: never;
     path: {
-        /**
-         * Permission string
-         */
         permission: string;
     };
     query?: never;
     url: '/api/roles/permissions/{permission}';
 };
 
-export type GetApiRolesPermissionsByPermissionErrors = {
+export type DeletePermissionErrors = {
     /**
-     * Permission not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiRolesPermissionsByPermissionResponses = {
+export type DeletePermissionError = DeletePermissionErrors[keyof DeletePermissionErrors];
+
+export type DeletePermissionResponses = {
     /**
-     * Permission found
+     * No Content
+     */
+    204: void;
+};
+
+export type DeletePermissionResponse = DeletePermissionResponses[keyof DeletePermissionResponses];
+
+export type GetPermissionData = {
+    body?: never;
+    path: {
+        permission: string;
+    };
+    query?: never;
+    url: '/api/roles/permissions/{permission}';
+};
+
+export type GetPermissionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetPermissionError = GetPermissionErrors[keyof GetPermissionErrors];
+
+export type GetPermissionResponses = {
+    /**
+     * OK
      */
     200: PermissionResponse;
 };
 
-export type GetApiRolesPermissionsByPermissionResponse = GetApiRolesPermissionsByPermissionResponses[keyof GetApiRolesPermissionsByPermissionResponses];
+export type GetPermissionResponse = GetPermissionResponses[keyof GetPermissionResponses];
 
-export type DeleteApiRolesByNameData = {
+export type DeleteRoleData = {
     body?: never;
     path: {
-        /**
-         * Role name (code) or ID
-         */
-        roleName: string;
+        id: string;
     };
     query?: never;
-    url: '/api/roles/{roleName}';
+    url: '/api/roles/{id}';
 };
 
-export type DeleteApiRolesByNameErrors = {
+export type DeleteRoleErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiRolesByNameResponses = {
+export type DeleteRoleError = DeleteRoleErrors[keyof DeleteRoleErrors];
+
+export type DeleteRoleResponses = {
     /**
-     * Role deleted
+     * No Content
      */
     204: void;
 };
 
-export type DeleteApiRolesByNameResponse = DeleteApiRolesByNameResponses[keyof DeleteApiRolesByNameResponses];
+export type DeleteRoleResponse = DeleteRoleResponses[keyof DeleteRoleResponses];
 
-export type GetApiRolesByNameData = {
+export type GetRoleData = {
     body?: never;
     path: {
         /**
-         * Role name (code) or ID
+         * Role id (TSID)
          */
-        roleName: string;
+        id: string;
     };
     query?: never;
-    url: '/api/roles/{roleName}';
+    url: '/api/roles/{id}';
 };
 
-export type GetApiRolesByNameErrors = {
+export type GetRoleErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiRolesByNameResponses = {
+export type GetRoleError = GetRoleErrors[keyof GetRoleErrors];
+
+export type GetRoleResponses = {
     /**
-     * Role found
+     * OK
      */
     200: RoleResponse;
 };
 
-export type GetApiRolesByNameResponse = GetApiRolesByNameResponses[keyof GetApiRolesByNameResponses];
+export type GetRoleResponse = GetRoleResponses[keyof GetRoleResponses];
 
-export type PutApiRolesByNameData = {
-    body: UpdateRoleRequest;
+export type UpdateRoleData = {
+    body: UpdateRoleRequestWritable;
     path: {
-        /**
-         * Role name (code) or ID
-         */
-        roleName: string;
+        id: string;
     };
     query?: never;
-    url: '/api/roles/{roleName}';
+    url: '/api/roles/{id}';
 };
 
-export type PutApiRolesByNameErrors = {
+export type UpdateRoleErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiRolesByNameResponses = {
+export type UpdateRoleError = UpdateRoleErrors[keyof UpdateRoleErrors];
+
+export type UpdateRoleResponses = {
     /**
-     * Role updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiRolesByNameResponse = PutApiRolesByNameResponses[keyof PutApiRolesByNameResponses];
+export type UpdateRoleResponse = UpdateRoleResponses[keyof UpdateRoleResponses];
 
-export type PostApiRolesByNamePermissionsData = {
-    body: GrantPermissionRequest;
+export type ListRolePermissionsData = {
+    body?: never;
     path: {
-        /**
-         * Role name (code) or ID
-         */
         roleName: string;
     };
     query?: never;
     url: '/api/roles/{roleName}/permissions';
 };
 
-export type PostApiRolesByNamePermissionsErrors = {
+export type ListRolePermissionsErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiRolesByNamePermissionsResponses = {
+export type ListRolePermissionsError = ListRolePermissionsErrors[keyof ListRolePermissionsErrors];
+
+export type ListRolePermissionsResponses = {
     /**
-     * Permission granted
+     * OK
+     */
+    200: RolePermissionListResponse;
+};
+
+export type ListRolePermissionsResponse = ListRolePermissionsResponses[keyof ListRolePermissionsResponses];
+
+export type GrantRolePermissionByBodyData = {
+    body: GrantPermissionRequestWritable;
+    path: {
+        roleName: string;
+    };
+    query?: never;
+    url: '/api/roles/{roleName}/permissions';
+};
+
+export type GrantRolePermissionByBodyErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GrantRolePermissionByBodyError = GrantRolePermissionByBodyErrors[keyof GrantRolePermissionByBodyErrors];
+
+export type GrantRolePermissionByBodyResponses = {
+    /**
+     * OK
      */
     200: RoleResponse;
 };
 
-export type PostApiRolesByNamePermissionsResponse = PostApiRolesByNamePermissionsResponses[keyof PostApiRolesByNamePermissionsResponses];
+export type GrantRolePermissionByBodyResponse = GrantRolePermissionByBodyResponses[keyof GrantRolePermissionByBodyResponses];
 
-export type DeleteApiRolesByNamePermissionsByPermissionData = {
+export type RevokeRolePermissionData = {
     body?: never;
     path: {
-        /**
-         * Role name (code) or ID
-         */
         roleName: string;
-        /**
-         * Permission to revoke
-         */
         permission: string;
     };
     query?: never;
     url: '/api/roles/{roleName}/permissions/{permission}';
 };
 
-export type DeleteApiRolesByNamePermissionsByPermissionErrors = {
+export type RevokeRolePermissionErrors = {
     /**
-     * Role not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiRolesByNamePermissionsByPermissionResponses = {
+export type RevokeRolePermissionError = RevokeRolePermissionErrors[keyof RevokeRolePermissionErrors];
+
+export type RevokeRolePermissionResponses = {
     /**
-     * Permission revoked
+     * OK
      */
     200: RoleResponse;
 };
 
-export type DeleteApiRolesByNamePermissionsByPermissionResponse = DeleteApiRolesByNamePermissionsByPermissionResponses[keyof DeleteApiRolesByNamePermissionsByPermissionResponses];
+export type RevokeRolePermissionResponse = RevokeRolePermissionResponses[keyof RevokeRolePermissionResponses];
 
-export type GetApiScheduledJobsData = {
+export type GrantRolePermissionData = {
+    body?: never;
+    path: {
+        roleName: string;
+        permission: string;
+    };
+    query?: never;
+    url: '/api/roles/{roleName}/permissions/{permission}';
+};
+
+export type GrantRolePermissionErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GrantRolePermissionError = GrantRolePermissionErrors[keyof GrantRolePermissionErrors];
+
+export type GrantRolePermissionResponses = {
+    /**
+     * OK
+     */
+    200: RoleResponse;
+};
+
+export type GrantRolePermissionResponse = GrantRolePermissionResponses[keyof GrantRolePermissionResponses];
+
+export type ListScheduledJobsData = {
     body?: never;
     path?: never;
-    query: {
-        /**
-         * Filter by client. Pass the literal `platform` to filter platform-scoped.
-         */
-        clientId?: string;
+    query?: {
         status?: string;
+        clientId?: string;
         search?: string;
-        pagination: PaginationParams;
+        page?: number;
+        size?: number;
+        limit?: number;
+        pageSize?: number;
+        page_size?: number;
     };
     url: '/api/scheduled-jobs';
 };
 
-export type GetApiScheduledJobsResponses = {
-    200: PaginatedResponseScheduledJobResponse;
+export type ListScheduledJobsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsResponse = GetApiScheduledJobsResponses[keyof GetApiScheduledJobsResponses];
+export type ListScheduledJobsError = ListScheduledJobsErrors[keyof ListScheduledJobsErrors];
 
-export type PostApiScheduledJobsData = {
-    body: CreateScheduledJobRequest;
+export type ListScheduledJobsResponses = {
+    /**
+     * OK
+     */
+    200: OffsetPageScheduledJobResponse;
+};
+
+export type ListScheduledJobsResponse = ListScheduledJobsResponses[keyof ListScheduledJobsResponses];
+
+export type CreateScheduledJobData = {
+    body: CreateScheduledJobRequestWritable;
     path?: never;
     query?: never;
     url: '/api/scheduled-jobs';
 };
 
-export type PostApiScheduledJobsErrors = {
-    400: unknown;
-    403: unknown;
-    409: unknown;
+export type CreateScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsResponses = {
+export type CreateScheduledJobError = CreateScheduledJobErrors[keyof CreateScheduledJobErrors];
+
+export type CreateScheduledJobResponses = {
+    /**
+     * Created
+     */
     201: CreatedResponse;
 };
 
-export type PostApiScheduledJobsResponse = PostApiScheduledJobsResponses[keyof PostApiScheduledJobsResponses];
+export type CreateScheduledJobResponse = CreateScheduledJobResponses[keyof CreateScheduledJobResponses];
 
-export type GetApiScheduledJobsByCodeData = {
+export type GetScheduledJobByCodeData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job code
-         */
         code: string;
     };
     query?: {
+        /**
+         * Optional client scope; omit for platform-scoped lookup
+         */
         clientId?: string;
     };
     url: '/api/scheduled-jobs/by-code/{code}';
 };
 
-export type GetApiScheduledJobsByCodeErrors = {
-    404: unknown;
+export type GetScheduledJobByCodeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsByCodeResponses = {
+export type GetScheduledJobByCodeError = GetScheduledJobByCodeErrors[keyof GetScheduledJobByCodeErrors];
+
+export type GetScheduledJobByCodeResponses = {
+    /**
+     * OK
+     */
     200: ScheduledJobResponse;
 };
 
-export type GetApiScheduledJobsByCodeResponse = GetApiScheduledJobsByCodeResponses[keyof GetApiScheduledJobsByCodeResponses];
+export type GetScheduledJobByCodeResponse = GetScheduledJobByCodeResponses[keyof GetScheduledJobByCodeResponses];
 
-export type GetApiScheduledJobsInstancesByIdData = {
+export type GetScheduledJobInstanceData = {
     body?: never;
     path: {
-        /**
-         * Instance ID
-         */
         instanceId: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/instances/{instanceId}';
 };
 
-export type GetApiScheduledJobsInstancesByIdErrors = {
-    404: unknown;
+export type GetScheduledJobInstanceErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsInstancesByIdResponses = {
+export type GetScheduledJobInstanceError = GetScheduledJobInstanceErrors[keyof GetScheduledJobInstanceErrors];
+
+export type GetScheduledJobInstanceResponses = {
+    /**
+     * OK
+     */
     200: ScheduledJobInstanceResponse;
 };
 
-export type GetApiScheduledJobsInstancesByIdResponse = GetApiScheduledJobsInstancesByIdResponses[keyof GetApiScheduledJobsInstancesByIdResponses];
+export type GetScheduledJobInstanceResponse = GetScheduledJobInstanceResponses[keyof GetScheduledJobInstanceResponses];
 
-export type PostApiScheduledJobsInstancesByIdCompleteData = {
-    body: InstanceCompleteRequest;
+export type CompleteScheduledJobInstanceData = {
+    body: CompleteInstanceRequestWritable;
     path: {
-        /**
-         * Instance ID
-         */
         instanceId: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/instances/{instanceId}/complete';
 };
 
-export type PostApiScheduledJobsInstancesByIdCompleteErrors = {
-    403: unknown;
-    404: unknown;
+export type CompleteScheduledJobInstanceErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsInstancesByIdCompleteResponses = {
+export type CompleteScheduledJobInstanceError = CompleteScheduledJobInstanceErrors[keyof CompleteScheduledJobInstanceErrors];
+
+export type CompleteScheduledJobInstanceResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type PostApiScheduledJobsInstancesByIdCompleteResponse = PostApiScheduledJobsInstancesByIdCompleteResponses[keyof PostApiScheduledJobsInstancesByIdCompleteResponses];
+export type CompleteScheduledJobInstanceResponse = CompleteScheduledJobInstanceResponses[keyof CompleteScheduledJobInstanceResponses];
 
-export type PostApiScheduledJobsInstancesByIdLogData = {
-    body: InstanceLogRequest;
+export type WriteScheduledJobInstanceLogData = {
+    body: WriteInstanceLogRequestWritable;
     path: {
-        /**
-         * Instance ID
-         */
         instanceId: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/instances/{instanceId}/log';
 };
 
-export type PostApiScheduledJobsInstancesByIdLogErrors = {
-    403: unknown;
-    404: unknown;
+export type WriteScheduledJobInstanceLogErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsInstancesByIdLogResponses = {
-    202: unknown;
+export type WriteScheduledJobInstanceLogError = WriteScheduledJobInstanceLogErrors[keyof WriteScheduledJobInstanceLogErrors];
+
+export type WriteScheduledJobInstanceLogResponses = {
+    /**
+     * No Content
+     */
+    204: void;
 };
 
-export type GetApiScheduledJobsInstancesByIdLogsData = {
+export type WriteScheduledJobInstanceLogResponse = WriteScheduledJobInstanceLogResponses[keyof WriteScheduledJobInstanceLogResponses];
+
+export type ListScheduledJobInstanceLogsData = {
     body?: never;
     path: {
-        /**
-         * Instance ID
-         */
         instanceId: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/instances/{instanceId}/logs';
 };
 
-export type GetApiScheduledJobsInstancesByIdLogsErrors = {
-    404: unknown;
+export type ListScheduledJobInstanceLogsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsInstancesByIdLogsResponses = {
-    200: Array<InstanceLogResponse>;
+export type ListScheduledJobInstanceLogsError = ListScheduledJobInstanceLogsErrors[keyof ListScheduledJobInstanceLogsErrors];
+
+export type ListScheduledJobInstanceLogsResponses = {
+    /**
+     * OK
+     */
+    200: Array<ScheduledJobInstanceLogResponse>;
 };
 
-export type GetApiScheduledJobsInstancesByIdLogsResponse = GetApiScheduledJobsInstancesByIdLogsResponses[keyof GetApiScheduledJobsInstancesByIdLogsResponses];
+export type ListScheduledJobInstanceLogsResponse = ListScheduledJobInstanceLogsResponses[keyof ListScheduledJobInstanceLogsResponses];
 
-export type DeleteApiScheduledJobsByIdData = {
+export type DeleteScheduledJobData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}';
 };
 
-export type DeleteApiScheduledJobsByIdErrors = {
-    404: unknown;
+export type DeleteScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type DeleteApiScheduledJobsByIdResponses = {
+export type DeleteScheduledJobError = DeleteScheduledJobErrors[keyof DeleteScheduledJobErrors];
+
+export type DeleteScheduledJobResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type DeleteApiScheduledJobsByIdResponse = DeleteApiScheduledJobsByIdResponses[keyof DeleteApiScheduledJobsByIdResponses];
+export type DeleteScheduledJobResponse = DeleteScheduledJobResponses[keyof DeleteScheduledJobResponses];
 
-export type GetApiScheduledJobsByIdData = {
+export type GetScheduledJobData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}';
 };
 
-export type GetApiScheduledJobsByIdErrors = {
-    404: unknown;
+export type GetScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsByIdResponses = {
+export type GetScheduledJobError = GetScheduledJobErrors[keyof GetScheduledJobErrors];
+
+export type GetScheduledJobResponses = {
+    /**
+     * OK
+     */
     200: ScheduledJobResponse;
 };
 
-export type GetApiScheduledJobsByIdResponse = GetApiScheduledJobsByIdResponses[keyof GetApiScheduledJobsByIdResponses];
+export type GetScheduledJobResponse = GetScheduledJobResponses[keyof GetScheduledJobResponses];
 
-export type PutApiScheduledJobsByIdData = {
-    body: UpdateScheduledJobRequest;
+export type UpdateScheduledJobData = {
+    body: UpdateScheduledJobRequestWritable;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}';
 };
 
-export type PutApiScheduledJobsByIdErrors = {
-    404: unknown;
+export type UpdateScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PutApiScheduledJobsByIdResponses = {
+export type UpdateScheduledJobError = UpdateScheduledJobErrors[keyof UpdateScheduledJobErrors];
+
+export type UpdateScheduledJobResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type PutApiScheduledJobsByIdResponse = PutApiScheduledJobsByIdResponses[keyof PutApiScheduledJobsByIdResponses];
+export type UpdateScheduledJobResponse = UpdateScheduledJobResponses[keyof UpdateScheduledJobResponses];
 
-export type PostApiScheduledJobsByIdArchiveData = {
+export type ArchiveScheduledJobData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}/archive';
 };
 
-export type PostApiScheduledJobsByIdArchiveErrors = {
-    404: unknown;
-    409: unknown;
+export type ArchiveScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsByIdArchiveResponses = {
+export type ArchiveScheduledJobError = ArchiveScheduledJobErrors[keyof ArchiveScheduledJobErrors];
+
+export type ArchiveScheduledJobResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type PostApiScheduledJobsByIdArchiveResponse = PostApiScheduledJobsByIdArchiveResponses[keyof PostApiScheduledJobsByIdArchiveResponses];
+export type ArchiveScheduledJobResponse = ArchiveScheduledJobResponses[keyof ArchiveScheduledJobResponses];
 
-export type PostApiScheduledJobsByIdFireData = {
-    body: FireRequest;
+export type FireScheduledJobNowData = {
+    body?: FireNowRequestWritable;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}/fire';
 };
 
-export type PostApiScheduledJobsByIdFireErrors = {
-    404: unknown;
-    409: unknown;
+export type FireScheduledJobNowErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsByIdFireResponses = {
-    202: CreatedResponse;
+export type FireScheduledJobNowError = FireScheduledJobNowErrors[keyof FireScheduledJobNowErrors];
+
+export type FireScheduledJobNowResponses = {
+    /**
+     * Accepted
+     */
+    202: FireNowResponse;
 };
 
-export type PostApiScheduledJobsByIdFireResponse = PostApiScheduledJobsByIdFireResponses[keyof PostApiScheduledJobsByIdFireResponses];
+export type FireScheduledJobNowResponse = FireScheduledJobNowResponses[keyof FireScheduledJobNowResponses];
 
-export type GetApiScheduledJobsByIdInstancesData = {
+export type ListScheduledJobInstancesData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
-    query: {
+    query?: {
         status?: string;
-        triggerKind?: string;
-        from?: string;
-        to?: string;
-        pagination: PaginationParams;
+        page?: number;
+        size?: number;
+        limit?: number;
+        pageSize?: number;
+        page_size?: number;
     };
     url: '/api/scheduled-jobs/{id}/instances';
 };
 
-export type GetApiScheduledJobsByIdInstancesResponses = {
-    200: PaginatedResponseScheduledJobInstanceResponse;
+export type ListScheduledJobInstancesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type GetApiScheduledJobsByIdInstancesResponse = GetApiScheduledJobsByIdInstancesResponses[keyof GetApiScheduledJobsByIdInstancesResponses];
+export type ListScheduledJobInstancesError = ListScheduledJobInstancesErrors[keyof ListScheduledJobInstancesErrors];
 
-export type PostApiScheduledJobsByIdPauseData = {
+export type ListScheduledJobInstancesResponses = {
+    /**
+     * OK
+     */
+    200: OffsetPageScheduledJobInstanceResponse;
+};
+
+export type ListScheduledJobInstancesResponse = ListScheduledJobInstancesResponses[keyof ListScheduledJobInstancesResponses];
+
+export type PauseScheduledJobData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}/pause';
 };
 
-export type PostApiScheduledJobsByIdPauseErrors = {
-    404: unknown;
-    409: unknown;
+export type PauseScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsByIdPauseResponses = {
+export type PauseScheduledJobError = PauseScheduledJobErrors[keyof PauseScheduledJobErrors];
+
+export type PauseScheduledJobResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type PostApiScheduledJobsByIdPauseResponse = PostApiScheduledJobsByIdPauseResponses[keyof PostApiScheduledJobsByIdPauseResponses];
+export type PauseScheduledJobResponse = PauseScheduledJobResponses[keyof PauseScheduledJobResponses];
 
-export type PostApiScheduledJobsByIdResumeData = {
+export type ResumeScheduledJobData = {
     body?: never;
     path: {
-        /**
-         * Scheduled job ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/scheduled-jobs/{id}/resume';
 };
 
-export type PostApiScheduledJobsByIdResumeErrors = {
-    404: unknown;
-    409: unknown;
+export type ResumeScheduledJobErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
 };
 
-export type PostApiScheduledJobsByIdResumeResponses = {
+export type ResumeScheduledJobError = ResumeScheduledJobErrors[keyof ResumeScheduledJobErrors];
+
+export type ResumeScheduledJobResponses = {
+    /**
+     * No Content
+     */
     204: void;
 };
 
-export type PostApiScheduledJobsByIdResumeResponse = PostApiScheduledJobsByIdResumeResponses[keyof PostApiScheduledJobsByIdResumeResponses];
+export type ResumeScheduledJobResponse = ResumeScheduledJobResponses[keyof ResumeScheduledJobResponses];
 
-export type GetApiSubscriptionsData = {
+export type ListServiceAccountsData = {
     body?: never;
     path?: never;
-    query: {
-        pagination: PaginationParams;
-        /**
-         * Filter by client ID
-         */
-        clientId?: string;
-        /**
-         * Filter by status
-         */
+    query?: never;
+    url: '/api/service-accounts';
+};
+
+export type ListServiceAccountsErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListServiceAccountsError = ListServiceAccountsErrors[keyof ListServiceAccountsErrors];
+
+export type ListServiceAccountsResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountListResponse;
+};
+
+export type ListServiceAccountsResponse = ListServiceAccountsResponses[keyof ListServiceAccountsResponses];
+
+export type CreateServiceAccountData = {
+    body: CreateServiceAccountRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/service-accounts';
+};
+
+export type CreateServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type CreateServiceAccountError = CreateServiceAccountErrors[keyof CreateServiceAccountErrors];
+
+export type CreateServiceAccountResponses = {
+    /**
+     * Created
+     */
+    201: CreateServiceAccountResponse;
+};
+
+export type CreateServiceAccountResponse2 = CreateServiceAccountResponses[keyof CreateServiceAccountResponses];
+
+export type GetServiceAccountByCodeData = {
+    body?: never;
+    path: {
+        code: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/code/{code}';
+};
+
+export type GetServiceAccountByCodeErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetServiceAccountByCodeError = GetServiceAccountByCodeErrors[keyof GetServiceAccountByCodeErrors];
+
+export type GetServiceAccountByCodeResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountResponse;
+};
+
+export type GetServiceAccountByCodeResponse = GetServiceAccountByCodeResponses[keyof GetServiceAccountByCodeResponses];
+
+export type DeleteServiceAccountData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}';
+};
+
+export type DeleteServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeleteServiceAccountError = DeleteServiceAccountErrors[keyof DeleteServiceAccountErrors];
+
+export type DeleteServiceAccountResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeleteServiceAccountResponse = DeleteServiceAccountResponses[keyof DeleteServiceAccountResponses];
+
+export type GetServiceAccountData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}';
+};
+
+export type GetServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type GetServiceAccountError = GetServiceAccountErrors[keyof GetServiceAccountErrors];
+
+export type GetServiceAccountResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountResponse;
+};
+
+export type GetServiceAccountResponse = GetServiceAccountResponses[keyof GetServiceAccountResponses];
+
+export type UpdateServiceAccountData = {
+    body: UpdateServiceAccountRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}';
+};
+
+export type UpdateServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type UpdateServiceAccountError = UpdateServiceAccountErrors[keyof UpdateServiceAccountErrors];
+
+export type UpdateServiceAccountResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type UpdateServiceAccountResponse = UpdateServiceAccountResponses[keyof UpdateServiceAccountResponses];
+
+export type DeactivateServiceAccountData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/deactivate';
+};
+
+export type DeactivateServiceAccountErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type DeactivateServiceAccountError = DeactivateServiceAccountErrors[keyof DeactivateServiceAccountErrors];
+
+export type DeactivateServiceAccountResponses = {
+    /**
+     * No Content
+     */
+    204: void;
+};
+
+export type DeactivateServiceAccountResponse = DeactivateServiceAccountResponses[keyof DeactivateServiceAccountResponses];
+
+export type RegenerateServiceAccountAuthTokenRegenerateAuthTokenData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/regenerate-auth-token';
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateAuthTokenErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateAuthTokenError = RegenerateServiceAccountAuthTokenRegenerateAuthTokenErrors[keyof RegenerateServiceAccountAuthTokenRegenerateAuthTokenErrors];
+
+export type RegenerateServiceAccountAuthTokenRegenerateAuthTokenResponses = {
+    /**
+     * OK
+     */
+    200: RegenerateAuthTokenResponse;
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateAuthTokenResponse = RegenerateServiceAccountAuthTokenRegenerateAuthTokenResponses[keyof RegenerateServiceAccountAuthTokenRegenerateAuthTokenResponses];
+
+export type RegenerateServiceAccountSigningSecretRegenerateSecretData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/regenerate-secret';
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSecretErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSecretError = RegenerateServiceAccountSigningSecretRegenerateSecretErrors[keyof RegenerateServiceAccountSigningSecretRegenerateSecretErrors];
+
+export type RegenerateServiceAccountSigningSecretRegenerateSecretResponses = {
+    /**
+     * OK
+     */
+    200: RegenerateSigningSecretResponse;
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSecretResponse = RegenerateServiceAccountSigningSecretRegenerateSecretResponses[keyof RegenerateServiceAccountSigningSecretRegenerateSecretResponses];
+
+export type RegenerateServiceAccountSigningSecretRegenerateSigningSecretData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/regenerate-signing-secret';
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSigningSecretErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSigningSecretError = RegenerateServiceAccountSigningSecretRegenerateSigningSecretErrors[keyof RegenerateServiceAccountSigningSecretRegenerateSigningSecretErrors];
+
+export type RegenerateServiceAccountSigningSecretRegenerateSigningSecretResponses = {
+    /**
+     * OK
+     */
+    200: RegenerateSigningSecretResponse;
+};
+
+export type RegenerateServiceAccountSigningSecretRegenerateSigningSecretResponse = RegenerateServiceAccountSigningSecretRegenerateSigningSecretResponses[keyof RegenerateServiceAccountSigningSecretRegenerateSigningSecretResponses];
+
+export type RegenerateServiceAccountAuthTokenRegenerateTokenData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/regenerate-token';
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateTokenErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateTokenError = RegenerateServiceAccountAuthTokenRegenerateTokenErrors[keyof RegenerateServiceAccountAuthTokenRegenerateTokenErrors];
+
+export type RegenerateServiceAccountAuthTokenRegenerateTokenResponses = {
+    /**
+     * OK
+     */
+    200: RegenerateAuthTokenResponse;
+};
+
+export type RegenerateServiceAccountAuthTokenRegenerateTokenResponse = RegenerateServiceAccountAuthTokenRegenerateTokenResponses[keyof RegenerateServiceAccountAuthTokenRegenerateTokenResponses];
+
+export type ListServiceAccountRolesData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/roles';
+};
+
+export type ListServiceAccountRolesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListServiceAccountRolesError = ListServiceAccountRolesErrors[keyof ListServiceAccountRolesErrors];
+
+export type ListServiceAccountRolesResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountRoleListResponse;
+};
+
+export type ListServiceAccountRolesResponse = ListServiceAccountRolesResponses[keyof ListServiceAccountRolesResponses];
+
+export type AssignServiceAccountRolesData = {
+    body: AssignRolesRequestWritable;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/roles';
+};
+
+export type AssignServiceAccountRolesErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type AssignServiceAccountRolesError = AssignServiceAccountRolesErrors[keyof AssignServiceAccountRolesErrors];
+
+export type AssignServiceAccountRolesResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountRolesAssignedResponse;
+};
+
+export type AssignServiceAccountRolesResponse = AssignServiceAccountRolesResponses[keyof AssignServiceAccountRolesResponses];
+
+export type MintServiceAccountTokenData = {
+    body?: never;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/service-accounts/{id}/token';
+};
+
+export type MintServiceAccountTokenErrors = {
+    /**
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type MintServiceAccountTokenError = MintServiceAccountTokenErrors[keyof MintServiceAccountTokenErrors];
+
+export type MintServiceAccountTokenResponses = {
+    /**
+     * OK
+     */
+    200: ServiceAccountTokenResponse;
+};
+
+export type MintServiceAccountTokenResponse = MintServiceAccountTokenResponses[keyof MintServiceAccountTokenResponses];
+
+export type ListSubscriptionsData = {
+    body?: never;
+    path?: never;
+    query?: {
         status?: string;
+        clientId?: string;
     };
     url: '/api/subscriptions';
 };
 
-export type GetApiSubscriptionsResponses = {
+export type ListSubscriptionsErrors = {
     /**
-     * List of subscriptions
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type ListSubscriptionsError = ListSubscriptionsErrors[keyof ListSubscriptionsErrors];
+
+export type ListSubscriptionsResponses = {
+    /**
+     * OK
      */
     200: SubscriptionListResponse;
 };
 
-export type GetApiSubscriptionsResponse = GetApiSubscriptionsResponses[keyof GetApiSubscriptionsResponses];
+export type ListSubscriptionsResponse = ListSubscriptionsResponses[keyof ListSubscriptionsResponses];
 
-export type PostApiSubscriptionsData = {
-    body: CreateSubscriptionRequest;
+export type CreateSubscriptionData = {
+    body: CreateSubscriptionRequestWritable;
     path?: never;
     query?: never;
     url: '/api/subscriptions';
 };
 
-export type PostApiSubscriptionsErrors = {
+export type CreateSubscriptionErrors = {
     /**
-     * Validation error
+     * Error
      */
-    400: unknown;
-    /**
-     * Duplicate code
-     */
-    409: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiSubscriptionsResponses = {
+export type CreateSubscriptionError = CreateSubscriptionErrors[keyof CreateSubscriptionErrors];
+
+export type CreateSubscriptionResponses = {
     /**
-     * Subscription created
+     * Created
      */
     201: CreatedResponse;
 };
 
-export type PostApiSubscriptionsResponse = PostApiSubscriptionsResponses[keyof PostApiSubscriptionsResponses];
+export type CreateSubscriptionResponse = CreateSubscriptionResponses[keyof CreateSubscriptionResponses];
 
-export type DeleteApiSubscriptionsByIdData = {
+export type DeleteSubscriptionData = {
     body?: never;
     path: {
-        /**
-         * Subscription ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/subscriptions/{id}';
 };
 
-export type DeleteApiSubscriptionsByIdErrors = {
+export type DeleteSubscriptionErrors = {
     /**
-     * Subscription not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type DeleteApiSubscriptionsByIdResponses = {
+export type DeleteSubscriptionError = DeleteSubscriptionErrors[keyof DeleteSubscriptionErrors];
+
+export type DeleteSubscriptionResponses = {
     /**
-     * Subscription deleted
+     * No Content
      */
     204: void;
 };
 
-export type DeleteApiSubscriptionsByIdResponse = DeleteApiSubscriptionsByIdResponses[keyof DeleteApiSubscriptionsByIdResponses];
+export type DeleteSubscriptionResponse = DeleteSubscriptionResponses[keyof DeleteSubscriptionResponses];
 
-export type GetApiSubscriptionsByIdData = {
+export type GetSubscriptionData = {
     body?: never;
     path: {
-        /**
-         * Subscription ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/subscriptions/{id}';
 };
 
-export type GetApiSubscriptionsByIdErrors = {
+export type GetSubscriptionErrors = {
     /**
-     * Subscription not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type GetApiSubscriptionsByIdResponses = {
+export type GetSubscriptionError = GetSubscriptionErrors[keyof GetSubscriptionErrors];
+
+export type GetSubscriptionResponses = {
     /**
-     * Subscription found
+     * OK
      */
     200: SubscriptionResponse;
 };
 
-export type GetApiSubscriptionsByIdResponse = GetApiSubscriptionsByIdResponses[keyof GetApiSubscriptionsByIdResponses];
+export type GetSubscriptionResponse = GetSubscriptionResponses[keyof GetSubscriptionResponses];
 
-export type PutApiSubscriptionsByIdData = {
-    body: UpdateSubscriptionRequest;
+export type UpdateSubscriptionData = {
+    body: UpdateSubscriptionRequestWritable;
     path: {
-        /**
-         * Subscription ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/subscriptions/{id}';
 };
 
-export type PutApiSubscriptionsByIdErrors = {
+export type UpdateSubscriptionErrors = {
     /**
-     * Subscription not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PutApiSubscriptionsByIdResponses = {
+export type UpdateSubscriptionError = UpdateSubscriptionErrors[keyof UpdateSubscriptionErrors];
+
+export type UpdateSubscriptionResponses = {
     /**
-     * Subscription updated
+     * No Content
      */
     204: void;
 };
 
-export type PutApiSubscriptionsByIdResponse = PutApiSubscriptionsByIdResponses[keyof PutApiSubscriptionsByIdResponses];
+export type UpdateSubscriptionResponse = UpdateSubscriptionResponses[keyof UpdateSubscriptionResponses];
 
-export type PostApiSubscriptionsByIdPauseData = {
+export type PauseSubscriptionData = {
     body?: never;
     path: {
-        /**
-         * Subscription ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/subscriptions/{id}/pause';
 };
 
-export type PostApiSubscriptionsByIdPauseErrors = {
+export type PauseSubscriptionErrors = {
     /**
-     * Subscription not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiSubscriptionsByIdPauseResponses = {
+export type PauseSubscriptionError = PauseSubscriptionErrors[keyof PauseSubscriptionErrors];
+
+export type PauseSubscriptionResponses = {
     /**
-     * Subscription paused
+     * No Content
      */
-    200: SubscriptionResponse;
+    204: void;
 };
 
-export type PostApiSubscriptionsByIdPauseResponse = PostApiSubscriptionsByIdPauseResponses[keyof PostApiSubscriptionsByIdPauseResponses];
+export type PauseSubscriptionResponse = PauseSubscriptionResponses[keyof PauseSubscriptionResponses];
 
-export type PostApiSubscriptionsByIdResumeData = {
+export type ResumeSubscriptionData = {
     body?: never;
     path: {
-        /**
-         * Subscription ID
-         */
         id: string;
     };
     query?: never;
     url: '/api/subscriptions/{id}/resume';
 };
 
-export type PostApiSubscriptionsByIdResumeErrors = {
+export type ResumeSubscriptionErrors = {
     /**
-     * Subscription not found
+     * Error
      */
-    404: unknown;
+    default: ErrorModel;
 };
 
-export type PostApiSubscriptionsByIdResumeResponses = {
+export type ResumeSubscriptionError = ResumeSubscriptionErrors[keyof ResumeSubscriptionErrors];
+
+export type ResumeSubscriptionResponses = {
     /**
-     * Subscription resumed
-     */
-    200: SubscriptionResponse;
-};
-
-export type PostApiSubscriptionsByIdResumeResponse = PostApiSubscriptionsByIdResumeResponses[keyof PostApiSubscriptionsByIdResumeResponses];
-
-export type GetAuthCheckDomainData = {
-    body?: never;
-    path?: never;
-    query: {
-        /**
-         * Email address to check
-         */
-        email: string;
-    };
-    url: '/auth/check-domain';
-};
-
-export type GetAuthCheckDomainResponses = {
-    /**
-     * Domain check result
-     */
-    200: DomainCheckResponse;
-};
-
-export type GetAuthCheckDomainResponse = GetAuthCheckDomainResponses[keyof GetAuthCheckDomainResponses];
-
-export type PostAuthLoginData = {
-    body: LoginRequest;
-    path?: never;
-    query?: never;
-    url: '/auth/login';
-};
-
-export type PostAuthLoginErrors = {
-    /**
-     * Invalid credentials
-     */
-    401: unknown;
-};
-
-export type PostAuthLoginResponses = {
-    /**
-     * Login successful
-     */
-    200: LoginResponse;
-};
-
-export type PostAuthLoginResponse = PostAuthLoginResponses[keyof PostAuthLoginResponses];
-
-export type PostAuthLogoutData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/auth/logout';
-};
-
-export type PostAuthLogoutResponses = {
-    /**
-     * Logout successful
+     * No Content
      */
     204: void;
 };
 
-export type PostAuthLogoutResponse = PostAuthLogoutResponses[keyof PostAuthLogoutResponses];
+export type ResumeSubscriptionResponse = ResumeSubscriptionResponses[keyof ResumeSubscriptionResponses];
 
-export type GetAuthMeData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/auth/me';
-};
-
-export type GetAuthMeErrors = {
-    /**
-     * Not authenticated
-     */
-    401: unknown;
-};
-
-export type GetAuthMeResponses = {
-    /**
-     * Current user info
-     */
-    200: CurrentUserResponse;
-};
-
-export type GetAuthMeResponse = GetAuthMeResponses[keyof GetAuthMeResponses];
-
-export type PostAuthRefreshData = {
-    body: RefreshTokenRequest;
-    path?: never;
-    query?: never;
-    url: '/auth/refresh';
-};
-
-export type PostAuthRefreshErrors = {
-    /**
-     * Invalid refresh token
-     */
-    401: unknown;
-};
-
-export type PostAuthRefreshResponses = {
-    /**
-     * Token refreshed
-     */
-    200: TokenRefreshResponse;
-};
-
-export type PostAuthRefreshResponse = PostAuthRefreshResponses[keyof PostAuthRefreshResponses];
-
-export type PostWebauthnAuthenticateBeginData = {
-    body: AuthenticateBeginRequest;
+export type WebauthnAuthenticateBeginData = {
+    body: AuthenticateBeginRequestWritable;
     path?: never;
     query?: never;
     url: '/auth/webauthn/authenticate/begin';
 };
 
-export type PostWebauthnAuthenticateBeginResponses = {
+export type WebauthnAuthenticateBeginErrors = {
     /**
-     * Authentication challenge issued
+     * Error
+     */
+    default: ErrorModel;
+};
+
+export type WebauthnAuthenticateBeginError = WebauthnAuthenticateBeginErrors[keyof WebauthnAuthenticateBeginErrors];
+
+export type WebauthnAuthenticateBeginResponses = {
+    /**
+     * OK
      */
     200: AuthenticateBeginResponse;
 };
 
-export type PostWebauthnAuthenticateBeginResponse = PostWebauthnAuthenticateBeginResponses[keyof PostWebauthnAuthenticateBeginResponses];
+export type WebauthnAuthenticateBeginResponse = WebauthnAuthenticateBeginResponses[keyof WebauthnAuthenticateBeginResponses];
 
-export type PostWebauthnAuthenticateCompleteData = {
-    body: AuthenticateCompleteRequest;
+export type WebauthnAuthenticateCompleteData = {
+    body: AuthenticateCompleteRequestWritable;
     path?: never;
     query?: never;
     url: '/auth/webauthn/authenticate/complete';
 };
 
-export type PostWebauthnAuthenticateCompleteErrors = {
+export type WebauthnAuthenticateCompleteErrors = {
     /**
-     * Invalid credentials
+     * Error
      */
-    401: unknown;
+    default: ErrorModel;
 };
 
-export type PostWebauthnAuthenticateCompleteResponses = {
+export type WebauthnAuthenticateCompleteError = WebauthnAuthenticateCompleteErrors[keyof WebauthnAuthenticateCompleteErrors];
+
+export type WebauthnAuthenticateCompleteResponses = {
     /**
-     * Login successful, session cookie set
+     * OK
      */
-    200: AuthenticateCompleteResponse;
+    200: WebauthnAuthenticateCompleteResponse;
 };
 
-export type PostWebauthnAuthenticateCompleteResponse = PostWebauthnAuthenticateCompleteResponses[keyof PostWebauthnAuthenticateCompleteResponses];
+export type WebauthnAuthenticateCompleteResponse2 = WebauthnAuthenticateCompleteResponses[keyof WebauthnAuthenticateCompleteResponses];
 
-export type GetWebauthnCredentialsData = {
+export type ListWebauthnCredentialsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/auth/webauthn/credentials';
 };
 
-export type GetWebauthnCredentialsErrors = {
+export type ListWebauthnCredentialsErrors = {
     /**
-     * Authentication required
+     * Error
      */
-    401: unknown;
+    default: ErrorModel;
 };
 
-export type GetWebauthnCredentialsResponses = {
+export type ListWebauthnCredentialsError = ListWebauthnCredentialsErrors[keyof ListWebauthnCredentialsErrors];
+
+export type ListWebauthnCredentialsResponses = {
     /**
-     * Caller's passkeys
+     * OK
      */
-    200: Array<CredentialSummary>;
+    200: Array<WebauthnCredentialSummary>;
 };
 
-export type GetWebauthnCredentialsResponse = GetWebauthnCredentialsResponses[keyof GetWebauthnCredentialsResponses];
+export type ListWebauthnCredentialsResponse = ListWebauthnCredentialsResponses[keyof ListWebauthnCredentialsResponses];
 
 export type DeleteWebauthnCredentialData = {
     body?: never;
     path: {
-        /**
-         * Credential id (pkc_…)
-         */
         id: string;
     };
     query?: never;
@@ -6177,78 +12116,68 @@ export type DeleteWebauthnCredentialData = {
 
 export type DeleteWebauthnCredentialErrors = {
     /**
-     * Authentication required
+     * Error
      */
-    401: unknown;
-    /**
-     * Credential not found or not owned by caller
-     */
-    404: unknown;
+    default: ErrorModel;
 };
+
+export type DeleteWebauthnCredentialError = DeleteWebauthnCredentialErrors[keyof DeleteWebauthnCredentialErrors];
 
 export type DeleteWebauthnCredentialResponses = {
     /**
-     * Passkey revoked
+     * No Content
      */
     204: void;
 };
 
 export type DeleteWebauthnCredentialResponse = DeleteWebauthnCredentialResponses[keyof DeleteWebauthnCredentialResponses];
 
-export type PostWebauthnRegisterBeginData = {
-    body: RegisterBeginRequest;
+export type WebauthnRegisterBeginData = {
+    body: RegisterBeginRequestWritable;
     path?: never;
     query?: never;
     url: '/auth/webauthn/register/begin';
 };
 
-export type PostWebauthnRegisterBeginErrors = {
+export type WebauthnRegisterBeginErrors = {
     /**
-     * Domain is federated or email malformed
+     * Error
      */
-    400: unknown;
-    /**
-     * Authentication required
-     */
-    401: unknown;
+    default: ErrorModel;
 };
 
-export type PostWebauthnRegisterBeginResponses = {
+export type WebauthnRegisterBeginError = WebauthnRegisterBeginErrors[keyof WebauthnRegisterBeginErrors];
+
+export type WebauthnRegisterBeginResponses = {
     /**
-     * Registration challenge issued
+     * OK
      */
     200: RegisterBeginResponse;
 };
 
-export type PostWebauthnRegisterBeginResponse = PostWebauthnRegisterBeginResponses[keyof PostWebauthnRegisterBeginResponses];
+export type WebauthnRegisterBeginResponse = WebauthnRegisterBeginResponses[keyof WebauthnRegisterBeginResponses];
 
-export type PostWebauthnRegisterCompleteData = {
-    body: RegisterCompleteRequest;
+export type WebauthnRegisterCompleteData = {
+    body: RegisterCompleteRequestWritable;
     path?: never;
     query?: never;
     url: '/auth/webauthn/register/complete';
 };
 
-export type PostWebauthnRegisterCompleteErrors = {
+export type WebauthnRegisterCompleteErrors = {
     /**
-     * Ceremony state expired or attestation invalid
+     * Error
      */
-    400: unknown;
-    /**
-     * Authentication required
-     */
-    401: unknown;
-    /**
-     * Ceremony belongs to a different principal
-     */
-    403: unknown;
+    default: ErrorModel;
 };
 
-export type PostWebauthnRegisterCompleteResponses = {
+export type WebauthnRegisterCompleteError = WebauthnRegisterCompleteErrors[keyof WebauthnRegisterCompleteErrors];
+
+export type WebauthnRegisterCompleteResponses = {
     /**
-     * Passkey registered
+     * OK
      */
     200: RegisterCompleteResponse;
 };
 
-export type PostWebauthnRegisterCompleteResponse = PostWebauthnRegisterCompleteResponses[keyof PostWebauthnRegisterCompleteResponses];
+export type WebauthnRegisterCompleteResponse = WebauthnRegisterCompleteResponses[keyof WebauthnRegisterCompleteResponses];

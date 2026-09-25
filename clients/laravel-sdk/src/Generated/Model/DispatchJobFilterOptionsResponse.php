@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class DispatchJobFilterOptionsResponse extends \ArrayObject
+class DispatchJobFilterOptionsResponse
 {
     /**
      * @var array
@@ -13,92 +13,84 @@ class DispatchJobFilterOptionsResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * @var list<FilterOption>|null
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
      */
-    protected $aggregates;
+    protected $dollarSchema;
     /**
-     * @var list<FilterOption>|null
+     * @var list<string>|null
      */
-    protected $applications;
+    protected $clientIds;
     /**
-     * @var list<FilterOption>|null
-     */
-    protected $clients;
-    /**
-     * @var list<FilterOption>|null
+     * @var list<string>|null
      */
     protected $codes;
     /**
-     * @var list<FilterOption>|null
+     * @var list<string>|null
+     */
+    protected $dispatchPoolIds;
+    /**
+     * @var list<string>|null
+     */
+    protected $kinds;
+    /**
+     * @var list<string>|null
      */
     protected $statuses;
     /**
-     * @var list<FilterOption>|null
+     * @var list<string>|null
      */
-    protected $subdomains;
+    protected $subscriptionIds;
     /**
-     * @return list<FilterOption>|null
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
      */
-    public function getAggregates(): ?array
+    public function getDollarSchema(): ?string
     {
-        return $this->aggregates;
+        return $this->dollarSchema;
     }
     /**
-     * @param list<FilterOption>|null $aggregates
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
      *
      * @return self
      */
-    public function setAggregates(?array $aggregates): self
+    public function setDollarSchema(?string $dollarSchema): self
     {
-        $this->initialized['aggregates'] = true;
-        $this->aggregates = $aggregates;
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
         return $this;
     }
     /**
-     * @return list<FilterOption>|null
+     * @return list<string>|null
      */
-    public function getApplications(): ?array
+    public function getClientIds(): ?array
     {
-        return $this->applications;
+        return $this->clientIds;
     }
     /**
-     * @param list<FilterOption>|null $applications
+     * @param list<string>|null $clientIds
      *
      * @return self
      */
-    public function setApplications(?array $applications): self
+    public function setClientIds(?array $clientIds): self
     {
-        $this->initialized['applications'] = true;
-        $this->applications = $applications;
+        $this->initialized['clientIds'] = true;
+        $this->clientIds = $clientIds;
         return $this;
     }
     /**
-     * @return list<FilterOption>|null
-     */
-    public function getClients(): ?array
-    {
-        return $this->clients;
-    }
-    /**
-     * @param list<FilterOption>|null $clients
-     *
-     * @return self
-     */
-    public function setClients(?array $clients): self
-    {
-        $this->initialized['clients'] = true;
-        $this->clients = $clients;
-        return $this;
-    }
-    /**
-     * @return list<FilterOption>|null
+     * @return list<string>|null
      */
     public function getCodes(): ?array
     {
         return $this->codes;
     }
     /**
-     * @param list<FilterOption>|null $codes
+     * @param list<string>|null $codes
      *
      * @return self
      */
@@ -109,14 +101,50 @@ class DispatchJobFilterOptionsResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return list<FilterOption>|null
+     * @return list<string>|null
+     */
+    public function getDispatchPoolIds(): ?array
+    {
+        return $this->dispatchPoolIds;
+    }
+    /**
+     * @param list<string>|null $dispatchPoolIds
+     *
+     * @return self
+     */
+    public function setDispatchPoolIds(?array $dispatchPoolIds): self
+    {
+        $this->initialized['dispatchPoolIds'] = true;
+        $this->dispatchPoolIds = $dispatchPoolIds;
+        return $this;
+    }
+    /**
+     * @return list<string>|null
+     */
+    public function getKinds(): ?array
+    {
+        return $this->kinds;
+    }
+    /**
+     * @param list<string>|null $kinds
+     *
+     * @return self
+     */
+    public function setKinds(?array $kinds): self
+    {
+        $this->initialized['kinds'] = true;
+        $this->kinds = $kinds;
+        return $this;
+    }
+    /**
+     * @return list<string>|null
      */
     public function getStatuses(): ?array
     {
         return $this->statuses;
     }
     /**
-     * @param list<FilterOption>|null $statuses
+     * @param list<string>|null $statuses
      *
      * @return self
      */
@@ -127,21 +155,21 @@ class DispatchJobFilterOptionsResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return list<FilterOption>|null
+     * @return list<string>|null
      */
-    public function getSubdomains(): ?array
+    public function getSubscriptionIds(): ?array
     {
-        return $this->subdomains;
+        return $this->subscriptionIds;
     }
     /**
-     * @param list<FilterOption>|null $subdomains
+     * @param list<string>|null $subscriptionIds
      *
      * @return self
      */
-    public function setSubdomains(?array $subdomains): self
+    public function setSubscriptionIds(?array $subscriptionIds): self
     {
-        $this->initialized['subdomains'] = true;
-        $this->subdomains = $subdomains;
+        $this->initialized['subscriptionIds'] = true;
+        $this->subscriptionIds = $subscriptionIds;
         return $this;
     }
 }

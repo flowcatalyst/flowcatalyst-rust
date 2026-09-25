@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class AuditLogResponse extends \ArrayObject
+class AuditLogResponse
 {
     /**
      * @var array
@@ -12,6 +12,12 @@ class AuditLogResponse extends \ArrayObject
     {
         return array_key_exists($property, $this->initialized);
     }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
     /**
      * @var string|null
      */
@@ -39,6 +45,10 @@ class AuditLogResponse extends \ArrayObject
     /**
      * @var string|null
      */
+    protected $operationJson;
+    /**
+     * @var \DateTime|null
+     */
     protected $performedAt;
     /**
      * @var string|null
@@ -48,6 +58,28 @@ class AuditLogResponse extends \ArrayObject
      * @var string|null
      */
     protected $principalName;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -159,16 +191,34 @@ class AuditLogResponse extends \ArrayObject
     /**
      * @return string|null
      */
-    public function getPerformedAt(): ?string
+    public function getOperationJson(): ?string
+    {
+        return $this->operationJson;
+    }
+    /**
+     * @param string|null $operationJson
+     *
+     * @return self
+     */
+    public function setOperationJson(?string $operationJson): self
+    {
+        $this->initialized['operationJson'] = true;
+        $this->operationJson = $operationJson;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getPerformedAt(): ?\DateTime
     {
         return $this->performedAt;
     }
     /**
-     * @param string|null $performedAt
+     * @param \DateTime|null $performedAt
      *
      * @return self
      */
-    public function setPerformedAt(?string $performedAt): self
+    public function setPerformedAt(?\DateTime $performedAt): self
     {
         $this->initialized['performedAt'] = true;
         $this->performedAt = $performedAt;

@@ -38,6 +38,11 @@ final class AsDispatchPool
      * @param string|null $description Pool description
      * @param int $rateLimit Maximum dispatches per minute (default 100)
      * @param int $concurrency Maximum concurrent dispatches (default 10)
+     * @param string|null $application Application code this pool belongs to.
+     *        Overrides the global `application_code` / `application_map` during
+     *        sync — set it when one codebase defines dispatch pools for more
+     *        than one application. Null = resolve from the namespace map /
+     *        default.
      */
     public function __construct(
         public readonly string $code,
@@ -45,6 +50,7 @@ final class AsDispatchPool
         public readonly ?string $description = null,
         public readonly int $rateLimit = 100,
         public readonly int $concurrency = 10,
+        public readonly ?string $application = null,
     ) {}
 
     /**

@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SyncRoleInputRequest extends \ArrayObject
+class SyncRoleInputRequest
 {
     /**
      * @var array

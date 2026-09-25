@@ -13,14 +13,38 @@ class RegisterBeginRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Display name shown in the authenticator UI (defaults to the user's name).
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var string|null
      */
     protected $displayName;
     /**
-     * Display name shown in the authenticator UI (defaults to the user's name).
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getDisplayName(): ?string
@@ -28,8 +52,6 @@ class RegisterBeginRequest extends \ArrayObject
         return $this->displayName;
     }
     /**
-     * Display name shown in the authenticator UI (defaults to the user's name).
-     *
      * @param string|null $displayName
      *
      * @return self

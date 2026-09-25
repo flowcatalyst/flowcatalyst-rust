@@ -1,6 +1,6 @@
 {
 	"name": "@flowcatalyst/sdk",
-	"version": "0.6.15",
+	"version": "0.11.27",
 	"description": "TypeScript/JavaScript SDK for FlowCatalyst platform",
 	"keywords": [
 		"event-driven",

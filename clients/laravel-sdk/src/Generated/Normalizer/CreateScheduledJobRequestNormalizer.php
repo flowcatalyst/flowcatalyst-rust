@@ -43,6 +43,20 @@ class CreateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
         if (\array_key_exists('tracksCompletion', $data) && \is_int($data['tracksCompletion'])) {
             $data['tracksCompletion'] = (bool) $data['tracksCompletion'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
+        if (\array_key_exists('applicationId', $data) && $data['applicationId'] !== null) {
+            $object->setApplicationId($data['applicationId']);
+            unset($data['applicationId']);
+        }
+        elseif (\array_key_exists('applicationId', $data) && $data['applicationId'] === null) {
+            $object->setApplicationId(null);
+        }
         if (\array_key_exists('clientId', $data) && $data['clientId'] !== null) {
             $object->setClientId($data['clientId']);
             unset($data['clientId']);
@@ -141,13 +155,14 @@ class CreateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('applicationId') && null !== $data->getApplicationId()) {
+            $dataArray['applicationId'] = $data->getApplicationId();
+        }
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
         $dataArray['code'] = $data->getCode();
-        if ($data->isInitialized('concurrent') && null !== $data->getConcurrent()) {
-            $dataArray['concurrent'] = $data->getConcurrent();
-        }
+        $dataArray['concurrent'] = $data->getConcurrent();
         $values = [];
         foreach ($data->getCrons() as $value) {
             $values[] = $value;
@@ -156,25 +171,23 @@ class CreateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
         if ($data->isInitialized('deliveryMaxAttempts') && null !== $data->getDeliveryMaxAttempts()) {
             $dataArray['deliveryMaxAttempts'] = $data->getDeliveryMaxAttempts();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['name'] = $data->getName();
         if ($data->isInitialized('payload') && null !== $data->getPayload()) {
             $dataArray['payload'] = $data->getPayload();
         }
-        if ($data->isInitialized('targetUrl')) {
+        if ($data->isInitialized('targetUrl') && null !== $data->getTargetUrl()) {
             $dataArray['targetUrl'] = $data->getTargetUrl();
         }
-        if ($data->isInitialized('timeoutSeconds')) {
+        if ($data->isInitialized('timeoutSeconds') && null !== $data->getTimeoutSeconds()) {
             $dataArray['timeoutSeconds'] = $data->getTimeoutSeconds();
         }
         if ($data->isInitialized('timezone') && null !== $data->getTimezone()) {
             $dataArray['timezone'] = $data->getTimezone();
         }
-        if ($data->isInitialized('tracksCompletion') && null !== $data->getTracksCompletion()) {
-            $dataArray['tracksCompletion'] = $data->getTracksCompletion();
-        }
+        $dataArray['tracksCompletion'] = $data->getTracksCompletion();
         foreach ($data as $key => $value_1) {
             if (preg_match('/.*/', (string) $key)) {
                 $dataArray[$key] = $value_1;

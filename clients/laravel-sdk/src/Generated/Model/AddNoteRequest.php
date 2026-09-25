@@ -13,20 +13,42 @@ class AddNoteRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Category of the note
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var string|null
      */
     protected $category;
     /**
-     * Note content
-     *
      * @var string|null
      */
     protected $text;
     /**
-     * Category of the note
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getCategory(): ?string
@@ -34,8 +56,6 @@ class AddNoteRequest extends \ArrayObject
         return $this->category;
     }
     /**
-     * Category of the note
-     *
      * @param string|null $category
      *
      * @return self
@@ -47,8 +67,6 @@ class AddNoteRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Note content
-     *
      * @return string|null
      */
     public function getText(): ?string
@@ -56,8 +74,6 @@ class AddNoteRequest extends \ArrayObject
         return $this->text;
     }
     /**
-     * Note content
-     *
      * @param string|null $text
      *
      * @return self

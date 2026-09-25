@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class ClientAccessGrantResponse extends \ArrayObject
+class ClientAccessGrantResponse
 {
     /**
      * @var array
@@ -13,21 +13,49 @@ class ClientAccessGrantResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var string|null
      */
     protected $clientId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $expiresAt;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $grantedAt;
     /**
      * @var string|null
      */
     protected $id;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -47,36 +75,36 @@ class ClientAccessGrantResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getExpiresAt(): ?string
+    public function getExpiresAt(): ?\DateTime
     {
         return $this->expiresAt;
     }
     /**
-     * @param string|null $expiresAt
+     * @param \DateTime|null $expiresAt
      *
      * @return self
      */
-    public function setExpiresAt(?string $expiresAt): self
+    public function setExpiresAt(?\DateTime $expiresAt): self
     {
         $this->initialized['expiresAt'] = true;
         $this->expiresAt = $expiresAt;
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getGrantedAt(): ?string
+    public function getGrantedAt(): ?\DateTime
     {
         return $this->grantedAt;
     }
     /**
-     * @param string|null $grantedAt
+     * @param \DateTime|null $grantedAt
      *
      * @return self
      */
-    public function setGrantedAt(?string $grantedAt): self
+    public function setGrantedAt(?\DateTime $grantedAt): self
     {
         $this->initialized['grantedAt'] = true;
         $this->grantedAt = $grantedAt;
