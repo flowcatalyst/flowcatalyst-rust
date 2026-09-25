@@ -446,6 +446,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "042_password_reset_token_purpose",
             include_str!("../../../../migrations/042_password_reset_token_purpose.sql"),
         ),
+        // Go's 039: the self-service developer API credential.
+        (
+            "043_developer_api_credentials",
+            include_str!("../../../../migrations/043_developer_api_credentials.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -618,6 +623,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
                AND column_name = 'redirect_uri') \
              AND EXISTS (SELECT 1 FROM pg_constraint \
              WHERE conname = 'chk_iam_password_reset_tokens_purpose')",
+        ),
+        (
+            "043_developer_api_credentials",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_principals' \
+               AND column_name = 'dev_client_secret_updated_at')",
         ),
     ];
 

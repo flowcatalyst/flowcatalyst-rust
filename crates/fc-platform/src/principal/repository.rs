@@ -1194,3 +1194,104 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
         Ok(())
     }
 }
+
+// ── Developer API credential (Go's dev_client_secret_ref) ──────────────────
+
+impl HasId for crate::developer_credential::DeveloperCredential {
+    fn id(&self) -> &str {
+        &self.principal_id
+    }
+}
+
+/// A USER principal's self-service client_credentials secret lives on its
+/// `iam_principals` row, so the principal repository writes it: set or
+/// rotate stamps `dev_client_secret_updated_at`, revoke clears both columns
+/// (Go `SetDevClientSecretRef` / `ClearDevClientSecretRef`).
+#[async_trait::async_trait]
+impl crate::usecase::Persist<crate::developer_credential::DeveloperCredential>
+    for PrincipalRepository
+{
+    async fn persist(
+        &self,
+        c: &crate::developer_credential::DeveloperCredential,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = $2, \
+             dev_client_secret_updated_at = CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END, \
+             updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&c.principal_id)
+        .bind(&c.secret_ref)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        c: &crate::developer_credential::DeveloperCredential,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = NULL, \
+             dev_client_secret_updated_at = NULL, updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&c.principal_id)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+}
+
+impl PrincipalRepository {
+    /// A principal's developer secret ref and when it was last set.
+    pub async fn find_developer_secret(
+        &self,
+        principal_id: &str,
+    ) -> Result<Option<(Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
+        let row = sqlx::query_as::<_, (Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT dev_client_secret_ref, dev_client_secret_updated_at FROM iam_principals \
+             WHERE id = $1",
+        )
+        .bind(principal_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// When each of `ids` last set a developer secret (absent: none set).
+    pub async fn find_developer_secret_times(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>> {
+        let rows = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT id, dev_client_secret_updated_at FROM iam_principals \
+             WHERE id = ANY($1) AND dev_client_secret_ref IS NOT NULL",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, at)| (id, at.unwrap_or_default()))
+            .collect())
+    }
+
+    /// Rewrite only the developer secret ref: the lazy at-rest format upgrade
+    /// after `/oauth/token` verified an older shape. Like the password
+    /// rehash, a storage-format change, not a credential change, so no
+    /// event (Go `RewriteDevClientSecretRef`). Callers treat errors as
+    /// non-fatal.
+    pub async fn rewrite_developer_secret_ref(&self, principal_id: &str, new_ref: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = $2, \
+             dev_client_secret_updated_at = NOW(), updated_at = NOW() WHERE id = $1",
+        )
+        .bind(principal_id)
+        .bind(new_ref)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}

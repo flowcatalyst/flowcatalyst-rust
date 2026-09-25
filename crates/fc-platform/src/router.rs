@@ -285,6 +285,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub webauthn: crate::webauthn::WebauthnApiState,
     /// Two-factor sign-in and self-service (`/auth/2fa/*`).
     pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
+    /// `/api/principals/developer-users`, `…/{id}/developer-credential`.
+    pub developer_credentials: crate::developer_credential::api::DeveloperCredentialsState,
     /// `/auth/change-password*`, `/auth/login-history`.
     pub account: Arc<crate::mfa::AccountState>,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
@@ -404,7 +406,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_API_PRINCIPALS,
                 crate::mfa::two_factor_admin_router(self.two_factor.clone()),
             )
-
+            .nest(
+                PATH_API_PRINCIPALS,
+                crate::developer_credential::developer_credentials_router(
+                    self.developer_credentials,
+                ),
+            )
             .nest(PATH_API_ROLES, roles_router(self.roles))
             .nest(
                 PATH_API_SUBSCRIPTIONS,

@@ -1243,6 +1243,22 @@ pub fn build_platform_routes(
         public: public_api_state,
         password_reset: password_reset_state,
         webauthn: webauthn_state,
+        developer_credentials: crate::developer_credential::api::DeveloperCredentialsState {
+            principal_repo: repos.principal_repo.clone(),
+            set_use_case: Arc::new(
+                crate::developer_credential::operations::SetDeveloperCredentialUseCase {
+                    principal_repo: repos.principal_repo.clone(),
+                    unit_of_work: unit_of_work.clone(),
+                },
+            ),
+            revoke_use_case: Arc::new(
+                crate::developer_credential::operations::RevokeDeveloperCredentialUseCase {
+                    principal_repo: repos.principal_repo.clone(),
+                    unit_of_work: unit_of_work.clone(),
+                },
+            ),
+            encryption: encryption_service.clone(),
+        },
         account: Arc::new(crate::mfa::AccountState {
             two_factor: two_factor.clone(),
             password_service: auth.password.clone(),

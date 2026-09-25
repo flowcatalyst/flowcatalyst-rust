@@ -1614,6 +1614,18 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     // Lookup client
     let client = match state.oauth_client_repo.find_by_client_id(&client_id).await {
         Ok(Some(c)) if c.active => c,
+        // No OAuth client: a USER principal's own id is the self-service
+        // developer credential (Go token.go:505-520). The prn_/oac_ prefixes
+        // keep the two client_id spaces apart.
+        Ok(None) if client_id.starts_with("prn_") => {
+            return handle_developer_credential_grant(
+                state,
+                client_id,
+                client_secret,
+                req.scope.as_deref(),
+            )
+            .await;
+        }
         Ok(_) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -1820,6 +1832,135 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
 
     info!(client_id = %client_id, "Token issued via client credentials grant");
 
+    (
+        StatusCode::OK,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        Json(TokenResponse {
+            access_token,
+            token_type: "Bearer".to_string(),
+            expires_in: state.auth_service.access_token_expiry_secs(),
+            refresh_token: None,
+            id_token: None,
+            scope: Some(granted.join(" ")).filter(|s| !s.is_empty()),
+        }),
+    )
+        .into_response()
+}
+
+/// The developer-credential branch of client_credentials (Go
+/// `handleDeveloperCredentialGrant` + `mintClientCredentialsToken`,
+/// token.go:595-679): `client_id` is an active USER principal's id,
+/// `client_secret` its developer secret. The developer role is re-checked
+/// live, so revoking the role stops new tokens at once. Every refusal is
+/// the same `invalid_client`.
+async fn handle_developer_credential_grant(
+    state: OAuthState,
+    client_id: String,
+    client_secret: String,
+    scope: Option<&str>,
+) -> Response {
+    let invalid = || {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: Some("Invalid client credentials".to_string()),
+            }),
+        )
+            .into_response()
+    };
+    let principal = match state.principal_repo.find_by_id(&client_id).await {
+        Ok(Some(p)) if p.active && p.principal_type == crate::PrincipalType::User => p,
+        Ok(_) => return invalid(),
+        Err(e) => {
+            error!(error = %e, "Failed to look up developer principal");
+            return server_error();
+        }
+    };
+    if !principal
+        .roles
+        .iter()
+        .any(|r| r.role == crate::developer_credential::DEVELOPER_ROLE)
+    {
+        return invalid();
+    }
+    let stored = match state.principal_repo.find_developer_secret(&principal.id).await {
+        Ok(Some((Some(stored), _))) => stored,
+        Ok(_) => return invalid(),
+        Err(e) => {
+            error!(error = %e, "Failed to read developer secret");
+            return server_error();
+        }
+    };
+    let record = |outcome, reason: Option<&str>| LoginAttempt {
+        identifier: Some(client_id.clone()),
+        principal_id: Some(principal.id.clone()),
+        failure_reason: reason.map(String::from),
+        ..LoginAttempt::new(AttemptType::DeveloperToken, outcome)
+    };
+    let (ok, rehash) = check_secret_ref(&state, Some(&stored), &client_secret);
+    if !ok {
+        let attempt = record(LoginOutcome::Failure, Some("Invalid developer client secret"));
+        if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+            warn!(error = %e, "Failed to log developer token attempt");
+        }
+        return invalid();
+    }
+    if rehash {
+        if let Some(enc) = state.encryption_service.as_deref() {
+            if let Err(e) = state
+                .principal_repo
+                .rewrite_developer_secret_ref(&principal.id, &enc.hash_secret(&client_secret))
+                .await
+            {
+                warn!(principal_id = %principal.id, error = %e, "Could not migrate developer client secret to hashed form");
+            }
+        }
+    }
+
+    let (granted, explicit) = match granted_scope(&state, &principal, scope).await {
+        Ok(g) => g,
+        Err(e) => {
+            error!(error = %e, "Failed to resolve granted scope");
+            return server_error();
+        }
+    };
+    if explicit && granted.is_empty() {
+        let attempt = record(
+            LoginOutcome::Failure,
+            Some("requested scope exceeds granted permissions"),
+        );
+        if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+            warn!(error = %e, "Failed to log developer token attempt");
+        }
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_scope".to_string(),
+                error_description: Some(
+                    "Requested scope exceeds your granted permissions".to_string(),
+                ),
+            }),
+        )
+            .into_response();
+    }
+    let access_token = match state
+        .auth_service
+        .generate_access_token_with_scope(&principal, &granted, None)
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!(error = %e, "Failed to generate access token");
+            return server_error();
+        }
+    };
+    let attempt = record(LoginOutcome::Success, None);
+    if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+        warn!(error = %e, "Failed to log developer token attempt");
+    }
     (
         StatusCode::OK,
         [

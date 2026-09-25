@@ -38,6 +38,7 @@ pub mod subscription;
 // Authentication & authorization
 pub mod audit;
 pub mod auth;
+pub mod developer_credential;
 pub mod mfa;
 pub mod webauthn;
 
