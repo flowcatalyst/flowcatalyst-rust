@@ -361,11 +361,7 @@ pub async fn get_event_type(
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
     // Check client access
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     Ok(Json(event_type.into()))
 }
@@ -392,18 +388,7 @@ pub async fn create_event_type(
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     // Validate client access if specified
-    if let Some(ref cid) = req.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                cid
-            )));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can create anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
 
@@ -471,15 +456,7 @@ pub async fn update_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can modify anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "modify")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = UpdateEventTypeCommand {
@@ -524,15 +501,7 @@ pub async fn delete_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can delete anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "delete")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeleteEventTypeCommand { event_type_id: id };
@@ -573,15 +542,7 @@ pub async fn archive_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can archive anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "archive")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = ArchiveEventTypeCommand {
@@ -634,11 +595,7 @@ pub async fn add_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     // Calculate next version
     let next_version = format!("{}.0", event_type.spec_versions.len() + 1);
@@ -696,11 +653,7 @@ pub async fn finalise_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = FinaliseSchemaCommand {
@@ -753,11 +706,7 @@ pub async fn deprecate_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeprecateSchemaCommand {
@@ -799,29 +748,10 @@ pub async fn sync_platform(
     auth: Authenticated,
     body: Option<Json<BffSyncPlatformRequest>>,
 ) -> Result<Json<BffSyncPlatformResponse>, PlatformError> {
-    use crate::event_type::operations::{SyncEventTypeInput, SyncEventTypesCommand};
-
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     sync_platform_target(body.map(|b| b.0))?;
-    let application_code = PLATFORM_APPLICATION_CODE.to_string();
-
-    let definitions = crate::seed::platform_event_types::definitions();
-    let inputs: Vec<SyncEventTypeInput> = definitions
-        .iter()
-        .map(|def| SyncEventTypeInput {
-            code: def.code.clone(),
-            name: def.name.clone(),
-            description: def.description.clone(),
-            schema: def.schema.clone(),
-        })
-        .collect();
-
-    let cmd = SyncEventTypesCommand {
-        application_code,
-        event_types: inputs,
-        remove_unlisted: false,
-    };
+    let cmd = platform_sync_command();
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.sync_use_case.run(cmd, ctx).await.into_result()?;
 
@@ -836,6 +766,28 @@ pub async fn sync_platform(
             unchanged: event.schemas_unchanged,
         },
     }))
+}
+
+/// The sync of the platform's own event types (`platform:*`, from
+/// `seed::platform_event_types`), shared by `POST
+/// /bff/event-types/sync-platform` and the server-rendered `fc-web` UI.
+/// Additive: types no longer defined are kept.
+pub fn platform_sync_command() -> crate::event_type::operations::SyncEventTypesCommand {
+    use crate::event_type::operations::{SyncEventTypeInput, SyncEventTypesCommand};
+    let event_types = crate::seed::platform_event_types::definitions()
+        .iter()
+        .map(|def| SyncEventTypeInput {
+            code: def.code.clone(),
+            name: def.name.clone(),
+            description: def.description.clone(),
+            schema: def.schema.clone(),
+        })
+        .collect();
+    SyncEventTypesCommand {
+        application_code: PLATFORM_APPLICATION_CODE.to_string(),
+        event_types,
+        remove_unlisted: false,
+    }
 }
 
 // ── Filter endpoints ──────────────────────────────────────────────────────

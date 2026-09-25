@@ -276,18 +276,7 @@ pub async fn create_subscription(
 
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
-    if let Some(ref cid) = req.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                cid
-            )));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can create anchor-level subscriptions",
-        ));
-    }
+    crate::subscription::access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
 
     // Ruling X-01: absent or unrecognised means NEXT_ON_ERROR (with a warning
     // for the unrecognised case), never a rejection.
@@ -358,11 +347,7 @@ pub async fn get_subscription(
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
 
     // Check client access
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
-        }
-    }
+    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
 
     Ok(Json(subscription.into()))
 }
@@ -407,10 +392,7 @@ pub async fn list_subscriptions(
     let filtered: Vec<SubscriptionResponse> = subscriptions
         .into_iter()
         .filter(|s| status.is_none_or(|st| s.status == st))
-        .filter(|s| match &s.client_id {
-            Some(cid) => auth.0.can_access_client(cid),
-            None => auth.0.is_anchor(),
-        })
+        .filter(|s| crate::subscription::access::is_listed(&auth.0, s))
         .map(|s| s.into())
         .collect();
 
@@ -453,15 +435,7 @@ pub async fn update_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can modify anchor-level subscriptions",
-        ));
-    }
+    crate::subscription::access::ensure_modifiable(&auth.0, &subscription, "modify")?;
 
     let cmd = UpdateSubscriptionCommand {
         subscription_id: id,
@@ -514,11 +488,7 @@ pub async fn pause_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
-        }
-    }
+    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
 
     let cmd = PauseSubscriptionCommand {
         subscription_id: id.clone(),
@@ -564,11 +534,7 @@ pub async fn resume_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
-        }
-    }
+    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
 
     let cmd = ResumeSubscriptionCommand {
         subscription_id: id.clone(),
@@ -614,15 +580,7 @@ pub async fn delete_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can delete anchor-level subscriptions",
-        ));
-    }
+    crate::subscription::access::ensure_modifiable(&auth.0, &subscription, "delete")?;
 
     let cmd = DeleteSubscriptionCommand {
         subscription_id: id,

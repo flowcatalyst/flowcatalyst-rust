@@ -1,0 +1,1137 @@
+/* FlowCatalyst theme for the server-rendered UI.
+
+   Matches the Vue app (frontend/): PrimeVue's Nora preset (emerald primary,
+   squared form controls, bold solid tags) with the FlowCatalyst density
+   tweaks from frontend/src/main.ts, the navy sidebar from AppSidebar.vue,
+   and the page chrome from frontend/src/styles/main.css. Values are copied
+   from those files so the two UIs sit side by side without a visible seam.
+
+   Tokens first (Tailwind `@theme` + the Topcoat UI token names the vendored
+   components use), then a small set of component classes (`.fc-btn`,
+   `.fc-tag`, `.fc-input`, …) that the Rust components in src/ui.rs render.
+   Page layout uses Tailwind utilities. */
+
+@import "tailwindcss";
+
+@source "./src/**/*.rs";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* The Vue app's stack. Like the Vue app, no web font is downloaded:
+     Inter is used where installed, else the system UI font. */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  /* FlowCatalyst brand (frontend/src/styles/main.css). */
+  --color-navy-50: #f0f4f8;
+  --color-navy-100: #d9e2ec;
+  --color-navy-200: #bcccdc;
+  --color-navy-300: #9fb3c8;
+  --color-navy-400: #829ab1;
+  --color-navy-500: #627d98;
+  --color-navy-600: #486581;
+  --color-navy-700: #334e68;
+  --color-navy-800: #243b53;
+  --color-navy-900: #102a43;
+  --color-navy-950: #0a1929;
+  --color-accent-300: #47a3f3;
+  --color-accent-500: #0967d2;
+  --color-accent-600: #0552b5;
+
+  /* Topcoat UI token names, mapped onto the same palette. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+}
+
+:root {
+  --background: #f8fafc;          /* slate-50: page */
+  --foreground: #1e293b;          /* slate-800: body text */
+  --card: #ffffff;
+  --card-foreground: #1e293b;
+  --popover: #ffffff;
+  --popover-foreground: #1e293b;
+  --muted-foreground: #64748b;    /* slate-500 */
+  --primary: #059669;             /* Nora primary: emerald-600 */
+  --primary-hover: #047857;       /* emerald-700 */
+  --primary-foreground: #ffffff;
+  --destructive: #dc2626;         /* red-600 */
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;              /* slate-200: card and row rules */
+  --field-border: #64748b;        /* Nora form field border: surface-500 */
+  --ring: #059669;
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.08);
+  --shadow-sm: 0 4px 16px rgb(15 23 42 / 0.12);
+}
+
+@layer base {
+  html {
+    /* The SPA's 12.6px base (styles/main.css): every rem shrinks with it,
+       as PrimeVue's rem tokens do there. */
+    font-size: 12.6px;
+    scrollbar-gutter: stable;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  h1, h2, h3, h4 {
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------- page chrome */
+  .fc-page-header {
+    @apply mb-4 flex items-start justify-between gap-4;
+  }
+  .fc-page-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--color-navy-900);
+  }
+  .fc-page-subtitle {
+    margin-top: 4px;
+    font-size: 14px;
+    color: var(--color-navy-500);
+  }
+  .fc-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .fc-card-flush {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0;
+    overflow: hidden;
+  }
+  .fc-section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--color-navy-900);
+  }
+
+  /* -------------------------------------------------------------- buttons */
+  .fc-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.625rem;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1.25;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .fc-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .fc-btn:disabled,
+  .fc-btn[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: default;
+    pointer-events: none;
+  }
+  .fc-btn-sm {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.875rem;
+  }
+  .fc-btn-block {
+    width: 100%;
+  }
+  .fc-btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+  }
+  .fc-btn-primary:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+  }
+  .fc-btn-secondary {
+    background: #e2e8f0;
+    border-color: #e2e8f0;
+    color: #334155;
+  }
+  .fc-btn-secondary:hover {
+    background: #cbd5e1;
+    border-color: #cbd5e1;
+    color: #1e293b;
+  }
+  .fc-btn-primary-outline {
+    background: transparent;
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .fc-btn-primary-outline:hover {
+    background: #ecfdf5;
+  }
+  .fc-btn-text-primary {
+    background: transparent;
+    color: var(--primary);
+  }
+  .fc-btn-text-primary:hover {
+    background: #ecfdf5;
+  }
+  .fc-btn-outline {
+    background: transparent;
+    border-color: #cbd5e1;
+    color: #475569;
+  }
+  .fc-btn-outline:hover {
+    background: #f1f5f9;
+    border-color: #94a3b8;
+    color: #1e293b;
+  }
+  .fc-btn-warn-outline {
+    background: transparent;
+    border-color: #ea580c;
+    color: #ea580c;
+  }
+  .fc-btn-warn-outline:hover {
+    background: #fff7ed;
+  }
+  .fc-btn-danger-outline {
+    background: transparent;
+    border-color: #dc2626;
+    color: #dc2626;
+  }
+  .fc-btn-danger-outline:hover {
+    background: #fef2f2;
+  }
+  .fc-btn-danger {
+    background: #dc2626;
+    border-color: #dc2626;
+    color: #fff;
+  }
+  .fc-btn-danger:hover {
+    background: #b91c1c;
+    border-color: #b91c1c;
+  }
+  .fc-btn-warn {
+    background: #ea580c;
+    border-color: #ea580c;
+    color: #fff;
+  }
+  .fc-btn-warn:hover {
+    background: #c2410c;
+    border-color: #c2410c;
+  }
+  .fc-btn-text {
+    background: transparent;
+    color: #475569;
+  }
+  .fc-btn-text:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+  }
+  .fc-btn-link {
+    background: transparent;
+    color: var(--primary);
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .fc-btn-link:hover {
+    color: var(--primary-hover);
+  }
+  .fc-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 9999px;
+    color: #64748b;
+    background: transparent;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .fc-icon-btn:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+  }
+
+  /* ----------------------------------------------------------------- tags */
+  .fc-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.45rem;
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .fc-tag-success { background: #16a34a; color: #fff; }
+  .fc-tag-info { background: #0284c7; color: #fff; }
+  .fc-tag-warn { background: #ea580c; color: #fff; }
+  .fc-tag-danger { background: #dc2626; color: #fff; }
+  .fc-tag-secondary { background: #e2e8f0; color: #334155; }
+  .fc-tag-primary { background: var(--primary); color: #fff; }
+
+  /* --------------------------------------------------------- form fields */
+  .fc-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #475569;
+  }
+  .fc-input,
+  .fc-select {
+    width: 100%;
+    padding: 0.4rem 0.625rem;
+    background: #fff;
+    border: 1px solid var(--field-border);
+    border-radius: 2px;
+    font-size: 1rem;
+    color: #0f172a;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .fc-input::placeholder {
+    color: #475569;
+    opacity: 0.8;
+  }
+  .fc-input:focus,
+  .fc-select:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: -1px;
+  }
+  .fc-input:disabled,
+  .fc-select:disabled {
+    background: #e2e8f0;
+    color: #475569;
+    cursor: default;
+  }
+  .fc-input[aria-invalid="true"] {
+    border-color: #ef4444;
+  }
+  .fc-select {
+    appearance: none;
+    padding-right: 2rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23334155' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+    cursor: pointer;
+  }
+  .fc-field-hint {
+    font-size: 12px;
+    color: var(--color-navy-500);
+  }
+  .fc-input-icon {
+    position: relative;
+  }
+  .fc-input-icon > svg {
+    position: absolute;
+    left: 0.625rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #475569;
+    pointer-events: none;
+  }
+  .fc-input-icon > .fc-input {
+    padding-left: 2rem;
+  }
+
+  /* --------------------------------------------------------- filter card */
+  .fc-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px;
+  }
+  .fc-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 200px;
+  }
+
+  /* --------------------------------------------------------------- table */
+  .fc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 1rem;
+  }
+  .fc-table thead th {
+    background: #f8fafc;
+    color: #334e68;
+    font-weight: 600;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .fc-table tbody td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+  }
+  .fc-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .fc-table tbody tr.fc-row-link {
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+  .fc-table tbody tr.fc-row-link:hover,
+  .fc-table tbody tr[aria-selected="true"] {
+    background: #f1f5f9;
+  }
+  .fc-table-caps thead th {
+    color: #475569;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+  }
+  .fc-table-striped tbody tr:nth-child(even) {
+    background: #f8fafc;
+  }
+  .fc-table-sm tbody td { padding: 0.3rem 0.6rem; }
+  .fc-table-sm thead th { padding: 0.4rem 0.6rem; }
+
+  /* FcTableToolbar.vue: quick search left; refresh, Clear All and the
+     Filters popover (native popover) right. */
+  .fc-table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .fc-toolbar-start,
+  .fc-toolbar-end {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .fc-toolbar-search {
+    width: 260px;
+    max-width: 100%;
+  }
+  .fc-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4rem;
+    height: 1.4rem;
+    padding: 0 0.35rem;
+    border-radius: 9999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .fc-filter-popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    width: min(360px, calc(100vw - 32px));
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 10px 30px rgb(15 23 42 / 0.15);
+    color: #1e293b;
+  }
+  .fc-filter-popover-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .fc-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #64748b;
+  }
+  .fc-empty > svg {
+    display: block;
+    margin: 0 auto 16px;
+    color: #cbd5e1;
+  }
+  .fc-empty > span {
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  /* PrimeVue Paginator (Nora): page links centred, report and rows-per-page. */
+  .fc-paginator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 1rem;
+    color: #64748b;
+  }
+  .fc-page-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    height: 2.5rem;
+    padding: 0 0.5rem;
+    border-radius: 2px;
+    color: #64748b;
+    text-decoration: none;
+  }
+  a.fc-page-link:hover {
+    background: #f1f5f9;
+    color: #334155;
+  }
+  .fc-page-link[aria-current="page"] {
+    background: #ecfdf5;
+    color: #047857;
+    font-weight: 600;
+  }
+  span.fc-page-link[aria-disabled="true"] {
+    opacity: 0.5;
+  }
+  .fc-page-report {
+    padding: 0 0.5rem;
+  }
+  .fc-paginator .fc-select {
+    width: auto;
+  }
+  .fc-mono { font-family: var(--font-mono); }
+  .fc-muted { color: #64748b; }
+
+  .fc-table-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: #64748b;
+  }
+
+  /* ------------------------------------------------ event type code chips */
+  .fc-code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .fc-code-seg {
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  .fc-code-seg.app { background: #dbeafe; color: #1d4ed8; }
+  .fc-code-seg.subdomain { background: #dcfce7; color: #15803d; }
+  .fc-code-seg.aggregate { background: #fef3c7; color: #b45309; }
+  .fc-code-seg.event { background: #f3e8ff; color: #7c3aed; }
+  .fc-code-sep { color: #94a3b8; margin: 0 1px; }
+  .fc-mono-chip {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: #f1f5f9;
+    color: #475569;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  /* ------------------------------------------------------ detail rows */
+  .fc-dl-grid {
+    display: grid;
+    grid-template-columns: 9rem 1fr;
+    gap: 12px 16px;
+    align-items: baseline;
+  }
+  .fc-dl-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #64748b;
+  }
+  .fc-json {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    max-height: 28rem;
+    overflow: auto;
+    white-space: pre;
+  }
+
+  /* ------------------------------------------------------- danger zone */
+  .fc-danger-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #dc2626;
+  }
+  .fc-danger-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .fc-danger-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px;
+    background: #fafafa;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+  }
+  .fc-danger-item strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .fc-danger-item p {
+    margin: 0;
+    font-size: 13px;
+    color: #64748b;
+  }
+
+  /* ------------------------------------------------------------ banners */
+  .fc-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  .fc-banner-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+  .fc-banner-error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
+
+  /* -------------------------------------------------------------- login */
+  /* LoginPage.vue: buttons and links use the theme's accent colour. */
+  .fc-login-submit {
+    background: var(--login-accent, #0967d2);
+    border-color: var(--login-accent, #0967d2);
+    color: #fff;
+  }
+  .fc-login-submit:hover {
+    background: color-mix(in srgb, var(--login-accent, #0967d2) 85%, black);
+    border-color: color-mix(in srgb, var(--login-accent, #0967d2) 85%, black);
+  }
+  /* Disabled until the form is valid, as the Vue page's :disabled. */
+  .fc-login form:invalid .fc-login-submit {
+    background: color-mix(in srgb, var(--login-accent, #0967d2) 50%, #e2e8f0);
+    border-color: color-mix(in srgb, var(--login-accent, #0967d2) 50%, #e2e8f0);
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .fc-login .fc-input:focus {
+    outline-color: var(--login-accent, #0967d2);
+  }
+  .fc-login-link {
+    color: var(--login-accent, #0967d2);
+    text-decoration: none;
+  }
+  .fc-login-link:hover {
+    color: #0552b5;
+  }
+  .fc-login-avatar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, var(--login-accent, #0967d2) 0%, #47a3f3 100%);
+    color: #fff;
+    font-weight: 600;
+  }
+  .fc-login-divider {
+    position: relative;
+    margin: -8px 0;
+    text-align: center;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+  .fc-login-divider::before,
+  .fc-login-divider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: calc(50% - 20px);
+    height: 1px;
+    background: #e2e8f0;
+  }
+  .fc-login-divider::before { left: 0; }
+  .fc-login-divider::after { right: 0; }
+  .fc-login-logo-svg svg {
+    max-width: 200px;
+    max-height: 72px;
+  }
+
+  /* ------------------------------------------------------------ sidebar */
+  .fc-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    width: 260px;
+    background: linear-gradient(180deg, #102a43 0%, #0a1929 100%);
+    overflow: hidden;
+    transition: width 0.3s ease;
+  }
+  .fc-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 64px;
+    padding: 16px;
+    border-bottom: 1px solid rgb(255 255 255 / 0.1);
+  }
+  .fc-sidebar-logo {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    color: #47a3f3;
+  }
+  .fc-sidebar-logo img,
+  .fc-sidebar-logo svg {
+    height: 100%;
+    width: auto;
+    max-width: 180px;
+    object-fit: contain;
+  }
+  .fc-collapse-btn {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgb(255 255 255 / 0.1);
+    color: rgb(255 255 255 / 0.7);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .fc-collapse-btn:hover {
+    background: rgb(255 255 255 / 0.15);
+    color: #fff;
+  }
+  .fc-sidebar-nav {
+    flex: 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 16px 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+  }
+  .fc-nav-group {
+    margin-bottom: 24px;
+  }
+  .fc-nav-group-label {
+    display: block;
+    margin-bottom: 8px;
+    padding: 0 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgb(255 255 255 / 0.4);
+  }
+  .fc-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 20px;
+    font-size: 14px;
+    color: rgb(255 255 255 / 0.7);
+    text-decoration: none;
+    cursor: pointer;
+    list-style: none;
+    transition: all 0.2s ease;
+  }
+  .fc-nav-item::-webkit-details-marker {
+    display: none;
+  }
+  .fc-nav-item > svg:first-child {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+  }
+  .fc-nav-item:hover {
+    background: rgb(255 255 255 / 0.08);
+    color: #fff;
+  }
+  .fc-nav-item[aria-current="page"] {
+    background: rgb(71 163 243 / 0.15);
+    color: #47a3f3;
+    box-shadow: inset -3px 0 0 #47a3f3;
+  }
+  .fc-nav-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fc-nav-chevron {
+    margin-left: auto;
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s ease;
+  }
+  details[open] > .fc-nav-item .fc-nav-chevron {
+    transform: rotate(90deg);
+  }
+  .fc-nav-child {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px 8px 44px;
+    font-size: 13px;
+    color: rgb(255 255 255 / 0.6);
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+  .fc-nav-child > svg {
+    width: 15px;
+    height: 15px;
+  }
+  .fc-nav-child:hover {
+    background: rgb(255 255 255 / 0.05);
+    color: rgb(255 255 255 / 0.9);
+  }
+  .fc-nav-child[aria-current="page"] {
+    background: rgb(71 163 243 / 0.1);
+    color: #47a3f3;
+  }
+  .fc-sidebar-footer {
+    padding: 8px;
+    border-top: 1px solid rgb(255 255 255 / 0.1);
+  }
+  .fc-user-trigger {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    color: #fff;
+    text-align: left;
+    cursor: pointer;
+  }
+  .fc-user-trigger:hover {
+    background: rgb(255 255 255 / 0.08);
+  }
+  .fc-user-name {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.3;
+    color: rgb(255 255 255 / 0.85);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-user-email {
+    display: block;
+    font-size: 11px;
+    line-height: 1.3;
+    color: rgb(255 255 255 / 0.5);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-avatar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, #0967d2 0%, #47a3f3 100%);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .fc-avatar-lg {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+
+  /* Collapsed: icons only. The class sits on <html> so it applies before
+     first paint (set from the `fc_sidebar` cookie). */
+  .fc-collapsed .fc-sidebar { width: 72px; }
+  .fc-collapsed .fc-main { margin-left: 72px; }
+  .fc-collapsed .fc-sidebar-logo,
+  .fc-collapsed .fc-nav-group-label,
+  .fc-collapsed .fc-nav-label,
+  .fc-collapsed .fc-nav-chevron,
+  .fc-collapsed .fc-nav-children,
+  .fc-collapsed .fc-user-text { display: none; }
+  .fc-collapsed .fc-sidebar-header { justify-content: center; }
+  .fc-collapsed .fc-collapse-btn svg { transform: rotate(180deg); }
+  .fc-collapsed .fc-nav-item { justify-content: center; padding: 12px; }
+  .fc-collapsed .fc-user-trigger { justify-content: center; }
+
+  .fc-main {
+    margin-left: 260px;
+    min-height: 100vh;
+    transition: margin-left 0.3s ease;
+  }
+
+  /* User menu popover (native `popover`: light dismiss, Escape). */
+  .fc-user-menu {
+    position: fixed;
+    inset: auto auto 76px 12px;
+    min-width: 280px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 10px 40px rgb(15 23 42 / 0.2);
+    color: #1e293b;
+  }
+  .fc-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #475569;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .fc-menu-item:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+  }
+  .fc-menu-item.danger {
+    color: #dc2626;
+  }
+  .fc-menu-item.danger:hover {
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+
+  /* ---------------------------------------------------- drawer & dialog */
+  /* EntityDrawer.vue: a non-modal right panel (no mask); the list stays
+     scrollable and clickable underneath, and a stronger shadow separates
+     the two. Sizes: default 560px, wide 800px, two-thirds. */
+  .fc-drawer {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 51;
+    display: flex;
+    flex-direction: column;
+    width: min(560px, calc(100vw - 24px));
+    background: #fff;
+    box-shadow: -8px 0 32px rgb(15 23 42 / 0.18);
+  }
+  .fc-drawer-wide { width: min(800px, calc(100vw - 24px)); }
+  .fc-drawer-two-thirds { width: min(66.667vw, calc(100vw - 24px)); }
+  .fc-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 1.25rem;
+  }
+  .fc-drawer-titles {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .fc-drawer-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-drawer-subtitle {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: #64748b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px 20px;
+  }
+  .fc-drawer-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid #e2e8f0;
+  }
+
+  /* ------------------------------------------ form kit (Fc* components) */
+  .fc-form-section {
+    margin-bottom: 16px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .fc-form-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .fc-form-section.fc-card {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fc-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .fc-form-section .fc-section-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+  .fc-section-description {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #64748b;
+  }
+  .fc-section-body {
+    container-type: inline-size;
+  }
+  .fc-danger-zone .fc-section-title {
+    color: #dc2626;
+  }
+  .fc-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+  .fc-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+  }
+  .fc-span-2 {
+    grid-column: 1 / -1;
+  }
+  @container (max-width: 640px) {
+    .fc-form-grid,
+    .fc-detail-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .fc-form-field,
+  .fc-detail-field {
+    min-width: 0;
+  }
+  .fc-field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #475569;
+    margin-bottom: 4px;
+  }
+  .fc-required { color: #dc2626; }
+  .fc-field-help {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .fc-field-error {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #dc2626;
+  }
+  .fc-detail-value {
+    font-size: 14px;
+    color: #1e293b;
+    overflow-wrap: break-word;
+  }
+  .fc-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #1e293b;
+  }
+  .fc-checkbox-row input {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: var(--primary);
+  }
+  /* Read view vs edit form in a drawer: the runtime toggles `hidden`. */
+  [hidden] { display: none !important; }
+  .fc-dialog {
+    margin: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 20px 60px rgb(15 23 42 / 0.3);
+    color: #1e293b;
+  }
+  .fc-dialog::backdrop {
+    background: rgb(15 23 42 / 0.4);
+  }
+  .fc-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px 12px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .fc-dialog-body {
+    padding: 0 24px 16px;
+  }
+  .fc-dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 24px 20px;
+  }
+}

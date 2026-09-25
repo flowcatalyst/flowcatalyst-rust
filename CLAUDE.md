@@ -432,6 +432,46 @@ regardless.
 drawers, keep the `<template>` + `<style scoped>` skeleton, and fill in
 the resource-specific bits.
 
+## fc-web (Topcoat UI trial)
+
+`crates/fc-web` is a server-rendered admin UI built with Topcoat, mounted in
+`fc-dev --features web` at `/ui/*` in front of the Vue SPA. Read
+`docs/topcoat-trial.md` first. It is **excluded from the Cargo workspace**
+(only the `web` feature builds it), so `--workspace` commands skip it; test
+it with `CARGO_TARGET_DIR=target cargo test --manifest-path
+crates/fc-web/Cargo.toml`.
+
+- **Every page, route, shard and procedure has an explicit path under
+  `/ui/(app)`.** That puts it inside the authentication `#[layer]`. A shard
+  or procedure without a path gets `/_topcoat/runtime/<hash>`, outside the
+  layer, and a shard endpoint runs without its page's checks.
+- **Every handler calls `auth(cx)?` and `permit(checks::…)?`**, the same
+  `checks` functions the axum handlers use. `tests/auth_convention_test.rs`
+  enforces both. Public entry points go on its allowlist with a reason.
+- **Writes are form POSTs to `#[route]`s that run the use case** (the same
+  one the BFF handler runs), then `see_other` back with `set_flash`. Never
+  write through a repository from fc-web; the UoW rules above apply
+  unchanged.
+- **Look = the SPA in `frontend/`** (Go's production UI): list pages with
+  rows that open a right-hand drawer.
+  - `styles.css` carries the PrimeVue Nora / FlowCatalyst values as
+    `.fc-*` classes, and `src/ui.rs` has the components (`page_header`,
+    `filter_select`, `tag`, `code_chips`, `confirm_dialog`, …).
+  - Reuse them. Don't use Topcoat UI (shadcn-style, doesn't match).
+  - Before adding a page, open the matching `.vue` list page and its drawer
+    and copy their values (columns, labels, tags, empty states).
+  - Gate pages and nav entries with the permission the API handler checks
+    (and `frontend/src/stores/permissions.ts` uses), never less.
+- **Pages work as plain HTML first.** Filters are GET forms and actions are
+  POST forms.
+  - Modals are native `<dialog>` opened with
+    `commandfor`/`command="show-modal"`.
+  - Menus are `popover`; collapsibles are `<details>`.
+  - Signals and shards are only for in-place updates, such as the detail
+    drawer, that HTML can't do.
+- **Assets bundle themselves** on the first start after a build
+  (`src/assets.rs`); after changing Tailwind classes, rebuild and restart.
+
 ## Frontend API Response Handling
 
 API modules live in `frontend/src/api/`, one per resource, over the

@@ -926,6 +926,14 @@ async fn main() -> Result<()> {
 
     // Event fan-out runs inside the stream processor (fc-stream) configured
     // above; nothing to start here.
+
+    // The Topcoat UI trial signs in through the same states `/auth/login`
+    // and `/auth/check-domain` use.
+    #[cfg(feature = "web")]
+    let web_auth = (
+        routes.auth.clone(),
+        routes.oidc_login.password_setup_hint.clone(),
+    );
     let (platform_app, platform_openapi) = routes.build();
 
     // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
@@ -1012,20 +1020,40 @@ async fn main() -> Result<()> {
                 .allow_headers(Any),
         );
 
+    // The Topcoat UI trial (`--features web`): it sits in front of the SPA
+    // fallback, claims `/ui/*` and `/_topcoat/*`, and hands everything else
+    // on to the SPA service below.
+    #[cfg(feature = "web")]
+    let mut web_deps = Some(fc_web::WebDeps::new(
+        &repos,
+        &auth_services,
+        unit_of_work.clone(),
+        web_auth.0,
+        web_auth.1,
+    ));
+    #[cfg(feature = "web")]
+    info!("Topcoat UI trial mounted at /ui");
+
     // Static frontend serving — uses FC_STATIC_DIR if set (for live reload),
     // otherwise serves from the embedded frontend assets compiled into the binary.
     let api_app = if let Ok(static_dir) = std::env::var("FC_STATIC_DIR") {
         let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
         if index_path.exists() {
             info!(dir = %static_dir, "Serving frontend from filesystem (live reload)");
-            fc_platform::router::serve_spa(api_app, &static_dir)
+            let app = fc_platform::router::serve_spa(api_app, &static_dir);
+            #[cfg(feature = "web")]
+            let app = app.fallback_service(fc_web::service(
+                web_deps.take().expect("web deps used once"),
+                fc_platform::router::serve_spa(Router::new(), &static_dir),
+            ));
+            app
         } else {
             warn!(dir = %static_dir, "FC_STATIC_DIR set but index.html not found — using embedded assets");
             api_app.fallback(axum::routing::get(embedded_asset_handler))
         }
     } else {
         info!("Serving embedded frontend (compiled into binary)");
-        api_app
+        let app = api_app
             .route("/auth/login", axum::routing::get(embedded_spa_handler))
             .route(
                 "/auth/forgot-password",
@@ -1034,14 +1062,25 @@ async fn main() -> Result<()> {
             .route(
                 "/auth/reset-password",
                 axum::routing::get(embedded_spa_handler),
-            )
-            .fallback(axum::routing::get(embedded_asset_handler))
+            );
+        #[cfg(feature = "web")]
+        let app = app.fallback_service(fc_web::service(
+            web_deps.take().expect("web deps used once"),
+            Router::new().fallback(axum::routing::get(embedded_asset_handler)),
+        ));
+        #[cfg(not(feature = "web"))]
+        let app = app.fallback(axum::routing::get(embedded_asset_handler));
+        app
     };
 
     let api_addr = format!("0.0.0.0:{}", args.api_port);
     info!("API server listening on http://{}", api_addr);
 
     let api_listener = TcpListener::bind(&api_addr).await?;
+    #[cfg(feature = "web")]
+    if let Ok(addr) = api_listener.local_addr() {
+        tokio::spawn(fc_web::notify_dev_ready(addr));
+    }
     let api_handle = {
         let mut shutdown_rx = shutdown_tx.subscribe();
         // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).

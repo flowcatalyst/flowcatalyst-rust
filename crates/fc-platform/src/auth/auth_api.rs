@@ -204,14 +204,89 @@ pub async fn login(
     // unreadable body is 400 `INVALID_JSON`, absent members are empty.
     let req: LoginRequest = serde_json::from_slice(&body)
         .map_err(|e| PlatformError::bad_request_code("INVALID_JSON", e.to_string()))?;
+    match password_login(
+        &state,
+        &jar,
+        &req.email,
+        &req.password,
+        client_ip.as_deref(),
+    )
+    .await?
+    {
+        PasswordLogin::SecondFactor(owed) => Ok(owed.into_response()),
+        PasswordLogin::Session {
+            principal,
+            session_token,
+        } => {
+            // Go `completeLogin` (endpoint.go:559-611): the session cookie,
+            // the recorded success, and the login payload.
+            let jar = jar.add(state.session_cookie.build_cookie(session_token));
+            Ok(login_response(&state, jar, *principal).await)
+        }
+    }
+}
+
+/// The completed-login payload (Go `completeLogin`'s body).
+async fn login_response(
+    state: &AuthState,
+    jar: CookieJar,
+    principal: crate::Principal,
+) -> axum::response::Response {
+    let principal_email = principal.email().unwrap_or_default().to_string();
+
+    let roles = crate::auth::auth_service::role_names(&principal);
+    // An unresolvable permission set leaves the list empty; the user is
+    // signed in regardless (Go, endpoint.go:586-592).
+    let (permissions, sso_managed) = tokio::join!(
+        effective_permissions(state, &roles),
+        sso_managed(state, &principal),
+    );
+    let response = LoginResponse {
+        status: "ok".to_string(),
+        principal_id: principal.id.clone(),
+        name: principal.name.clone(),
+        email: principal_email,
+        roles,
+        permissions: permissions.unwrap_or_default(),
+        client_id: principal.client_id.clone(),
+        sso_managed: sso_managed.unwrap_or(false),
+    };
+
+    (jar, Json(response)).into_response()
+}
+
+/// What a password sign-in comes to.
+pub enum PasswordLogin {
+    /// Signed in: set the session cookie carrying `session_token`.
+    Session {
+        principal: Box<crate::Principal>,
+        session_token: String,
+    },
+    /// A second factor is owed first (`mfa_required` /
+    /// `enrollment_required`); no session was minted.
+    SecondFactor(crate::mfa::login_api::SecondFactor),
+}
+
+/// Password login, shared by the JSON `/auth/login` handler and the
+/// server-rendered `fc-web` login form: the empty-field check, backoff, SSO
+/// enforcement, principal lookup, password verification, lazy rehash, the
+/// second-factor gate, and attempt recording, as Go's login
+/// (auth/login/endpoint.go). `jar` carries the trusted-device cookie. On
+/// success the caller sets the session cookie.
+pub async fn password_login(
+    state: &AuthState,
+    jar: &CookieJar,
+    email: &str,
+    password: &str,
+    ip: Option<&str>,
+) -> Result<PasswordLogin, PlatformError> {
     // Lower-cased up front so the backoff identifier matches across
     // attempts whatever the casing typed.
-    let email = req.email.trim().to_lowercase();
-    if email.is_empty() || req.password.is_empty() {
+    let email = email.trim().to_lowercase();
+    if email.is_empty() || password.is_empty() {
         // Constant-shape error: which field is missing is not said.
         return Err(PlatformError::session_unauthorized("Invalid credentials"));
     }
-    let ip = client_ip.as_deref();
 
     // Brute-force backoff: per-(email, IP) exponential delay plus a
     // per-email ceiling, before credentials are evaluated.
@@ -226,7 +301,7 @@ pub async fn login(
     let record_failure = |principal_id: Option<String>, reason: &'static str| {
         let repo = state.login_attempt_repo.clone();
         let email = email.clone();
-        let ip = client_ip.clone();
+        let ip = ip.map(str::to_owned);
         async move {
             record_user_login_attempt(
                 &repo,
@@ -272,7 +347,7 @@ pub async fn login(
     // passwordhash.Verify).
     let password_valid = state
         .password_service
-        .verify_password(&req.password, &stored_hash)
+        .verify_password(password, &stored_hash)
         .unwrap_or(false);
     if !password_valid {
         record_failure(None, "Invalid credentials").await;
@@ -284,7 +359,7 @@ pub async fn login(
     // password. Best-effort, as Go's login (auth/login/endpoint.go:519-525):
     // a failure is logged and the login goes on.
     if state.password_service.needs_rehash(&stored_hash) {
-        match state.password_service.rehash_password(&req.password) {
+        match state.password_service.rehash_password(password) {
             Ok(new_hash) => {
                 if let Err(e) = state
                     .principal_repo
@@ -305,28 +380,22 @@ pub async fn login(
     // requirement can't be evaluated. Passkey and OIDC sign-ins never reach
     // here.
     if let Some(two_factor) = &state.two_factor {
-        match two_factor.maybe_challenge(&jar, &principal).await {
-            Ok(Some(challenge)) => return Ok(challenge),
+        match two_factor.second_factor_owed(jar, &principal).await {
+            Ok(Some(owed)) => return Ok(PasswordLogin::SecondFactor(owed)),
             Ok(None) => {}
             Err(e) => {
                 tracing::error!(principal_id = %principal.id, error = %e, "2FA evaluation failed; denying login");
-                return Ok((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "code": "MFA_EVAL_FAILED",
-                        "message": "could not evaluate two-factor requirement"
-                    })),
-                )
-                    .into_response());
+                return Err(PlatformError::SessionEndpoint {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "MFA_EVAL_FAILED".to_string(),
+                    message: "could not evaluate two-factor requirement".to_string(),
+                    retry_after_secs: None,
+                });
             }
         }
     }
 
-    // Go `completeLogin` (endpoint.go:559-611): the session cookie, the
-    // recorded success, and the login payload.
     let session_token = state.auth_service.generate_session_token(&principal)?;
-    let jar = jar.add(state.session_cookie.build_cookie(session_token));
-    let principal_email = principal.email().unwrap_or_default().to_string();
     record_user_login_attempt(
         &state.login_attempt_repo,
         Some(&email),
@@ -337,25 +406,10 @@ pub async fn login(
     )
     .await;
 
-    let roles = crate::auth::auth_service::role_names(&principal);
-    // An unresolvable permission set leaves the list empty; the user is
-    // signed in regardless (Go, endpoint.go:586-592).
-    let (permissions, sso_managed) = tokio::join!(
-        effective_permissions(&state, &roles),
-        sso_managed(&state, &principal),
-    );
-    let response = LoginResponse {
-        status: "ok".to_string(),
-        principal_id: principal.id.clone(),
-        name: principal.name.clone(),
-        email: principal_email,
-        roles,
-        permissions: permissions.unwrap_or_default(),
-        client_id: principal.client_id.clone(),
-        sso_managed: sso_managed.unwrap_or(false),
-    };
-
-    Ok((jar, Json(response)).into_response())
+    Ok(PasswordLogin::Session {
+        principal: Box::new(principal),
+        session_token,
+    })
 }
 
 /// Logout / revoke token

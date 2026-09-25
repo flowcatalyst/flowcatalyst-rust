@@ -379,11 +379,7 @@ pub async fn get_event(
         .ok_or_else(|| PlatformError::not_found("Event", &id))?;
 
     // Check client access
-    if let Some(ref cid) = event.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event"));
-        }
-    }
+    crate::shared::caller_reach::ensure_row_visible(&auth.0, event.client_id.as_deref(), "event")?;
 
     Ok(Json(event.into()))
 }
@@ -408,33 +404,18 @@ pub async fn list_events(
 ) -> Result<Json<Vec<super::entity::EventRead>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_events(&auth.0)?;
 
-    let mut client_ids = split_csv(query.client_ids.as_deref());
     let event_types = split_csv(query.types.as_deref());
     let applications = split_csv(query.applications.as_deref());
     let subdomains = split_csv(query.subdomains.as_deref());
     let aggregates = split_csv(query.aggregates.as_deref());
 
-    if !client_ids.is_empty() {
-        for cid in &client_ids {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
-        }
-    } else if !auth.0.is_anchor() {
-        client_ids = auth
-            .0
-            .accessible_clients
-            .iter()
-            .filter(|c| c.as_str() != "*")
-            .cloned()
-            .collect();
-        if client_ids.is_empty() {
-            return Ok(Json(vec![]));
-        }
-    }
+    let Some(client_ids) = crate::shared::caller_reach::read_client_filter(
+        &auth.0,
+        split_csv(query.client_ids.as_deref()),
+    )?
+    else {
+        return Ok(Json(vec![]));
+    };
 
     let size = query.size.unwrap_or(50).clamp(1, 1000) as i64;
 

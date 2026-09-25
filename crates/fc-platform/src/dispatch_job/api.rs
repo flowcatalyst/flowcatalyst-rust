@@ -425,11 +425,11 @@ pub async fn get_dispatch_job(
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
 
     // Check client access
-    if let Some(ref cid) = job.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this dispatch job"));
-        }
-    }
+    crate::shared::caller_reach::ensure_row_visible(
+        &auth.0,
+        job.client_id.as_deref(),
+        "dispatch job",
+    )?;
 
     Ok(Json(job.into()))
 }
@@ -454,34 +454,19 @@ pub async fn list_dispatch_jobs(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
 
-    let mut client_ids = split_csv(query.client_ids.as_deref());
     let statuses = split_csv(query.statuses.as_deref());
     let applications = split_csv(query.applications.as_deref());
     let subdomains = split_csv(query.subdomains.as_deref());
     let aggregates = split_csv(query.aggregates.as_deref());
     let codes = split_csv(query.codes.as_deref());
 
-    if !client_ids.is_empty() {
-        for cid in &client_ids {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
-        }
-    } else if !auth.0.is_anchor() {
-        client_ids = auth
-            .0
-            .accessible_clients
-            .iter()
-            .filter(|c| c.as_str() != "*")
-            .cloned()
-            .collect();
-        if client_ids.is_empty() {
-            return Ok(Json(vec![]));
-        }
-    }
+    let Some(client_ids) = crate::shared::caller_reach::read_client_filter(
+        &auth.0,
+        split_csv(query.client_ids.as_deref()),
+    )?
+    else {
+        return Ok(Json(vec![]));
+    };
 
     // Unknown (or miscased) statuses are a 400, not an empty result.
     let statuses = statuses
@@ -860,11 +845,11 @@ pub async fn get_dispatch_job_attempts(
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
 
     // Check client access
-    if let Some(ref cid) = job.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this dispatch job"));
-        }
-    }
+    crate::shared::caller_reach::ensure_row_visible(
+        &auth.0,
+        job.client_id.as_deref(),
+        "dispatch job",
+    )?;
 
     let attempts: Vec<DispatchAttemptResponse> = job.attempts.into_iter().map(Into::into).collect();
     Ok(Json(attempts))
@@ -986,11 +971,11 @@ pub async fn get_dispatch_job_raw(
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
 
     // Check client access
-    if let Some(ref cid) = job.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this dispatch job"));
-        }
-    }
+    crate::shared::caller_reach::ensure_row_visible(
+        &auth.0,
+        job.client_id.as_deref(),
+        "dispatch job",
+    )?;
 
     Ok(Json(job))
 }

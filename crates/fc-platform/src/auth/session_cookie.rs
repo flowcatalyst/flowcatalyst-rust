@@ -15,6 +15,18 @@ pub struct SessionCookieConfig {
 }
 
 impl SessionCookieConfig {
+    /// The platform session cookie as password login issues it: `fc_session`,
+    /// `SameSite=Lax`, one day, `Secure` per deployment (on in fc-server, off
+    /// only for fc-dev's plain-http localhost).
+    pub fn password_login(secure: bool) -> Self {
+        Self {
+            name: crate::shared::middleware::SESSION_COOKIE_NAME.to_string(),
+            secure,
+            same_site: SameSite::Lax,
+            ttl: time::Duration::seconds(86400),
+        }
+    }
+
     /// Parse a configured `SameSite` value. `strict`, `none` and `lax` are
     /// accepted in any case; anything else falls back to `Lax` with a warning.
     pub fn parse_same_site(value: &str) -> SameSite {
