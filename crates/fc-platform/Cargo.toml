@@ -8,7 +8,7 @@ description = "FlowCatalyst Platform - Core domain models, services, and APIs"
 [dependencies]
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
-fc-queue = { path = "../fc-queue" }
+fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
 # FunctionAddress, shared with the function host and the guest PDK. Without
 # the Extism envelope, which is the host's business.
 fc-function-abi = { path = "../fc-function-abi" }
@@ -122,6 +122,8 @@ aws-sdk-s3 = { workspace = true }
 [dev-dependencies]
 # Log capture in unit tests.
 tracing-subscriber = { workspace = true }
+# The dispatch scheduler's SQS publish, end to end against LocalStack.
+aws-sdk-sqs = { workspace = true }
 # The function host's webhook verifier: deliveries the platform signs must
 # pass it (tests/function_promote_golden_test.rs).
 fc-fnhost-core = { path = "../fc-fnhost-core" }
