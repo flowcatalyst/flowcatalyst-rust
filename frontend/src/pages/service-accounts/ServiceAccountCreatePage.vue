@@ -16,6 +16,8 @@ const name = ref("");
 const description = ref("");
 const scope = ref<PrincipalScope>("ANCHOR");
 const selectedClientIds = ref<string[]>([]);
+// Off by default: a new account is linked to no application.
+const allApplications = ref(false);
 const clients = ref<Client[]>([]);
 const saving = ref(false);
 
@@ -100,6 +102,8 @@ async function createServiceAccount() {
 					scope.value !== "ANCHOR" && selectedClientIds.value.length > 0
 						? selectedClientIds.value
 						: undefined,
+				// Sent only when on; off means no application access.
+				allApplications: allApplications.value ? true : undefined,
 			});
 
 		// Store credentials and show dialog
@@ -230,10 +234,25 @@ function goBack() {
         </div>
       </div>
 
-      <p class="help-text">
-        A new service account has no application access. Grant applications on its detail
-        page once it is created.
-      </p>
+      <div class="form-section">
+        <h2 class="section-title">Application Access</h2>
+
+        <div class="form-group">
+          <div class="toggle-row">
+            <ToggleSwitch
+              v-model="allApplications"
+              inputId="allApplications"
+              data-testid="all-applications-toggle"
+            />
+            <label for="allApplications" class="toggle-label">All applications</label>
+          </div>
+          <small class="help-text">
+            Off: the service account starts with no application access; grant applications on
+            its detail page once it is created. On: it reaches every application, including
+            future ones. Only an administrator with access to all applications can turn this on.
+          </small>
+        </div>
+      </div>
 
       <div class="form-actions">
         <Button label="Cancel" text severity="secondary" @click="goBack" />
@@ -383,6 +402,18 @@ function goBack() {
 
 .form-group .required {
   color: #ef4444;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.form-group .toggle-row .toggle-label {
+  display: inline;
+  margin-bottom: 0;
+  cursor: pointer;
 }
 
 .help-text {
