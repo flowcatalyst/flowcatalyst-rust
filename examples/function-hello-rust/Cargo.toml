@@ -17,6 +17,7 @@ crate-type = ["cdylib"]
 [dependencies]
 # Outside this repository, point at the repository instead:
 # fc-function-pdk = { git = "https://github.com/flowcatalyst/flowcatalyst-rust" }
+# or, once it is published, at crates.io: fc-function-pdk = "0.1"
 fc-function-pdk = { path = "../../crates/fc-function-pdk" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

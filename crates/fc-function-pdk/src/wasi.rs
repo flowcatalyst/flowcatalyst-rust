@@ -24,7 +24,10 @@ use crate::runtime::wait;
 #[cfg(feature = "flowcatalyst")]
 mod bindings {
     wit_bindgen::generate!({
-        path: "../../wit/flowcatalyst-function",
+        // The crate's vendored copy of the repository root's
+        // `wit/flowcatalyst-function` (the source of truth), so it also builds
+        // from crates.io; the README says how the two are kept in step.
+        path: "wit/flowcatalyst-function",
         world: "imports",
     });
 }

@@ -11,6 +11,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+# The git dependency always works; once fc-function-pdk is on crates.io,
+# `fc-function-pdk = "0.1"` does too (README.md).
 fc-function-pdk = { git = "https://github.com/flowcatalyst/flowcatalyst-rust" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

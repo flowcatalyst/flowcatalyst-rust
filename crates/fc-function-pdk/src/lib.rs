@@ -5,9 +5,9 @@
 //! and the function answers with an HTTP response. On top of `wasi:http` the
 //! host offers the `flowcatalyst:function` interfaces (config, secrets,
 //! events, logging and the invocation context; `wit/flowcatalyst-function/`
-//! at the repository root). This crate is the Rust side of both: the surface
-//! Java's `function-api` gives JVM authors, mapped onto `wasi:http` and the
-//! WIT.
+//! at the repository root, vendored in this crate). This crate is the Rust
+//! side of both: the surface Java's `function-api` gives JVM authors, mapped
+//! onto `wasi:http` and the WIT.
 //!
 //! ```ignore
 //! use fc_function_pdk::prelude::*;
