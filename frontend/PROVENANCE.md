@@ -80,3 +80,10 @@ platform-granted sources.
   `FcFormField` / `FcDetailField` / `FcFormActions`. A function's own page (tabs: versions, config &
   secrets, invoke, public routes; publish dialog) and the manifest editor stay full pages, as Rust
   had them.
+
+### Tests carried over from Rust's SPA
+
+`tests/service-accounts/service-account-create.test.ts` pins the owner ruling "new service accounts
+get no application access" against Go's `ServiceAccountCreateDrawer` (its toggle is Go's own, from
+a8ff165; Rust's all-applications toggle was not re-added). Rust's `tests/conventions/` check is the
+same file in both repos.
