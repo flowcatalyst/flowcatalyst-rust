@@ -200,7 +200,7 @@ directory beside `go/*.log` and `rust/*.log` — one log per process.
   flips a bucket), the most requests in
   flight at the target at once, signature verdicts, outbox rows left, the queue depth, settle time
   and disruptions.
-- **Invariants broken**, per side, checked on that side alone: no loss, no duplicate acceptance,
+- **Invariants broken**, per side (with the entry citing it, if any), checked on that side alone: no loss, no duplicate acceptance,
   group order (default for BLOCK_ON_ERROR targets), retry budget, minimum retry gap, pool
   concurrency, valid signatures, and "everything accepted but jobs not terminal". A **Go**
   invariant failure means the scenario asks for something Go does not guarantee (fix the
@@ -228,6 +228,15 @@ Deliberate deviations from Go. Each entry must cite a ruling:
 `scenario` and `field` match exactly or by a prefix ending in `*` (`groupOrder/*`). On a full
 two-sided run an entry that matched nothing is **stale** and fails the run, so a fix that removes
 a difference must remove its excuse too. No `ruling`, no entry.
+
+A side's broken invariant is cited the same way, under the field `invariant/<side>/<kind>` —
+`kind` is the violation's prefix: `loss`, `duplicates`, `group-order`, `fifo`, `retry-budget`,
+`backoff`, `pool-concurrency`, `signature`, `status` (e.g. `invariant/go/loss`). A scenario whose
+only differences and broken invariants are all cited is ACCEPTED; an uncited broken invariant is
+still a FAIL. Citations are per side, so a Go defect's entry never excuses the same failure on Rust.
+
+`"intermittent": true` marks a difference that only shows when a disruption lands in a narrow
+window (a timing-dependent Go defect): such an entry is never reported stale.
 
 ## Things that made Go (and Rust) awkward to run
 
