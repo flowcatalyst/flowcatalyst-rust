@@ -60,3 +60,12 @@ Rust's f6bf4a22: the user and service-account role tables highlighted `assignmen
 which neither backend emits, so every role rendered muted. `utils/roleAssignment.ts`
 (`assignmentSourceSeverity`) highlights `ADMIN_ASSIGNED` / legacy `ADMIN` and mutes the synced and
 platform-granted sources.
+
+### Functions (Go has none; Java is the reference)
+
+- `api/functions.ts` + `api/generated-functions/` (types from
+  `crates/fc-platform/resources/openapi/functions.openapi.json`, a second `openapi-ts` job), as in
+  Rust's SPA (8e51797b and later).
+- `api/client.ts` (Go's) gains two additive changes the function pages need: `ApiError.details` (the
+  envelope's raw `details`, for per-field errors) and a caller-set `Content-Type` is kept (the
+  artifact upload sends `application/octet-stream`).

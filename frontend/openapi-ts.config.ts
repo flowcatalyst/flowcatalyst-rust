@@ -14,13 +14,31 @@ const openApiInput =
 		? `http://localhost:${livePort}/q/openapi`
 		: "./openapi/openapi.json";
 
-export default defineConfig({
-	input: openApiInput,
-	output: {
-		path: "src/api/generated",
+// The function API is a second, separate document (Go has no functions):
+// Java's `functions.openapi.json` plus Rust's backward-compatible additions,
+// which the platform serves verbatim at `GET /api/openapi-functions.json`
+// (crates/fc-platform/src/function/openapi.rs). Types only —
+// `api/functions.ts` wraps them over the hand-rolled `api/client.ts`.
+const functionsOpenApiInput =
+	"../crates/fc-platform/resources/openapi/functions.openapi.json";
+
+export default defineConfig([
+	{
+		input: openApiInput,
+		output: {
+			path: "src/api/generated",
+		},
+		postProcess: [],
+		// Types only: the app's transport is the hand-rolled api/client.ts
+		// (toasts, 401 handling, field errors).
+		plugins: ["@hey-api/typescript"],
 	},
-	postProcess: [],
-	// Types only: the app's transport is the hand-rolled api/client.ts
-	// (toasts, 401 handling, field errors).
-	plugins: ["@hey-api/typescript"],
-});
+	{
+		input: functionsOpenApiInput,
+		output: {
+			path: "src/api/generated-functions",
+		},
+		postProcess: [],
+		plugins: ["@hey-api/typescript"],
+	},
+]);
