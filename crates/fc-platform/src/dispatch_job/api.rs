@@ -567,7 +567,12 @@ pub async fn create_dispatch_job(
     ),
     PlatformError,
 > {
-    crate::shared::authorization_service::checks::can_create_dispatch_jobs(&auth.0)?;
+    // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, with
+    // Go's body.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
+    )?;
 
     // Validate client access if specified
     if let Some(ref cid) = req.client_id {
@@ -691,7 +696,12 @@ pub async fn batch_create_dispatch_jobs(
     auth: Authenticated,
     Json(req): Json<BatchCreateDispatchJobsRequest>,
 ) -> Result<Json<BatchCreateDispatchJobsResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_create_dispatch_jobs(&auth.0)?;
+    // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, with
+    // Go's body.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
+    )?;
 
     // Validate batch size
     if req.jobs.is_empty() {

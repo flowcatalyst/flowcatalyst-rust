@@ -181,6 +181,22 @@ fn generate_anchor_token(auth_service: &AuthService) -> String {
         .expect("Failed to generate access token")
 }
 
+/// An anchor token granted the two ingest permissions on its `scope`
+/// (Go's `platform:messaging:batch:{events,dispatch-jobs}-write`).
+fn generate_ingest_token(auth_service: &AuthService) -> String {
+    let principal = Principal::new_user("ingest@flowcatalyst.local", UserScope::Anchor);
+    auth_service
+        .generate_access_token_with_scope(
+            &principal,
+            &[
+                fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string(),
+                fc_platform::permissions::admin::BATCH_DISPATCH_JOBS_WRITE.to_string(),
+            ],
+            None,
+        )
+        .expect("Failed to generate ingest token")
+}
+
 // ─── Test Cases ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -359,7 +375,7 @@ async fn test_unauthorized_request() {
 async fn test_batch_events_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     let response = app
         .clone()
@@ -414,7 +430,7 @@ async fn test_batch_events_via_api() {
 async fn test_batch_events_exceeds_limit() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     // Build a batch with 101 items (exceeds the 100-item limit)
     let items: Vec<serde_json::Value> = (0..101)
@@ -456,7 +472,7 @@ async fn test_batch_events_exceeds_limit() {
 async fn test_batch_dispatch_jobs_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     let response = app
         .clone()

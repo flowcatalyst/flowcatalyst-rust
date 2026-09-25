@@ -391,7 +391,11 @@ async fn test_api_batch_events_throughput() {
 
     let principal = Principal::new_user("load@test.local", UserScope::Anchor);
     let token = auth_service
-        .generate_access_token(&principal)
+        .generate_access_token_with_scope(
+            &principal,
+            &[fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string()],
+            None,
+        )
         .expect("Failed to generate token");
 
     // 10 batch requests of 100 events each = 1000 events

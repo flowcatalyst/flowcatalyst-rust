@@ -18,6 +18,8 @@ use utoipa::ToSchema;
 use crate::client::repository::ClientRepository;
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
+use crate::permissions;
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -99,9 +101,12 @@ pub struct SdkEventsState {
 
 async fn batch_events(
     State(state): State<SdkEventsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Json(req): Json<BatchEventsRequest>,
 ) -> Result<Json<BatchResponse>, PlatformError> {
+    // Go event/api/api.go:137: the batch-write permission, checked before
+    // anything is read.
+    checks::require_permission(&auth.0, permissions::admin::BATCH_EVENTS_WRITE)?;
     if req.items.len() > 1000 {
         return Err(PlatformError::validation("Maximum 1000 items per batch"));
     }

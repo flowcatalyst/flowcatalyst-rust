@@ -263,8 +263,11 @@ pub async fn create_event(
     auth: Authenticated,
     Json(req): Json<CreateEventRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CreateEventResponse>), PlatformError> {
-    // Verify permission
-    crate::shared::authorization_service::checks::can_write_events(&auth.0)?;
+    // Go event/api/api.go:90: the ingest permission, exactly.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_EVENTS_WRITE,
+    )?;
 
     // Check for duplicate deduplication ID
     if let Some(ref dedup_id) = req.deduplication_id {
@@ -489,7 +492,12 @@ pub async fn batch_create_events(
     auth: Authenticated,
     Json(req): Json<BatchCreateEventsRequest>,
 ) -> Result<Json<BatchCreateResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_write_events(&auth.0)?;
+    // The same ingest permission as `/api/events/batch` (Go registers one
+    // handler for both).
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_EVENTS_WRITE,
+    )?;
 
     // Validate batch size
     if req.events.is_empty() {

@@ -13,6 +13,8 @@ use utoipa::ToSchema;
 
 use crate::dispatch_job::api::CreateDispatchJobRequest;
 use crate::dispatch_job::entity::parse_dispatch_mode;
+use crate::permissions;
+use crate::shared::authorization_service::checks;
 use crate::shared::batch_api::{BatchResponse, BatchResultItem};
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
@@ -38,6 +40,10 @@ async fn sdk_batch_create_dispatch_jobs(
     auth: Authenticated,
     Json(req): Json<SdkBatchDispatchJobsRequest>,
 ) -> Result<Json<BatchResponse>, PlatformError> {
+    // Go shared/sdk/dispatch_jobs_batch.go:174: the batch-write permission,
+    // checked before anything is read.
+    checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
+
     // Validate batch size
     if req.items.is_empty() {
         return Err(PlatformError::validation(
