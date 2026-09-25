@@ -133,8 +133,10 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
 
             let current_id: String = match existing.iter().find(|et| et.code == input.code) {
                 Some(et) => {
-                    // Only update API-sourced event types (skip UI-sourced)
-                    if et.source == EventTypeSource::Api || et.source == EventTypeSource::Code {
+                    // As Go (eventtype/operations/sync.go): a listed code
+                    // that already exists has its name and description
+                    // updated, whatever its source.
+                    {
                         let mut updated = et.clone();
                         updated.name = input.name.clone();
                         updated.description = input.description.clone();
@@ -228,12 +230,12 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
             }
         }
 
-        // Remove unlisted API-sourced event types
+        // Remove unlisted API-sourced event types.
         if command.remove_unlisted {
             for et in &existing {
-                if (et.source == EventTypeSource::Api || et.source == EventTypeSource::Code)
-                    && !synced_codes.contains(&et.code)
-                {
+                // As Go: only API-sourced rows are ever removed — UI- and
+                // CODE-managed rows (the platform's own catalogue) never.
+                if et.source == EventTypeSource::Api && !synced_codes.contains(&et.code) {
                     if let Err(e) = self.event_type_repo.delete(&et.id).await {
                         return Err(UseCaseError::commit(format!(
                             "Failed to delete event type '{}': {}",
