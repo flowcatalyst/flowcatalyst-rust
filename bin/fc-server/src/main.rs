@@ -550,10 +550,15 @@ async fn main() -> Result<()> {
     let api_addr = format!("0.0.0.0:{}", api_port);
     info!("API server listening on http://{}", api_addr);
     let api_listener = TcpListener::bind(&api_addr).await?;
+    // Stops both listeners at shutdown; see `drain_http`.
+    let http_stop = tokio_util::sync::CancellationToken::new();
     // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
-    let api_task = tokio::spawn(async move {
-        fc_platform::router::serve_api(api_listener, app, std::future::pending()).await;
-    });
+    let api_task = {
+        let stop = http_stop.clone();
+        tokio::spawn(async move {
+            fc_platform::router::serve_api(api_listener, app, stop.cancelled_owned()).await;
+        })
+    };
 
     let metrics_addr = format!("0.0.0.0:{}", metrics_port);
     info!(
@@ -583,9 +588,17 @@ async fn main() -> Result<()> {
         .route("/ready", get(ready_handler));
 
     let metrics_listener = TcpListener::bind(&metrics_addr).await?;
-    let metrics_task = tokio::spawn(async move {
-        axum::serve(metrics_listener, metrics_app).await.unwrap();
-    });
+    let metrics_task = {
+        let stop = http_stop.clone();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(metrics_listener, metrics_app)
+                .with_graceful_shutdown(stop.cancelled_owned())
+                .await
+            {
+                warn!(error = %e, "metrics server stopped with an error");
+            }
+        })
+    };
 
     // ── Startup Summary ──────────────────────────────────────────────────────
     info!("=== FlowCatalyst Unified Server Started ===");
@@ -644,8 +657,12 @@ async fn main() -> Result<()> {
     // Signal all background processors to stop via the active channel
     let _ = active_tx.send(false);
 
-    api_task.abort();
-    metrics_task.abort();
+    // Then let the HTTP servers drain, as Go's `server.Run` does
+    // (`apiSrv.Shutdown` with 30 s): stop accepting, finish the requests in
+    // flight. A `/api/dispatch/process` call in flight has already sent its
+    // webhook; aborting it lost the outcome and left the job PROCESSING
+    // (delivery run 3, `platform-down`).
+    drain_http(&http_stop, vec![api_task, metrics_task], HTTP_DRAIN_TIMEOUT).await;
 
     // Shutdown stream processor if running
     if let Some(handle) = _stream_handle {
@@ -654,6 +671,39 @@ async fn main() -> Result<()> {
 
     info!("FlowCatalyst Unified Server shutdown complete");
     Ok(())
+}
+
+/// How long the HTTP servers get to finish their in-flight requests at
+/// shutdown (Go `server.Run`: `context.WithTimeout(…, 30*time.Second)` around
+/// `apiSrv.Shutdown`).
+const HTTP_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Stop the HTTP servers gracefully: `stop` makes each stop accepting and
+/// finish what it is serving; wait up to `timeout` for all of them, then
+/// abort whatever is left.
+async fn drain_http(
+    stop: &tokio_util::sync::CancellationToken,
+    mut servers: Vec<tokio::task::JoinHandle<()>>,
+    timeout: std::time::Duration,
+) -> bool {
+    stop.cancel();
+    let all = async {
+        for s in servers.iter_mut() {
+            let _ = s.await;
+        }
+    };
+    if tokio::time::timeout(timeout, all).await.is_ok() {
+        info!("HTTP servers drained");
+        return true;
+    }
+    warn!(
+        timeout_secs = timeout.as_secs(),
+        "HTTP drain timed out; aborting the requests still in flight"
+    );
+    for s in &servers {
+        s.abort();
+    }
+    false
 }
 
 // ── Platform App Builder ─────────────────────────────────────────────────────
@@ -1400,4 +1450,65 @@ async fn build_postgres_consumer(
         ))?;
 
     Ok(Arc::new(consumer))
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+    use std::time::Duration;
+
+    async fn slow(delay: Duration) -> Router {
+        Router::new().route(
+            "/slow",
+            axum::routing::post(move || async move {
+                tokio::time::sleep(delay).await;
+                "done"
+            }),
+        )
+    }
+
+    async fn serve(
+        app: Router,
+    ) -> (
+        String,
+        tokio_util::sync::CancellationToken,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = tokio_util::sync::CancellationToken::new();
+        let task = {
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                fc_platform::router::serve_api(listener, app, stop.cancelled_owned()).await;
+            })
+        };
+        (format!("http://{addr}/slow"), stop, task)
+    }
+
+    /// Delivery run 3, `platform-down`: a request in flight at shutdown (a
+    /// `/api/dispatch/process` call whose webhook is already out) is
+    /// finished and answered, not cut, as Go's `apiSrv.Shutdown` does.
+    #[tokio::test]
+    async fn shutdown_finishes_the_request_in_flight() {
+        let (url, stop, task) = serve(slow(Duration::from_millis(300)).await).await;
+        let call = tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(drain_http(&stop, vec![task], Duration::from_secs(5)).await);
+        let resp = call.await.unwrap().expect("answered, not reset");
+        assert_eq!(resp.text().await.unwrap(), "done");
+    }
+
+    /// The drain is bounded: past the timeout what is left is aborted.
+    #[tokio::test]
+    async fn the_drain_gives_up_at_its_timeout() {
+        let (url, stop, task) = serve(slow(Duration::from_secs(30)).await).await;
+        tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let started = std::time::Instant::now();
+        assert!(!drain_http(&stop, vec![task], Duration::from_millis(200)).await);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }
