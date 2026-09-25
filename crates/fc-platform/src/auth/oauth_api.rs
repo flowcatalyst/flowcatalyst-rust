@@ -196,6 +196,10 @@ pub struct OAuthState {
     /// Verifies client secrets. `None` when `FLOWCATALYST_APP_KEY` is unset,
     /// in which case every confidential client is refused.
     pub encryption_service: Option<Arc<crate::shared::encryption_service::EncryptionService>>,
+    /// The portal identity plane: redeems authorization codes whose subject
+    /// is a `ptu_…` portal identity (Go `State.PortalIdentities` /
+    /// `PortalApps`). `None` refuses portal codes (fail closed).
+    pub portal: Option<crate::portal::PortalState>,
 }
 
 /// Authorization endpoint - initiates the OAuth2 flow
@@ -298,6 +302,25 @@ pub async fn authorize(
             Json(ErrorResponse {
                 error: "invalid_request".to_string(),
                 error_description: Some("Invalid redirect_uri".to_string()),
+            }),
+        )
+            .into_response();
+    }
+
+    // Plane separation (Go oauthapi/authorize.go:86-95): a portal-flagged
+    // client belongs to the portal identity plane and must enter through
+    // /portal/authorize, or it would sign in platform users instead of
+    // portal identities.
+    if client
+        .portal_client_id
+        .as_deref()
+        .is_some_and(|p| !p.is_empty())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "unauthorized_client".to_string(),
+                error_description: Some("Portal clients must use /portal/authorize".to_string()),
             }),
         )
             .into_response();
@@ -1236,6 +1259,31 @@ async fn handle_authorization_code_grant(
             )
                 .into_response();
         }
+    }
+
+    // Portal-plane subject (Go token.go:725-733): a code minted by a
+    // /portal/authorize flow for a ptu_ portal identity, not a principal.
+    if crate::portal::is_portal_subject(&auth_code.principal_id) {
+        let Some(portal) = state.portal.as_ref() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Portal subjects are not supported".to_string()),
+                }),
+            )
+                .into_response();
+        };
+        let client_id = authenticated_client
+            .as_ref()
+            .map_or(auth_code.client_id.as_str(), |c| c.client_id.as_str());
+        return crate::portal::token::redeem_portal_code(
+            portal,
+            &state.auth_service,
+            &auth_code,
+            client_id,
+        )
+        .await;
     }
 
     // Get the principal. One deactivated since the code was issued gets no

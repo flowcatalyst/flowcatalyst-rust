@@ -193,6 +193,12 @@ pub const PATH_API_ME: &str = "/api/me";
 pub const PATH_AUTH_CLIENT: &str = "/auth/client";
 pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
 
+// Portal identity plane (Go portalidentity/api + portalauth): the admin
+// surface and the public portal login surface.
+pub const PATH_API_PORTAL_USERS: &str = "/api/portal-users";
+pub const PATH_API_PORTAL_APPS: &str = "/api/portal-apps";
+pub const PATH_PORTAL: &str = "/portal";
+
 // OAuth / OIDC
 pub const PATH_OAUTH: &str = "/oauth";
 pub const PATH_WELL_KNOWN: &str = "/.well-known";
@@ -282,6 +288,9 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub sdk_audit_batch: SdkAuditBatchState,
     pub public: PublicApiState,
     pub password_reset: PasswordResetApiState,
+    /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
+    /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
+    pub portal: crate::portal::PortalState,
     pub webauthn: crate::webauthn::WebauthnApiState,
     /// Two-factor sign-in and self-service (`/auth/2fa/*`).
     pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
@@ -364,6 +373,28 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 over_budget: password_reset_requested_response,
             },
             distributed_rate_limit_per_email,
+        );
+
+        // Portal identity plane (Go wire_routes.go:261-291): the portal
+        // routes sit behind the OIDC bridge's per-IP governor
+        // (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST), and its hooks answer the
+        // portal-subject requests of the shared reset-token and OIDC
+        // callback routes.
+        let portal_login = crate::portal::login_api::PortalLoginState {
+            portal: self.portal.clone(),
+            oidc: self.oidc_login.clone(),
+        };
+        let portal_ip_layer = axum::middleware::from_fn_with_state(
+            IpRateLimiterState::new(&crate::portal::login_api::portal_ip_rate_config()),
+            rate_limit_per_ip,
+        );
+        let portal_reset_hook = axum::middleware::from_fn_with_state(
+            self.portal.passwords.clone(),
+            crate::portal::password::intercept,
+        );
+        let portal_oidc_hook = axum::middleware::from_fn_with_state(
+            portal_login.clone(),
+            crate::portal::oidc::intercept,
         );
 
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
@@ -644,7 +675,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_ME, me_router(self.me))
             .nest(
                 PATH_AUTH,
-                oidc_login_router(self.oidc_login).layer(auth_layer.clone()),
+                oidc_login_router(self.oidc_login)
+                    .layer(portal_oidc_hook)
+                    .layer(auth_layer.clone()),
             )
             .nest(
                 PATH_OAUTH,
@@ -679,9 +712,23 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
+                    .layer(portal_reset_hook)
                     .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
+            )
+            // Portal identity plane.
+            .nest(
+                PATH_API_PORTAL_USERS,
+                crate::portal::api::portal_users_router(self.portal.clone()),
+            )
+            .nest(
+                PATH_API_PORTAL_APPS,
+                crate::portal::api::portal_apps_router(self.portal),
+            )
+            .nest(
+                PATH_PORTAL,
+                crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))

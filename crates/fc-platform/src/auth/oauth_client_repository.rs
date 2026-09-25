@@ -33,6 +33,8 @@ struct OAuthClientRow {
     active: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    portal_client_id: Option<String>,
+    portal_app_id: Option<String>,
 }
 
 impl TryFrom<OAuthClientRow> for OAuthClient {
@@ -70,6 +72,8 @@ impl TryFrom<OAuthClientRow> for OAuthClient {
             created_at: r.created_at,
             updated_at: r.updated_at,
             created_by: None,
+            portal_client_id: r.portal_client_id,
+            portal_app_id: r.portal_app_id,
         })
     }
 }
@@ -774,8 +778,8 @@ impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
                 (id, client_id, client_name, client_type, client_secret_ref,
                  default_scopes, pkce_required, service_account_principal_id, active,
                  created_at, updated_at, previous_secret_ref, previous_secret_expires_at,
-                 previous_secret_last_used_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                 previous_secret_last_used_at, portal_client_id, portal_app_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                 client_id = EXCLUDED.client_id,
                 client_name = EXCLUDED.client_name,
@@ -788,7 +792,9 @@ impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
                 pkce_required = EXCLUDED.pkce_required,
                 service_account_principal_id = EXCLUDED.service_account_principal_id,
                 active = EXCLUDED.active,
-                updated_at = EXCLUDED.updated_at"#,
+                updated_at = EXCLUDED.updated_at,
+                portal_client_id = EXCLUDED.portal_client_id,
+                portal_app_id = EXCLUDED.portal_app_id"#,
         )
         .bind(&c.id)
         .bind(&c.client_id)
@@ -804,6 +810,8 @@ impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
         .bind(&c.previous_secret_ref)
         .bind(c.previous_secret_expires_at)
         .bind(c.previous_secret_last_used_at)
+        .bind(&c.portal_client_id)
+        .bind(&c.portal_app_id)
         .execute(&mut **tx.inner)
         .await?;
 

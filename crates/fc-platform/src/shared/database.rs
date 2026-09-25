@@ -456,6 +456,18 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "044_reset_approval_requests",
             include_str!("../../../../migrations/044_reset_approval_requests.sql"),
         ),
+        // Go's 041 + 043: the portal identity plane (portal_identities,
+        // portal_login_flows, the portal flags on OAuth clients and OIDC
+        // login states, the reset-token redirect).
+        (
+            "046_portal_identities",
+            include_str!("../../../../migrations/046_portal_identities.sql"),
+        ),
+        // Go's 053: portal apps and per-app grants.
+        (
+            "047_portal_apps",
+            include_str!("../../../../migrations/047_portal_apps.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -639,6 +651,26 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "044_reset_approval_requests",
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = 'iam_reset_approval_requests')",
+        ),
+        // A database Go migrated past its 041 has both the flow table and
+        // the reset-token redirect column.
+        (
+            "046_portal_identities",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'portal_login_flows') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_password_reset_tokens' \
+               AND column_name = 'redirect_uri')",
+        ),
+        // Go's 053 adds the invite columns last-but-one; with the grants
+        // table they mean it ran.
+        (
+            "047_portal_apps",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'portal_identity_apps') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'portal_identities' \
+               AND column_name = 'invite_expires_at')",
         ),
     ];
 

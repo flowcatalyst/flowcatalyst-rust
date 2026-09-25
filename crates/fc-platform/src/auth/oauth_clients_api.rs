@@ -54,6 +54,16 @@ pub struct CreateOAuthClientRequest {
     /// Application IDs this client can access
     #[serde(default)]
     pub application_ids: Vec<String>,
+
+    /// Marks this client as a portal entry point owned by that tenant client
+    /// (Go `portalClientId`).
+    #[serde(default)]
+    pub portal_client_id: Option<String>,
+
+    /// Links this portal client to one of the client's portal apps (Go
+    /// `portalAppId`); its client becomes the portal owner.
+    #[serde(default)]
+    pub portal_app_id: Option<String>,
 }
 
 /// Update OAuth client request
@@ -83,6 +93,14 @@ pub struct UpdateOAuthClientRequest {
 
     /// Whether client is active
     pub active: Option<bool>,
+
+    /// Portal owner: empty clears the portal flag (and the app link).
+    #[serde(default)]
+    pub portal_client_id: Option<String>,
+
+    /// Portal app link: empty unlinks.
+    #[serde(default)]
+    pub portal_app_id: Option<String>,
 }
 
 /// OAuth client response DTO
@@ -104,6 +122,12 @@ pub struct OAuthClientResponse {
     pub allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_principal_id: Option<String>,
+    /// Portal entry point owner (Go `portalClientId`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portal_client_id: Option<String>,
+    /// The linked portal app (Go `portalAppId`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portal_app_id: Option<String>,
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -139,6 +163,8 @@ impl From<OAuthClient> for OAuthClientResponse {
             application_ids: c.application_ids,
             allowed_origins: c.allowed_origins,
             service_account_principal_id: c.service_account_principal_id,
+            portal_client_id: c.portal_client_id,
+            portal_app_id: c.portal_app_id,
             active: c.active,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
@@ -190,6 +216,8 @@ pub struct OAuthClientsQuery {
 #[derive(Clone)]
 pub struct OAuthClientsState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
+    /// Resolves `portalAppId` to its owning client (Go `State.PortalApps`).
+    pub portal_apps: Arc<crate::portal::repository::PortalAppRepository>,
     pub create_oauth_client_use_case:
         Arc<crate::auth::operations::CreateOAuthClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_oauth_client_use_case:
@@ -240,6 +268,13 @@ pub async fn create_oauth_client(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_create_oauth_clients(&auth.0)?;
+    let mut portal_client_id = req.portal_client_id.clone();
+    crate::portal::resolve_oauth_client_portal_app(
+        &state.portal_apps,
+        req.portal_app_id.as_deref(),
+        &mut portal_client_id,
+    )
+    .await?;
 
     // Auto-generate client_id if not provided
     let client_id = req
@@ -301,6 +336,8 @@ pub async fn create_oauth_client(
         allowed_origins: vec![],
         service_account_principal_id: None,
         created_by: Some(auth.0.principal_id.clone()),
+        portal_client_id,
+        portal_app_id: req.portal_app_id,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -419,6 +456,13 @@ pub async fn update_oauth_client(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_oauth_clients(&auth.0)?;
+    let mut portal_client_id = req.portal_client_id.clone();
+    crate::portal::resolve_oauth_client_portal_app(
+        &state.portal_apps,
+        req.portal_app_id.as_deref(),
+        &mut portal_client_id,
+    )
+    .await?;
 
     let cmd = UpdateOAuthClientCommand {
         oauth_client_id: id,
@@ -434,6 +478,8 @@ pub async fn update_oauth_client(
         application_ids: req.application_ids,
         allowed_origins: req.allowed_origins,
         active: req.active,
+        portal_client_id,
+        portal_app_id: req.portal_app_id,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state

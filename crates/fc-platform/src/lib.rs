@@ -50,6 +50,7 @@ pub mod identity_provider;
 pub mod login_attempt;
 pub mod password_reset;
 pub mod platform_config;
+pub mod portal;
 
 // Shared infrastructure
 pub mod shared;
