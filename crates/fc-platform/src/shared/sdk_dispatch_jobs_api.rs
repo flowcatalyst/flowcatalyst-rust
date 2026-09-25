@@ -151,7 +151,8 @@ async fn sdk_batch_create_dispatch_jobs(
             job.id = id;
         }
 
-        job.mark_queued();
+        // PENDING (the entity's default), as Go's batch insert: the
+        // scheduler claims it. A job inserted QUEUED is never polled.
         created_jobs.push(job);
     }
 

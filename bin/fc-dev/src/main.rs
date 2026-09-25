@@ -746,33 +746,64 @@ async fn main() -> Result<()> {
         None
     };
 
-    // 7c. Start dispatch scheduler (polls PENDING jobs → publishes to queue → router delivers)
+    // 7c. Start dispatch scheduler (claims PENDING jobs → publishes to the
+    //     embedded queue → router → /api/dispatch/process). fc-dev's router
+    //     consumes exactly one queue, so every job goes to it rather than to
+    //     per-tenant queues.
     let _scheduler_handle: Option<tokio::task::JoinHandle<()>> = if args.scheduler_enabled {
-        use fc_platform::scheduler::{DispatchScheduler, SchedulerConfig};
+        use fc_platform::scheduler::{
+            DispatchAuthService, DispatchScheduler, PoolCodeResolver, SchedulerConfig,
+            SingleQueuePublisher,
+        };
 
         let config = SchedulerConfig {
             processing_endpoint: format!("http://localhost:{}/api/dispatch/process", args.api_port),
             ..SchedulerConfig::default()
         };
-
-        // Pass the SQLite queue publisher directly — no bridge needed
-        let scheduler = Arc::new(DispatchScheduler::new(
+        // FLOWCATALYST_APP_KEY is always set by this point (see above).
+        let auth = DispatchAuthService::from_env().ok_or_else(|| {
+            anyhow::anyhow!("FLOWCATALYST_APP_KEY is required to sign dispatch tokens")
+        })?;
+        let pool_codes = Arc::new(PoolCodeResolver::new(
+            pg_pool.clone(),
+            config.paused_cache_ttl,
+        ));
+        let scheduler = DispatchScheduler::new(
             config,
             pg_pool.clone(),
-            queue.clone(),
-        ));
+            Arc::new(SingleQueuePublisher::new(queue.clone())),
+            auth,
+            pool_codes,
+        );
 
+        let cancel = tokio_util::sync::CancellationToken::new();
         let mut shutdown_rx = shutdown_tx.subscribe();
-        let sched_clone = scheduler.clone();
-        let handle = tokio::spawn(async move {
-            tokio::select! {
-                _ = scheduler.start() => {}
-                _ = shutdown_rx.recv() => {
-                    info!("Dispatch scheduler received shutdown signal");
-                    sched_clone.stop().await;
-                }
-            }
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            let _ = shutdown_rx.recv().await;
+            info!("Dispatch scheduler received shutdown signal");
+            stop.cancel();
         });
+        let handle = tokio::spawn(async move {
+            scheduler.run(Arc::new(|| true), cancel).await;
+        });
+
+        // The stranded-sibling reaper (Go's A-01 backstop).
+        {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let stop = cancel.clone();
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                let _ = shutdown_rx.recv().await;
+                stop.cancel();
+            });
+            tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+                Arc::new(fc_platform::DispatchJobRepository::new(&pg_pool)),
+                fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
+                fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+                cancel,
+            ));
+        }
 
         info!("Dispatch scheduler started (polling PENDING jobs)");
         Some(handle)

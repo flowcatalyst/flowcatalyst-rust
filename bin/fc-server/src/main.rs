@@ -28,6 +28,16 @@
 //! | `FC_STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
 //! | `FC_OUTBOX_ENABLED` | `false` | Run the outbox processor |
 //!
+//! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
+//! | Variable | Default | Description |
+//! |----------|---------|-------------|
+//! | `FC_DISPATCH_QUEUE_TYPE` / `DISPATCH_QUEUE_TYPE` | - | `SQS` or `POSTGRES` |
+//! | `FC_DISPATCH_QUEUE_URL` / `DISPATCH_QUEUE_URL` | - | Any SQS URL in the account; its account (and region) address the per-tenant queues |
+//! | `FC_DISPATCH_QUEUE_REGION` / `DISPATCH_QUEUE_REGION` | from the URL | SQS region |
+//! | `FC_DISPATCH_QUEUE_PREFIX` | - | Queue name prefix, required for SQS (`{prefix}-{tenant}-{priority}.fifo`) |
+//! | `FC_DISPATCH_PROCESSING_ENDPOINT` / `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:{port}/api/dispatch/process` | The router's callback URL |
+//! | `FLOWCATALYST_APP_KEY` | - | Signs the router's dispatch tokens (required) |
+//!
 //! ### Standby / HA
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
@@ -405,6 +415,18 @@ async fn main() -> Result<()> {
     let rate_limit_policies =
         Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
+    // The stranded-sibling reaper (Go's A-01 backstop): platform
+    // housekeeping, run wherever the platform is, not leader-gated (each
+    // sweep is a status-guarded UPDATE).
+    if platform_enabled {
+        tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+            repos.dispatch_job_repo.clone(),
+            fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
+            fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+            tokio_util::sync::CancellationToken::new(),
+        ));
+    }
+
     // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
     // purger does the same).
     fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
@@ -469,7 +491,7 @@ async fn main() -> Result<()> {
     // Scheduler (dispatch job polling)
     if scheduler_enabled {
         info!("Starting scheduler subsystem...");
-        spawn_scheduler(&pg_pool, active_rx.clone()).await?;
+        spawn_scheduler(&pg_pool, active_rx.clone(), api_port).await?;
         spawn_scheduled_job_scheduler(&repos, active_rx.clone()).await?;
     }
 
@@ -892,77 +914,38 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
 }
 
 /// Spawn the dispatch scheduler, gated on leadership.
+///
+/// Refuses to start (an error at boot, not a silent no-op) when no dispatch
+/// queue is configured or `FLOWCATALYST_APP_KEY` is missing: a scheduler
+/// with nowhere to publish would claim jobs into the void, and one without
+/// the key would publish tokens `/api/dispatch/process` rejects.
 async fn spawn_scheduler(
     pg_pool: &sqlx::PgPool,
-    mut active_rx: watch::Receiver<bool>,
+    active_rx: watch::Receiver<bool>,
+    api_port: u16,
 ) -> Result<()> {
-    use fc_platform::scheduler::DispatchScheduler;
+    use fc_platform::scheduler::{DispatchAuthService, DispatchQueueSettings, DispatchScheduler};
 
-    struct NoopQueuePublisher;
+    let settings = DispatchQueueSettings::from_env()
+        .map_err(|e| anyhow::anyhow!("dispatch scheduler refused to start: {e}"))?;
+    let auth = DispatchAuthService::from_env().ok_or_else(|| {
+        anyhow::anyhow!(
+            "dispatch scheduler refused to start: FLOWCATALYST_APP_KEY is not set, so dispatch \
+             tokens cannot be signed"
+        )
+    })?;
+    let config = load_scheduler_config(api_port);
+    let scheduler = DispatchScheduler::from_settings(config, pg_pool.clone(), &settings, auth)
+        .await
+        .map_err(|e| anyhow::anyhow!("dispatch scheduler refused to start: {e}"))?;
 
-    #[async_trait::async_trait]
-    impl fc_queue::QueuePublisher for NoopQueuePublisher {
-        fn identifier(&self) -> &str {
-            "noop-scheduler"
-        }
-        async fn publish(&self, message: fc_common::Message) -> fc_queue::Result<String> {
-            info!(id = %message.id, "Scheduler: message published (noop)");
-            Ok(message.id)
-        }
-        async fn publish_batch(
-            &self,
-            messages: Vec<fc_common::Message>,
-        ) -> fc_queue::Result<Vec<String>> {
-            let ids: Vec<String> = messages.iter().map(|m| m.id.clone()).collect();
-            for m in &messages {
-                info!(id = %m.id, "Scheduler: message published (noop)");
-            }
-            Ok(ids)
-        }
-    }
-
-    let config = load_scheduler_config();
-    let queue_publisher: Arc<dyn fc_queue::QueuePublisher> = Arc::new(NoopQueuePublisher);
-    let scheduler = Arc::new(DispatchScheduler::new(
-        config,
-        pg_pool.clone(),
-        queue_publisher,
-    ));
-
+    // Only the leader claims: the per-group order needs one active scheduler.
+    let is_leader: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || *active_rx.borrow());
     tokio::spawn(async move {
-        loop {
-            // Wait until active
-            if !*active_rx.borrow() {
-                info!("Scheduler: waiting for leadership...");
-                loop {
-                    if active_rx.changed().await.is_err() {
-                        return;
-                    }
-                    if *active_rx.borrow() {
-                        break;
-                    }
-                }
-                info!("Scheduler: acquired leadership, starting");
-            }
-
-            scheduler.start().await;
-
-            // Watch for leadership loss
-            let mut lost_rx = active_rx.clone();
-            loop {
-                if lost_rx.changed().await.is_err() {
-                    scheduler.stop().await;
-                    return;
-                }
-                if !*lost_rx.borrow() {
-                    info!("Scheduler: lost leadership, stopping");
-                    scheduler.stop().await;
-                    break;
-                }
-            }
-        }
+        scheduler
+            .run(is_leader, tokio_util::sync::CancellationToken::new())
+            .await;
     });
-
     Ok(())
 }
 
@@ -1041,36 +1024,30 @@ async fn spawn_scheduled_job_scheduler(
     Ok(())
 }
 
-/// Dispatch scheduler settings, read from the environment.
-///
-/// `FLOWCATALYST_SCHEDULER_*` are the names the removed `fc-config` crate
-/// honoured; their defaults are unchanged. Batch size, stale threshold and the
-/// HMAC app key were never env-configurable there, so they stay fixed here
-/// (no app key means unsigned dispatch callbacks, as before).
-fn load_scheduler_config() -> fc_platform::scheduler::SchedulerConfig {
+/// Dispatch scheduler tuning, read from the environment. The defaults are
+/// Go's; the processing endpoint takes Go's names
+/// (`FC_DISPATCH_PROCESSING_ENDPOINT`, then
+/// `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT`, which the ECS task definitions
+/// set), then the older `FC_SCHEDULER_PROCESSING_ENDPOINT`, and defaults to
+/// this server's own listener.
+fn load_scheduler_config(api_port: u16) -> fc_platform::scheduler::SchedulerConfig {
+    let defaults = fc_platform::scheduler::SchedulerConfig::default();
+    let processing_endpoint = [
+        "FC_DISPATCH_PROCESSING_ENDPOINT",
+        "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
+        "FC_SCHEDULER_PROCESSING_ENDPOINT",
+    ]
+    .iter()
+    .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
+    .unwrap_or_else(|| format!("http://localhost:{api_port}/api/dispatch/process"));
     fc_platform::scheduler::SchedulerConfig {
-        // Parsed with `bool::from_str`: only "true"/"false" are understood and
-        // anything else keeps the default, exactly as fc-config did.
-        enabled: env_or_parse("FLOWCATALYST_SCHEDULER_ENABLED", true),
         poll_interval: Duration::from_millis(env_or_parse(
             "FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS",
-            100,
+            defaults.poll_interval.as_millis() as u64,
         )),
-        batch_size: 100,
-        stale_threshold: Duration::from_secs(15 * 60),
-        default_dispatch_mode: fc_common::DispatchMode::from_str(&env_or(
-            "FLOWCATALYST_SCHEDULER_DISPATCH_MODE",
-            "immediate",
-        )),
-        default_pool_code: env_or("FC_SCHEDULER_DEFAULT_POOL_CODE", "DISPATCH-POOL"),
-        processing_endpoint: env_or_alias(
-            "FC_SCHEDULER_PROCESSING_ENDPOINT",
-            "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
-            "http://localhost:8080/api/dispatch/process",
-        ),
-        app_key: None,
-        max_concurrent_groups: env_or_parse("FC_SCHEDULER_MAX_CONCURRENT_GROUPS", 10),
-        connection_filter_enabled: true,
+        batch_size: env_or_parse("FLOWCATALYST_SCHEDULER_BATCH_SIZE", defaults.batch_size),
+        processing_endpoint,
+        ..defaults
     }
 }
 

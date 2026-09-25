@@ -676,8 +676,8 @@ pub async fn create_dispatch_job(
         job.metadata.push(DispatchMetadata { key, value });
     }
 
-    // Mark as queued
-    job.mark_queued();
+    // Created PENDING (the entity's default), as Go inserts it: the
+    // scheduler claims and queues it.
 
     // The identity that would sign it must be the caller's to use.
     state
@@ -802,8 +802,7 @@ pub async fn batch_create_dispatch_jobs(
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;
         }
-        job.mark_queued();
-
+        // PENDING, as Go inserts it; the scheduler queues it.
         created_jobs.push(job);
     }
 
