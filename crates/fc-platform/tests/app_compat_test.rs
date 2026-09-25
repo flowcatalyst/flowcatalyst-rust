@@ -504,3 +504,57 @@ async fn hr_outbox_events_are_linked_to_their_client_by_code() {
     assert_eq!(rows[0].2[0]["key"], "principalId");
     assert_eq!(rows[0].2[1]["value"], "");
 }
+
+/// AgentPlanner (`oidc.py:248-258`) and the Laravel SDK
+/// (`OidcAuthController.php:215-247`) end the session with `client_id`
+/// instead of `id_token_hint` when they hold no id_token. Go accepts it
+/// (auth/bridge/login_endpoint.go:174-230).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn logout_with_client_id_and_no_id_token_hint() {
+    let app = TestApp::setup().await;
+    let mut client =
+        fc_platform::auth::oauth_entity::OAuthClient::new("agent-planner", "Agent Planner");
+    client.post_logout_redirect_uris = vec!["https://planner.example.test/auth/logged-out".into()];
+    app.repos
+        .oauth_client_repo
+        .insert(&client)
+        .await
+        .expect("insert oauth client");
+
+    let redirect = "https%3A%2F%2Fplanner.example.test%2Fauth%2Flogged-out";
+    let resp = app
+        .get_unauth(&format!(
+            "/auth/oidc/session/end?post_logout_redirect_uri={redirect}&client_id=agent-planner"
+        ))
+        .await;
+    assert_eq!(resp.status(), 303);
+    assert_eq!(
+        resp.headers()["location"],
+        "https://planner.example.test/auth/logged-out"
+    );
+
+    // A URI the client didn't register is still refused.
+    let (status, body) = read_json(
+        app.get_unauth(
+            "/auth/oidc/session/end?post_logout_redirect_uri=https%3A%2F%2Fevil.test%2F&client_id=agent-planner",
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+
+    // Neither a hint nor a client_id: the redirect can't be verified.
+    let (status, body) = read_json(
+        app.get_unauth(&format!(
+            "/auth/oidc/session/end?post_logout_redirect_uri={redirect}"
+        ))
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(
+        body["error_description"],
+        "Invalid post_logout_redirect_uri: id_token_hint or client_id is required to verify post_logout_redirect_uri"
+    );
+}
