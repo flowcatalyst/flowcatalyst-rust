@@ -1235,3 +1235,69 @@ async fn application_sync_stays_within_the_callers_reach() {
     assert!(roles_of(&app, &other_own).await.is_empty());
     assert_eq!(roles_of(&app, &foreign).await, vec!["hr:employee"]);
 }
+
+/// Go parity (`role/operations/sync.go`): a role name already carrying the
+/// application's prefix is not prefixed twice, and a sync that names a role
+/// without permissions keeps the permissions curated in the UI.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn role_sync_names_and_permissions_follow_go() {
+    let app = setup().await;
+    application(&app, "rs1").await;
+    let super_admin = stored_caller(
+        &app,
+        "rs1-super@iam.test",
+        UserScope::Anchor,
+        &[permissions::ADMIN_ALL],
+    )
+    .await;
+    let sync = |roles: serde_json::Value| {
+        let app = &app;
+        let super_admin = &super_admin;
+        async move {
+            let (status, resp) = read_json(
+                app.post(
+                    "/api/applications/rs1/roles/sync",
+                    super_admin,
+                    json!({ "roles": roles }),
+                )
+                .await,
+            )
+            .await;
+            assert!(status.is_success(), "{status}: {resp}");
+        }
+    };
+    let permissions_of = |name: &'static str| {
+        let app = &app;
+        async move {
+            let role = app
+                .repos
+                .role_repo
+                .find_by_name(name)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| panic!("role {name} missing"));
+            let mut p: Vec<String> = role.permissions.into_iter().collect();
+            p.sort();
+            p
+        }
+    };
+
+    sync(json!([{ "name": "rs1:admin", "permissions": ["rs1:thing:view"] }])).await;
+    assert!(app
+        .repos
+        .role_repo
+        .find_by_name("rs1:rs1:admin")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(permissions_of("rs1:admin").await, vec!["rs1:thing:view"]);
+
+    // Named again with no permissions: the stored ones stay.
+    sync(json!([{ "name": "admin" }])).await;
+    assert_eq!(permissions_of("rs1:admin").await, vec!["rs1:thing:view"]);
+
+    // A non-empty list replaces them.
+    sync(json!([{ "name": "admin", "permissions": ["rs1:thing:edit"] }])).await;
+    assert_eq!(permissions_of("rs1:admin").await, vec!["rs1:thing:edit"]);
+}

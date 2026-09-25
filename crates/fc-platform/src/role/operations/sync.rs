@@ -149,7 +149,10 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for input in &command.roles {
-            let full_name = format!("{}:{}", command.application_code, input.name.to_lowercase());
+            // As Go (`splitRoleName`): a name that already carries this
+            // application's prefix is not prefixed twice.
+            let short_name = short_role_name(&input.name.to_lowercase(), &command.application_code);
+            let full_name = format!("{}:{}", command.application_code, short_name);
             synced_names.push(full_name.clone());
 
             let existing_role = existing.iter().find(|r| r.name == full_name);
@@ -163,7 +166,12 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                             .clone()
                             .unwrap_or_else(|| input.name.clone());
                         updated.description = input.description.clone();
-                        updated.permissions = input.permissions.iter().cloned().collect();
+                        // As Go: apps usually declare role names and curate
+                        // permissions in the UI, so an empty list keeps the
+                        // stored permissions; only a non-empty list replaces them.
+                        if !input.permissions.is_empty() {
+                            updated.permissions = input.permissions.iter().cloned().collect();
+                        }
                         updated.client_managed = input.client_managed;
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.role_repo.update(&updated).await {
@@ -184,7 +192,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                 None => {
                     let mut role = AuthRole::new(
                         &command.application_code,
-                        input.name.to_lowercase(),
+                        short_name.clone(),
                         input.display_name.as_deref().unwrap_or(&input.name),
                     );
                     role.application_id = Some(application.id.clone());
@@ -249,6 +257,16 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
             synced_codes: synced_names,
         };
         Ok((rows, event))
+    }
+}
+
+/// The short role name: `name` without a leading `{application_code}:` (Go
+/// `splitRoleName`), so `orders:admin` and `admin` name the same role.
+fn short_role_name(name: &str, application_code: &str) -> String {
+    let prefix = format!("{application_code}:");
+    match name.strip_prefix(&prefix) {
+        Some(short) if !short.is_empty() => short.to_string(),
+        _ => name.to_string(),
     }
 }
 
