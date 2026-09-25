@@ -11,6 +11,12 @@ function localise() {
     const at = new Date(el.getAttribute("datetime"));
     if (!Number.isNaN(at.getTime())) el.textContent = at.toLocaleString();
   }
+  // Date-only cells (`toLocaleDateString()`): the server renders YYYY-MM-DD.
+  for (const el of document.querySelectorAll("time[data-local-date]")) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(el.textContent)) continue;
+    const at = new Date(el.getAttribute("datetime"));
+    if (!Number.isNaN(at.getTime())) el.textContent = at.toLocaleDateString();
+  }
 }
 
 localise();
@@ -21,6 +27,14 @@ new MutationObserver(localise).observe(document.body, {
   attributes: true,
   attributeFilter: ["datetime"],
 });
+
+// A dialog the server rendered to be seen at once (credentials shown a
+// single time after provisioning) opens as a modal on load.
+// Like the SPA's (closable=false), only its own button dismisses it.
+for (const d of document.querySelectorAll("dialog[data-open-on-load]")) {
+  d.addEventListener("cancel", (e) => e.preventDefault());
+  d.showModal();
+}
 
 // Escape closes the record drawer (EntityDrawer), unless a dialog or a
 // popover is open: those close first, natively.

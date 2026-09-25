@@ -52,6 +52,9 @@ pub struct WebDeps {
     pub(crate) platform_config_repo: Arc<PlatformConfigRepository>,
     pub(crate) application_repo: Arc<ApplicationRepository>,
     pub(crate) client_repo: Arc<ClientRepository>,
+    pub(crate) service_account_repo: Arc<fc_platform::ServiceAccountRepository>,
+    pub(crate) oauth_client_repo: Arc<fc_platform::OAuthClientRepository>,
+    pub(crate) application_client_config_repo: Arc<fc_platform::ApplicationClientConfigRepository>,
 }
 
 impl WebDeps {
@@ -93,6 +96,9 @@ impl WebDeps {
             platform_config_repo: repos.platform_config_repo.clone(),
             application_repo: repos.application_repo.clone(),
             client_repo: repos.client_repo.clone(),
+            service_account_repo: repos.service_account_repo.clone(),
+            oauth_client_repo: repos.oauth_client_repo.clone(),
+            application_client_config_repo: repos.application_client_config_repo.clone(),
         }
     }
 }
