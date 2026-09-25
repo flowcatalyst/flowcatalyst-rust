@@ -2,6 +2,7 @@
 //!
 //! Client management - tenants in the platform.
 
+pub mod access;
 pub mod api;
 pub mod entity;
 pub mod operations;

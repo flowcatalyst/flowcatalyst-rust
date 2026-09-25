@@ -263,9 +263,7 @@ pub async fn get_client(
     crate::checks::can_read_clients(&auth.0)?;
 
     // Check access
-    if !auth.0.is_anchor() && !auth.0.can_access_client(&id) {
-        return Err(PlatformError::forbidden("No access to this client"));
-    }
+    crate::client::access::ensure_visible(&auth.0, &id)?;
 
     let client = state
         .client_repo
@@ -617,9 +615,7 @@ pub async fn get_client_by_identifier(
         .ok_or_else(|| PlatformError::not_found("Client", &identifier))?;
 
     // Check access
-    if !auth.0.is_anchor() && !auth.0.can_access_client(&client.id) {
-        return Err(PlatformError::forbidden("No access to this client"));
-    }
+    crate::client::access::ensure_visible(&auth.0, &client.id)?;
 
     Ok(Json(client.into()))
 }
@@ -691,9 +687,7 @@ pub async fn get_client_applications(
     Path(id): Path<String>,
 ) -> Result<Json<ClientApplicationsResponse>, PlatformError> {
     // Check access
-    if !auth.0.is_anchor() && !auth.0.can_access_client(&id) {
-        return Err(PlatformError::forbidden("No access to this client"));
-    }
+    crate::client::access::ensure_visible(&auth.0, &id)?;
 
     // Verify client exists
     let _client = state
