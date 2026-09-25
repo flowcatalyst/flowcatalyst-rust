@@ -44,6 +44,11 @@ pub struct SyncDispatchPoolsCommand {
     pub pools: Vec<SyncDispatchPoolInput>,
     #[serde(default)]
     pub remove_unlisted: bool,
+    /// Pools this sync must leave alone: a function's own pool (Java
+    /// `protectedIds`, `function-invocation.md` §4.2). Neither updated when
+    /// listed nor archived when unlisted, and neither counted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub protected_ids: std::collections::BTreeSet<String>,
 }
 
 impl crate::usecase::AuditMasked for SyncDispatchPoolsCommand {}
@@ -149,6 +154,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
 
             let existing_pool = existing.iter().find(|p| p.code == input.code);
             match existing_pool {
+                Some(pool) if command.protected_ids.contains(&pool.id) => {}
                 Some(pool) => {
                     let mut updated = pool.clone();
                     updated.name = input.name.clone();
@@ -185,6 +191,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
             for pool in &existing {
                 if !synced_codes.contains(&pool.code)
                     && pool.status != crate::DispatchPoolStatus::Archived
+                    && !command.protected_ids.contains(&pool.id)
                 {
                     let mut archived = pool.clone();
                     archived.archive();
@@ -221,6 +228,7 @@ mod tests {
             application_code: "orders".to_string(),
             pools: vec![],
             remove_unlisted: false,
+            protected_ids: Default::default(),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("orders"));
