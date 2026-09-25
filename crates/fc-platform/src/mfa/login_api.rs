@@ -89,6 +89,55 @@ struct TwoFactorResponse {
     remember_device_allowed: bool,
 }
 
+/// A second factor a password sign-in owes (the pending `/auth/login`
+/// outcomes, Go `twoFactorResponse`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecondFactor {
+    /// `mfa_required`: prove one of `methods` at `POST /auth/2fa/verify`.
+    Challenge {
+        mfa_token: String,
+        methods: Vec<String>,
+        remember_device_allowed: bool,
+    },
+    /// `enrollment_required`: the domain requires a factor the user lacks.
+    Enrollment {
+        enroll_token: String,
+        allowed_methods: Vec<String>,
+    },
+}
+
+impl SecondFactor {
+    /// The `/auth/login` body for this outcome.
+    pub fn into_response(self) -> Response {
+        let body = match self {
+            SecondFactor::Challenge {
+                mfa_token,
+                methods,
+                remember_device_allowed,
+            } => TwoFactorResponse {
+                status: "mfa_required",
+                mfa_token: Some(mfa_token),
+                enroll_token: None,
+                methods,
+                allowed_methods: Vec::new(),
+                remember_device_allowed,
+            },
+            SecondFactor::Enrollment {
+                enroll_token,
+                allowed_methods,
+            } => TwoFactorResponse {
+                status: "enrollment_required",
+                mfa_token: None,
+                enroll_token: Some(enroll_token),
+                methods: Vec::new(),
+                allowed_methods,
+                remember_device_allowed: false,
+            },
+        };
+        Json(body).into_response()
+    }
+}
+
 /// A completed sign-in (Go `loginResponse`).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -298,6 +347,19 @@ impl TwoFactorLogin {
         jar: &CookieJar,
         p: &Principal,
     ) -> crate::shared::error::Result<Option<Response>> {
+        Ok(self
+            .second_factor_owed(jar, p)
+            .await?
+            .map(SecondFactor::into_response))
+    }
+
+    /// The decision behind [`Self::maybe_challenge`], typed, for callers
+    /// that render it themselves (the server-rendered `fc-web` login).
+    pub async fn second_factor_owed(
+        &self,
+        jar: &CookieJar,
+        p: &Principal,
+    ) -> crate::shared::error::Result<Option<SecondFactor>> {
         // Federated users never carry a password; defensive.
         if p.external_identity.is_some() {
             return Ok(None);
@@ -328,17 +390,11 @@ impl TwoFactorLogin {
                 .tokens
                 .mint(&p.id, Purpose::Pending, PENDING_TOKEN_TTL_SECS)
                 .ok_or_else(|| crate::shared::error::PlatformError::internal("mint mfa token"))?;
-            return Ok(Some(
-                Json(TwoFactorResponse {
-                    status: "mfa_required",
-                    mfa_token: Some(token),
-                    enroll_token: None,
-                    methods: usable,
-                    allowed_methods: Vec::new(),
-                    remember_device_allowed: remember_allowed,
-                })
-                .into_response(),
-            ));
+            return Ok(Some(SecondFactor::Challenge {
+                mfa_token: token,
+                methods: usable,
+                remember_device_allowed: remember_allowed,
+            }));
         }
 
         // No usable factor: only the domain can compel enrolment. A passkey
@@ -350,17 +406,10 @@ impl TwoFactorLogin {
             .tokens
             .mint(&p.id, Purpose::Enroll, ENROLL_TOKEN_TTL_SECS)
             .ok_or_else(|| crate::shared::error::PlatformError::internal("mint mfa token"))?;
-        Ok(Some(
-            Json(TwoFactorResponse {
-                status: "enrollment_required",
-                mfa_token: None,
-                enroll_token: Some(token),
-                methods: Vec::new(),
-                allowed_methods: eval.allowed_methods(),
-                remember_device_allowed: false,
-            })
-            .into_response(),
-        ))
+        Ok(Some(SecondFactor::Enrollment {
+            enroll_token: token,
+            allowed_methods: eval.allowed_methods(),
+        }))
     }
 
     /// Mint an enrolment token for a user who just set a password on a

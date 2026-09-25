@@ -574,35 +574,11 @@ fn go_code_and_message(
     }
 }
 
-impl IntoResponse for PlatformError {
-    fn into_response(self) -> Response {
-        if let PlatformError::SessionEndpoint {
-            status,
-            code,
-            message,
-            retry_after_secs,
-        } = self
-        {
-            let mut response = (
-                status,
-                Json(serde_json::json!({"code": code, "message": message})),
-            )
-                .into_response();
-            let headers = response.headers_mut();
-            if status == StatusCode::UNAUTHORIZED {
-                headers.insert(
-                    axum::http::header::WWW_AUTHENTICATE,
-                    axum::http::HeaderValue::from_static(r#"Cookie realm="fc_session""#),
-                );
-            }
-            if let Some(secs) = retry_after_secs {
-                if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
-                    headers.insert(axum::http::header::RETRY_AFTER, v);
-                }
-            }
-            return response;
-        }
-        let (status, error_code) = match &self {
+impl PlatformError {
+    /// The HTTP status and machine-readable code this error renders with.
+    fn status_and_code(&self) -> (StatusCode, String) {
+        match self {
+            PlatformError::SessionEndpoint { status, code, .. } => (*status, code.clone()),
             PlatformError::NotFound { .. } => (StatusCode::NOT_FOUND, "NOT_FOUND".to_string()),
             PlatformError::Duplicate { .. } => (StatusCode::CONFLICT, "DUPLICATE".to_string()),
             PlatformError::BusinessRule { code, .. } => (StatusCode::CONFLICT, code.clone()),
@@ -650,7 +626,45 @@ impl IntoResponse for PlatformError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR".to_string(),
             ),
-        };
+        }
+    }
+
+    /// The HTTP status this error renders with, for callers that map it
+    /// onto another response type (the server-rendered `fc-web` UI).
+    pub fn status_code(&self) -> StatusCode {
+        self.status_and_code().0
+    }
+}
+
+impl IntoResponse for PlatformError {
+    fn into_response(self) -> Response {
+        if let PlatformError::SessionEndpoint {
+            status,
+            code,
+            message,
+            retry_after_secs,
+        } = self
+        {
+            let mut response = (
+                status,
+                Json(serde_json::json!({"code": code, "message": message})),
+            )
+                .into_response();
+            let headers = response.headers_mut();
+            if status == StatusCode::UNAUTHORIZED {
+                headers.insert(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    axum::http::HeaderValue::from_static(r#"Cookie realm="fc_session""#),
+                );
+            }
+            if let Some(secs) = retry_after_secs {
+                if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                    headers.insert(axum::http::header::RETRY_AFTER, v);
+                }
+            }
+            return response;
+        }
+        let (status, error_code) = self.status_and_code();
 
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self, "Internal server error");

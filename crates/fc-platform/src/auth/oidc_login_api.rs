@@ -84,26 +84,44 @@ pub struct PasswordSetupHint {
 /// a security decision: a lookup error, or the address being throttled by
 /// the login backoff, reads as false (the ordinary password prompt).
 async fn password_setup_required(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> bool {
-    let Some(hint) = &state.password_setup_hint else {
-        return false;
-    };
-    if email.is_empty() {
-        return false;
+    match &state.password_setup_hint {
+        Some(hint) => hint.required_for(email, ip).await,
+        None => false,
     }
-    match crate::auth::login_backoff::check(&hint.login_attempt_repo, &hint.backoff_policy, email, ip)
+}
+
+impl PasswordSetupHint {
+    /// `passwordSetupRequired` for `email` (see [`password_setup_required`]),
+    /// shared with the server-rendered `fc-web` login form.
+    pub async fn required_for(&self, email: &str, ip: Option<&str>) -> bool {
+        let hint = self;
+        if email.is_empty() {
+            return false;
+        }
+        match crate::auth::login_backoff::check(
+            &hint.login_attempt_repo,
+            &hint.backoff_policy,
+            email,
+            ip,
+        )
         .await
-    {
-        Ok(crate::auth::login_backoff::BackoffDecision::Allow) => {}
-        _ => return false,
+        {
+            Ok(crate::auth::login_backoff::BackoffDecision::Allow) => {}
+            _ => return false,
+        }
+        matches!(
+            hint.principal_repo.find_by_email(email).await,
+            Ok(Some(p)) if crate::auth::password_reset_api::password_setup_eligible(&p)
+        )
     }
-    matches!(
-        hint.principal_repo.find_by_email(email).await,
-        Ok(Some(p)) if crate::auth::password_reset_api::password_setup_eligible(&p)
-    )
 }
 
 /// An `internal` check-domain answer, with the password-setup hint.
-async fn internal_domain_answer(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> Response {
+async fn internal_domain_answer(
+    state: &OidcLoginApiState,
+    email: &str,
+    ip: Option<&str>,
+) -> Response {
     Json(DomainCheckResponse {
         auth_method: "internal".to_string(),
         login_url: None,
@@ -230,102 +248,132 @@ pub async fn check_domain(
 ) -> Response {
     let ip = ip.as_deref();
     let email = body.email.trim().to_lowercase();
+    let resolved = resolve_auth_method(
+        &state.anchor_domain_repo,
+        &state.email_domain_mapping_repo,
+        &state.identity_provider_repo,
+        &email,
+    )
+    .await;
+    match resolved {
+        Ok(AuthMethod::Internal) => internal_domain_answer(&state, &email, ip).await,
+        Ok(AuthMethod::External {
+            login_url,
+            idp_issuer,
+        }) => Json(DomainCheckResponse {
+            auth_method: "external".to_string(),
+            login_url: Some(login_url),
+            idp_issuer: Some(idp_issuer),
+            password_setup_required: false,
+        })
+        .into_response(),
+        Err(AuthMethodError::InvalidEmail) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid email format".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(AuthMethodError::Lookup) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "Failed to check domain".to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// How an email address signs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthMethod {
+    /// Password or passkey against the platform's own principal store.
+    Internal,
+    /// Federated: send the browser to `login_url` (the platform's
+    /// `/auth/oidc/login?domain=…`), which redirects on to the IdP.
+    External {
+        login_url: String,
+        idp_issuer: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthMethodError {
+    InvalidEmail,
+    /// A repository lookup failed (already logged).
+    Lookup,
+}
+
+/// Decide how `email` signs in, shared by `POST /auth/check-domain` and the
+/// server-rendered `fc-web` login form. Anchor domains and domains without
+/// an OIDC mapping sign in internally.
+pub async fn resolve_auth_method(
+    anchor_domain_repo: &AnchorDomainRepository,
+    email_domain_mapping_repo: &EmailDomainMappingRepository,
+    identity_provider_repo: &IdentityProviderRepository,
+    email: &str,
+) -> Result<AuthMethod, AuthMethodError> {
+    let email = email.trim().to_lowercase();
 
     // Validate email format
     let at_index = match email.find('@') {
         Some(idx) if idx > 0 && idx < email.len() - 1 => idx,
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "Invalid email format".to_string(),
-                }),
-            )
-                .into_response();
-        }
+        _ => return Err(AuthMethodError::InvalidEmail),
     };
 
     let domain = &email[at_index + 1..];
     debug!(domain = %domain, "Checking auth method");
 
-    // Check if anchor domain (god mode)
-    match state.anchor_domain_repo.is_anchor_domain(domain).await {
-        Ok(true) => {
-            // Anchor domains can use internal auth
-            return internal_domain_answer(&state, &email, ip).await;
-        }
+    // Check if anchor domain (god mode): anchor domains can use internal auth
+    match anchor_domain_repo.is_anchor_domain(domain).await {
+        Ok(true) => return Ok(AuthMethod::Internal),
         Ok(false) => {}
         Err(e) => {
             error!(error = %e, "Failed to check anchor domain");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check domain".to_string(),
-                }),
-            )
-                .into_response();
+            return Err(AuthMethodError::Lookup);
         }
     }
 
     // Look up email domain mapping
-    let mapping = match state
-        .email_domain_mapping_repo
-        .find_by_email_domain(domain)
-        .await
-    {
+    let mapping = match email_domain_mapping_repo.find_by_email_domain(domain).await {
         Ok(Some(m)) => m,
         Ok(None) => {
             // Default to internal auth if no mapping
             debug!(domain = %domain, "No email domain mapping, defaulting to internal");
-            return internal_domain_answer(&state, &email, ip).await;
+            return Ok(AuthMethod::Internal);
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup email domain mapping");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check domain".to_string(),
-                }),
-            )
-                .into_response();
+            return Err(AuthMethodError::Lookup);
         }
     };
 
     // Load the identity provider
-    let idp = match state
-        .identity_provider_repo
+    let idp = match identity_provider_repo
         .find_by_id(&mapping.identity_provider_id)
         .await
     {
         Ok(Some(idp)) => idp,
         Ok(None) => {
             debug!(domain = %domain, "Identity provider not found, defaulting to internal");
-            return internal_domain_answer(&state, &email, ip).await;
+            return Ok(AuthMethod::Internal);
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup identity provider");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Failed to check domain".to_string(),
-                }),
-            )
-                .into_response();
+            return Err(AuthMethodError::Lookup);
         }
     };
 
-    if idp.r#type == IdentityProviderType::Oidc && idp.oidc_issuer_url.is_some() {
-        let login_url = format!("/auth/oidc/login?domain={}", domain);
-        debug!(domain = %domain, login_url = %login_url, "Domain uses OIDC");
-        Json(DomainCheckResponse {
-            auth_method: "external".to_string(),
-            login_url: Some(login_url),
-            idp_issuer: idp.oidc_issuer_url,
-            password_setup_required: false,
-        })
-        .into_response()
-    } else {
-        internal_domain_answer(&state, &email, ip).await
+    match (idp.r#type, idp.oidc_issuer_url) {
+        (IdentityProviderType::Oidc, Some(idp_issuer)) => {
+            let login_url = format!("/auth/oidc/login?domain={}", domain);
+            debug!(domain = %domain, login_url = %login_url, "Domain uses OIDC");
+            Ok(AuthMethod::External {
+                login_url,
+                idp_issuer,
+            })
+        }
+        _ => Ok(AuthMethod::Internal),
     }
 }
 

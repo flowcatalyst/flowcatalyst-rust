@@ -187,7 +187,7 @@ pub struct AuditLogsState {
 }
 
 /// Enrich audit logs with principal names from a batch lookup.
-async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &PrincipalRepository) {
+pub async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &PrincipalRepository) {
     let principal_ids: Vec<String> = logs
         .iter()
         .filter_map(|l| l.principal_id.clone())
@@ -209,7 +209,10 @@ async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &Principa
 }
 
 /// Enrich a single audit log with principal name.
-async fn enrich_single_principal_name(log: &mut AuditLog, principal_repo: &PrincipalRepository) {
+pub async fn enrich_single_principal_name(
+    log: &mut AuditLog,
+    principal_repo: &PrincipalRepository,
+) {
     if let Some(pid) = &log.principal_id {
         if let Ok(name_map) = principal_repo
             .find_names_by_ids(std::slice::from_ref(pid))

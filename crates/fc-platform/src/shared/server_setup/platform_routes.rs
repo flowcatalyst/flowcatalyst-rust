@@ -16,7 +16,6 @@
 //! password-reset endpoints are passed directly so each binary can read
 //! them from env in whatever style it prefers.
 
-use axum_extra::extract::cookie::SameSite;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -638,12 +637,7 @@ pub fn build_platform_routes(
         login_attempt_repo: repos.login_attempt_repo.clone(),
         audit_log_repo: repos.audit_log_repo.clone(),
         backoff_policy: backoff_policy.clone(),
-        session_cookie: SessionCookieConfig {
-            name: "fc_session".to_string(),
-            secure: config.session_cookie_secure,
-            same_site: SameSite::Lax,
-            ttl: time::Duration::seconds(86400),
-        },
+        session_cookie: SessionCookieConfig::password_login(config.session_cookie_secure),
         rate_limit_store: config.rate_limit_store.clone(),
         rate_limit_policies: config.rate_limit_policies.clone(),
     });
@@ -657,14 +651,7 @@ pub fn build_platform_routes(
         identity_provider_repo: repos.idp_repo.clone(),
         login_attempt_repo: repos.login_attempt_repo.clone(),
         backoff_policy: backoff_policy.clone(),
-        // Password login: Secure per deployment config (on in fc-server,
-        // off only for fc-dev's plain-http localhost), always SameSite=Lax.
-        session_cookie: SessionCookieConfig {
-            name: "fc_session".to_string(),
-            secure: config.session_cookie_secure,
-            same_site: SameSite::Lax,
-            ttl: time::Duration::seconds(86400),
-        },
+        session_cookie: SessionCookieConfig::password_login(config.session_cookie_secure),
         two_factor: Some(two_factor.clone()),
     };
     // Portal identity plane (Go wire_routes.go: portalusersapi.State,

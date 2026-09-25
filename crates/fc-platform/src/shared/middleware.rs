@@ -234,8 +234,8 @@ enum Presented {
     Nothing,
 }
 
-fn presented_credential(parts: &Parts) -> Presented {
-    if let Some(header) = parts.headers.get(AUTHORIZATION) {
+fn presented_credential(headers: &axum::http::HeaderMap) -> Presented {
+    if let Some(header) = headers.get(AUTHORIZATION) {
         const PREFIX: &str = "Bearer ";
         return match header.to_str() {
             Ok(h) if h.len() > PREFIX.len() && h[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) => {
@@ -247,7 +247,7 @@ fn presented_credential(parts: &Parts) -> Presented {
             _ => Presented::Nothing,
         };
     }
-    match extract_session_cookie(&parts.headers) {
+    match extract_session_cookie(headers) {
         Some(token) => Presented::SessionCookie(token),
         None => Presented::Nothing,
     }
@@ -278,7 +278,16 @@ async fn authenticate(
     if let Some(ResolvedAuthContext(context)) = parts.extensions.get::<ResolvedAuthContext>() {
         return Ok(Authentication::Context(context.clone()));
     }
-    match presented_credential(parts) {
+    authenticate_credential(app_state, &parts.headers).await
+}
+
+/// Authenticate the credential the headers present, bearer or session
+/// cookie, with no per-request cache.
+async fn authenticate_credential(
+    app_state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> std::result::Result<Authentication, AuthError> {
+    match presented_credential(headers) {
         Presented::Nothing => Ok(Authentication::Anonymous {
             stale_session: false,
         }),
@@ -320,6 +329,21 @@ async fn authenticate(
                 }
             }
         }
+    }
+}
+
+/// Authenticate a request from its headers alone, for callers outside the
+/// axum extractor path (the server-rendered `fc-web` UI). Same rules as
+/// [`Authenticated`]: `Ok(None)` is anonymous (no credential, or a session
+/// cookie that no longer signs anyone in); a bearer that does not validate,
+/// or a failed session lookup, is an error.
+pub async fn authenticate_headers(
+    app_state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> std::result::Result<Option<AuthContext>, AuthError> {
+    match authenticate_credential(app_state, headers).await? {
+        Authentication::Context(context) => Ok(Some(context)),
+        Authentication::Anonymous { .. } => Ok(None),
     }
 }
 

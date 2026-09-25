@@ -361,11 +361,7 @@ pub async fn get_event_type(
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
     // Check client access
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     Ok(Json(event_type.into()))
 }
@@ -471,15 +467,7 @@ pub async fn update_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can modify anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "modify")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = UpdateEventTypeCommand {
@@ -524,15 +512,7 @@ pub async fn delete_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can delete anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "delete")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeleteEventTypeCommand { event_type_id: id };
@@ -573,15 +553,7 @@ pub async fn archive_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can archive anchor-level event types",
-        ));
-    }
+    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "archive")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = ArchiveEventTypeCommand {
@@ -634,11 +606,7 @@ pub async fn add_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     // Calculate next version
     let next_version = format!("{}.0", event_type.spec_versions.len() + 1);
@@ -696,11 +664,7 @@ pub async fn finalise_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = FinaliseSchemaCommand {
@@ -753,11 +717,7 @@ pub async fn deprecate_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
+    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeprecateSchemaCommand {
