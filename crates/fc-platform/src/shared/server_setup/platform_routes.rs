@@ -1194,21 +1194,35 @@ pub fn build_platform_routes(
         public: public_api_state,
         password_reset: password_reset_state,
         webauthn: webauthn_state,
-        dispatch_process: Some(DispatchProcessState {
-            dispatch_job_repo: repos.dispatch_job_repo.clone(),
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client"),
-            credentials: Some(Arc::new(
-                crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
-                    repos.subscription_repo.clone(),
-                    repos.connection_repo.clone(),
-                    repos.application_repo.clone(),
-                    outbound_credentials.clone(),
-                ),
-            )),
-        }),
+        // The router's delivery callback. Fail closed as Go does: without
+        // FLOWCATALYST_APP_KEY no token can be verified, so it is not mounted.
+        dispatch_process: match crate::scheduler::DispatchAuthService::from_env() {
+            Some(auth) => Some(DispatchProcessState {
+                dispatch_job_repo: repos.dispatch_job_repo.clone(),
+                http_client: crate::shared::dispatch_process_api::delivery_http_client(),
+                credentials: Some(Arc::new(
+                    crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
+                        repos.subscription_repo.clone(),
+                        repos.connection_repo.clone(),
+                        repos.application_repo.clone(),
+                        outbound_credentials.clone(),
+                    ),
+                )),
+                auth,
+                client_codes: Some(Arc::new(
+                    crate::shared::dispatch_process_api::ClientCodeResolver::new(
+                        repos.client_repo.clone(),
+                    ),
+                )),
+            }),
+            None => {
+                tracing::warn!(
+                    "dispatch-processing callback not mounted: FLOWCATALYST_APP_KEY is not set, \
+                     so the router's job tokens cannot be verified"
+                );
+                None
+            }
+        },
         bff_developer: crate::router::BffDeveloperDeps {
             application_repo: repos.application_repo.clone(),
             openapi_spec_repo: openapi_spec_repo.clone(),

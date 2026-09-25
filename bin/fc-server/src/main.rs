@@ -415,6 +415,18 @@ async fn main() -> Result<()> {
     let rate_limit_policies =
         Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
+    // The stranded-sibling reaper (Go's A-01 backstop): platform
+    // housekeeping, run wherever the platform is, not leader-gated (each
+    // sweep is a status-guarded UPDATE).
+    if platform_enabled {
+        tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+            repos.dispatch_job_repo.clone(),
+            fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
+            fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+            tokio_util::sync::CancellationToken::new(),
+        ));
+    }
+
     // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
     // purger does the same).
     fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(

@@ -788,6 +788,23 @@ async fn main() -> Result<()> {
             scheduler.run(Arc::new(|| true), cancel).await;
         });
 
+        // The stranded-sibling reaper (Go's A-01 backstop).
+        {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let stop = cancel.clone();
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                let _ = shutdown_rx.recv().await;
+                stop.cancel();
+            });
+            tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+                Arc::new(fc_platform::DispatchJobRepository::new(&pg_pool)),
+                fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
+                fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+                cancel,
+            ));
+        }
+
         info!("Dispatch scheduler started (polling PENDING jobs)");
         Some(handle)
     } else {
