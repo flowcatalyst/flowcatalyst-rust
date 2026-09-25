@@ -747,13 +747,34 @@ async fn the_router_config_lists_pools_and_tenant_queues() {
             { "code": "acme-fast", "concurrency": 5, "rateLimitPerMinute": 60 }
         ])
     );
+    // A client with no pool or subscription still gets both its queues.
+    app.repos
+        .client_repo
+        .insert(&fc_platform::client::entity::Client::new("Solo", "solo"))
+        .await
+        .unwrap();
+    let body = assert_status(
+        app.get("/api/dispatch/router-config", &admin).await,
+        StatusCode::OK,
+    )
+    .await;
     let names: Vec<&str> = body["queues"]
         .as_array()
         .unwrap()
         .iter()
         .map(|q| q["queueName"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["platform-DEFAULT", "acme-DEFAULT"]);
+    assert_eq!(
+        names,
+        [
+            "platform-DEFAULT",
+            "platform-HIGH_PRIORITY",
+            "acme-DEFAULT",
+            "acme-HIGH_PRIORITY",
+            "solo-DEFAULT",
+            "solo-HIGH_PRIORITY"
+        ]
+    );
     assert_eq!(body["queues"][0]["connections"], 0);
     assert!(body["queues"][0]["queueUri"]
         .as_str()

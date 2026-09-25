@@ -47,4 +47,16 @@ impl RouterConfigRepository {
         .fetch_all(&self.pool)
         .await?)
     }
+
+    /// Every client's identifier: each is a tenant the scheduler can
+    /// publish a client-scoped job under (its `PoolCodeResolver` reads
+    /// `tnt_clients` whatever the client's status).
+    pub async fn client_identifiers(&self) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT identifier FROM tnt_clients WHERE identifier <> '' ORDER BY identifier",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(i,)| i).collect())
+    }
 }

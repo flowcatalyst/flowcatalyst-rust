@@ -144,7 +144,7 @@ impl QueueSettings {
         if !sqs {
             return Ok(Self {
                 sqs: false,
-                prefix: prefix.to_string(),
+                prefix: prefix.trim().to_string(),
                 sqs_account_id: String::new(),
                 sqs_region: String::new(),
                 database_url: normalise_postgres_scheme(database_url),
@@ -279,10 +279,13 @@ fn normalise_postgres_scheme(url: &str) -> String {
 
 fn url_host_and_path(url: &str) -> (&str, &str) {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    match rest.split_once('/') {
-        Some((host, path)) => (host, path),
+    let (authority, path) = match rest.split_once('/') {
+        Some((a, p)) => (a, p),
         None => (rest, ""),
-    }
+    };
+    let authority = authority.split(['?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    (host, path.split(['?', '#']).next().unwrap_or(""))
 }
 
 /// Go `regionFromSQSURL`: `sqs.<region>.amazonaws.com`.

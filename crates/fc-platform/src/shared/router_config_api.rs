@@ -4,12 +4,15 @@
 //! - pools: every `msg_dispatch_pools` row (any status), code composed per
 //!   tenant (`{clientIdentifier|platform}-{code}`), `rateLimitPerMinute`
 //!   only when set and positive;
-//! - queues: one DEFAULT queue per tenant (`platform` first, then pool
-//!   tenants, then ACTIVE subscriptions' tenants, first-seen order), plus a
-//!   HIGH_PRIORITY queue for a tenant with an ACTIVE subscription on it. A
-//!   tenant whose name does not fit SQS's limit is left out with a warning.
-//!   `connections` and `visibilityTimeout` are always 0: the router applies
-//!   its own defaults.
+//! - queues: a DEFAULT and a HIGH_PRIORITY queue per tenant (`platform`
+//!   first, then pool tenants, then ACTIVE subscriptions' tenants, then
+//!   every client's identifier, first-seen order). A tenant whose name does
+//!   not fit SQS's limit is left out with a warning. `connections` and
+//!   `visibilityTimeout` are always 0: the router applies its own defaults.
+//!
+//! **Deliberate deviation from Go** (see [`build_document`]): Go lists only
+//! the tenants of pools and subscriptions, and HIGH_PRIORITY only where a
+//! subscription asks for it.
 //!
 //! Gate: anchor and `platform:messaging:dispatch-pool:view` (the `router`
 //! role holds exactly that).
@@ -64,11 +67,25 @@ pub struct RouterQueueConfig {
     pub visibility_timeout: u32,
 }
 
-/// Go `DocumentBuilder.Build`, from the two reads.
+/// Go `DocumentBuilder.Build`, from the reads, with one deliberate
+/// deviation: the queue list covers **every queue the scheduler can
+/// publish to** — every client's tenant, and both priorities for every
+/// tenant.
+///
+/// Why: the scheduler publishes a job to its client's tenant queue
+/// (`{prefix}-{client identifier}-{priority}`) and takes the priority from
+/// the job's own `queue` column before its subscription's. Go's document
+/// lists a tenant only through a pool's or subscription's
+/// `client_identifier` (which the API never sets) and HIGH_PRIORITY only
+/// for a subscription asking for it, so a client-scoped job, or a job
+/// claiming HIGH_PRIORITY itself, lands on a queue no router consumes and
+/// sits QUEUED forever (found by the delivery harness). The document's
+/// shape is unchanged; only more queues are listed.
 pub fn build_document(
     settings: &QueueSettings,
     pools: &[RouterPoolRow],
     subscriptions: &[RouterSubscriptionRow],
+    client_identifiers: &[String],
 ) -> RouterConfigDocument {
     let processing_pools = pools
         .iter()
@@ -79,9 +96,8 @@ pub fn build_document(
         })
         .collect();
 
-    // Tenants in first-seen order; which of them use HIGH_PRIORITY.
+    // Tenants in first-seen order: Go's, then every client's.
     let mut tenants: Vec<String> = vec![crate::shared::dispatch_queue::TENANT_PLATFORM.to_string()];
-    let mut high: Vec<String> = Vec::new();
     let add = |t: &str, tenants: &mut Vec<String>| {
         if !tenants.iter().any(|x| x == t) {
             tenants.push(t.to_string());
@@ -91,32 +107,18 @@ pub fn build_document(
         add(tenant_for(p.client_identifier.as_deref()), &mut tenants);
     }
     for s in subscriptions {
-        let tenant = tenant_for(s.client_identifier.as_deref());
-        add(tenant, &mut tenants);
-        if Priority::for_publishing(s.queue.as_deref()) == Priority::HighPriority
-            && !high.iter().any(|h| h == tenant)
-        {
-            high.push(tenant.to_string());
-        }
+        add(tenant_for(s.client_identifier.as_deref()), &mut tenants);
+    }
+    for c in client_identifiers {
+        add(tenant_for(Some(c)), &mut tenants);
     }
 
     let mut queues = Vec::new();
     for tenant in &tenants {
-        let mut names = vec![compose_name(
-            &settings.prefix,
-            tenant,
-            Priority::Default,
-            settings.sqs,
-        )];
-        if high.contains(tenant) {
-            names.push(compose_name(
-                &settings.prefix,
-                tenant,
-                Priority::HighPriority,
-                settings.sqs,
-            ));
-        }
-        let names: Result<Vec<String>, NameError> = names.into_iter().collect();
+        let names: Result<Vec<String>, NameError> = [Priority::Default, Priority::HighPriority]
+            .into_iter()
+            .map(|p| compose_name(&settings.prefix, tenant, p, settings.sqs))
+            .collect();
         match names {
             Ok(names) => queues.extend(names.into_iter().map(|name| RouterQueueConfig {
                 queue_uri: settings.queue_uri_for(&name),
@@ -163,12 +165,16 @@ pub async fn get_router_config(
 ) -> Result<Json<RouterConfigDocument>, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
     checks::require_permission(&auth.0, crate::permissions::admin::DISPATCH_POOL_READ)?;
-    let (pools, subscriptions) =
-        tokio::try_join!(state.repo.pools(), state.repo.active_subscriptions())?;
+    let (pools, subscriptions, clients) = tokio::try_join!(
+        state.repo.pools(),
+        state.repo.active_subscriptions(),
+        state.repo.client_identifiers()
+    )?;
     Ok(Json(build_document(
         &state.settings,
         &pools,
         &subscriptions,
+        &clients,
     )))
 }
 
@@ -218,6 +224,8 @@ mod tests {
                 sub(Some("beta"), Some("high_priority")),
                 sub(Some("acme"), None),
             ],
+            // A client with no pool or subscription still gets its queues.
+            &["acme".to_string(), "gamma".to_string()],
         );
         assert_eq!(
             doc.processing_pools,
@@ -239,9 +247,13 @@ mod tests {
             names,
             [
                 "FC-platform-DEFAULT.fifo",
+                "FC-platform-HIGH_PRIORITY.fifo",
                 "FC-acme-DEFAULT.fifo",
+                "FC-acme-HIGH_PRIORITY.fifo",
                 "FC-beta-DEFAULT.fifo",
-                "FC-beta-HIGH_PRIORITY.fifo"
+                "FC-beta-HIGH_PRIORITY.fifo",
+                "FC-gamma-DEFAULT.fifo",
+                "FC-gamma-HIGH_PRIORITY.fifo"
             ]
         );
         assert_eq!(
@@ -267,8 +279,8 @@ mod tests {
         )
         .unwrap();
         let long = "t".repeat(90);
-        let doc = build_document(&settings, &[pool("p", Some(&long), 1, None)], &[]);
-        assert_eq!(doc.queues.len(), 1);
+        let doc = build_document(&settings, &[pool("p", Some(&long), 1, None)], &[], &[]);
+        assert_eq!(doc.queues.len(), 2);
         assert_eq!(doc.processing_pools.len(), 1);
     }
 }
