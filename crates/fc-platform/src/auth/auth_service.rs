@@ -455,37 +455,36 @@ impl Default for AuthConfig {
 
 impl AuthConfig {
     /// Load RSA keys from file paths or environment variables.
-    /// Priority: file path → env var (FLOWCATALYST_JWT_*) → None
+    ///
+    /// Private key: the file at `private_key_path`, else the inline PEM in
+    /// `FLOWCATALYST_JWT_PRIVATE_KEY` / `FC_JWT_SIGNING_KEY_PEM` (Go's names,
+    /// normalised as Go normalises them). Public key: the file at
+    /// `public_key_path`, else `FLOWCATALYST_JWT_PUBLIC_KEY`, else — as Go
+    /// always does — derived from the private key, which gives Go's `kid`.
     pub fn load_rsa_keys(
         private_key_path: Option<&str>,
         public_key_path: Option<&str>,
     ) -> (Option<String>, Option<String>) {
-        let private_key = private_key_path
-            .and_then(|p| {
-                if p.is_empty() {
-                    None
-                } else {
-                    std::fs::read_to_string(p).ok()
-                }
-            })
-            .or_else(|| {
-                std::env::var("FLOWCATALYST_JWT_PRIVATE_KEY")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            });
+        let read = |path: Option<&str>| {
+            path.filter(|p| !p.is_empty())
+                .and_then(|p| std::fs::read_to_string(p).ok())
+        };
+        let private_key =
+            read(private_key_path).or_else(crate::auth::signing_keys::private_key_from_env);
 
-        let public_key = public_key_path
-            .and_then(|p| {
-                if p.is_empty() {
-                    None
-                } else {
-                    std::fs::read_to_string(p).ok()
-                }
-            })
+        let public_key = read(public_key_path)
             .or_else(|| {
                 std::env::var("FLOWCATALYST_JWT_PUBLIC_KEY")
                     .ok()
-                    .filter(|s| !s.is_empty())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| crate::auth::signing_keys::normalize_pem(&s))
+            })
+            .or_else(|| {
+                private_key.as_deref().and_then(|p| {
+                    crate::auth::signing_keys::public_pem_from_private_pem(p)
+                        .map_err(|e| warn!("Cannot derive the JWT public key: {}", e))
+                        .ok()
+                })
             });
 
         if private_key.is_some() && public_key.is_some() {
@@ -558,10 +557,18 @@ impl AuthConfig {
         private_key_path: Option<&str>,
         public_key_path: Option<&str>,
     ) -> Result<(String, String)> {
-        // 1. Try configured paths / env vars
+        // 1. Try configured paths / env vars (the public key is derived
+        //    from the private one when only the private is configured).
         let (private, public) = Self::load_rsa_keys(private_key_path, public_key_path);
-        if let (Some(priv_key), Some(pub_key)) = (private, public) {
+        if let (Some(priv_key), Some(pub_key)) = (private.clone(), public) {
             return Ok((priv_key, pub_key));
+        }
+        if private.is_some() {
+            // A private key that can't yield a public key is unusable: refuse
+            // rather than silently signing with a fresh, unshared key.
+            return Err(PlatformError::Internal {
+                message: "the configured JWT private key is not a valid RSA key".to_string(),
+            });
         }
 
         // 2. Both paths configured but files missing → generate into those paths
@@ -750,13 +757,16 @@ impl AuthService {
     /// Add a previous RSA key pair for validation-only (key rotation).
     /// The previous key will be used to validate existing tokens and exposed in JWKS.
     pub fn add_previous_rsa_key(&mut self, public_key_pem: &str) -> Result<()> {
-        let decoding_key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes()).map_err(|e| {
-            PlatformError::Internal {
+        let rsa_components =
+            Self::extract_rsa_components(public_key_pem).map_err(|e| PlatformError::Internal {
                 message: format!("Invalid previous RSA public key: {}", e),
-            }
+            })?;
+        let decoding_key = DecodingKey::from_rsa_components(&rsa_components.n, &rsa_components.e)
+            .map_err(|e| PlatformError::Internal {
+            message: format!("Invalid previous RSA public key: {}", e),
         })?;
+        // Go names the previous key by a hash of its (normalised) PEM text.
         let key_id = Self::generate_key_id(public_key_pem);
-        let rsa_components = Self::extract_rsa_components(public_key_pem)?;
 
         info!("Added previous RSA key for rotation (key_id: {})", key_id);
 
@@ -768,25 +778,16 @@ impl AuthService {
         Ok(())
     }
 
-    /// Extract RSA public key components (n, e) for JWKS
+    /// Extract RSA public key components (n, e) for JWKS. Accepts SPKI and
+    /// PKCS#1 PEMs, as Go's `parseRSAPublicKey` does.
     fn extract_rsa_components(public_key_pem: &str) -> Result<RsaPublicKeyComponents> {
-        use base64::Engine;
-        use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, RsaPublicKey};
-
-        let public_key = RsaPublicKey::from_public_key_pem(public_key_pem).map_err(|e| {
-            PlatformError::Internal {
-                message: format!("Failed to parse RSA public key: {}", e),
-            }
-        })?;
-
-        // Get modulus and exponent as big-endian bytes
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
-
-        // Base64url encode (no padding)
-        let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&n_bytes);
-        let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&e_bytes);
-
+        let public_key =
+            crate::auth::signing_keys::parse_public_key(public_key_pem).map_err(|e| {
+                PlatformError::Internal {
+                    message: format!("Failed to parse RSA public key: {}", e),
+                }
+            })?;
+        let (n, e) = crate::auth::signing_keys::jwk_components(&public_key);
         Ok(RsaPublicKeyComponents { n, e })
     }
 
@@ -834,16 +835,10 @@ impl AuthService {
         Self::new_with_secret(config)
     }
 
-    /// Generate key ID from public key (22 char base64url SHA-256 hash)
+    /// Generate key ID from public key (22 char base64url SHA-256 hash; Go
+    /// `generateKeyID`).
     fn generate_key_id(public_key_pem: &str) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(public_key_pem.as_bytes());
-        let hash = hasher.finalize();
-        base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            &hash[..16],
-        )
+        crate::auth::signing_keys::key_id(public_key_pem)
     }
 
     /// Get the key ID (for JWKS)

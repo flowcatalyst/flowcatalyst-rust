@@ -7,8 +7,25 @@ use crate::shared::tsid;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Default refresh token expiry: 30 days
-const REFRESH_TOKEN_EXPIRY_DAYS: i64 = 30;
+/// The lifetime stamped on a freshly issued refresh token, in seconds, and so
+/// the family's absolute cap: rotation carries the first deadline forward.
+/// Go's `grantstore.RefreshTokenTTL` — a process-wide setting, one week by
+/// default, set once at startup from `OIDC_REFRESH_TOKEN_TTL` (see
+/// `server_setup::auth_init`).
+static REFRESH_TOKEN_TTL_SECS: std::sync::atomic::AtomicI64 =
+    std::sync::atomic::AtomicI64::new(7 * 24 * 60 * 60);
+
+/// Set the refresh-token lifetime; a non-positive value is ignored.
+pub fn set_refresh_token_ttl_secs(secs: i64) {
+    if secs > 0 {
+        REFRESH_TOKEN_TTL_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The configured refresh-token lifetime.
+pub fn refresh_token_ttl() -> Duration {
+    Duration::seconds(REFRESH_TOKEN_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed))
+}
 
 /// Refresh token entity
 ///
@@ -102,7 +119,7 @@ impl RefreshToken {
             revoked_at: None,
             replaced_by: None,
             created_at: now,
-            expires_at: now + Duration::days(REFRESH_TOKEN_EXPIRY_DAYS),
+            expires_at: now + refresh_token_ttl(),
             last_used_at: None,
             created_from_ip: None,
             user_agent: None,

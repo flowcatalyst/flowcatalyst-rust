@@ -75,14 +75,29 @@ pub fn init_logging(_service_name: &str) {
     }
 }
 
+/// Initialize logging for a production server, as Go's fc-server logs:
+/// JSON unless `LOG_FORMAT` says otherwise (`text`), and the level from
+/// `RUST_LOG`, else Go's `FC_LOG_LEVEL`, else info.
+pub fn init_production_logging(_service_name: &str) {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(go_log_level(std::env::var("FC_LOG_LEVEL").ok())));
+    let format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    if format.is_empty() || format.eq_ignore_ascii_case("json") {
+        init_json_logging(env_filter);
+    } else {
+        init_text_logging(env_filter);
+    }
+}
+
 /// Go's `FC_LOG_LEVEL` (`internal/logging`), the fallback when `RUST_LOG`
-/// is unset: `debug`, `warn`/`warning` and `error` in either case; anything
-/// else is `info`.
+/// is unset: `debug`, `warn`/`warning` and `error`; anything else is
+/// `info`. Case-insensitive (Go matches the all-lower and all-upper
+/// spellings; a mixed-case value here is read, not dropped to `info`).
 fn go_log_level(raw: Option<String>) -> &'static str {
-    match raw.as_deref() {
-        Some("debug" | "DEBUG") => "debug",
-        Some("warn" | "WARN" | "warning" | "WARNING") => "warn",
-        Some("error" | "ERROR") => "error",
+    match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("debug") => "debug",
+        Some("warn" | "warning") => "warn",
+        Some("error") => "error",
         _ => "info",
     }
 }
@@ -143,10 +158,7 @@ mod tests {
         assert_eq!(go_log_level(Some("DEBUG".into())), "debug");
         assert_eq!(go_log_level(Some("warning".into())), "warn");
         assert_eq!(go_log_level(Some("ERROR".into())), "error");
-        assert_eq!(
-            go_log_level(Some("Debug".into())),
-            "info",
-            "Go matches exact cases only"
-        );
+        assert_eq!(go_log_level(Some("Debug".into())), "debug");
+        assert_eq!(go_log_level(Some("verbose".into())), "info");
     }
 }

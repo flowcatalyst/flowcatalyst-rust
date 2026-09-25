@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rustls = "0.23"
 fc-common = { path = "../../crates/fc-common" }
 fc-router = { path = "../../crates/fc-router", features = ["backends"] }
 tokio = { workspace = true }

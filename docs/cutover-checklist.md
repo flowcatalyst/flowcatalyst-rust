@@ -93,8 +93,13 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       principals, service accounts' batch permissions, service accounts not tied to an application)
 - [ ] Same RSA signing key, issuer and `FLOWCATALYST_APP_KEY` as Go
 - [ ] App service accounts hold `platform:messaging:batch:events-write` (and `dispatch-jobs-write`)
-- [ ] Prod env names read by Rust (see `inhance/iac/compute/flowcatalyst.ts`, `fc-router.ts`). Router task: done
-      (`feat/router-env`, `docs/parity/router-env-vs-go.md`) — deploy the main `Dockerfile` image (`fc-server`,
-      linux/arm64) to `inhance/fc-router`; no IaC change. Confirm note 1 there (Teams alerts start arriving).
+- [x] Prod env names read by Rust: all three task definitions run unchanged, no IaC change.
+      - Platform and worker tasks (`flowcatalyst.ts`): `feat/platform-env`, `docs/parity/platform-env-vs-go.md`.
+        Key continuity: keep the SSM `jwt-private-key`, `jwt-previous-public-key` and `app-key` and
+        `EXTERNAL_BASE_URL` as they are. Rust derives Go's public key and `kid`, so Go-issued tokens and stored
+        secrets keep working.
+      - Router task (`fc-router.ts`): `feat/router-env`, `docs/parity/router-env-vs-go.md`. Deploy the main
+        `Dockerfile` image (`fc-server`, linux/arm64) to `inhance/fc-router`. Confirm note 1 there (Teams alerts
+        start arriving).
 - [ ] Rotate the leaked passwords; click Redact after the deploy
 - [ ] SDK cutover steps in `docs/sdks.md`

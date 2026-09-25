@@ -32,6 +32,7 @@ sqlx = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
 reqwest = { workspace = true }
+rustls = "0.23"
 urlencoding = "2.1"
 regex = { workspace = true }
 utoipa = { workspace = true }
@@ -44,6 +45,9 @@ axum = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 parking_lot = { workspace = true }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+rsa = { version = "0.9", features = ["pem"] }
 
 [features]
 default = []

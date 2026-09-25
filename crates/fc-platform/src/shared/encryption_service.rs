@@ -204,6 +204,27 @@ impl EncryptionService {
         }
     }
 
+    /// Go `MustFromEnv` (encryption.go): `Ok(None)` when
+    /// `FLOWCATALYST_APP_KEY` is unset — the documented "encryption disabled"
+    /// state — and an error when it (or `FLOWCATALYST_APP_KEY_PREVIOUS`) is
+    /// set but malformed, which Go treats as a fatal boot misconfiguration
+    /// (owner ruling 2026-09-08) rather than carrying on with every secret
+    /// read failing.
+    pub fn from_env_checked() -> Result<Option<Self>, EncryptionError> {
+        let Some(current) = std::env::var("FLOWCATALYST_APP_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
+        else {
+            return Ok(None);
+        };
+        let previous = std::env::var("FLOWCATALYST_APP_KEY_PREVIOUS")
+            .ok()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let previous: Vec<&str> = previous.as_deref().into_iter().collect();
+        Self::with_previous_keys(&current, &previous).map(Some)
+    }
+
     /// Encrypt a plaintext string using the current key.
     /// Returns base64-encoded `version || nonce || ciphertext`.
     pub fn encrypt(&self, plaintext: &str) -> Result<String, EncryptionError> {

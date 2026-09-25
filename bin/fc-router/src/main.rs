@@ -36,6 +36,11 @@ async fn main() -> Result<()> {
 
     fc_common::logging::init_logging("fc-router");
 
+    // The standby election may dial a `rediss://` Redis (rustls). Both rustls
+    // crypto backends are compiled in (aws-lc-rs via the AWS SDK, ring via
+    // others), so rustls needs a process-level choice or it panics.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Initialize Prometheus metrics recorder (must be before any metrics are recorded)
     let metrics_handle = fc_router::init_prometheus_recorder();
 

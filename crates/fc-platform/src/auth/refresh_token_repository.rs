@@ -5,7 +5,7 @@
 
 use crate::shared::error::Result;
 use crate::RefreshToken;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -96,7 +96,7 @@ impl From<PayloadRow> for RefreshToken {
         let created_at = m.created_at;
         let expires_at = m
             .expires_at
-            .unwrap_or_else(|| created_at + Duration::days(30));
+            .unwrap_or_else(|| created_at + crate::auth::refresh_token::refresh_token_ttl());
 
         RefreshToken {
             id,
