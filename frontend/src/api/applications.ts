@@ -1,47 +1,28 @@
 import { apiFetch } from "./client";
+import type {
+	ApplicationListResponse as GenApplicationListResponse,
+	ApplicationLoginClientCredentials,
+	ApplicationProvisionLoginClientResponse,
+	ApplicationProvisionServiceAccountResponse,
+	ApplicationResponse,
+	ApplicationServiceAccountCredentials,
+	CreatedResponse,
+} from "./generated";
 
+// Request-side string union the forms rely on. The generated response
+// types deliberately stay `string` (the spec doesn't carry enums — see
+// docs/frontend-api-types-adoption.md on SDK coordination).
 export type ApplicationType = "APPLICATION" | "INTEGRATION";
 
-export interface Application {
-	id: string;
-	type: ApplicationType;
-	code: string;
-	name: string;
-	description?: string;
-	defaultBaseUrl?: string;
-	iconUrl?: string;
-	website?: string;
-	logo?: string;
-	logoMimeType?: string;
-	serviceAccountId?: string;
-	/**
-	 * True iff this application has a login OAuth client provisioned.
-	 * Set by the detail endpoint; absent on list responses.
-	 */
-	hasLoginClient?: boolean;
-	active: boolean;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface ServiceAccountCredentials {
-	principalId: string;
-	name: string;
-	oauthClient: {
-		id: string;
-		clientId: string;
-		clientSecret: string; // Only available at creation time
-	};
-}
-
-export interface ApplicationWithServiceAccount extends Application {
-	serviceAccount?: ServiceAccountCredentials;
-}
-
-export interface ApplicationListResponse {
-	applications: Application[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. Note `hasLoginClient` is always on the wire
+// (required boolean); list responses leave it false — only the detail
+// endpoint computes it.
+export type Application = ApplicationResponse;
+export type ApplicationListResponse = GenApplicationListResponse;
+export type ServiceAccountCredentials = ApplicationServiceAccountCredentials;
+export type LoginClientCredentials = ApplicationLoginClientCredentials;
 
 export interface CreateApplicationRequest {
 	code: string;
@@ -78,9 +59,7 @@ export const applicationsApi = {
 		if (options.activeOnly) params.append("activeOnly", "true");
 		if (options.type) params.append("type", options.type);
 		const queryString = params.toString();
-		return apiFetch(
-			`/applications${queryString ? `?${queryString}` : ""}`,
-		);
+		return apiFetch(`/applications${queryString ? `?${queryString}` : ""}`);
 	},
 
 	/**
@@ -108,11 +87,10 @@ export const applicationsApi = {
 
 	/**
 	 * Create a new application or integration.
-	 * Returns the application with service account credentials (only available at creation time).
+	 * Returns the standard created envelope `{ id }` — service-account
+	 * credentials are NOT issued on create; use `provisionServiceAccount`.
 	 */
-	create(
-		data: CreateApplicationRequest,
-	): Promise<ApplicationWithServiceAccount> {
+	create(data: CreateApplicationRequest): Promise<CreatedResponse> {
 		return apiFetch("/applications", {
 			method: "POST",
 			body: JSON.stringify(data),
@@ -142,10 +120,9 @@ export const applicationsApi = {
 	 * Provision a service account for an existing application.
 	 * Returns the credentials (only available at provisioning time).
 	 */
-	provisionServiceAccount(id: string): Promise<{
-		message: string;
-		serviceAccount: ServiceAccountCredentials;
-	}> {
+	provisionServiceAccount(
+		id: string,
+	): Promise<ApplicationProvisionServiceAccountResponse> {
 		return apiFetch(`/applications/${id}/provision-service-account`, {
 			method: "POST",
 		});
@@ -166,10 +143,7 @@ export const applicationsApi = {
 	provisionLoginClient(
 		id: string,
 		body: ProvisionLoginClientRequest,
-	): Promise<{
-		message: string;
-		loginClient: LoginClientCredentials;
-	}> {
+	): Promise<ApplicationProvisionLoginClientResponse> {
 		return apiFetch(`/applications/${id}/provision-login-client`, {
 			method: "POST",
 			body: JSON.stringify(body),
@@ -177,21 +151,10 @@ export const applicationsApi = {
 	},
 };
 
-/** Request body for `provisionLoginClient`. */
+/** Request body for `provisionLoginClient` (hand-rolled: keeps the
+ * clientType union the form binds to; the wire accepts plain string). */
 export interface ProvisionLoginClientRequest {
 	clientType?: "PUBLIC" | "CONFIDENTIAL";
 	redirectUris: string[];
 	allowedOrigins?: string[];
-}
-
-/** Credentials returned from `provisionLoginClient`. */
-export interface LoginClientCredentials {
-	clientType: "PUBLIC" | "CONFIDENTIAL";
-	redirectUris: string[];
-	oauthClient: {
-		id: string;
-		clientId: string;
-		/** Only present for CONFIDENTIAL clients. */
-		clientSecret?: string;
-	};
 }

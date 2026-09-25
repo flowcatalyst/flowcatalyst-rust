@@ -1,56 +1,55 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { useClientOptions } from "@/composables/useClientOptions";
 import { usersApi, type User } from "@/api/users";
 import { rolesApi, type Role } from "@/api/roles";
 import ClientFilter from "@/components/ClientFilter.vue";
+import UserImportDialog from "@/components/UserImportDialog.vue";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
-const { ensureLoaded: ensureClients, getLabel: getClientLabel } = useClientOptions();
+const route = useRoute();
+const {
+	ensureLoaded: ensureClients,
+	getLabel: getClientLabel,
+	options: clientOptions,
+} = useClientOptions();
 
 const users = ref<User[]>([]);
 const availableRoles = ref<Role[]>([]);
 const loading = ref(false);
-const initialLoading = ref(true);
 const totalRecords = ref(0);
 
-const { filters, page, pageSize, sortField, sortOrder, hasActiveFilters, clearFilters, onPage, onSort } =
-	useListState(
-		{
-			filters: {
-				q: { type: "string", key: "q" },
-				clientId: { type: "string", key: "clientId" },
-				active: { type: "boolean", key: "active" },
-				roles: { type: "array", key: "roles" },
-			},
-			pageSize: 100,
-			sortField: "createdAt",
-			sortOrder: "asc",
+const listState = useListState(
+	{
+		filters: {
+			q: { type: "string", key: "q" },
+			clientId: { type: "string", key: "clientId" },
+			active: { type: "boolean", key: "active" },
+			roles: { type: "array", key: "roles" },
 		},
-		() => loadUsers(),
-	);
-
-// Map active filter boolean to the status select (which uses string values)
-const selectedStatus = computed({
-	get: () => {
-		if (filters.active.value === true) return "active";
-		if (filters.active.value === false) return "inactive";
-		return null;
+		pageSize: 100,
+		sortField: "createdAt",
+		sortOrder: "asc",
 	},
-	set: (val: string | null) => {
-		if (val === "active") filters.active.value = true;
-		else if (val === "inactive") filters.active.value = false;
-		else filters.active.value = null;
-	},
-});
+	() => loadUsers(),
+);
+const { filters, page, pageSize, sortField, sortOrder, onPage, onSort } =
+	listState;
 
-const statusOptions = [
-	{ label: "Active", value: "active" },
-	{ label: "Inactive", value: "inactive" },
+// Lazy table: the DataTable filter meta isn't bound — popup inputs write the
+// listState refs directly and loadUsers() serializes them into API params.
+const { activeFilterCount, clearAll } = useTableFilters(listState, [
+	{ field: "clientId", param: "clientId" },
+	{ field: "active", param: "active" },
+	{ field: "roles", param: "roles" },
+]);
+
+const statusFilterOptions = [
+	{ label: "Active", value: true },
+	{ label: "Inactive", value: false },
 ];
 
 const roleOptions = computed(() =>
@@ -67,10 +66,7 @@ async function loadUsers() {
 		const response = await usersApi.list({
 			type: "USER",
 			clientId: filters.clientId.value || undefined,
-			active:
-				filters.active.value !== null
-					? filters.active.value
-					: undefined,
+			active: filters.active.value !== null ? filters.active.value : undefined,
 			q: filters.q.value || undefined,
 			roles: filters.roles.value.length > 0 ? filters.roles.value : undefined,
 			page: page.value,
@@ -84,7 +80,6 @@ async function loadUsers() {
 		console.error("Failed to fetch users:", error);
 	} finally {
 		loading.value = false;
-		initialLoading.value = false;
 	}
 }
 
@@ -98,18 +93,21 @@ async function loadRoles() {
 }
 
 function addUser() {
-	router.push("/users/new");
+	void router.push({ path: "/users/new", query: route.query });
 }
 
 function viewUser(user: User) {
-	navigateToDetail(`/users/${user.id}`);
+	void router.push({ path: `/users/${user.id}`, query: route.query });
 }
 
 function editUser(user: User) {
-	navigateToDetail(`/users/${user.id}`, { edit: "true" });
+	void router.push({
+		path: `/users/${user.id}`,
+		query: { ...route.query, edit: "true" },
+	});
 }
 
-function getClientName(clientId: string | null): string {
+function getClientName(clientId: string | null | undefined): string {
 	if (!clientId) return "No Client";
 	return getClientLabel(clientId);
 }
@@ -159,81 +157,15 @@ function formatDate(dateStr: string | undefined | null) {
         <h1 class="page-title">Users</h1>
         <p class="page-subtitle">Manage platform users and their access</p>
       </div>
-      <Button label="Add User" icon="pi pi-user-plus" @click="addUser" />
-    </header>
-
-    <!-- Filters -->
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Search</label>
-          <IconField>
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.q.value"
-              placeholder="Search by name or email..."
-              class="filter-input"
-            />
-          </IconField>
-        </div>
-
-        <div class="filter-group">
-          <label>Client</label>
-          <ClientFilter
-            v-model="filters.clientId.value"
-            :multiple="false"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Status</label>
-          <Select
-            v-model="selectedStatus"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Statuses"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Roles</label>
-          <MultiSelect
-            v-model="filters.roles.value"
-            :options="roleOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Roles"
-            :showClear="true"
-            display="chip"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
+      <div class="header-actions">
+        <UserImportDialog :client-options="clientOptions" @imported="loadUsers" />
+        <Button label="Add User" icon="pi pi-user-plus" @click="addUser" />
       </div>
-    </div>
+    </header>
 
     <!-- Data Table -->
     <div class="fc-card table-card">
-      <div v-if="initialLoading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
         :value="users"
         :loading="loading"
         :paginator="true"
@@ -245,10 +177,61 @@ function formatDate(dateStr: string | undefined | null) {
         :showCurrentPageReport="true"
         currentPageReportTemplate="Showing {first} to {last} of {totalRecords} users"
         stripedRows
+        rowHover
+        :rowClass="() => 'clickable-row'"
         size="small"
         @page="onPage"
         @sort="onSort"
+        @row-click="(e) => viewUser(e.data)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search by name or email..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Client">
+                <ClientFilter
+                  v-model="filters.clientId.value"
+                  :multiple="false"
+                  appendTo="self"
+                />
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.active.value"
+                    :options="statusFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Roles">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.roles.value"
+                    :options="roleOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All roles"
+                    display="chip"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column field="name" header="Name" sortable style="width: 20%">
           <template #body="{ data }">
             <span class="user-name">{{ data.name }}</span>
@@ -264,10 +247,10 @@ function formatDate(dateStr: string | undefined | null) {
         <Column header="Type" style="width: 12%">
           <template #body="{ data }">
             <Tag
+              v-tooltip.top="getUserType(data).tooltip"
               :value="getUserType(data).label"
               :severity="getUserType(data).severity"
               :icon="data.isAnchorUser ? 'pi pi-star' : undefined"
-              v-tooltip.top="getUserType(data).tooltip"
             />
           </template>
         </Column>
@@ -327,24 +310,16 @@ function formatDate(dateStr: string | undefined | null) {
           </template>
         </Column>
 
-        <Column header="Actions" style="width: 5%">
+        <Column header="Actions" style="width: 60px">
           <template #body="{ data }">
             <div class="action-buttons">
               <Button
-                icon="pi pi-eye"
-                text
-                rounded
-                severity="secondary"
-                @click="viewUser(data)"
-                v-tooltip.top="'View'"
-              />
-              <Button
+                v-tooltip.top="'Edit'"
                 icon="pi pi-pencil"
                 text
                 rounded
                 severity="secondary"
-                @click="editUser(data)"
-                v-tooltip.top="'Edit'"
+                @click.stop="editUser(data)"
               />
             </div>
           </template>
@@ -354,57 +329,34 @@ function formatDate(dateStr: string | undefined | null) {
           <div class="empty-message">
             <i class="pi pi-users"></i>
             <span>No users found</span>
-            <Button v-if="hasActiveFilters" label="Clear filters" link @click="clearFilters" />
+            <Button
+              v-if="listState.hasActiveFilters.value"
+              label="Clear filters"
+              link
+              @click="clearAll"
+            />
           </div>
         </template>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadUsers" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
+.header-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 200px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #475569;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-actions {
-  margin-left: auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .table-card {
   padding: 0;
   overflow: hidden;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 60px;
 }
 
 .user-name {
@@ -496,21 +448,5 @@ function formatDate(dateStr: string | undefined | null) {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-@media (max-width: 1024px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    margin-left: 0;
-    margin-top: 8px;
-  }
 }
 </style>

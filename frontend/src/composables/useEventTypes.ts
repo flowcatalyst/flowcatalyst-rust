@@ -13,16 +13,18 @@ export function useEventTypes() {
 	const loading = ref(false);
 	const error = ref<string | null>(null);
 
-	// Use useListState for URL-synced filters (no pagination/sort needed for this page)
-	const { filters, hasActiveFilters, clearFilters: clearListFilters, withSuppressed } = useListState({
+	// Use useListState for URL-synced filters (no pagination/sort needed for this page).
+	// `q` feeds the table's client-side global filter only — no reload watcher.
+	const listState = useListState({
 		filters: {
+			q: { type: "string", key: "q" },
 			applications: { type: "array", key: "app" },
 			subdomains: { type: "array", key: "sub" },
 			aggregates: { type: "array", key: "agg" },
 			status: { type: "string", key: "status" },
 		},
-		debounce: 0,
 	});
+	const { filters, hasActiveFilters, clearFilters: clearListFilters, withSuppressed } = listState;
 
 	// Filter options
 	const applicationOptions = ref<string[]>([]);
@@ -157,6 +159,9 @@ export function useEventTypes() {
 		initialLoading,
 		loading,
 		error,
+
+		// List state (URL-synced filters incl. `q`) — for FcTableToolbar/useTableFilters
+		listState,
 
 		// Filters
 		selectedApplications,

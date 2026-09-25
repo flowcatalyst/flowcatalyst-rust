@@ -81,7 +81,8 @@ function iconFor(severity: string): string {
 .banner-stack {
   position: sticky;
   top: 0;
-  z-index: 1100;
+  /* Above PrimeVue's modal layer (drawer masks start at 1101) so toasts stay visible */
+  z-index: 1400;
   display: flex;
   flex-direction: column;
   gap: 1px;

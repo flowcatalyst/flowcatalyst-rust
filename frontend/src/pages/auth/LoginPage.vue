@@ -5,13 +5,36 @@ import { useForm, useField } from "vee-validate";
 import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/stores/auth";
-import { useLoginThemeStore } from "@/stores/loginTheme";
-import { checkEmailDomain, loadPermissions, login } from "@/api/auth";
+import {
+	normalizeClientParam,
+	useLoginThemeStore,
+} from "@/stores/loginTheme";
+import {
+	checkEmailDomain,
+	checkSession,
+	externalIdpRedirectUrl,
+	login,
+	oauthAuthorizeUrl,
+	redirectAfterLogin,
+	requestPasswordSetup,
+	type LoginResult,
+} from "@/api/auth";
 import { authenticateWithPasskey, isWebauthnSupported } from "@/api/webauthn";
-import router from "@/router";
+import TwoFactorChallenge from "@/components/TwoFactorChallenge.vue";
+import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
 import { getErrorMessage } from "@/utils/errors";
 
-type LoginStep = "email" | "password" | "redirecting";
+type LoginStep =
+	| "email"
+	| "password"
+	| "setup"
+	| "setupSent"
+	| "redirecting"
+	| "2fa"
+	| "enroll";
+
+type MfaChallenge = Extract<LoginResult, { status: "mfa_required" }>;
+type MfaEnroll = Extract<LoginResult, { status: "enrollment_required" }>;
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -22,12 +45,14 @@ const showResetSuccess = computed(() => route.query["reset"] === "success");
 
 // Load theme on mount
 onMounted(async () => {
-	await themeStore.loadTheme();
+	await themeStore.loadTheme(normalizeClientParam(route.query["client"]));
 	themeStore.applyThemeColors();
 });
 
 const step = ref<LoginStep>("email");
 const isSubmitting = ref(false);
+const mfaChallenge = ref<MfaChallenge | null>(null);
+const mfaEnroll = ref<MfaEnroll | null>(null);
 
 // Email step schema
 const emailSchema = toTypedSchema(
@@ -84,44 +109,23 @@ const onCheckEmail = handleEmailSubmit(async (values) => {
 
 		if (result.authMethod === "external" && result.loginUrl) {
 			step.value = "redirecting";
-
-			// Forward OAuth params to OIDC login if this is part of an OAuth flow
-			const currentParams = new URLSearchParams(window.location.search);
-			let redirectUrl = result.loginUrl;
-
-			// Forward interaction param for OIDC interaction flow
-			const interactionUid = currentParams.get("interaction");
-			if (interactionUid) {
-				const loginUrl = new URL(result.loginUrl, window.location.origin);
-				loginUrl.searchParams.set("interaction", interactionUid);
-				redirectUrl = loginUrl.toString();
-			} else if (currentParams.get("oauth") === "true") {
-				const oauthFields = [
-					"client_id",
-					"redirect_uri",
-					"scope",
-					"state",
-					"code_challenge",
-					"code_challenge_method",
-					"nonce",
-				];
-				const loginUrl = new URL(result.loginUrl, window.location.origin);
-
-				for (const field of oauthFields) {
-					const value = currentParams.get(field);
-					if (value) {
-						// Map to oauth_ prefix expected by /auth/oidc/login
-						loginUrl.searchParams.set("oauth_" + field, value);
-					}
-				}
-				redirectUrl = loginUrl.toString();
-			}
-
-			window.location.href = redirectUrl;
+			// Forward OIDC-interaction / OAuth round-trip context to the IdP
+			// login URL (shared helper — see api/auth.ts).
+			window.location.href = externalIdpRedirectUrl(result.loginUrl);
+		} else if (result.authMethod === "internal" && result.passwordSetupRequired) {
+			// App-created internal user who has never set a password: we
+			// never accept a new password inline — email them a
+			// mailbox-proving set-password link instead.
+			step.value = "setup";
 		} else {
 			step.value = "password";
 		}
 	} catch (e: unknown) {
+		// Surface the failure — a silent catch here meant "Continue" did
+		// nothing at all when the domain check errored.
+		authStore.setError(
+			getErrorMessage(e, "Could not check your email — please try again."),
+		);
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -133,9 +137,52 @@ async function onSubmitPassword() {
 	isSubmitting.value = true;
 
 	try {
-		await login({ email: currentEmail.value, password: passwordValue.value });
+		const result = await login({
+			email: currentEmail.value,
+			password: passwordValue.value,
+		});
+		if (result.status === "mfa_required") {
+			mfaChallenge.value = result;
+			step.value = "2fa";
+		} else if (result.status === "enrollment_required") {
+			mfaEnroll.value = result;
+			step.value = "enroll";
+		}
+		// "ok" → login() already established the session and redirected.
 	} catch {
 		// Error is handled by AuthStore
+	} finally {
+		isSubmitting.value = false;
+	}
+}
+
+async function onRequestPasswordSetup() {
+	if (isSubmitting.value) return;
+
+	isSubmitting.value = true;
+	authStore.setError(null);
+
+	try {
+		// Only forward a redirect when the page was entered as an OAuth
+		// round-trip (?oauth=true) — the rebuilt /oauth/authorize?... URL is
+		// what sends the user back into the calling application once they've
+		// set their password. Same field list / getter shape as every other
+		// oauthAuthorizeUrl call site (see api/auth.ts, router/guards.ts).
+		const redirectUri =
+			route.query["oauth"] === "true"
+				? oauthAuthorizeUrl((field) => {
+						const value = route.query[field];
+						return typeof value === "string" ? value : null;
+					})
+				: undefined;
+		await requestPasswordSetup(currentEmail.value, redirectUri);
+		step.value = "setupSent";
+	} catch (e: unknown) {
+		// Silent-success endpoint — an error here means the request itself
+		// failed (network/5xx), not that the account doesn't exist.
+		authStore.setError(
+			getErrorMessage(e, "Could not send the email — please try again."),
+		);
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -150,51 +197,24 @@ async function onPasskeyLogin() {
 	authStore.setError(null);
 
 	try {
-		const result = await authenticateWithPasskey(currentEmail.value);
-		// Server set the session cookie. Mirror what /auth/login does to
-		// keep the auth store in sync and honour OAuth/OIDC redirects.
-		authStore.setUser({
-			id: result.principalId,
-			email: result.email ?? currentEmail.value,
-			name: result.name,
-			clientId: null,
-			roles: result.roles,
-			permissions: null,
-		});
-		await loadPermissions();
-
-		const urlParams = new URLSearchParams(window.location.search);
-		const interactionUid = urlParams.get("interaction");
-		if (interactionUid) {
-			window.location.href = `/oidc/interaction/${interactionUid}/login`;
-			return;
-		}
-		if (urlParams.get("oauth") === "true") {
-			const oauthFields = [
-				"response_type",
-				"client_id",
-				"redirect_uri",
-				"scope",
-				"state",
-				"code_challenge",
-				"code_challenge_method",
-				"nonce",
-			];
-			const oauthParams = new URLSearchParams();
-			for (const field of oauthFields) {
-				const value = urlParams.get(field);
-				if (value) oauthParams.set(field, value);
-			}
-			window.location.href = `/oauth/authorize?${oauthParams.toString()}`;
-			return;
-		}
-		await router.replace("/dashboard");
+		await authenticateWithPasskey(currentEmail.value);
+		// The server set the session cookie. Load the FULL session (permissions,
+		// clientId, roles) into the store so the sidebar and landing decision
+		// have real data immediately — a partial setUser here previously left the
+		// store with clientId:null and no permissions, so the nav rendered empty
+		// until a manual page reload.
+		await checkSession();
+		// Same post-login navigation as the password path (OIDC interaction /
+		// OAuth round-trip / landing page).
+		redirectAfterLogin();
 	} catch (e) {
-		const message = getErrorMessage(e, "Passkey sign-in failed");
+		// DOMException name, not message: getErrorMessage returns the human
+		// description, which doesn't contain the error name — the friendly
+		// "Cancelled" branch never fired on message matching.
 		authStore.setError(
-			message.includes("NotAllowedError")
+			e instanceof Error && e.name === "NotAllowedError"
 				? "Cancelled — try again or use your password."
-				: message,
+				: getErrorMessage(e, "Passkey sign-in failed"),
 		);
 	} finally {
 		isSubmitting.value = false;
@@ -243,7 +263,15 @@ async function onPasskeyLogin() {
               ? 'Sign in to your account'
               : step === 'password'
                 ? 'Enter your password'
-                : 'Redirecting...'
+                : step === 'setup'
+                  ? 'Create your password'
+                  : step === 'setupSent'
+                    ? 'Check your email'
+                    : step === '2fa'
+                      ? 'Verify it\'s you'
+                      : step === 'enroll'
+                        ? 'Set up two-factor authentication'
+                        : 'Redirecting...'
           }}
         </h2>
 
@@ -271,6 +299,7 @@ async function onPasskeyLogin() {
               id="email"
               v-model="emailValue"
               type="email"
+              autocomplete="username"
               placeholder="you@company.com"
               :disabled="isSubmitting"
               :invalid="!!emailError"
@@ -313,6 +342,7 @@ async function onPasskeyLogin() {
               :disabled="isSubmitting"
               :feedback="false"
               toggleMask
+              :inputProps="{ autocomplete: 'current-password' }"
               inputClass="w-full"
               class="w-full"
               @blur="passwordTouched = true"
@@ -320,8 +350,11 @@ async function onPasskeyLogin() {
           </div>
 
           <div class="form-options">
+            <!-- The whole query goes along: mid-OAuth (?oauth=true&client_id=…)
+                 the forgot page needs it to bring the user back to the
+                 application after the reset. -->
             <RouterLink
-              :to="{ name: 'forgot-password', query: currentEmail ? { email: currentEmail } : {} }"
+              :to="{ name: 'forgot-password', query: { ...route.query, ...(currentEmail ? { email: currentEmail } : {}) } }"
               class="forgot-password"
             >Forgot password?</RouterLink>
           </div>
@@ -350,6 +383,66 @@ async function onPasskeyLogin() {
             @click="onPasskeyLogin"
           />
         </form>
+
+        <!-- Password setup step: internal user created by an application,
+             invite email suppressed — first time signing in, no password
+             set yet. We never accept a new password inline here; the
+             emailed link is what proves mailbox ownership. -->
+        <div v-if="step === 'setup'" class="login-form">
+          <div class="email-display">
+            <div class="email-info">
+              <div class="email-avatar">
+                {{ currentEmail.charAt(0).toUpperCase() }}
+              </div>
+              <span class="email-text">{{ currentEmail }}</span>
+            </div>
+            <button type="button" class="change-email-btn" @click="onChangeEmail">
+              Use a different email
+            </button>
+          </div>
+
+          <p class="form-description">
+            This is your first time signing in. We'll email you a link to
+            create your password — this confirms it's really you.
+          </p>
+
+          <Button
+            type="button"
+            label="Email me a link"
+            :loading="isSubmitting"
+            class="w-full"
+            @click="onRequestPasswordSetup"
+          />
+        </div>
+
+        <!-- Password setup link sent -->
+        <div v-if="step === 'setupSent'" class="login-form">
+          <div class="success-banner">
+            <p>
+              We sent a link to <strong>{{ currentEmail }}</strong>. Open it
+              on this device to create your password. The link expires in 72
+              hours.
+            </p>
+          </div>
+          <button type="button" class="change-email-btn" @click="onChangeEmail">
+            Back to sign in
+          </button>
+        </div>
+
+        <!-- 2FA challenge step -->
+        <TwoFactorChallenge
+          v-if="step === '2fa' && mfaChallenge"
+          :mfa-token="mfaChallenge.mfaToken"
+          :methods="mfaChallenge.methods"
+          :remember-device-allowed="mfaChallenge.rememberDeviceAllowed"
+        />
+
+        <!-- Forced enrollment step -->
+        <TwoFactorSetup
+          v-if="step === 'enroll' && mfaEnroll"
+          :enroll-token="mfaEnroll.enrollToken"
+          :allowed-methods="mfaEnroll.allowedMethods"
+        />
       </div>
 
       <!-- Footer -->
@@ -510,6 +603,13 @@ async function onPasskeyLogin() {
   font-size: 14px;
   font-weight: 500;
   color: #334e68;
+}
+
+.form-description {
+  color: #627d98;
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.6;
 }
 
 .field-hint {

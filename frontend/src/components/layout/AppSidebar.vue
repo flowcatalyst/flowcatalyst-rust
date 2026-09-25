@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
-import {
-	NAVIGATION_CONFIG,
-	visibleNavigation,
-	type NavItem,
-} from "@/config/navigation";
-import { useAuthStore } from "@/stores/auth";
+import { NAVIGATION_CONFIG, type NavItem } from "@/config/navigation";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
 import { useAppThemeStore } from "@/stores/appTheme";
+import { useAuthStore } from "@/stores/auth";
+import { canAccessPath, canSeeScope } from "@/stores/permissions";
 
 defineProps<{
 	collapsed: boolean;
+	mobileOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -24,21 +22,46 @@ const appThemeStore = useAppThemeStore();
 const authStore = useAuthStore();
 const expandedItems = ref<Record<string, boolean>>({});
 
+// Keep only the nav entries the current user can actually reach: filter a
+// parent's children (dropping the parent if none remain) and leaf items by the
+// same canAccessPath() the route guards use, so the sidebar never offers a page
+// that would bounce the user to their profile.
+function visibleItem(item: NavItem): NavItem | null {
+	if (!canSeeScope(authStore.user, item.scope)) return null;
+	if (item.children && item.children.length > 0) {
+		const children = item.children.filter(
+			(c) =>
+				canSeeScope(authStore.user, c.scope) &&
+				(!c.route || canAccessPath(authStore.user, c.route)),
+		);
+		return children.length > 0 ? { ...item, children } : null;
+	}
+	if (item.route && !canAccessPath(authStore.user, item.route)) return null;
+	return item;
+}
+
 // Load app theme on mount
 onMounted(() => {
 	appThemeStore.loadTheme();
 });
 
-// Filter navigation based on the user's permissions (items they cannot open
-// are hidden) and the platform configuration
+// Filter navigation by platform configuration and per-user access.
 const filteredNavigation = computed(() => {
-	return visibleNavigation(NAVIGATION_CONFIG, authStore.user).filter((group) => {
+	return NAVIGATION_CONFIG.filter((group) => {
 		// Hide Messaging group when messaging is disabled
 		if (group.label === "Messaging" && !platformConfigStore.messagingEnabled) {
 			return false;
 		}
 		return true;
-	});
+	})
+		.map((group) => ({
+			...group,
+			items: group.items
+				.map(visibleItem)
+				.filter((item): item is NavItem => item !== null),
+		}))
+		// Drop groups that have no visible items for this user.
+		.filter((group) => group.items.length > 0);
 });
 
 function toggleExpand(itemLabel: string) {
@@ -55,7 +78,7 @@ function isActive(item: NavItem): boolean {
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ collapsed }">
+  <aside class="sidebar" :class="{ collapsed, 'mobile-open': mobileOpen }">
     <!-- Logo Section -->
     <div class="sidebar-header">
       <div
@@ -156,10 +179,7 @@ function isActive(item: NavItem): boolean {
 
     <!-- Footer -->
     <div class="sidebar-footer">
-      <div v-if="!collapsed" class="version-info">
-        <span class="version-label">Version</span>
-        <span class="version-number">0.0.1</span>
-      </div>
+      <SidebarProfile :collapsed="collapsed" />
     </div>
   </aside>
 </template>
@@ -367,20 +387,8 @@ function isActive(item: NavItem): boolean {
 }
 
 .sidebar-footer {
-  padding: 16px;
+  padding: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.version-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.version-number {
-  color: rgba(255, 255, 255, 0.6);
 }
 
 /* Scrollbar styling */
@@ -402,7 +410,9 @@ function isActive(item: NavItem): boolean {
 }
 
 @media (max-width: 768px) {
-  .sidebar {
+  .sidebar,
+  .sidebar.collapsed {
+    width: 260px;
     transform: translateX(-100%);
   }
 

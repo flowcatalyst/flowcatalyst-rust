@@ -6,31 +6,31 @@
  */
 
 import { apiFetch } from "./client";
+import type {
+	DeliveryPlan as GenDeliveryPlan,
+	DispatchJobFilterOptionsResponse,
+	DispatchJobRead as GenDispatchJobRead,
+	DispatchJobResponse as GenDispatchJobResponse,
+	RequestSummary as GenRequestSummary,
+	RequeueResponse,
+} from "./generated";
 
-export interface DispatchJobRead {
-	id: string;
-	eventId: string;
-	subscriptionId: string;
-	clientId?: string | null;
-	clientIdentifier?: string | null;
-	application?: string | null;
-	subdomain?: string | null;
-	aggregate?: string | null;
-	code?: string | null;
-	source?: string | null;
-	subject?: string | null;
-	status: string;
-	dispatchMode?: string | null;
-	priority?: number | null;
-	correlationId?: string | null;
-	scheduledFor?: string | null;
-	createdAt: string;
-	updatedAt: string;
-	completedAt?: string | null;
-	lastAttemptAt?: string | null;
-	attemptCount?: number | null;
-	[key: string]: unknown;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. The old hand-rolled row carried phantom fields
+// (no `maxRetries` on the read row) and an index signature; the old
+// filter-options shape ({value,label} arrays under applications/subdomains/
+// aggregates) never matched the wire — the facets are plain string arrays
+// under statuses/codes/clientIds/dispatchPoolIds/subscriptionIds/kinds.
+export type DispatchJobRead = GenDispatchJobRead;
+export type DispatchJobFilterOptions = DispatchJobFilterOptionsResponse;
+/** The full job (write-side row): payload, metadata, attempts. */
+export type DispatchJobDetail = GenDispatchJobResponse;
+export type DispatchJobAttempt = NonNullable<GenDispatchJobResponse["attempts"]>[number];
+/** What the platform sent on an attempt — see the Go RequestSummary. */
+export type DeliveryRequestSummary = GenRequestSummary;
+/** The "sign" action's answer: the delivery as it would go out right now. */
+export type DeliveryPlan = GenDeliveryPlan;
 
 export interface DispatchJobsListParams {
 	size?: number;
@@ -41,14 +41,14 @@ export interface DispatchJobsListParams {
 	aggregates?: string[] | undefined;
 	codes?: string[] | undefined;
 	source?: string | undefined;
-}
-
-export interface DispatchJobFilterOptions {
-	applications: { value: string; label: string }[];
-	subdomains: { value: string; label: string }[];
-	aggregates: { value: string; label: string }[];
-	codes: { value: string; label: string }[];
-	statuses: { value: string; label: string }[];
+	/** Exact message group. */
+	messageGroup?: string | undefined;
+	/** RFC3339 lower bound on createdAt. */
+	since?: string | undefined;
+	/** RFC3339 upper bound on createdAt. */
+	until?: string | undefined;
+	/** createdAt sort direction; server default is newest-first. */
+	sort?: "createdAt.asc" | "createdAt.desc" | undefined;
 }
 
 function buildQuery(params: DispatchJobsListParams): string {
@@ -61,6 +61,10 @@ function buildQuery(params: DispatchJobsListParams): string {
 	if (params.aggregates?.length) qp.set("aggregates", params.aggregates.join(","));
 	if (params.codes?.length) qp.set("codes", params.codes.join(","));
 	if (params.source) qp.set("source", params.source);
+	if (params.messageGroup) qp.set("messageGroup", params.messageGroup);
+	if (params.since) qp.set("since", params.since);
+	if (params.until) qp.set("until", params.until);
+	if (params.sort) qp.set("sort", params.sort);
 	const s = qp.toString();
 	return s ? `?${s}` : "";
 }
@@ -69,7 +73,29 @@ export const dispatchJobsApi = {
 	list(params: DispatchJobsListParams): Promise<DispatchJobRead[]> {
 		return apiFetch(`/dispatch-jobs${buildQuery(params)}`);
 	},
+	get(id: string): Promise<DispatchJobDetail> {
+		return apiFetch(`/dispatch-jobs/${encodeURIComponent(id)}`);
+	},
+	attempts(id: string): Promise<DispatchJobAttempt[]> {
+		return apiFetch(`/dispatch-jobs/${encodeURIComponent(id)}/attempts`);
+	},
 	filterOptions(): Promise<DispatchJobFilterOptions> {
 		return apiFetch(`/dispatch-jobs/filter-options`);
+	},
+	// Reset jobs to PENDING so the scheduler re-dispatches them. Returns the
+	// number actually reset (tenant-scoped server-side). Used by the list
+	// page's per-row retry + bulk "requeue selected".
+	requeue(ids: string[]): Promise<RequeueResponse> {
+		return apiFetch(`/dispatch-jobs/requeue`, {
+			method: "POST",
+			body: JSON.stringify({ ids }),
+		});
+	},
+	// Dry run: which service account would sign, every header, and a real
+	// signature over the real body — without delivering. Hand the timestamp,
+	// signature and body to the subscriber's verify command to see whether
+	// THEIR secret accepts it.
+	sign(id: string): Promise<DeliveryPlan> {
+		return apiFetch(`/dispatch-jobs/${encodeURIComponent(id)}/sign`, { method: "POST" });
 	},
 };

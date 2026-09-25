@@ -33,22 +33,37 @@ async function refresh() {
 
 async function onRegister() {
 	if (registering.value) return;
+	const name = newPasskeyName.value.trim();
+	if (!name) {
+		error.value = "Please name this passkey before adding it.";
+		return;
+	}
 	registering.value = true;
 	error.value = null;
 	successMessage.value = null;
 	try {
-		const name = newPasskeyName.value.trim() || undefined;
 		await registerPasskey(name);
 		successMessage.value = "Passkey added.";
 		newPasskeyName.value = "";
 		await refresh();
 	} catch (e) {
 		// User cancelled in the authenticator UI is the most common case;
-		// surface a friendlier message for that path.
+		// surface friendlier messages for the known authenticator errors.
+		// Match on the DOMException NAME — the message carries the human
+		// description, not the name, so message matching never fired.
+		const name = e instanceof Error ? e.name : "";
 		const message = getErrorMessage(e, "Failed to add passkey");
-		error.value = message.includes("NotAllowedError")
-			? "Cancelled — no passkey was added."
-			: message;
+		if (name === "NotAllowedError") {
+			error.value = "Cancelled — no passkey was added.";
+		} else if (
+			name === "InvalidStateError" ||
+			message.toLowerCase().includes("previously registered")
+		) {
+			error.value =
+				"This device already has a passkey for your account — use a different device or security key to add another.";
+		} else {
+			error.value = message;
+		}
 	} finally {
 		registering.value = false;
 	}
@@ -105,7 +120,7 @@ onMounted(async () => {
       <div class="add-passkey">
         <InputText
           v-model="newPasskeyName"
-          placeholder="Name (e.g. 'Andrew's MacBook')"
+          placeholder="Name (e.g. 'My Computer/Phone')"
           :disabled="registering"
           class="passkey-name-input"
         />
@@ -113,6 +128,7 @@ onMounted(async () => {
           label="Add a passkey"
           icon="pi pi-key"
           :loading="registering"
+          :disabled="!newPasskeyName.trim()"
           @click="onRegister"
         />
       </div>

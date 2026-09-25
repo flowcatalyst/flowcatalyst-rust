@@ -14,6 +14,27 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const loading = ref(true);
 const noDocs = ref(false);
 const error = ref<string | null>(null);
+const currentSpec = ref<Record<string, unknown> | null>(null);
+const currentVersion = ref<string | null>(null);
+
+function downloadSpec() {
+  if (!currentSpec.value) return;
+  const info = currentSpec.value["info"] as { title?: string } | undefined;
+  const name = (info?.title || props.applicationId)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const version = currentVersion.value ? `-${currentVersion.value}` : "";
+  const blob = new Blob([JSON.stringify(currentSpec.value, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name || "openapi"}${version}-openapi.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 async function mountSpec() {
   loading.value = true;
@@ -21,9 +42,13 @@ async function mountSpec() {
   error.value = null;
 
   let spec: Record<string, unknown> | null = null;
+  currentSpec.value = null;
+  currentVersion.value = null;
   try {
     const res = await developerApi.getCurrentOpenApi(props.applicationId);
     spec = res.spec;
+    currentSpec.value = res.spec;
+    currentVersion.value = res.version ?? null;
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
       noDocs.value = true;
@@ -87,11 +112,26 @@ onBeforeUnmount(() => {
 
     <!-- Swagger UI mounts here. Kept v-show'd (not v-if'd) so the ref is
          always available when mountSpec runs after the network fetch. -->
+    <div v-show="!loading && !noDocs && !error" class="docs-toolbar">
+      <Button
+        label="Download OpenAPI"
+        icon="pi pi-download"
+        size="small"
+        outlined
+        @click="downloadSpec"
+      />
+    </div>
     <div v-show="!loading && !noDocs && !error" ref="containerRef" class="swagger-mount"></div>
   </div>
 </template>
 
 <style scoped>
+.docs-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
 .api-docs-tab {
   margin-top: 16px;
 }

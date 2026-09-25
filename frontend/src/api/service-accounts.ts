@@ -1,68 +1,59 @@
 import { apiFetch } from "./client";
 import type { PrincipalScope } from "./users";
+import type {
+	ApplicationAccessListResponse,
+	ApplicationAccessResponse,
+	CreateServiceAccountResponse as GenCreateServiceAccountResponse,
+	PrincipalAvailableApplication,
+	PrincipalAvailableApplicationsResponse,
+	RegenerateAuthTokenResponse,
+	RegenerateSigningSecretResponse,
+	RoleAssignmentDto,
+	ServiceAccountTokenResponse as GenServiceAccountTokenResponse,
+	ServiceAccountListResponse as GenServiceAccountListResponse,
+	ServiceAccountOAuthSecrets,
+	ServiceAccountResponse,
+	ServiceAccountRoleListResponse,
+	ServiceAccountRolesAssignedResponse,
+	ServiceAccountWebhookSecrets,
+	SetApplicationAccessResponse,
+} from "./generated";
 
+// Request-side string union the forms rely on. The generated response
+// types deliberately stay `string` (the spec doesn't carry enums — see
+// docs/frontend-api-types-adoption.md on SDK coordination).
 export type WebhookAuthType = "BEARER" | "BASIC";
 
-export interface ServiceAccount {
-	id: string;
-	code: string;
-	name: string;
-	description: string | null;
-	/** The requested scope as stored; absent when none was requested. */
-	scope?: PrincipalScope;
-	/**
-	 * Client links. The token tier follows them: none is ANCHOR (every client),
-	 * one is CLIENT, several is PARTNER.
-	 */
-	clientIds: string[];
-	applicationId: string | null;
-	active: boolean;
-	authType: WebhookAuthType | null;
-	roles: string[];
-	lastUsedAt: string | null;
-	createdAt: string;
-	updatedAt: string;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. Optional fields come back `undefined` (not
+// `null`); normalise at use sites.
+export type ServiceAccount = ServiceAccountResponse;
+export type ServiceAccountListResponse = GenServiceAccountListResponse;
+export type OAuthCredentials = ServiceAccountOAuthSecrets;
+export type WebhookCredentials = ServiceAccountWebhookSecrets;
+export type CreateServiceAccountResponse = GenCreateServiceAccountResponse;
+export type RegenerateTokenResponse = RegenerateAuthTokenResponse;
+export type RegenerateSecretResponse = RegenerateSigningSecretResponse;
+export type ServiceAccountTokenResponse = GenServiceAccountTokenResponse;
+export type RoleAssignment = RoleAssignmentDto;
+export type RolesResponse = ServiceAccountRoleListResponse;
+export type RolesAssignedResponse = ServiceAccountRolesAssignedResponse;
+export type ApplicationAccessGrant = ApplicationAccessResponse;
+export type ApplicationAccessAssignedResponse = SetApplicationAccessResponse;
+export type AvailableApplication = PrincipalAvailableApplication;
+export type AvailableApplicationsResponse =
+	PrincipalAvailableApplicationsResponse;
 
-export interface ServiceAccountListResponse {
-	serviceAccounts: ServiceAccount[];
-	total: number;
-}
-
-/**
- * A new service account has no application access; grant applications
- * afterwards on its detail page. `scope` is stored as sent; the token tier
- * follows `clientIds` (none ANCHOR, one CLIENT, several PARTNER).
- */
 export interface CreateServiceAccountRequest {
 	code: string;
 	name: string;
 	description?: string;
 	clientIds?: string[];
-	scope?: PrincipalScope;
-	/**
-	 * Grant every application, present and future. Omitted (the default): the
-	 * account starts with no application access. The API refuses it (403)
-	 * unless the caller itself reaches every application.
-	 */
+	applicationId?: string;
+	/** Grant every application. Omitted/false → no application access. */
 	allApplications?: boolean;
-}
-
-export interface OAuthCredentials {
-	clientId: string;
-	clientSecret: string;
-}
-
-export interface WebhookCredentials {
-	authToken: string;
-	signingSecret: string;
-}
-
-export interface CreateServiceAccountResponse {
-	serviceAccount: ServiceAccount;
-	principalId: string;
-	oauth: OAuthCredentials;
-	webhook: WebhookCredentials;
+	scope?: PrincipalScope;
 }
 
 export interface UpdateServiceAccountRequest {
@@ -70,30 +61,6 @@ export interface UpdateServiceAccountRequest {
 	description?: string;
 	clientIds?: string[];
 	scope?: PrincipalScope;
-}
-
-export interface RegenerateTokenResponse {
-	authToken: string;
-}
-
-export interface RegenerateSecretResponse {
-	signingSecret: string;
-}
-
-export interface RoleAssignment {
-	roleName: string;
-	assignmentSource: string;
-	assignedAt: string;
-}
-
-export interface RolesResponse {
-	roles: RoleAssignment[];
-}
-
-export interface RolesAssignedResponse {
-	roles: RoleAssignment[];
-	addedRoles: string[];
-	removedRoles: string[];
 }
 
 export interface ServiceAccountFilters {
@@ -146,7 +113,8 @@ export const serviceAccountsApi = {
 	},
 
 	/**
-	 * Update a service account's metadata. Responds 204 — refetch afterwards.
+	 * Update a service account's metadata. Returns 204 (no body) — reload or
+	 * patch local state from the request after a successful save.
 	 */
 	update(id: string, data: UpdateServiceAccountRequest): Promise<void> {
 		return apiFetch(`/service-accounts/${id}`, {
@@ -167,16 +135,6 @@ export const serviceAccountsApi = {
 	// ==================== Credential Management ====================
 
 	/**
-	 * Update the auth token with a custom value.
-	 */
-	updateAuthToken(id: string, authToken: string): Promise<ServiceAccount> {
-		return apiFetch(`/service-accounts/${id}/auth-token`, {
-			method: "PUT",
-			body: JSON.stringify({ authToken }),
-		});
-	},
-
-	/**
 	 * Regenerate the auth token (returns new token, shown only once).
 	 */
 	regenerateToken(id: string): Promise<RegenerateTokenResponse> {
@@ -190,6 +148,17 @@ export const serviceAccountsApi = {
 	 */
 	regenerateSecret(id: string): Promise<RegenerateSecretResponse> {
 		return apiFetch(`/service-accounts/${id}/regenerate-secret`, {
+			method: "POST",
+		});
+	},
+
+	/**
+	 * Mint a short-lived bearer token for the service account (anchor-only,
+	 * audited). Same claims as a client_credentials exchange; expires in an
+	 * hour and is never shown again — treat it as a live credential.
+	 */
+	mintToken(id: string): Promise<ServiceAccountTokenResponse> {
+		return apiFetch(`/service-accounts/${id}/token`, {
 			method: "POST",
 		});
 	},
@@ -210,6 +179,53 @@ export const serviceAccountsApi = {
 		return apiFetch(`/service-accounts/${id}/roles`, {
 			method: "PUT",
 			body: JSON.stringify({ roles }),
+		});
+	},
+
+	// ==================== Application Access ====================
+	//
+	// A service account's roles + application access live on its linked SERVICE
+	// principal, not the service-account row, so these target the shared
+	// /principals/{principalId}/application-access endpoints. The principal id
+	// comes from ServiceAccountResponse.principalId (single-account read).
+
+	/**
+	 * Get the application access grants for a service account's principal.
+	 */
+	getApplicationAccess(
+		principalId: string,
+	): Promise<ApplicationAccessListResponse> {
+		return apiFetch(`/principals/${principalId}/application-access`);
+	},
+
+	/**
+	 * Get applications available to grant to a service account's principal.
+	 */
+	getAvailableApplications(
+		principalId: string,
+	): Promise<AvailableApplicationsResponse> {
+		return apiFetch(`/principals/${principalId}/available-applications`);
+	},
+
+	/**
+	 * Declaratively set a service account's application access. allApplications is
+	 * omitted (left unchanged) unless explicitly passed; only an all-applications
+	 * administrator may set it true (backend-enforced).
+	 */
+	assignApplicationAccess(
+		principalId: string,
+		applicationIds: string[],
+		allApplications?: boolean,
+	): Promise<SetApplicationAccessResponse> {
+		const body: { applicationIds: string[]; allApplications?: boolean } = {
+			applicationIds,
+		};
+		if (allApplications !== undefined) {
+			body.allApplications = allApplications;
+		}
+		return apiFetch(`/principals/${principalId}/application-access`, {
+			method: "PUT",
+			body: JSON.stringify(body),
 		});
 	},
 };

@@ -1,53 +1,34 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
-import {
-	dispatchPoolsApi,
-	type DispatchPool,
-	type DispatchPoolStatus,
-} from "@/api/dispatch-pools";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { dispatchPoolsApi, type DispatchPool } from "@/api/dispatch-pools";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const pools = ref<DispatchPool[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
-		q:      { type: "string", key: "q" },
-		status: { type: "string", key: "status" },
+		q: { type: "string" as const, key: "q" },
+		status: { type: "string" as const, key: "status" },
 	},
 });
+const { filters } = listState;
 
-const statusOptions = [
-	{ label: "All Statuses", value: null },
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[{ field: "status", param: "status" }],
+);
+
+const statusFilterOptions = [
 	{ label: "Active", value: "ACTIVE" },
 	{ label: "Suspended", value: "SUSPENDED" },
 	{ label: "Archived", value: "ARCHIVED" },
 ];
-
-const filteredPools = computed(() => {
-	let result = pools.value;
-
-	if (filters.status.value) {
-		result = result.filter((pool) => pool.status === filters.status.value);
-	}
-
-	if (filters.q.value) {
-		const query = filters.q.value.toLowerCase();
-		result = result.filter(
-			(pool) =>
-				pool.code.toLowerCase().includes(query) ||
-				pool.name.toLowerCase().includes(query) ||
-				pool.clientIdentifier?.toLowerCase().includes(query),
-		);
-	}
-
-	return result;
-});
 
 onMounted(async () => {
 	await loadPools();
@@ -67,7 +48,19 @@ async function loadPools() {
 	}
 }
 
-function getStatusSeverity(status: DispatchPoolStatus) {
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/dispatch-pools/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({ path: "/dispatch-pools/new", query: route.query });
+}
+
+// Wire status is plain string (spec carries no enum); default covers unknowns.
+function getStatusSeverity(status: string) {
 	switch (status) {
 		case "ACTIVE":
 			return "success";
@@ -99,40 +92,53 @@ function getScopeLabel(pool: DispatchPool) {
         <h1 class="page-title">Dispatch Pools</h1>
         <p class="page-subtitle">Manage rate limiting and concurrency for dispatch jobs</p>
       </div>
-      <Button label="Create Pool" icon="pi pi-plus" @click="router.push('/dispatch-pools/new')" />
+      <Button label="Create Pool" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search pools..." />
-        </IconField>
-        <Select
-          v-model="filters.status.value"
-          :options="statusOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Filter by status"
-          class="status-filter"
-        />
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredPools"
+        :value="pools"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['code', 'name', 'clientIdentifier']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No dispatch pools found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search pools..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.status.value"
+                    :options="statusFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+        <template #empty>No dispatch pools found</template>
+
         <Column field="code" header="Code" sortable>
           <template #body="{ data }">
             <code class="pool-code">{{ data.code }}</code>
@@ -161,54 +167,28 @@ function getScopeLabel(pool: DispatchPool) {
             {{ formatDate(data.createdAt) }}
           </template>
         </Column>
-        <Column header="Actions" style="width: 120px">
+        <Column header="Actions" style="width: 80px">
           <template #body="{ data }">
             <Button
-              icon="pi pi-eye"
-              text
-              rounded
-              v-tooltip="'View'"
-              @click="navigateToDetail(`/dispatch-pools/${data.id}`)"
-            />
-            <Button
+              v-tooltip="'Edit'"
               icon="pi pi-pencil"
               text
               rounded
-              v-tooltip="'Edit'"
-              @click="navigateToDetail(`/dispatch-pools/${data.id}`)"
+              @click.stop="openDetail(data.id, true)"
             />
           </template>
         </Column>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadPools" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.search-wrapper {
-  flex: 1;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.status-filter {
-  min-width: 180px;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

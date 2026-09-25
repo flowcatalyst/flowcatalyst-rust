@@ -1,25 +1,19 @@
 import { apiFetch } from "./client";
+import type {
+	ConnectionListResponse as GenConnectionListResponse,
+	ConnectionResponse,
+} from "./generated";
 
+// Request-side string union the filters rely on. The generated response
+// types deliberately stay `string` (the spec doesn't carry enums — see
+// docs/frontend-api-types-adoption.md on SDK coordination).
 export type ConnectionStatus = "ACTIVE" | "PAUSED";
 
-export interface Connection {
-	id: string;
-	code: string;
-	name: string;
-	description?: string;
-	externalId?: string;
-	serviceAccountId: string;
-	clientId?: string;
-	clientIdentifier?: string;
-	status: ConnectionStatus;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface ConnectionListResponse {
-	connections: Connection[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports.
+export type Connection = ConnectionResponse;
+export type ConnectionListResponse = GenConnectionListResponse;
 
 export interface CreateConnectionRequest {
 	code: string;
@@ -39,11 +33,6 @@ export interface UpdateConnectionRequest {
 export interface ConnectionFilters {
 	clientId?: string;
 	status?: ConnectionStatus;
-}
-
-export interface StatusResponse {
-	message: string;
-	connectionId: string;
 }
 
 export const connectionsApi = {
@@ -74,19 +63,21 @@ export const connectionsApi = {
 		});
 	},
 
-	delete(id: string): Promise<StatusResponse> {
+	delete(id: string): Promise<void> {
 		return apiFetch(`/connections/${id}`, {
 			method: "DELETE",
 		});
 	},
 
-	pause(id: string): Promise<StatusResponse> {
+	/** Returns the updated connection (the wire sends the full entity, not a status envelope). */
+	pause(id: string): Promise<Connection> {
 		return apiFetch(`/connections/${id}/pause`, {
 			method: "POST",
 		});
 	},
 
-	activate(id: string): Promise<StatusResponse> {
+	/** Returns the updated connection (the wire sends the full entity, not a status envelope). */
+	activate(id: string): Promise<Connection> {
 		return apiFetch(`/connections/${id}/activate`, {
 			method: "POST",
 		});

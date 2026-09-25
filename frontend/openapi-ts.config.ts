@@ -1,36 +1,35 @@
+import { existsSync } from "fs";
 import { defineConfig } from "@hey-api/openapi-ts";
 
-// Default to the snapshotted JSON spec (refreshed by `just regen-sdks`).
+// Default to the backend's committed OpenAPI lockfile — the same contract
+// the lockfile coverage test (Java) / `make api-diff` (Go) gate — so the SPA's
+// generated types can never drift from what the server actually serves.
+// OPENAPI_LIVE=true points at a running server instead (useful while
+// iterating on an unmerged backend change).
+//
+// This file is shared verbatim between the Go repo (`../api/openapi.lock.json`)
+// and the Java repo (`../server/src/main/resources/openapi/openapi.lock.json`,
+// a byte-for-byte copy of the same file) — it picks whichever path exists at
+// run time, so the Go side can take it as-is. See docs/go-mirror/2026-09-14-frontend-source-shared.md.
+const goLockfile = "../api/openapi.lock.json";
+const javaLockfile = "../server/src/main/resources/openapi/openapi.lock.json";
 const livePort = process.env.FC_API_PORT ?? "8080";
 const openApiInput =
 	process.env.OPENAPI_LIVE === "true"
 		? `http://localhost:${livePort}/q/openapi`
-		: "./openapi/openapi.json";
+		: existsSync(goLockfile)
+			? goLockfile
+			: javaLockfile;
 
-// The function API is a second, separate document: Java's
-// `functions.openapi.json` plus Rust's backward-compatible additions, which
-// the platform serves verbatim at `GET /api/openapi-functions.json`
-// (crates/fc-platform/src/function/openapi.rs).
-// Types only — `api/functions.ts` wraps them over the hand-rolled
-// `api/client.ts`, as Java's SPA does (docs/spec/function-ui.md §1 there).
-const functionsOpenApiInput =
-	"../crates/fc-platform/resources/openapi/functions.openapi.json";
-
-export default defineConfig([
-	{
-		input: openApiInput,
-		output: {
-			path: "src/api/generated",
-		},
-		postProcess: [],
-		plugins: ["@hey-api/typescript", "@hey-api/sdk", "@hey-api/client-fetch"],
+export default defineConfig({
+	input: openApiInput,
+	output: {
+		path: "src/api/generated",
 	},
-	{
-		input: functionsOpenApiInput,
-		output: {
-			path: "src/api/generated-functions",
-		},
-		postProcess: [],
-		plugins: ["@hey-api/typescript"],
-	},
-]);
+	postProcess: [],
+	// Types only: the app's transport is the hand-rolled api/client.ts
+	// (toasts, 401 handling, field errors). The previously-generated fetch
+	// client + SDK were never imported by app code, and the retry layer
+	// attached to them never executed.
+	plugins: ["@hey-api/typescript"],
+});

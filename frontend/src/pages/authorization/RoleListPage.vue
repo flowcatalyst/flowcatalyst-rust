@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { toast } from "@/utils/errorBus";
 import { ref, computed, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useConfirm } from "primevue/useconfirm";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 import {
 	rolesApi,
 	type Role,
@@ -10,15 +12,18 @@ import {
 	type ApplicationOption,
 } from "@/api/roles";
 
-const { navigateToDetail } = useReturnTo();
+const router = useRouter();
+const route = useRoute();
+const confirm = useConfirm();
 
 // Data
 const roles = ref<Role[]>([]);
 const applications = ref<ApplicationOption[]>([]);
 const loading = ref(true);
-const initialLoading = ref(true);
 
-const { filters, hasActiveFilters, clearFilters } = useListState(
+// Hybrid list: application/source are server-side filters (onChange refetch);
+// q stays client-side via the DataTable filter engine below.
+const listState = useListState(
 	{
 		filters: {
 			q: { type: "string", key: "q" },
@@ -28,24 +33,23 @@ const { filters, hasActiveFilters, clearFilters } = useListState(
 	},
 	() => loadRoles(),
 );
+const { filters } = listState;
+
+// application/source rows arrive pre-filtered from the server, so their meta
+// constraints are no-ops here — the specs still feed the toolbar badge.
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "applicationCode", param: "application" },
+		{ field: "source", param: "source" },
+	],
+);
 
 const sourceOptions = [
 	{ label: "Code-defined", value: "CODE" },
 	{ label: "Admin-created", value: "DATABASE" },
 	{ label: "SDK-registered", value: "SDK" },
 ];
-
-// Filtered roles based on search (client-side since roles are not server-paginated)
-const filteredRoles = computed(() => {
-	if (!filters.q.value) return roles.value;
-	const query = filters.q.value.toLowerCase();
-	return roles.value.filter(
-		(role) =>
-			role.name.toLowerCase().includes(query) ||
-			role.displayName?.toLowerCase().includes(query) ||
-			role.description?.toLowerCase().includes(query),
-	);
-});
 
 // Create dialog
 const showCreateDialog = ref(false);
@@ -62,20 +66,9 @@ const isCreateFormValid = computed(() => {
 	return createForm.value.applicationCode && createForm.value.name.trim();
 });
 
-// Edit dialog
-const showEditDialog = ref(false);
-const editingRole = ref<Role | null>(null);
-const editForm = ref({
-	displayName: "",
-	description: "",
-});
-const updating = ref(false);
-const updateError = ref<string | null>(null);
-
 // Initialize
 onMounted(async () => {
 	await Promise.all([loadRoles(), loadApplications()]);
-	initialLoading.value = false;
 });
 
 async function loadRoles() {
@@ -105,7 +98,18 @@ async function loadApplications() {
 }
 
 function viewRole(role: Role) {
-	navigateToDetail(`/authorization/roles/${encodeURIComponent(role.name)}`);
+	// Role names contain ":" — encode so the name stays a single path segment.
+	void router.push({
+		path: `/authorization/roles/${encodeURIComponent(role.name)}`,
+		query: route.query,
+	});
+}
+
+function editRole(role: Role) {
+	// Straight to the full-page permission-catalogue editor.
+	void router.push(
+		`/authorization/roles/${encodeURIComponent(role.name)}/edit`,
+	);
 }
 
 function openCreateDialog() {
@@ -145,48 +149,18 @@ async function createRole() {
 	}
 }
 
-function openEditDialog(role: Role) {
-	editingRole.value = role;
-	editForm.value = {
-		displayName: role.displayName || "",
-		description: role.description || "",
-	};
-	updateError.value = null;
-	showEditDialog.value = true;
-}
-
-async function updateRole() {
-	if (!editingRole.value) return;
-
-	updating.value = true;
-	updateError.value = null;
-
-	try {
-		await rolesApi.update(editingRole.value.name, {
-			displayName: editForm.value.displayName || undefined,
-			description: editForm.value.description || undefined,
-		});
-
-		toast.success("Success", "Role updated successfully");
-		showEditDialog.value = false;
-		loadRoles();
-	} catch (e) {
-		updateError.value =
-			e instanceof Error ? e.message : "Failed to update role";
-	} finally {
-		updating.value = false;
-	}
+function confirmDeleteRole(role: Role) {
+	confirm.require({
+		message: `Are you sure you want to delete the role "${role.displayName || role.name}"?`,
+		header: "Delete Role",
+		icon: "pi pi-exclamation-triangle",
+		acceptLabel: "Delete",
+		acceptClass: "p-button-danger",
+		accept: () => void deleteRole(role),
+	});
 }
 
 async function deleteRole(role: Role) {
-	if (
-		!confirm(
-			`Are you sure you want to delete the role "${role.displayName || role.name}"?`,
-		)
-	) {
-		return;
-	}
-
 	try {
 		await rolesApi.delete(role.name);
 		toast.success("Success", "Role deleted successfully");
@@ -232,66 +206,13 @@ function getSourceLabel(source: RoleSource) {
       <Button label="Create Role" icon="pi pi-plus" @click="openCreateDialog" />
     </header>
 
-    <!-- Filters -->
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Search</label>
-          <IconField>
-            <InputIcon class="pi pi-search" />
-            <InputText v-model="filters.q.value" placeholder="Search roles..." class="filter-input" />
-          </IconField>
-        </div>
-
-        <div class="filter-group">
-          <label>Application</label>
-          <Select
-            v-model="filters.application.value"
-            :options="applications"
-            optionLabel="name"
-            optionValue="code"
-            placeholder="All Applications"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Source</label>
-          <Select
-            v-model="filters.source.value"
-            :options="sourceOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Sources"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-    </div>
-
     <!-- Data Table -->
     <div class="fc-card table-card">
-      <div v-if="initialLoading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredRoles"
+        :value="roles"
         :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['name', 'displayName', 'description']"
         :paginator="true"
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
@@ -300,7 +221,53 @@ function getSourceLabel(source: RoleSource) {
         size="small"
         @row-click="(e) => viewRole(e.data)"
         :rowHover="true"
+        :rowClass="() => 'clickable-row'"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search roles..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.application.value"
+                    :options="applications"
+                    optionLabel="name"
+                    optionValue="code"
+                    placeholder="All applications"
+                    showClear
+                    filter
+                    filterPlaceholder="Type to filter..."
+                    autoFilterFocus
+                    resetFilterOnHide
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Source">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.source.value"
+                    :options="sourceOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All sources"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column header="Role" style="width: 25%">
           <template #body="{ data }">
             <div class="role-info clickable">
@@ -338,17 +305,9 @@ function getSourceLabel(source: RoleSource) {
           </template>
         </Column>
 
-        <Column header="Actions" style="width: 10%">
+        <Column header="Actions" style="width: 7%">
           <template #body="{ data }">
             <div class="action-buttons" @click.stop>
-              <Button
-                icon="pi pi-eye"
-                text
-                rounded
-                severity="secondary"
-                v-tooltip.left="'View role'"
-                @click="viewRole(data)"
-              />
               <Button
                 v-if="data.source === 'DATABASE'"
                 icon="pi pi-pencil"
@@ -356,7 +315,7 @@ function getSourceLabel(source: RoleSource) {
                 rounded
                 severity="secondary"
                 v-tooltip.left="'Edit role'"
-                @click="openEditDialog(data)"
+                @click="editRole(data)"
               />
               <Button
                 v-if="data.source === 'DATABASE'"
@@ -365,7 +324,7 @@ function getSourceLabel(source: RoleSource) {
                 rounded
                 severity="danger"
                 v-tooltip.left="'Delete role'"
-                @click="deleteRole(data)"
+                @click="confirmDeleteRole(data)"
               />
             </div>
           </template>
@@ -375,7 +334,12 @@ function getSourceLabel(source: RoleSource) {
           <div class="empty-message">
             <i class="pi pi-inbox"></i>
             <span>No roles found</span>
-            <Button v-if="hasActiveFilters" label="Clear filters" link @click="clearFilters" />
+            <Button
+              v-if="listState.hasActiveFilters.value"
+              label="Clear filters"
+              link
+              @click="clearAll"
+            />
           </div>
         </template>
       </DataTable>
@@ -458,103 +422,17 @@ function getSourceLabel(source: RoleSource) {
       </template>
     </Dialog>
 
-    <!-- Edit Role Dialog -->
-    <Dialog
-      v-model:visible="showEditDialog"
-      header="Edit Role"
-      :modal="true"
-      :closable="true"
-      :style="{ width: '500px' }"
-    >
-      <form @submit.prevent="updateRole">
-        <div class="dialog-form">
-          <div class="form-field">
-            <label>Role Name</label>
-            <InputText :model-value="editingRole?.name" disabled class="full-width" />
-          </div>
-
-          <div class="form-field">
-            <label>Display Name</label>
-            <InputText
-              v-model="editForm.displayName"
-              placeholder="e.g., Administrator"
-              class="full-width"
-            />
-          </div>
-
-          <div class="form-field">
-            <label>Description</label>
-            <Textarea
-              v-model="editForm.description"
-              placeholder="What this role grants access to"
-              :rows="3"
-              class="full-width"
-            />
-          </div>
-
-          <Message v-if="updateError" severity="error" class="error-message">
-            {{ updateError }}
-          </Message>
-        </div>
-      </form>
-
-      <template #footer>
-        <Button
-          label="Cancel"
-          icon="pi pi-times"
-          severity="secondary"
-          outlined
-          @click="showEditDialog = false"
-        />
-        <Button label="Save Changes" icon="pi pi-check" :loading="updating" @click="updateRole" />
-      </template>
-    </Dialog>
+    <!-- Drawer outlet: the role detail child route renders over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadRoles" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 180px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #475569;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-actions {
-  margin-left: auto;
-}
-
 .table-card {
   padding: 0;
   overflow: hidden;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 60px;
 }
 
 .role-info {
@@ -665,21 +543,5 @@ function getSourceLabel(source: RoleSource) {
 
 :deep(.p-datatable .p-datatable-tbody > tr:hover) {
   background: #f8fafc;
-}
-
-@media (max-width: 1024px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    margin-left: 0;
-    margin-top: 8px;
-  }
 }
 </style>

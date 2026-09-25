@@ -7,12 +7,16 @@ export interface PlatformFeatures {
 
 export interface PlatformConfig {
 	features: PlatformFeatures;
+	// Configurable brand name; the SPA uses it for the document title and as the
+	// fallback brand. Defaults to "FlowCatalyst".
+	platformName: string;
 }
 
 const DEFAULT_CONFIG: PlatformConfig = {
 	features: {
 		messagingEnabled: true,
 	},
+	platformName: "FlowCatalyst",
 };
 
 export const usePlatformConfigStore = defineStore("platformConfig", () => {
@@ -26,15 +30,23 @@ export const usePlatformConfigStore = defineStore("platformConfig", () => {
 		() => config.value.features.messagingEnabled,
 	);
 
+	const platformName = computed(
+		() => config.value.platformName || DEFAULT_CONFIG.platformName,
+	);
+
 	// Actions
-	async function loadConfig(): Promise<void> {
-		if (isLoaded.value) return;
+	async function loadConfig(force = false): Promise<void> {
+		if (isLoaded.value && !force) return;
 
 		try {
 			const response = await fetch("/api/config/platform");
 			if (response.ok) {
 				const data = await response.json();
-				config.value = data;
+				config.value = { ...DEFAULT_CONFIG, ...data };
+				// Reflect the configured brand in the browser tab.
+				if (config.value.platformName) {
+					document.title = config.value.platformName;
+				}
 			} else {
 				console.warn("Failed to load platform config, using defaults");
 			}
@@ -59,6 +71,7 @@ export const usePlatformConfigStore = defineStore("platformConfig", () => {
 		error,
 		// Computed
 		messagingEnabled,
+		platformName,
 		// Actions
 		loadConfig,
 		reset,

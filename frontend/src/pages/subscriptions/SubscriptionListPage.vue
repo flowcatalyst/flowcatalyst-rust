@@ -1,30 +1,34 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
-import {
-	subscriptionsApi,
-	type Subscription,
-	type SubscriptionStatus,
-} from "@/api/subscriptions";
+import { useRoute, useRouter } from "vue-router";
+import { subscriptionsApi, type Subscription } from "@/api/subscriptions";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const subscriptions = ref<Subscription[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string" as const, key: "q" },
 		status: { type: "string" as const, key: "status" },
 		application: { type: "array" as const, key: "app" },
 	},
 });
+const { filters } = listState;
 
-const statusOptions = [
-	{ label: "All Statuses", value: "" },
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "status", param: "status" },
+		{ field: "applicationCode", param: "application" },
+	],
+);
+
+const statusFilterOptions = [
 	{ label: "Active", value: "ACTIVE" },
 	{ label: "Paused", value: "PAUSED" },
 ];
@@ -39,36 +43,6 @@ const applicationOptions = computed(() => {
 	return Array.from(codes)
 		.toSorted()
 		.map((code: string) => ({ label: code, value: code }));
-});
-
-const filteredSubscriptions = computed(() => {
-	let result = subscriptions.value;
-
-	if (filters.status.value) {
-		result = result.filter((sub) => sub.status === filters.status.value);
-	}
-
-	if (filters.application.value.length > 0) {
-		result = result.filter(
-			(sub) =>
-				sub.applicationCode &&
-				filters.application.value.includes(sub.applicationCode),
-		);
-	}
-
-	if (filters.q.value) {
-		const query = filters.q.value.toLowerCase();
-		result = result.filter(
-			(sub) =>
-				sub.code.toLowerCase().includes(query) ||
-				sub.name.toLowerCase().includes(query) ||
-				(sub.connectionId?.toLowerCase().includes(query) ?? false) ||
-				sub.applicationCode?.toLowerCase().includes(query) ||
-				sub.clientIdentifier?.toLowerCase().includes(query),
-		);
-	}
-
-	return result;
 });
 
 onMounted(async () => {
@@ -89,7 +63,19 @@ async function loadSubscriptions() {
 	}
 }
 
-function getStatusSeverity(status: SubscriptionStatus) {
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/subscriptions/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({ path: "/subscriptions/new", query: route.query });
+}
+
+// Wire status is plain string (spec carries no enum); default covers unknowns.
+function getStatusSeverity(status: string) {
 	switch (status) {
 		case "ACTIVE":
 			return "success";
@@ -137,53 +123,67 @@ function getEventTypesLabel(sub: Subscription) {
         <h1 class="page-title">Subscriptions</h1>
         <p class="page-subtitle">Manage event subscriptions and webhook routing</p>
       </div>
-      <Button
-        label="Create Subscription"
-        icon="pi pi-plus"
-        @click="router.push('/subscriptions/new')"
-      />
+      <Button label="Create Subscription" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search subscriptions..." />
-        </IconField>
-        <MultiSelect
-          v-model="filters.application.value"
-          :options="applicationOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Filter by application"
-          class="application-filter"
-          display="chip"
-        />
-        <Select
-          v-model="filters.status.value"
-          :options="statusOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Filter by status"
-          class="status-filter"
-        />
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredSubscriptions"
+        :value="subscriptions"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['code', 'name', 'connectionId', 'applicationCode', 'clientIdentifier']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No subscriptions found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search subscriptions..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.application.value"
+                    :options="applicationOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All applications"
+                    display="chip"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.status.value"
+                    :options="statusFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+        <template #empty>No subscriptions found</template>
+
         <Column field="code" header="Code" sortable>
           <template #body="{ data }">
             <code class="sub-code">{{ data.code }}</code>
@@ -226,58 +226,28 @@ function getEventTypesLabel(sub: Subscription) {
             {{ formatDate(data.createdAt) }}
           </template>
         </Column>
-        <Column header="Actions" style="width: 120px">
+        <Column header="Actions" style="width: 80px">
           <template #body="{ data }">
             <Button
-              icon="pi pi-eye"
-              text
-              rounded
-              v-tooltip="'View'"
-              @click="navigateToDetail(`/subscriptions/${data.id}`)"
-            />
-            <Button
+              v-tooltip="'Edit'"
               icon="pi pi-pencil"
               text
               rounded
-              v-tooltip="'Edit'"
-              @click="navigateToDetail(`/subscriptions/${data.id}`)"
+              @click.stop="openDetail(data.id, true)"
             />
           </template>
         </Column>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadSubscriptions" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.search-wrapper {
-  flex: 1;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.status-filter {
-  min-width: 180px;
-}
-
-.application-filter {
-  min-width: 220px;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

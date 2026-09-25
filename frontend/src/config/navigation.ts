@@ -1,12 +1,15 @@
-import { canEnterRoute } from "@/stores/permissions";
-import type { User } from "@/stores/auth";
-
 export interface NavItem {
 	label: string;
 	icon: string;
 	route?: string;
 	children?: NavItem[];
 	expanded?: boolean;
+	// Restrict an item to a single audience by scope. "anchor" shows only to
+	// anchor-scoped users (platform admins); "client" shows only to client/
+	// partner-scoped users (client-administrators). Used to split the platform
+	// user-management page from the client-scoped one. Omit for items everyone
+	// who holds the route permission may see.
+	scope?: "anchor" | "client";
 }
 
 export interface NavGroup {
@@ -22,6 +25,8 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 				label: "Dashboard",
 				icon: "pi pi-home",
 				route: "/dashboard",
+				// Platform-wide stats — anchor (platform-admin) audience only.
+				scope: "anchor",
 			},
 		],
 	},
@@ -32,11 +37,18 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 				label: "User Management",
 				icon: "pi pi-users",
 				route: "/users",
+				scope: "anchor",
 			},
 			{
 				label: "Service Accounts",
 				icon: "pi pi-server",
 				route: "/identity/service-accounts",
+			},
+			{
+				label: "Developer Users",
+				icon: "pi pi-code",
+				route: "/identity/developer-users",
+				scope: "anchor",
 			},
 			{
 				label: "Identity Providers",
@@ -57,11 +69,49 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 				label: "Roles",
 				icon: "pi pi-shield",
 				route: "/authorization/roles",
+				// Role-definition management is a platform concern; client
+				// administrators assign roles to users from the client-scoped
+				// user pages and never manage the role catalogue itself.
+				scope: "anchor",
 			},
 			{
 				label: "Permissions",
 				icon: "pi pi-lock",
 				route: "/authorization/permissions",
+				scope: "anchor",
+			},
+		],
+	},
+	{
+		label: "Client Administration",
+		items: [
+			{
+				label: "User Management",
+				icon: "pi pi-users",
+				route: "/client-administration/users",
+				scope: "client",
+			},
+			{
+				label: "Reset Approvals",
+				icon: "pi pi-shield",
+				route: "/authentication/reset-approvals",
+			},
+		],
+	},
+	{
+		// The portal plane: the portals each client runs for its customers,
+		// and those portals' end users (separate from platform users).
+		label: "Portal",
+		items: [
+			{
+				label: "Portal Apps",
+				icon: "pi pi-window-maximize",
+				route: "/identity/portal-apps",
+			},
+			{
+				label: "Portal Users",
+				icon: "pi pi-globe",
+				route: "/identity/portal-users",
 			},
 		],
 	},
@@ -89,6 +139,13 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 				route: "/platform/audit-log",
 			},
 			{
+				label: "Documentation",
+				icon: "pi pi-book",
+				route: "/platform/docs",
+				// Platform reference docs — administrators to start.
+				scope: "anchor",
+			},
+			{
 				label: "Login Attempts",
 				icon: "pi pi-sign-in",
 				route: "/platform/login-attempts",
@@ -102,6 +159,11 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 						label: "Theme",
 						icon: "pi pi-palette",
 						route: "/platform/settings/theme",
+					},
+					{
+						label: "Names",
+						icon: "pi pi-tag",
+						route: "/platform/settings/names",
 					},
 				],
 			},
@@ -165,26 +227,6 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 		],
 	},
 	{
-		label: "Functions",
-		items: [
-			{
-				label: "Functions",
-				icon: "pi pi-code",
-				route: "/functions",
-			},
-			{
-				label: "Function Domains",
-				icon: "pi pi-globe",
-				route: "/function-domains",
-			},
-			{
-				label: "Function Policies",
-				icon: "pi pi-shield",
-				route: "/function-policies",
-			},
-		],
-	},
-	{
 		label: "Developer",
 		items: [
 			{
@@ -200,31 +242,3 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 		],
 	},
 ];
-
-/**
- * The navigation a user may see: an item whose route the user cannot enter
- * (the route guard's rule, `canEnterRoute`: the page's permission, and anchor
- * tier for an anchor-only page) is hidden, a
- * parent is hidden once none of its children is left, and so is a group left
- * empty.
- */
-export function visibleNavigation(
-	groups: readonly NavGroup[],
-	user: Pick<User, "roles" | "permissions" | "scope"> | null | undefined,
-): NavGroup[] {
-	const visible = (item: NavItem): NavItem | null => {
-		if (item.children) {
-			const children = item.children
-				.map(visible)
-				.filter((c): c is NavItem => c !== null);
-			return children.length > 0 ? { ...item, children } : null;
-		}
-		return !item.route || canEnterRoute(user, item.route) ? item : null;
-	};
-	return groups
-		.map((group) => ({
-			...group,
-			items: group.items.map(visible).filter((i): i is NavItem => i !== null),
-		}))
-		.filter((group) => group.items.length > 0);
-}

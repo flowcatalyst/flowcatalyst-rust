@@ -9,10 +9,10 @@ html,
 body {
 	height: 100%;
 	margin: 0;
-	/* 14px base scales every rem-based PrimeVue token down ~12% from the
-	   browser default 16px. Pairs with the FlowCatalystPreset density tokens
-	   in main.ts. */
-	font-size: 14px;
+	/* 12.6px base scales every rem-based PrimeVue token down ~10% from the
+	   previous 14px (and ~21% from the browser default 16px). Pairs with the
+	   FlowCatalystPreset density tokens in main.ts. */
+	font-size: 12.6px;
 	font-family:
 		"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 		"Helvetica Neue", Arial, sans-serif;
@@ -149,3 +149,99 @@ h6 {
 	font-size: 12px;
 }
 
+/* Reserve the scrollbar gutter so modal drawers (blockScroll toggles body
+   overflow) don't reflow the page by the scrollbar width on open/close */
+html {
+	scrollbar-gutter: stable;
+}
+
+/* Rows that open the record drawer on click */
+.p-datatable .clickable-row {
+	cursor: pointer;
+}
+
+/* PrimeVue's blockScroll also pads the body by the scrollbar width — with the
+   gutter permanently reserved above, that padding would narrow the content by
+   ~15px on every drawer open (the "judder"). Neutralize it. */
+body.p-overflow-hidden {
+	padding-right: 0 !important;
+}
+
+/* Form layout kit (FcFormField / FcFormSection / FcDetailField) */
+.fc-form {
+	max-width: 900px;
+}
+
+.fc-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px 20px;
+}
+
+.fc-detail-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px 20px;
+}
+
+.fc-span-2 {
+	grid-column: 1 / -1;
+}
+
+/* Collapse to one column in narrow containers (FcFormSection bodies are
+   container roots — this is what makes the same markup work inside drawers) */
+@container (max-width: 640px) {
+	.fc-form-grid,
+	.fc-detail-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 640px) {
+	.fc-form-grid,
+	.fc-detail-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
+.fc-field-label {
+	display: block;
+	font-size: 13px;
+	font-weight: 500;
+	color: #475569;
+	margin-bottom: 4px;
+}
+
+.fc-required {
+	color: #dc2626;
+}
+
+.fc-field-help {
+	display: block;
+	margin-top: 4px;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.fc-field-error {
+	display: block;
+	margin-top: 4px;
+	font-size: 12px;
+	color: #dc2626;
+}
+
+.fc-detail-value {
+	font-size: 14px;
+	color: #1e293b;
+	overflow-wrap: break-word;
+}
+
+/* Inputs fill their form field */
+.fc-form-field .p-inputtext,
+.fc-form-field .p-select,
+.fc-form-field .p-multiselect,
+.fc-form-field .p-inputnumber,
+.fc-form-field .p-textarea,
+.fc-form-field .p-autocomplete {
+	width: 100%;
+}

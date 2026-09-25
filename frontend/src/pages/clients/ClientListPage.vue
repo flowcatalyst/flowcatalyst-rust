@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { clientsApi, type Client } from "@/api/clients";
 
 const PAGE_SIZE = 100;
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const clients = ref<Client[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const hasMore = ref(false);
 
-const { filters, page } = useListState(
+const listState = useListState(
 	{
 		filters: {
 			q: { type: "string", key: "q" },
@@ -23,16 +23,14 @@ const { filters, page } = useListState(
 	},
 	() => loadClients(),
 );
+const { filters, page } = listState;
 
-const filteredClients = computed(() => {
-	if (!filters.q.value) return clients.value;
-	const query = filters.q.value.toLowerCase();
-	return clients.value.filter(
-		(client) =>
-			client.identifier.toLowerCase().includes(query) ||
-			client.name.toLowerCase().includes(query),
-	);
-});
+// Hybrid list: the server fetch is a page window (Prev/Next below); the quick
+// search filters CLIENT-SIDE within the fetched window via the global filter.
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[],
+);
 
 onMounted(async () => {
 	await loadClients();
@@ -62,6 +60,17 @@ async function nextPage() {
 	await loadClients();
 }
 
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/clients/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({ path: "/clients/new", query: route.query });
+}
+
 function getStatusSeverity(status: string) {
 	switch (status) {
 		case "ACTIVE":
@@ -87,29 +96,33 @@ function formatDate(dateString: string) {
         <h1 class="page-title">Clients</h1>
         <p class="page-subtitle">Manage customer clients and their configurations</p>
       </div>
-      <Button label="Create Client" icon="pi pi-plus" @click="router.push('/clients/new')" />
+      <Button label="Create Client" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search clients..." />
-        </IconField>
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredClients"
+        :value="clients"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['identifier', 'name']"
         stripedRows
-        emptyMessage="No clients found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search clients..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          />
+        </template>
+        <template #empty>No clients found</template>
+
         <Column field="identifier" header="Identifier" sortable>
           <template #body="{ data }">
             <code class="client-code">{{ data.identifier }}</code>
@@ -126,26 +139,20 @@ function formatDate(dateString: string) {
             {{ formatDate(data.createdAt) }}
           </template>
         </Column>
-        <Column header="Actions" style="width: 120px">
+        <Column header="Actions" style="width: 80px">
           <template #body="{ data }">
             <Button
-              icon="pi pi-eye"
-              text
-              rounded
-              v-tooltip="'View'"
-              @click="navigateToDetail(`/clients/${data.id}`)"
-            />
-            <Button
+              v-tooltip="'Edit'"
               icon="pi pi-pencil"
               text
               rounded
-              v-tooltip="'Edit'"
-              @click="navigateToDetail(`/clients/${data.id}`)"
+              @click.stop="openDetail(data.id, true)"
             />
           </template>
         </Column>
       </DataTable>
 
+      <!-- Server page-window pagination (the list endpoint reports no total) -->
       <div v-if="!loading" class="pagination">
         <Button
           v-if="page > 0"
@@ -164,24 +171,15 @@ function formatDate(dateString: string) {
         />
       </div>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadClients" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 16px;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

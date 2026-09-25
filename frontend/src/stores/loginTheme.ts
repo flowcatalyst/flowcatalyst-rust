@@ -26,11 +26,49 @@ const DEFAULT_THEME: LoginTheme = {
 	footerText: "Secure access to your FlowCatalyst platform",
 };
 
+// The tenant client whose branding the login surface should wear. A
+// relying party names it via /oauth/authorize?client=<identifier>, which
+// forwards it to /auth/login. It is remembered for the tab's lifetime so
+// the forgot-password and reset pages — reached by links that carry no
+// query string — stay branded.
+const CLIENT_STORAGE_KEY = "fc_login_client";
+
+/**
+ * Normalizes a `client` route-query value. vue-router types a query entry
+ * as `string | null` or an array of those, so a repeated param collapses
+ * to its first usable entry.
+ */
+export function normalizeClientParam(
+	value: string | null | undefined | (string | null)[],
+): string | undefined {
+	const raw = Array.isArray(value) ? value[0] : value;
+	const trimmed = typeof raw === "string" ? raw.trim() : "";
+	return trimmed === "" ? undefined : trimmed;
+}
+
+function rememberClient(identifier?: string): string | undefined {
+	try {
+		if (identifier) {
+			sessionStorage.setItem(CLIENT_STORAGE_KEY, identifier);
+			return identifier;
+		}
+		return sessionStorage.getItem(CLIENT_STORAGE_KEY) || undefined;
+	} catch {
+		// Private-browsing / disabled storage — branding is best-effort.
+		return identifier;
+	}
+}
+
 export const useLoginThemeStore = defineStore("loginTheme", () => {
 	// State
 	const theme = ref<LoginTheme>(DEFAULT_THEME);
 	const isLoaded = ref(false);
 	const error = ref<string | null>(null);
+	// The client the currently-held theme was fetched for. Keying the
+	// cache on it (rather than a bare isLoaded flag) lets a second page
+	// re-fetch when it names a different client, while still collapsing
+	// repeat loads for the same one.
+	const loadedClient = ref<string | undefined>(undefined);
 
 	// Computed
 	const hasCustomLogo = computed(() =>
@@ -42,12 +80,23 @@ export const useLoginThemeStore = defineStore("loginTheme", () => {
 	);
 
 	// Actions
-	async function loadTheme(clientId?: string): Promise<void> {
-		if (isLoaded.value) return;
+
+	/**
+	 * Loads the login theme, optionally branded for a tenant client.
+	 *
+	 * `clientIdentifier` is the client's URL-safe slug, taken from the
+	 * `client` query param. Omitting it falls back to the one remembered
+	 * earlier in this tab, then to the platform-wide theme. The backend
+	 * layers the client's theme over the platform one field by field, so
+	 * anything the client hasn't overridden still shows through.
+	 */
+	async function loadTheme(clientIdentifier?: string): Promise<void> {
+		const client = rememberClient(clientIdentifier);
+		if (isLoaded.value && loadedClient.value === client) return;
 
 		try {
-			const url = clientId
-				? `/api/public/login-theme?clientId=${encodeURIComponent(clientId)}`
+			const url = client
+				? `/api/public/login-theme?client=${encodeURIComponent(client)}`
 				: "/api/public/login-theme";
 
 			const response = await fetch(url);
@@ -62,6 +111,7 @@ export const useLoginThemeStore = defineStore("loginTheme", () => {
 			error.value = err instanceof Error ? err.message : "Unknown error";
 		} finally {
 			isLoaded.value = true;
+			loadedClient.value = client;
 		}
 	}
 
@@ -86,6 +136,7 @@ export const useLoginThemeStore = defineStore("loginTheme", () => {
 	function reset(): void {
 		theme.value = DEFAULT_THEME;
 		isLoaded.value = false;
+		loadedClient.value = undefined;
 		error.value = null;
 
 		// Remove custom CSS
@@ -99,6 +150,7 @@ export const useLoginThemeStore = defineStore("loginTheme", () => {
 		// State
 		theme,
 		isLoaded,
+		loadedClient,
 		error,
 		// Computed
 		hasCustomLogo,

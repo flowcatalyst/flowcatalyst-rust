@@ -1,3 +1,6 @@
+// Stays hand-rolled: auth surface. The routes ARE in the OpenAPI spec
+// (huma), but the browser-ceremony payloads (navigator.credentials shapes,
+// Set-Cookie session handling) don't map onto the generated types usefully.
 /**
  * WebAuthn / passkey API client.
  *
@@ -24,7 +27,10 @@ import type {
 	AuthenticationResponseJSON,
 } from "@simplewebauthn/browser";
 
-const WEBAUTHN_URL = "/auth/webauthn";
+import { authFetch } from "./client";
+
+// Paths below are relative to authFetch's /auth prefix.
+const WEBAUTHN = "/webauthn";
 
 export interface CredentialSummary {
 	id: string;
@@ -54,21 +60,11 @@ interface AuthenticateCompleteResponse {
 	roles: string[];
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-	const response = await fetch(`${WEBAUTHN_URL}${path}`, {
+const postJson = <T>(path: string, body: unknown) =>
+	authFetch<T>(`${WEBAUTHN}${path}`, {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
-		credentials: "include",
 	});
-	if (!response.ok) {
-		const errorBody = await response.json().catch(() => ({}));
-		const message =
-			errorBody.message || errorBody.error || `Request failed (${response.status})`;
-		throw new Error(message);
-	}
-	return response.json();
-}
 
 /**
  * Register a new passkey for the currently authenticated user.
@@ -123,24 +119,15 @@ export async function authenticateWithPasskey(
 
 /** List the current user's registered passkeys. */
 export async function listPasskeys(): Promise<CredentialSummary[]> {
-	const response = await fetch(`${WEBAUTHN_URL}/credentials`, {
-		credentials: "include",
-	});
-	if (!response.ok) {
-		throw new Error("Failed to list passkeys");
-	}
-	return response.json();
+	return authFetch<CredentialSummary[]>(`${WEBAUTHN}/credentials`);
 }
 
 /** Revoke a specific passkey. */
 export async function revokePasskey(credentialId: string): Promise<void> {
-	const response = await fetch(
-		`${WEBAUTHN_URL}/credentials/${encodeURIComponent(credentialId)}`,
-		{ method: "DELETE", credentials: "include" },
+	await authFetch<void>(
+		`${WEBAUTHN}/credentials/${encodeURIComponent(credentialId)}`,
+		{ method: "DELETE" },
 	);
-	if (!response.ok) {
-		throw new Error("Failed to revoke passkey");
-	}
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  * BFF Event Type contracts — local type stubs.
  *
- * These mirror the shapes returned by the Rust BFF endpoints
+ * These mirror the shapes returned by the BFF endpoints
  * so the frontend can consume them without depending on the
  * TypeScript backend package.
  */

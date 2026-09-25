@@ -1,113 +1,72 @@
 import { apiFetch } from "./client";
+import type {
+	ApplicationAccessListResponse as GenApplicationAccessListResponse,
+	ApplicationAccessResponse,
+	BulkImportResponse as GenBulkImportResponse,
+	BulkImportResult,
+	CheckEmailDomainResponse,
+	ClientAccessGrantResponse,
+	DeveloperUserListResponse as GenDeveloperUserListResponse,
+	PrincipalAvailableApplication,
+	PrincipalAvailableApplicationsResponse,
+	PrincipalListResponse,
+	PrincipalResponse,
+	PrincipalRoleAssignmentDto,
+	RolesAssignedResponse as GenRolesAssignedResponse,
+	SetApplicationAccessResponse,
+	SetDeveloperCredentialResponse as GenSetDeveloperCredentialResponse,
+} from "./generated";
 
+// Request-side string unions the forms rely on. The generated response
+// types deliberately stay `string` (the spec doesn't carry enums — see
+// docs/frontend-api-types-adoption.md on SDK coordination).
 export type PrincipalType = "USER" | "SERVICE";
 export type IdpType = "INTERNAL" | "OIDC" | "SAML";
 export type PrincipalScope = "ANCHOR" | "PARTNER" | "CLIENT";
 
-export interface User {
-	id: string;
-	type: PrincipalType;
-	scope: PrincipalScope | null;
-	clientId: string | null;
-	name: string;
-	active: boolean;
-	email: string | null;
-	idpType: IdpType | null;
-	roles: string[];
-	isAnchorUser: boolean;
-	grantedClientIds: string[];
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface UserListResponse {
-	principals: User[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports.
+export type User = PrincipalResponse;
+export type UserListResponse = PrincipalListResponse;
+export type ClientAccessGrant = ClientAccessGrantResponse;
+export type RoleAssignment = PrincipalRoleAssignmentDto;
+export type RolesAssignedResponse = GenRolesAssignedResponse;
+export type ApplicationAccessGrant = ApplicationAccessResponse;
+export type ApplicationAccessListResponse = GenApplicationAccessListResponse;
+export type ApplicationAccessAssignedResponse = SetApplicationAccessResponse;
+export type AvailableApplication = PrincipalAvailableApplication;
+export type AvailableApplicationsResponse =
+	PrincipalAvailableApplicationsResponse;
+export type EmailDomainCheckResponse = CheckEmailDomainResponse;
+export type BulkImportResultRow = BulkImportResult;
+export type BulkImportResponse = GenBulkImportResponse;
+export type DeveloperUserListResponse = GenDeveloperUserListResponse;
+export type SetDeveloperCredentialResponse = GenSetDeveloperCredentialResponse;
 
 export interface CreateUserRequest {
 	email: string;
 	password?: string; // Optional - only required for INTERNAL auth users
 	name: string;
+	/**
+	 * Optional; defaults to CLIENT on the backend. ANCHOR/PARTNER are only
+	 * honoured when the email domain's setup backs them — send the
+	 * derivedScope from checkEmailDomain.
+	 */
+	scope?: PrincipalScope;
+	/** A clt_ id or the client's identifier slug (backend resolves either). */
 	clientId?: string;
 }
 
-export interface ClientAccessGrant {
-	id: string;
-	clientId: string;
-	grantedAt: string;
-	expiresAt: string | null;
-}
-
 export interface UpdateUserRequest {
-	name: string;
-	scope?: PrincipalScope;
-	clientId?: string | null;
+	name?: string;
+	active?: boolean;
+	/** Optional; asserted against the stored email — a different value is rejected, not a rename. */
+	email?: string;
 }
 
-export interface RoleAssignment {
-	id: string;
-	roleName: string;
-	assignmentSource: string;
-	assignedAt: string;
-}
-
-export interface RolesAssignedResponse {
-	roles: RoleAssignment[];
-	added: string[];
-	removed: string[];
-}
-
-export interface ApplicationAccessGrant {
-	applicationId: string;
-	applicationCode: string;
-	applicationName: string;
-}
-
-export interface ApplicationAccessListResponse {
-	applications: ApplicationAccessGrant[];
-	total: number;
-	/** Access to every application, present and future; the list is moot when true. */
-	allApplications: boolean;
-}
-
-export interface ApplicationAccessAssignedResponse {
-	applications: ApplicationAccessGrant[];
-	added: number;
-	removed: number;
-	/** The principal's all-applications flag after the change. */
-	allApplications: boolean;
-}
-
-export interface AvailableApplication {
-	id: string;
-	code: string;
-	name: string;
-}
-
-export interface AvailableApplicationsResponse {
-	applications: AvailableApplication[];
-}
-
-export interface EmailDomainCheckResponse {
-	domain: string;
-	authProvider: string;
-	isAnchorDomain: boolean;
-	hasIdpConfig: boolean;
-	emailExists: boolean;
-	info: string | null;
-	warning: string | null;
-	/** Scope the user will be created with — ANCHOR / PARTNER / CLIENT. */
-	derivedScope: PrincipalScope;
-	/** True when the form must supply a clientId before submit. */
-	requiresClientId: boolean;
-	/**
-	 * Allow-list of client IDs the form should constrain the picker to.
-	 * Empty when there is no per-domain restriction; the picker can show the
-	 * full active-clients list in that case.
-	 */
-	allowedClientIds: string[];
-}
+/** Explicit-intent change of a user's scope/client association (anchor-gated). */
+export type ClientAssociationMode = "CHANGE_CLIENT" | "TO_PARTNER";
 
 export interface UserFilters {
 	clientId?: string;
@@ -141,8 +100,11 @@ export const usersApi = {
 		return apiFetch(`/principals${query ? `?${query}` : ""}`);
 	},
 
-	get(id: string): Promise<User> {
-		return apiFetch(`/principals/${id}`);
+	get(
+		id: string,
+		opts?: { suppressGlobalErrorToast?: boolean; suppressAuthErrorEvent?: boolean },
+	): Promise<User> {
+		return apiFetch(`/principals/${id}`, opts);
 	},
 
 	create(data: CreateUserRequest): Promise<User> {
@@ -156,6 +118,23 @@ export const usersApi = {
 		return apiFetch(`/principals/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
+		});
+	},
+
+	/**
+	 * Change a user's scope/client association with explicit intent (anchor-gated).
+	 * Pass clientId "*" to make the user an ANCHOR; otherwise supply a mode:
+	 * CHANGE_CLIENT (replace home client) or TO_PARTNER (promote to PARTNER,
+	 * keeping the old client and adding the new one).
+	 */
+	setClientAssociation(
+		id: string,
+		clientId: string,
+		mode?: ClientAssociationMode,
+	): Promise<User> {
+		return apiFetch(`/principals/${id}/client-association`, {
+			method: "PUT",
+			body: JSON.stringify({ clientId, mode }),
 		});
 	},
 
@@ -186,6 +165,34 @@ export const usersApi = {
 	sendPasswordReset(id: string): Promise<{ message: string }> {
 		return apiFetch(`/principals/${id}/send-password-reset`, {
 			method: "POST",
+		});
+	},
+
+	/**
+	 * Clear a user's enrolled 2FA (factors, recovery codes, pending PINs, trusted
+	 * devices). The user must re-enroll at next sign-in if their domain requires
+	 * 2FA — i.e. this re-triggers 2FA onboarding for a lost-device recovery.
+	 */
+	resetTwoFactor(id: string): Promise<{ message: string }> {
+		return apiFetch(`/principals/${id}/reset-2fa`, {
+			method: "POST",
+		});
+	},
+
+	/**
+	 * Create a CLIENT-scope user in a specific client. Used by the client-admin
+	 * user-management page; goes through POST /principals with an explicit scope
+	 * (the email-domain-driven /principals/users path derives scope instead).
+	 */
+	createClientUser(data: {
+		email: string;
+		name: string;
+		password?: string;
+		clientId: string;
+	}): Promise<{ id: string }> {
+		return apiFetch("/principals", {
+			method: "POST",
+			body: JSON.stringify({ ...data, scope: "CLIENT" }),
 		});
 	},
 
@@ -270,20 +277,75 @@ export const usersApi = {
 	},
 
 	/**
-	 * Batch assign application access to a user or service account.
+	 * Batch assign application access to a user.
 	 * This is a declarative operation - sets the complete application access list.
 	 * Applications not in the list will be removed, new applications will be added.
-	 * `allApplications`, when given, sets access to every application; omitted
-	 * leaves it unchanged.
 	 */
 	assignApplicationAccess(
 		id: string,
 		applicationIds: string[],
 		allApplications?: boolean,
 	): Promise<ApplicationAccessAssignedResponse> {
+		// allApplications is omitted (left unchanged) unless explicitly passed;
+		// only an all-applications administrator may set it true (backend-enforced).
+		const body: { applicationIds: string[]; allApplications?: boolean } = {
+			applicationIds,
+		};
+		if (allApplications !== undefined) {
+			body.allApplications = allApplications;
+		}
 		return apiFetch(`/principals/${id}/application-access`, {
 			method: "PUT",
-			body: JSON.stringify({ applicationIds, allApplications }),
+			body: JSON.stringify(body),
+		});
+	},
+
+	/**
+	 * Bulk-import CLIENT users for a client (CSV onboarding). Missing users are
+	 * created with the listed roles (validated against the client's apps);
+	 * existing users are skipped. Returns a per-row outcome.
+	 */
+	bulkImport(
+		clientId: string,
+		users: BulkImportUserRow[],
+	): Promise<BulkImportResponse> {
+		return apiFetch("/principals/bulk-import", {
+			method: "POST",
+			body: JSON.stringify({ clientId, users }),
+		});
+	},
+
+	// Self-service developer API credentials (client_credentials, principal-as-client_id)
+
+	/** Every USER principal currently holding the developer role. */
+	listDeveloperUsers(): Promise<DeveloperUserListResponse> {
+		return apiFetch("/principals/developer-users");
+	},
+
+	/**
+	 * Create or rotate a principal's developer client_credentials secret.
+	 * Callable on your own id (if you hold the developer role) or, by a user
+	 * administrator, on someone else's. The plaintext secret is only ever
+	 * returned in this response — never again.
+	 */
+	setDeveloperCredential(id: string): Promise<SetDeveloperCredentialResponse> {
+		return apiFetch(`/principals/${id}/developer-credential`, {
+			method: "POST",
+		});
+	},
+
+	/** Revoke a principal's developer client_credentials secret. */
+	revokeDeveloperCredential(id: string): Promise<void> {
+		return apiFetch(`/principals/${id}/developer-credential`, {
+			method: "DELETE",
 		});
 	},
 };
+
+// Request shape for bulkImport (hand-rolled: the CSV form always sends
+// roles, so it stays required here even though the wire accepts absent).
+export interface BulkImportUserRow {
+	name: string;
+	email: string;
+	roles: string[];
+}

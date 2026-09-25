@@ -1,14 +1,19 @@
-import type { NavigationGuardNext, RouteLocationNormalized } from "vue-router";
+import {
+	START_LOCATION,
+	type NavigationGuardNext,
+	type RouteLocationNormalized,
+} from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import {
 	usePermissionsStore,
 	getRoutePermission,
-	lacksAnchor,
-	requiresAnchor,
-	userCan,
+	canAccessPath,
+	canSeeScope,
+	userScope,
+	landingPath,
 } from "@/stores/permissions";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
-import { checkSession } from "@/api/auth";
+import { checkSession, oauthAuthorizeUrl } from "@/api/auth";
 
 /**
  * Guard that ensures user is authenticated.
@@ -79,32 +84,20 @@ export async function guestGuard(
 			return;
 		}
 
-		// Check if this is an OAuth flow - redirect to /oauth/authorize to complete it
+		// Check if this is an OAuth flow - redirect to /oauth/authorize to
+		// complete it (shared field list — see api/auth.ts). The session
+		// cookie is sent and the auth code issued.
 		if (to.query['oauth'] === "true") {
-			const oauthParams = new URLSearchParams();
-			const oauthFields = [
-				"response_type",
-				"client_id",
-				"redirect_uri",
-				"scope",
-				"state",
-				"code_challenge",
-				"code_challenge_method",
-				"nonce",
-			];
-			for (const field of oauthFields) {
+			window.location.href = oauthAuthorizeUrl((field) => {
 				const value = to.query[field];
-				if (value && typeof value === "string") {
-					oauthParams.set(field, value);
-				}
-			}
-			// Redirect to OAuth authorize - the session cookie will be sent and auth code issued
-			window.location.href = `/oauth/authorize?${oauthParams.toString()}`;
+				return typeof value === "string" ? value : null;
+			});
 			return;
 		}
 
-		// Normal case - redirect to dashboard (replace to avoid back-button loop)
-		next({ path: "/dashboard", replace: true });
+		// Normal case - go to the dashboard, or the profile if the user has no
+		// roles (replace to avoid a back-button loop).
+		next({ path: landingPath(authStore.user), replace: true });
 		return;
 	}
 
@@ -139,13 +132,14 @@ export function roleGuard(requiredRole: string) {
 export function permissionGuard(requiredPermission: string) {
 	return (
 		to: RouteLocationNormalized,
-		from: RouteLocationNormalized,
+		_from: RouteLocationNormalized,
 		next: NavigationGuardNext,
 	): void => {
 		const authStore = useAuthStore();
 		const permissionsStore = usePermissionsStore();
+		const permissions = authStore.user?.permissions || [];
 
-		if (userCan(authStore.user, requiredPermission)) {
+		if (permissions.includes(requiredPermission)) {
 			next();
 			return;
 		}
@@ -158,12 +152,8 @@ export function permissionGuard(requiredPermission: string) {
 			path: to.fullPath,
 		});
 
-		// Stay on current page or go to dashboard if no history
-		if (from.name) {
-			next(false);
-		} else {
-			next("/dashboard");
-		}
+		// Direct the user to their profile — somewhere they can always access.
+		next({ path: "/profile", replace: true });
 	};
 }
 
@@ -172,66 +162,86 @@ export function permissionGuard(requiredPermission: string) {
  * This should be registered as a global beforeEach guard.
  */
 export function createRoutePermissionGuard() {
-	return (
+	return async (
 		to: RouteLocationNormalized,
 		from: RouteLocationNormalized,
 		next: NavigationGuardNext,
-	): void => {
+	): Promise<void> => {
 		const authStore = useAuthStore();
 		const permissionsStore = usePermissionsStore();
 
-		// Skip for unauthenticated users (authGuard will handle)
+		// A cold page load reaches this global guard BEFORE the route's
+		// authGuard has hydrated the session, so isAuthenticated is still
+		// false. Settle the session first on authenticated routes — otherwise
+		// the permission checks below never run for the very navigation a
+		// role-less user types in (e.g. /dashboard would stay put instead of
+		// landing on /profile). authGuard then finds the session ready.
+		if (!authStore.isAuthenticated && authStore.isLoading && requiresAuth(to)) {
+			await checkSession();
+		}
+
+		// Unauthenticated users pass through — authGuard redirects to login.
 		if (!authStore.isAuthenticated) {
 			next();
 			return;
 		}
 
-		// An anchor-only page, for a user known not to be anchor tier.
-		if (requiresAnchor(to.path) && lacksAnchor(authStore.user)) {
+		// Profile is always reachable — it's where we send users who can't go
+		// elsewhere, so never bounce them away from it.
+		if (to.path === "/profile") {
+			next();
+			return;
+		}
+
+		// Scope-restricted routes (e.g. the platform vs client-scoped user pages)
+		// send the wrong-scope user to their own equivalent instead of a bare
+		// denial, so a client-admin who follows a /users link lands on their page.
+		const requiredScope = (to.meta as { scope?: "anchor" | "client" }).scope;
+		if (!canSeeScope(authStore.user, requiredScope)) {
+			next({
+				path:
+					userScope(authStore.user) === "client"
+						? "/client-administration/users"
+						: "/users",
+				replace: true,
+			});
+			return;
+		}
+
+		// Accessible routes (no requirement, or the user holds a matching
+		// permission — wildcards included) are allowed through.
+		if (canAccessPath(authStore.user, to.path)) {
+			next();
+			return;
+		}
+
+		// Only surface the "permission denied" modal when the user DELIBERATELY
+		// navigated to a forbidden page from somewhere in the app. An automatic
+		// landing — the initial page load, straight after login, or a redirect
+		// such as "/" -> "/dashboard" — should quietly route a no-access user to
+		// their profile instead of greeting them with a denial dialog.
+		const isAutomaticLanding =
+			from === START_LOCATION ||
+			from.path.startsWith("/auth") ||
+			to.redirectedFrom != null;
+		if (!isAutomaticLanding) {
 			permissionsStore.showPermissionDenied({
 				type: "route",
-				message: "This page is available to platform (anchor) users only.",
+				message: "You do not have permission to access this page.",
+				requiredPermission: getRoutePermission(to.path) ?? "",
 				path: to.fullPath,
 			});
-			if (from.name) {
-				next(false);
-			} else {
-				next("/dashboard");
-			}
-			return;
 		}
 
-		// Skip for routes without permission requirements
-		const requiredPermission = getRoutePermission(to.path);
-		if (!requiredPermission) {
-			next();
-			return;
-		}
-
-		// The user's permissions grant one of the route's (wildcards
-		// included); a backend without `permissions` falls back to the
-		// admin-role rule (see `userCan`).
-		if (userCan(authStore.user, requiredPermission)) {
-			next();
-			return;
-		}
-
-		// Show permission denied modal
-		permissionsStore.showPermissionDenied({
-			type: "route",
-			message: "You do not have permission to access this page.",
-			requiredPermission:
-				typeof requiredPermission === "string"
-					? requiredPermission
-					: requiredPermission.join(" or "),
-			path: to.fullPath,
-		});
-
-		// Stay on current page or go to dashboard if no history
-		if (from.name) {
-			next(false);
-		} else {
-			next("/dashboard");
-		}
+		// Direct the user to their profile — somewhere they can always access.
+		next({ path: "/profile", replace: true });
 	};
+}
+
+/** Whether any matched route record is guarded by authGuard. */
+function requiresAuth(to: RouteLocationNormalized): boolean {
+	return to.matched.some((record) => {
+		const guard = record.beforeEnter;
+		return guard === authGuard || (Array.isArray(guard) && guard.includes(authGuard));
+	});
 }
