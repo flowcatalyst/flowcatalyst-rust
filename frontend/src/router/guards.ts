@@ -3,6 +3,8 @@ import { useAuthStore } from "@/stores/auth";
 import {
 	usePermissionsStore,
 	getRoutePermission,
+	lacksAnchor,
+	requiresAnchor,
 	userCan,
 } from "@/stores/permissions";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
@@ -181,6 +183,21 @@ export function createRoutePermissionGuard() {
 		// Skip for unauthenticated users (authGuard will handle)
 		if (!authStore.isAuthenticated) {
 			next();
+			return;
+		}
+
+		// An anchor-only page, for a user known not to be anchor tier.
+		if (requiresAnchor(to.path) && lacksAnchor(authStore.user)) {
+			permissionsStore.showPermissionDenied({
+				type: "route",
+				message: "This page is available to platform (anchor) users only.",
+				path: to.fullPath,
+			});
+			if (from.name) {
+				next(false);
+			} else {
+				next("/dashboard");
+			}
 			return;
 		}
 

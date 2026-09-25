@@ -217,15 +217,71 @@ export function userHasPermission(
 }
 
 /**
- * Anchor-or-partner scope: `/auth/me` only carries a `clientId` for a
- * CLIENT-scope principal, so a principal without one may act for other
- * owners (the platform, or a client it picks). The server's reach rule
- * still decides what each call may touch.
+ * Anchor-or-partner scope: a principal that may act for other owners (the
+ * platform, or a client it picks). Decided by the tier `/auth/me` reports;
+ * a backend without it falls back to "no home client". The server's reach
+ * rule still decides what each call may touch.
  */
 export function isUnscopedUser(
-	user: { clientId: string | null } | null | undefined,
+	user: { clientId: string | null; scope?: string | null } | null | undefined,
 ): boolean {
-	return !!user && !user.clientId;
+	if (!user) return false;
+	if (user.scope) return user.scope !== "CLIENT";
+	return !user.clientId;
+}
+
+/**
+ * Pages whose main endpoint needs anchor reach on top of its permission (Go's
+ * `anchorWith` reads: clients, identity providers, email-domain mappings,
+ * OAuth clients, CORS origins, login attempts; Rust keeps anchor on audit
+ * logs and function policies). A detail or `new` page inherits its list's
+ * entry, as with [`ROUTE_PERMISSIONS`].
+ */
+export const ANCHOR_ROUTES: readonly string[] = [
+	"/clients",
+	"/authentication/identity-providers",
+	"/authentication/email-domain-mappings",
+	"/authentication/oauth-clients",
+	"/platform/cors",
+	"/platform/audit-log",
+	"/platform/login-attempts",
+	"/function-policies",
+];
+
+/** Whether `path` (or its nearest mapped ancestor) is an anchor-only page. */
+export function requiresAnchor(path: string): boolean {
+	const segments = path.split("/").filter(Boolean);
+	for (let n = segments.length; n > 0; n--) {
+		if (ANCHOR_ROUTES.includes("/" + segments.slice(0, n).join("/"))) return true;
+	}
+	return false;
+}
+
+/**
+ * Whether the user is known not to have anchor reach. An unknown tier (a
+ * backend whose `/auth/me` predates `scope`) is not held against the user:
+ * the server refuses what it must.
+ */
+export function lacksAnchor(
+	user: { scope?: string | null } | null | undefined,
+): boolean {
+	return !!user?.scope && user.scope !== "ANCHOR";
+}
+
+/**
+ * Whether the user may enter the page at `path`: its tier where the page is
+ * anchor-only, and its permission. The route guard and the sidebar both use
+ * this, so the sidebar never shows what the guard refuses.
+ */
+export function canEnterRoute(
+	user:
+		| { roles: string[]; permissions: string[] | null; scope?: string | null }
+		| null
+		| undefined,
+	path: string,
+): boolean {
+	if (requiresAnchor(path) && lacksAnchor(user)) return false;
+	return userCan(user, getRoutePermission(path));
 }
 
 /**
