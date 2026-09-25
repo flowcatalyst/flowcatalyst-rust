@@ -516,7 +516,10 @@ pub async fn emit_events(
         if !node.is_object() {
             return Err(invalid().into());
         }
-        let bytes = node.to_json_string().len();
+        // The bytes as received (owner decision 5): what the host sent is
+        // what is limited, not a re-serialisation that drops whitespace and
+        // unescapes `\uXXXX`.
+        let bytes = raw.get().len();
         if bytes > MAX_EMIT_DATA_BYTES {
             return Err(UseCaseError::validation(
                 "EVENT_DATA_TOO_LARGE",
