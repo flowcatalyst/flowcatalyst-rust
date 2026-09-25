@@ -7,6 +7,8 @@
 //! lifecycle), so they bypass UoW. Same for instance log entries.
 
 pub mod api;
+pub mod cron;
+pub mod cron_migration;
 pub mod entity;
 pub mod instance_repository;
 pub mod operations;

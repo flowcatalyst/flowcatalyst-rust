@@ -12,6 +12,7 @@ use serde_json::Value;
 use fc_function_signing::SignaturesMode;
 use fc_platform::function::artifact::PlatformArtifactRef;
 use fc_platform::function::schedule_check::{parse_cron, zone_id_valid};
+use fc_platform::scheduled_job::cron::JobZone;
 
 fn golden() -> Value {
     let path =
@@ -37,10 +38,29 @@ fn cron_expressions_parse_as_java_parses_them() {
     }
 }
 
+/// As Java accepts them, except the legacy `SystemV/*` ids: Java accepts
+/// them, the scheduler's tz database cannot evaluate them, and the owner
+/// ruled them `TIMEZONE_INVALID` (decision 2 of 2026-09-25). Every id that
+/// is accepted is one the scheduler evaluates.
 #[test]
 fn zone_ids_are_accepted_as_java_accepts_them() {
+    let mut refused_unlike_java = Vec::new();
     for (id, want) in table("zone") {
-        assert_eq!(zone_id_valid(&id), want.as_bool().unwrap(), "{id:?}");
+        let got = zone_id_valid(&id);
+        if want.as_bool().unwrap() && !got {
+            refused_unlike_java.push(id.clone());
+        } else {
+            assert_eq!(got, want.as_bool().unwrap(), "{id:?}");
+        }
+        if got {
+            assert!(JobZone::parse(&id).is_some(), "{id:?} is not evaluable");
+        }
+    }
+    refused_unlike_java.sort();
+    assert_eq!(refused_unlike_java.len(), 13, "{refused_unlike_java:?}");
+    for id in &refused_unlike_java {
+        assert!(id.starts_with("SystemV/"), "{id:?}");
+        assert!(JobZone::parse(id).is_none(), "{id:?}");
     }
 }
 

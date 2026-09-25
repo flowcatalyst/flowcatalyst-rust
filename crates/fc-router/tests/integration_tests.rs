@@ -95,6 +95,21 @@ impl QueueConsumer for TestQueueConsumer {
     }
 }
 
+/// Waits (up to 10 s) until `done` holds. The pools deliver on their own
+/// tasks, so a fixed sleep is a guess that fails once the machine is busy
+/// (a parallel `cargo test --workspace`); this waits for the outcome
+/// itself.
+async fn eventually(what: &str, done: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn create_test_message(id: &str, pool_code: &str, target: &str) -> Message {
     Message {
         id: id.to_string(),
@@ -172,8 +187,7 @@ async fn test_end_to_end_successful_delivery() {
         .await
         .unwrap();
 
-    // Wait for processing
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    eventually("the ACK", || !consumer.acked_handles().is_empty()).await;
 
     // Verify ACK was sent
     let acked = consumer.acked_handles();
@@ -235,7 +249,7 @@ async fn test_end_to_end_failed_delivery() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    eventually("the NACK", || !consumer.nacked_handles().is_empty()).await;
 
     // Verify NACK was sent (failure)
     let nacked = consumer.nacked_handles();
@@ -292,7 +306,7 @@ async fn test_end_to_end_config_error_no_retry() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    eventually("the ACK", || !consumer.acked_handles().is_empty()).await;
 
     // Config errors (4xx) should be ACK'd to prevent infinite retries
     // The message is removed from the queue without retry
@@ -368,7 +382,7 @@ async fn test_end_to_end_multiple_pools() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    eventually("3 ACKs", || consumer.acked_handles().len() >= 3).await;
 
     // All 3 messages should be processed
     assert_eq!(request_count.load(Ordering::SeqCst), 3);
@@ -424,7 +438,7 @@ async fn test_end_to_end_custom_delay_response() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    eventually("the NACK", || !consumer.nacked_handles().is_empty()).await;
 
     // Should NACK with delay
     let nacked = consumer.nacked_handles();
@@ -483,7 +497,7 @@ async fn test_end_to_end_batch_processing() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    eventually("20 ACKs", || consumer.acked_handles().len() >= 20).await;
 
     // All messages should be processed
     assert_eq!(request_count.load(Ordering::SeqCst), 20);
@@ -492,8 +506,14 @@ async fn test_end_to_end_batch_processing() {
 
 #[tokio::test]
 async fn test_end_to_end_connection_error() {
-    // Use a port that's definitely not listening
-    let target = "http://127.0.0.1:59999/webhook";
+    // A port nothing listens on: bound by the OS, then released (a fixed
+    // port may be taken by another test or process).
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let target = &format!("http://127.0.0.1:{port}/webhook");
 
     let config = HttpMediatorConfig {
         max_retries: 1,
@@ -530,7 +550,7 @@ async fn test_end_to_end_connection_error() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    eventually("the NACK", || !consumer.nacked_handles().is_empty()).await;
 
     // Should NACK due to connection error
     let nacked = consumer.nacked_handles();
@@ -614,7 +634,7 @@ async fn test_end_to_end_auth_token() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    eventually("the ACK", || !consumer.acked_handles().is_empty()).await;
 
     // Should ACK - auth header was correctly sent
     assert_eq!(consumer.acked_handles().len(), 1);

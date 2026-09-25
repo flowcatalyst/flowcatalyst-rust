@@ -4,10 +4,10 @@
 //! whose sources are byte-identical to the pin `0118cdca`):
 //!
 //! - the trigger keys and pool code (`FunctionTriggerSync.fid` / `hash8`);
-//! - the cron dialect: every cron a manifest may declare, stored as promote
-//!   stores it and walked by the Rust scheduler's own reader, fires at the
-//!   instants Java's `CronExpression.next` gives, in region and fixed-offset
-//!   zones, across a daylight-saving gap;
+//! - the cron dialect: every cron a manifest may declare, stored as written
+//!   (as promote and Java store it) and walked by the Rust scheduler's own
+//!   reader, fires at the instants Java's `CronExpression.next` gives, in
+//!   region and fixed-offset zones, across a daylight-saving gap;
 //! - the `plan` of `manifest/check`, as a JSON value
 //!   (`FunctionApi.PromotePlanResponse`);
 //! - delivery signing: the platform's signer gives Java `WebhookSigner`'s
@@ -20,7 +20,6 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use fc_platform::dispatch_job::delivery_credentials::Resolved;
-use fc_platform::function::cron_dialect::scheduler_crons;
 use fc_platform::function::operations::promote_plan::{
     Conflict, PoolAction, PromotePlan, PublicRoutesAction, RouteKey, ScheduleAction,
     SubscriptionAction, Wiring,
@@ -73,13 +72,13 @@ fn trigger_keys_are_javas() {
     }
 }
 
-/// Promote stores `scheduler_crons(cron)`; the poller's reader walks it.
+/// Promote stores the cron as written; the poller's reader walks it.
 #[test]
 fn stored_crons_fire_on_the_rust_scheduler_when_java_fires_them() {
     let golden = golden();
     let start = instant(&golden["start"]);
     let cases = golden["cron"].as_array().unwrap();
-    assert!(cases.len() > 100, "{} cases", cases.len());
+    assert_eq!(cases.len(), 140);
     for case in cases {
         let cron = case["cron"].as_str().unwrap();
         let zone = case["zone"].as_str().unwrap();
@@ -89,66 +88,25 @@ fn stored_crons_fire_on_the_rust_scheduler_when_java_fires_them() {
             .iter()
             .map(instant)
             .collect();
-        let stored = scheduler_crons(cron).unwrap_or_else(|e| panic!("{cron}: {e:?}"));
+        let stored = vec![cron.to_string()];
 
         let mut got = Vec::new();
         let mut t = start;
         for _ in 0..want.len() {
             let next = next_slot_after(&stored, zone, t)
-                .unwrap_or_else(|e| panic!("{cron} as {stored:?} in {zone}: {e}"))
-                .unwrap_or_else(|| panic!("{cron} as {stored:?} in {zone}: no next slot"));
+                .unwrap_or_else(|| panic!("{cron} in {zone}: no next slot"));
             got.push(next);
             t = next;
         }
-        assert_eq!(got, want, "{cron} (stored {stored:?}) in {zone}");
+        assert_eq!(got, want, "{cron} in {zone}");
 
         // The poller's own question: the latest slot in (start, last].
         let last = *want.last().unwrap();
         assert_eq!(
-            latest_slot_in_window(&stored, zone, start, last).unwrap(),
+            latest_slot_in_window(&stored, zone, start, last),
             Some(last),
             "{cron} in {zone}"
         );
-    }
-}
-
-/// The control: stored as written, these would fire at other instants (or
-/// not at all) on the Rust scheduler.
-#[test]
-fn stored_as_written_they_would_not() {
-    let golden = golden();
-    let start = instant(&golden["start"]);
-    for cron in [
-        "0 0 9 * * 1-5",
-        "0 0 0 13 * 5",
-        "0 0 12 ? * 0",
-        "0 30 8 1-7 * mon",
-    ] {
-        let case = golden["cron"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|c| c["cron"] == cron && c["zone"] == "UTC")
-            .unwrap();
-        let java: Vec<DateTime<Utc>> = case["fires"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(instant)
-            .collect();
-        let raw = vec![cron.to_string()];
-        let mut t = start;
-        let mut got = Vec::new();
-        for _ in 0..java.len() {
-            match next_slot_after(&raw, "UTC", t) {
-                Ok(Some(next)) => {
-                    got.push(next);
-                    t = next;
-                }
-                _ => break,
-            }
-        }
-        assert_ne!(got, java, "{cron}");
     }
 }
 

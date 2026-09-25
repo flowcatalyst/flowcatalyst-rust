@@ -363,10 +363,17 @@ async fn write_all(stream: &OutputStream, mut bytes: &[u8]) -> Result<(), String
         stream.write(&bytes[..take]).map_err(stream_error)?;
         bytes = &bytes[take..];
     }
-    stream.flush().map_err(stream_error)?;
+    // Every byte is with the host now. The host stops taking the body once
+    // the declared `content-length` has gone out, so the stream may already
+    // be closed here: that is the body sent, not a failure (a connection
+    // that died instead shows in the response, which is checked first).
+    let settled = |r: Result<u64, StreamError>| match r {
+        Ok(_) | Err(StreamError::Closed) => Ok(()),
+        Err(e) => Err(stream_error(e)),
+    };
+    settled(stream.flush().map(|()| 0))?;
     wait(stream.subscribe()).await;
-    stream.check_write().map_err(stream_error)?;
-    Ok(())
+    settled(stream.check_write())
 }
 
 async fn read_all(stream: &InputStream) -> Result<Vec<u8>, String> {

@@ -1302,3 +1302,132 @@ async fn test_dispatch_pool_find_anchor_by_codes() {
     assert_eq!(found, vec!["fast", "slow"]);
     assert!(repo.find_anchor_by_codes(&[]).await.unwrap().is_empty());
 }
+
+// ─── Scheduled-job cron dialect migration (036) ───────────────────────────
+
+/// Insert a bare job row with `crons`, as an earlier build stored it.
+async fn insert_job(pool: &sqlx::PgPool, id: &str, crons: &[&str]) {
+    sqlx::query("INSERT INTO msg_scheduled_jobs (id, code, name, crons) VALUES ($1, $1, $1, $2)")
+        .bind(id)
+        .bind(crons.iter().map(|c| c.to_string()).collect::<Vec<_>>())
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn crons_of(pool: &sqlx::PgPool, id: &str) -> Vec<String> {
+    let (crons,): (Vec<String>,) =
+        sqlx::query_as("SELECT crons FROM msg_scheduled_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    crons
+}
+
+/// Pretend the migration has not run yet (it ran, over no jobs, at setup).
+async fn forget_cron_migration(pool: &sqlx::PgPool) {
+    sqlx::query("DELETE FROM _schema_migrations WHERE migration_id = $1")
+        .bind(fc_platform::scheduled_job::cron_migration::MIGRATION_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_cron_migration_rewrites_old_dialect_rows_once() {
+    use chrono::{TimeZone, Utc};
+    use fc_platform::scheduled_job::cron_migration::run;
+    use fc_platform::scheduled_job::scheduler::poller::next_slot_after;
+    use std::str::FromStr;
+
+    let (pool, _container) = setup_test_db().await;
+    forget_cron_migration(&pool).await;
+    // Old dialect (1 = Sunday): Monday to Friday, and Saturdays at 18:00.
+    insert_job(&pool, "sjb_weekdays", &["0 0 9 * * 2-6", "0 0 18 * * 7"]).await;
+    insert_job(&pool, "sjb_daily", &["@daily"]).await;
+    // Reads the same in both dialects: left as written.
+    insert_job(
+        &pool,
+        "sjb_same",
+        &["0 */5 9-17 * * *", "0 0 9 * * MON-FRI"],
+    )
+    .await;
+    // Friday the 13th has no robfig form: left, whole job.
+    insert_job(&pool, "sjb_f13", &["0 0 0 13 * 6", "0 0 9 * * 2"]).await;
+    // Never read by the old poller: left.
+    insert_job(&pool, "sjb_never", &["0 0 9 * *"]).await;
+
+    let report = run(&pool).await.unwrap();
+    assert_eq!(report.foreign_tracker, None);
+    assert_eq!(report.rewritten.len(), 2, "{report:?}");
+    assert_eq!(
+        crons_of(&pool, "sjb_weekdays").await,
+        vec!["0 0 9 * * MON-FRI", "0 0 18 * * SAT"]
+    );
+    assert_eq!(crons_of(&pool, "sjb_daily").await, vec!["0 0 0 * * *"]);
+    assert_eq!(
+        crons_of(&pool, "sjb_same").await,
+        vec!["0 */5 9-17 * * *", "0 0 9 * * MON-FRI"]
+    );
+    assert_eq!(
+        crons_of(&pool, "sjb_f13").await,
+        vec!["0 0 0 13 * 6", "0 0 9 * * 2"]
+    );
+    assert_eq!(crons_of(&pool, "sjb_never").await, vec!["0 0 9 * *"]);
+
+    // The rewritten job fires on the new poller when the old one fired it.
+    let old: Vec<cron::Schedule> = ["0 0 9 * * 2-6", "0 0 18 * * 7"]
+        .iter()
+        .map(|c| cron::Schedule::from_str(c).unwrap())
+        .collect();
+    let new = crons_of(&pool, "sjb_weekdays").await;
+    let mut t = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+    for _ in 0..50 {
+        let before = old.iter().filter_map(|s| s.after(&t).next()).min().unwrap();
+        let after = next_slot_after(&new, "UTC", t).unwrap();
+        assert_eq!(after, before);
+        t = after;
+    }
+
+    // Once only: a cron written after it is Go's dialect already.
+    sqlx::query(
+        "UPDATE msg_scheduled_jobs SET crons = ARRAY['0 0 9 * * 1-5'] WHERE id = 'sjb_daily'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let again = run(&pool).await.unwrap();
+    assert!(again.already_applied);
+    assert_eq!(crons_of(&pool, "sjb_daily").await, vec!["0 0 9 * * 1-5"]);
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_cron_migration_leaves_rows_alone_where_go_or_java_migrated() {
+    use fc_platform::scheduled_job::cron_migration::run;
+
+    for tracker in ["goose_db_version", "flyway_schema_history"] {
+        let (pool, _container) = setup_test_db().await;
+        forget_cron_migration(&pool).await;
+        sqlx::query(&format!("CREATE TABLE {tracker} (id INT)"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // As Go or Java wrote them: Monday to Friday, the 13th or a Friday.
+        insert_job(&pool, "sjb_go", &["0 0 9 * * 1-5", "0 0 0 13 * 5"]).await;
+        insert_job(&pool, "sjb_plain", &["0 0 * * * *"]).await;
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!(report.foreign_tracker.as_deref(), Some(tracker));
+        assert!(report.rewritten.is_empty());
+        assert_eq!(report.left_as_written.len(), 1, "{report:?}");
+        assert_eq!(
+            crons_of(&pool, "sjb_go").await,
+            vec!["0 0 9 * * 1-5", "0 0 0 13 * 5"]
+        );
+        assert_eq!(crons_of(&pool, "sjb_plain").await, vec!["0 0 * * * *"]);
+        assert!(run(&pool).await.unwrap().already_applied);
+    }
+}

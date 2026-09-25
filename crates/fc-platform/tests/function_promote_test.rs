@@ -409,8 +409,8 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     assert_eq!(sub.5.as_deref(), Some(pool_id.as_str()));
     assert_eq!((sub.6, sub.7, sub.8.as_str()), (5, true, "IMMEDIATE"));
 
-    // The scheduled job: the application, the crons in the scheduler's
-    // dialect, the zone as written, the target and payload.
+    // The scheduled job: the application, the cron and the zone as
+    // written, the target and payload.
     let job_code = schedule_key(&fid, "0 0 9 * * 1-5", Some("Europe/Amsterdam"));
     let job: JobRow = sqlx::query_as(
         "SELECT id, crons, timezone, application_id, target_url, payload, client_id \
@@ -420,7 +420,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     .fetch_one(&app.pool)
     .await
     .unwrap();
-    assert_eq!(job.1, vec!["0 0 9 * * MON,TUE,WED,THU,FRI".to_string()]);
+    assert_eq!(job.1, vec!["0 0 9 * * 1-5".to_string()]);
     assert_eq!(job.2, "Europe/Amsterdam");
     assert_eq!(job.3.as_deref(), Some(billing.id.as_str()));
     assert_eq!(
@@ -432,7 +432,6 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     // It fires on the Rust scheduler: a weekday 09:00 Amsterdam in a week.
     let now = Utc::now();
     let slot = latest_slot_in_window(&job.1, &job.2, now - chrono::Duration::days(7), now)
-        .unwrap()
         .expect("fires within a week");
     let local = slot.with_timezone(&chrono_tz::Europe::Amsterdam);
     use chrono::{Datelike, Timelike};
@@ -568,14 +567,14 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
             .await
             .unwrap();
     assert_eq!(concurrency, 9);
-    // Java's either-day rule, as two crons the scheduler unions.
+    // Java's either-day cron, stored as written: the scheduler reads it.
     let (crons, tz): (Vec<String>, String) =
         sqlx::query_as("SELECT crons, timezone FROM msg_scheduled_jobs WHERE code = $1")
             .bind(&job_b)
             .fetch_one(&app.pool)
             .await
             .unwrap();
-    assert_eq!(crons, vec!["0 0 0 13 * *", "0 0 0 * * FRI"]);
+    assert_eq!(crons, vec!["0 0 0 13 * 5"]);
     assert_eq!(tz, "UTC");
     assert_eq!(
         count(

@@ -421,6 +421,9 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "035_scheduled_jobs_application_id",
             include_str!("../../../../migrations/035_scheduled_jobs_application_id.sql"),
         ),
+        // 036 is a data migration in Rust, not SQL, run after these:
+        // `036_scheduled_job_cron_dialect` (see below). The next SQL
+        // migration is 037.
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -624,6 +627,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         }
     }
 
+    // 036: the one-off rewrite of crons the previous Rust poller read in the
+    // `cron` crate's dialect into Java/Go's. It needs the old parser, so it
+    // is Rust; it tracks itself in `_schema_migrations` (never on a
+    // database another platform has migrated: see the module docs). It is
+    // not in the pre-tracker backfill above on purpose: a pre-tracker Rust
+    // database still needs it, and its own guard covers Go's.
+    crate::scheduled_job::cron_migration::run(pool).await?;
+
     info!("All database migrations completed");
     Ok(())
 }
@@ -717,7 +728,7 @@ async fn apply_tracked(pool: &PgPool, id: &str, sql: &str) -> Result<(), sqlx::E
 
 /// SHA-256 of a migration's SQL body, hex-encoded. Used for drift
 /// detection on re-runs of an already-applied migration.
-fn sha256_hex(content: &str) -> String {
+pub(crate) fn sha256_hex(content: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());

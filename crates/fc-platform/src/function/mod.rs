@@ -12,7 +12,6 @@
 pub mod api;
 pub mod artifact;
 pub mod control_api;
-pub mod cron_dialect;
 pub mod desired_state;
 pub mod domain_api;
 pub mod domain_repository;

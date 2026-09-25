@@ -48,13 +48,13 @@ use crate::dispatch_pool::operations::{
     CreateDispatchPoolCommand, DeleteDispatchPoolCommand, DispatchPoolCreated, DispatchPoolDeleted,
     DispatchPoolUpdated, UpdateDispatchPoolCommand,
 };
-use crate::function::cron_dialect::scheduler_crons;
 use crate::function::dispatch_mode;
 use crate::function::entity::{
     Function, FunctionRoute, FunctionStatus, FunctionVersion, TriggerObject, TriggerObjectKind,
 };
 use crate::function::repository::FunctionRepository;
 use crate::function::route_repository::FunctionRouteRepository;
+use crate::function::schedule_check::parse_java_cron;
 use crate::function::settings_repository::FunctionSettingsRepository;
 use crate::function::trigger_object_repository::{
     Linked, LinkedRepository, TriggerObjectRepository,
@@ -992,22 +992,26 @@ impl TriggerSync {
     }
 
     /// What a schedule entry makes its job (Java's `ScheduledJob.Definition`
-    /// for a function): the crons in the scheduler's dialect
-    /// ([`scheduler_crons`]), the zone as written or `UTC`, the payload, the
-    /// function's URL for the entry's path, not concurrent, no completion
-    /// tracking.
+    /// for a function): the cron as Java stores it (its text, stripped; the
+    /// scheduler reads Java's dialect), the zone as written or `UTC`, the
+    /// payload, the function's URL for the entry's path, not concurrent, no
+    /// completion tracking.
     fn job_definition(
         &self,
         f: &Function,
         manifest: &Manifest,
         spec: &ScheduleSpec,
     ) -> Result<JobDefinition, UseCaseError> {
-        let crons = scheduler_crons(&spec.cron).map_err(|(_, why)| {
-            UseCaseError::validation(
-                "CRON_INVALID",
-                format!("cron expression '{}' invalid: {why}", spec.cron),
-            )
-        })?;
+        let crons = vec![
+            parse_java_cron(&spec.cron)
+                .map_err(|(_, why)| {
+                    UseCaseError::validation(
+                        "CRON_INVALID",
+                        format!("cron expression '{}' invalid: {why}", spec.cron),
+                    )
+                })?
+                .expression,
+        ];
         let payload = match &spec.payload {
             None => None,
             Some(node) if node.is_null() => None,
