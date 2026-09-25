@@ -26,7 +26,7 @@ Per run: **one Postgres** container (`postgres:17`, a database per side) and **o
 |---|---|---|
 | platform: API + stream processor, scheduler **off** | `fc-server` | `fc-server` |
 | worker: dispatch scheduler **on**, platform off | `fc-server` | `fc-server` |
-| router | `fc-server` with `MESSAGE_ROUTER_ENABLED=true`, `PLATFORM_ENABLED=false` | `fc-router-bin` |
+| router | `fc-server` with `MESSAGE_ROUTER_ENABLED=true`, `PLATFORM_ENABLED=false` | `fc-server`, the same |
 | outbox processor (SDK outbox table in the platform DB) | `fc-server` with `FC_OUTBOX_ENABLED=true` | `fc-outbox-processor` |
 
 Each side has its **own recording receiver** (an axum server on a random loopback port) so the two
@@ -62,10 +62,10 @@ shell leaks into either side.
 - The Rust binaries:
 
   ```sh
-  cargo build -p fc-server -p fc-router-bin -p fc-outbox-processor
+  cargo build -p fc-server -p fc-outbox-processor
   ```
 
-  or `--rust-bin-dir <dir>` holding `fc-server`, `fc-router-bin` (or `fc-router`) and
+  or `--rust-bin-dir <dir>` holding `fc-server` and
   `fc-outbox-processor` — e.g. built from a branch with fixes.
 
 ### Building Go

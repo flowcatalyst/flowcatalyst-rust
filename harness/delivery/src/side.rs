@@ -213,6 +213,13 @@ impl Side {
         }
     }
 
+    /// The router runs with the production router task definition's
+    /// variable names (`inhance/iac/compute/fc-router.ts`) on both sides —
+    /// Go's `fc-server` and Rust's, each in its router role. Only harness
+    /// plumbing is added: ports (`FC_API_PORT`, which both read; the task's
+    /// `API_PORT` names the same port but neither reads it), AWS/LocalStack,
+    /// the drain budget, a 5s config interval, and Go's dev-mode mediator
+    /// switch.
     fn router_spec(&self, config_url: &str, creds: Option<(&str, &str)>) -> ProcSpec {
         let mut env = BTreeMap::new();
         let common = self.env.common();
@@ -232,20 +239,17 @@ impl Side {
         let (api, metrics) = (free_port(), free_port());
         let platform = self.env.platform_url();
         for (k, v) in [
-            ("FC_API_PORT", api.to_string()),
+            // The task definition's names.
             ("API_PORT", api.to_string()),
-            ("PORT", api.to_string()),
-            ("FC_METRICS_PORT", metrics.to_string()),
-            ("FC_PLATFORM_ENABLED", "false".into()),
-            ("PLATFORM_ENABLED", "false".into()),
-            ("FC_ROUTER_ENABLED", "true".into()),
             ("MESSAGE_ROUTER_ENABLED", "true".into()),
+            ("PLATFORM_ENABLED", "false".into()),
             ("FLOWCATALYST_CONFIG_URL", config_url.to_string()),
             ("FLOWCATALYST_CONFIG_INTERVAL", "5".into()),
-            ("FC_ROUTER_CONFIG_INTERVAL_SECONDS", "5".into()),
-            ("FC_STANDBY_ENABLED", "false".into()),
             ("FLOWCATALYST_STANDBY_ENABLED", "false".into()),
             ("AUTH_MODE", "NONE".into()),
+            // Harness plumbing.
+            ("FC_API_PORT", api.to_string()),
+            ("FC_METRICS_PORT", metrics.to_string()),
         ] {
             env.insert(k.to_string(), v);
         }

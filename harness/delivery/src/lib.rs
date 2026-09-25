@@ -41,7 +41,7 @@ pub struct Options {
     pub go_src: PathBuf,
     /// Prebuilt Go `fc-server`; skips the Go build.
     pub go_bin_dir: Option<PathBuf>,
-    /// Directory holding `fc-server`, `fc-router-bin` (or `fc-router`) and
+    /// Directory holding `fc-server` (every role, the router included) and
     /// `fc-outbox-processor`.
     pub rust_bin_dir: PathBuf,
     pub keep_infra: bool,
@@ -134,7 +134,7 @@ fn rust_binaries(dir: &Path) -> anyhow::Result<Binaries> {
             .find(|p| p.exists())
             .with_context(|| {
                 format!(
-                    "none of {names:?} in {} — build with `cargo build -p fc-server -p fc-router-bin -p fc-outbox-processor` or pass --rust-bin-dir",
+                    "none of {names:?} in {} — build with `cargo build -p fc-server -p fc-outbox-processor` or pass --rust-bin-dir",
                     dir.display()
                 )
             })
@@ -142,8 +142,10 @@ fn rust_binaries(dir: &Path) -> anyhow::Result<Binaries> {
     let server = pick(&["fc-server"])?;
     Ok(Binaries {
         platform: server.clone(),
-        worker: server,
-        router: pick(&["fc-router-bin", "fc-router"])?,
+        worker: server.clone(),
+        // Production runs the router as fc-server in its router role
+        // (MESSAGE_ROUTER_ENABLED=true, PLATFORM_ENABLED=false), as Go does.
+        router: server,
         outbox: pick(&["fc-outbox-processor"])?,
     })
 }
