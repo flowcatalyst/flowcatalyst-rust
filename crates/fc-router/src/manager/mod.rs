@@ -55,6 +55,7 @@ mod tracking;
 
 pub use registry::ConsumerStat;
 pub use snapshots::{ForceAckResult, GroupFlushSnapshot, InFlightMessageInfo};
+pub use stall::stall_config_for_mediation_timeout;
 
 pub(crate) use registry::{ConsumerRegistry, RunningConsumer};
 

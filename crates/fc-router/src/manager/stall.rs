@@ -13,6 +13,22 @@ use fc_common::{StallConfig, StalledMessageInfo, WarningCategory, WarningSeverit
 
 use super::QueueManager;
 
+/// Go's `DefaultStallConfig`, derived from the mediation timeout (one
+/// delivery attempt may legitimately run that long): warn once a message
+/// has been in flight for one attempt plus a minute; force-NACK stays OFF,
+/// and if an operator enables it, it may only fire past the whole
+/// three-attempt budget with room to spare (4 attempts) — earlier, it would
+/// hand the broker a second copy of a delivery that is still running.
+pub fn stall_config_for_mediation_timeout(attempt: Duration) -> StallConfig {
+    StallConfig {
+        enabled: true,
+        stall_threshold_seconds: attempt.as_secs() + 60,
+        force_nack_stalled: false,
+        force_nack_after_seconds: 4 * attempt.as_secs(),
+        nack_delay_seconds: 30,
+    }
+}
+
 impl QueueManager {
     /// Check for potential memory leaks (large in-pipeline maps)
     pub fn check_memory_health(&self) -> bool {

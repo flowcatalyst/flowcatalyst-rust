@@ -104,6 +104,11 @@ async fn main() -> Result<()> {
     //    each pool gets its own HttpMediator + connection pool.
     let queue_manager = Arc::new(
         QueueManager::builder(HttpMediatorConfig::production())
+            // Go's DefaultStallConfig: derived from the mediation timeout,
+            // force-NACK off.
+            .stall_config(fc_router::stall_config_for_mediation_timeout(
+                HttpMediatorConfig::production().timeout,
+            ))
             .warning_service(warning_service.clone())
             .health_service(health_service.clone())
             .consumer_factory(Arc::new(SchemeConsumerFactory {

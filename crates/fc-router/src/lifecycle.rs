@@ -87,6 +87,12 @@ pub struct LifecycleConfig {
     /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` wiring in `bin/fc-router/src/main.rs`.
     /// Mirrors Go's `ServerConfig.SynthPoolIdleAge` default (1 hour).
     pub synth_pool_idle_ttl: Duration,
+    /// How often the stall detector runs (Go: `StallConfig.CheckInterval`,
+    /// 60s). What counts as stalled is the manager's `StallConfig`.
+    pub stall_check_interval: Duration,
+    /// Queue backlog/growth monitoring (Go: `QueueHealthMonitor`, every
+    /// 30s against broker metrics). `None` disables it.
+    pub queue_health: Option<crate::queue_health_monitor::QueueHealthConfig>,
 }
 
 impl Default for LifecycleConfig {
@@ -103,6 +109,8 @@ impl Default for LifecycleConfig {
             pending_delete_max_age: Duration::from_secs(60), // 1 minute — short so deliberate resends are reprocessed
             circuit_breaker_max_idle: Duration::from_secs(3600), // 1 hour
             synth_pool_idle_ttl: Duration::from_secs(3600),  // 1 hour, matches Go's default
+            stall_check_interval: Duration::from_secs(60),
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig::default()),
         }
     }
 }
@@ -223,6 +231,48 @@ impl LifecycleManager {
                     }
                 }
             }));
+        }
+
+        // Stall detector (Go: `StallDetector.Watch`, started in
+        // `Server.Run`): warns once per episode about messages in flight
+        // past the stall threshold; force-NACKs only if the manager's
+        // StallConfig enables it (off by default, as in Go). It was never
+        // started, so a message wedged for an hour raised nothing.
+        {
+            let manager = manager.clone();
+            let token = shutdown.child_token();
+            let interval = config.stall_check_interval;
+            tasks.push(tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                ticker.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            manager.check_and_handle_stalled_messages().await;
+                        }
+                        _ = token.cancelled() => {
+                            info!("Stall detector shutting down");
+                            break;
+                        }
+                    }
+                }
+            }));
+        }
+
+        // Queue health monitor (Go: `QueueHealthMonitor.Watch`, started in
+        // `Server.Run`): backlog and sustained-growth warnings from broker
+        // metrics. It was never started either.
+        if let Some(qh_config) = config.queue_health.clone() {
+            let monitor = Arc::new(crate::queue_health_monitor::QueueHealthMonitor::new(
+                qh_config,
+                warning_service.clone(),
+            ));
+            tasks.push(crate::queue_health_monitor::spawn_queue_health_monitor(
+                monitor,
+                manager.clone(),
+                shutdown.child_token(),
+            ));
         }
 
         // Warning service cleanup
@@ -597,11 +647,159 @@ mod tests {
     use crate::manager::QueueManager;
     use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningService;
+    use fc_common::WarningCategory;
 
     #[test]
     fn test_default_config() {
         let config = LifecycleConfig::default();
         assert_eq!(config.memory_health_interval, Duration::from_secs(60));
+    }
+
+    /// Go's `Server.Run` starts the stall detector and the queue-health
+    /// monitor; they were never started here. Both now run on the lifecycle
+    /// ticks: a message in flight past the stall threshold raises a Stall
+    /// warning, and a queue backlog raises a QueueHealth warning.
+    #[tokio::test]
+    async fn stall_detector_and_queue_health_monitor_run() {
+        use async_trait::async_trait;
+        use fc_common::{MediationOutcome, Message, PoolConfig, QueuedMessage, RouterConfig};
+        use fc_queue::{QueueConsumer, QueueMetrics};
+
+        struct Hang;
+        #[async_trait]
+        impl crate::Mediator for Hang {
+            async fn mediate(&self, _m: &Message) -> MediationOutcome {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                MediationOutcome::success(200)
+            }
+        }
+        struct Backlogged;
+        #[async_trait]
+        impl QueueConsumer for Backlogged {
+            fn identifier(&self) -> &str {
+                "backlogged"
+            }
+            async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+            async fn get_metrics(&self) -> fc_queue::Result<Option<QueueMetrics>> {
+                Ok(Some(QueueMetrics {
+                    pending_messages: 50_000,
+                    queue_identifier: "backlogged".to_string(),
+                    ..QueueMetrics::default()
+                }))
+            }
+        }
+
+        let warning_service = Arc::new(WarningService::default());
+        let manager = Arc::new(
+            QueueManager::builder_with_shared_mediator(Arc::new(Hang))
+                .warning_service(warning_service.clone())
+                .stall_config(fc_common::StallConfig {
+                    enabled: true,
+                    stall_threshold_seconds: 0,
+                    force_nack_stalled: false,
+                    force_nack_after_seconds: 3600,
+                    nack_delay_seconds: 30,
+                })
+                .build(),
+        );
+        manager
+            .apply_config(RouterConfig {
+                processing_pools: vec![PoolConfig {
+                    code: "P".to_string(),
+                    concurrency: 1,
+                    rate_limit_per_minute: None,
+                }],
+                queues: vec![],
+            })
+            .await
+            .unwrap();
+        manager.add_consumer(Arc::new(Backlogged)).await;
+        let msg = Message {
+            id: "slow".to_string(),
+            pool_code: "P".to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: fc_common::MediationType::HTTP,
+            mediation_target: "http://localhost/x".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: fc_common::DispatchMode::Immediate,
+            dispatch_mode_specified: true,
+        };
+        manager
+            .route_batch(
+                vec![QueuedMessage {
+                    message: msg,
+                    receipt_handle: "rh".to_string(),
+                    broker_message_id: Some("b".to_string()),
+                    queue_identifier: "backlogged".to_string(),
+                }],
+                Arc::new(Backlogged),
+            )
+            .await
+            .unwrap();
+
+        let health_service = Arc::new(HealthService::new(
+            HealthServiceConfig::default(),
+            warning_service.clone(),
+        ));
+        let long = Duration::from_secs(60);
+        let config = LifecycleConfig {
+            memory_health_interval: long,
+            consumer_health_interval: long,
+            warning_cleanup_interval: long,
+            health_report_interval: long,
+            reaper_interval: long,
+            stall_check_interval: Duration::from_millis(50),
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+                check_interval: Duration::from_millis(50),
+                ..Default::default()
+            }),
+            ..LifecycleConfig::default()
+        };
+        let mut lifecycle = LifecycleManager::start(
+            manager.clone(),
+            warning_service.clone(),
+            health_service,
+            config,
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let stall = warning_service
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len();
+            let backlog = warning_service
+                .get_warnings_by_category(WarningCategory::QueueHealth)
+                .len();
+            if stall > 0 && backlog > 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "stall={stall} backlog={backlog}: both detectors must run"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        lifecycle.shutdown().await;
+        manager
+            .shutdown_with_timeout(Duration::from_millis(50))
+            .await;
     }
 
     /// `CancellationToken` is level-triggered: shutdown must complete
@@ -630,6 +828,11 @@ mod tests {
             pending_delete_max_age: long,
             circuit_breaker_max_idle: long,
             synth_pool_idle_ttl: long,
+            stall_check_interval: long,
+            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+                check_interval: long,
+                ..Default::default()
+            }),
         };
 
         let mut lifecycle =
