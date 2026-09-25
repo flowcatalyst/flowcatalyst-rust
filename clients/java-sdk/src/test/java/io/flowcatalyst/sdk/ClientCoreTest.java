@@ -186,8 +186,11 @@ class ClientCoreTest {
     }
 
     @Test
-    void routerCallsAreUnauthenticatedAgainstRouterBaseUrl() throws Exception {
+    void routerCallsSendThePlatformBearerTokenToTheRouterBaseUrl() throws Exception {
+        server.stubToken("tok");
         try (StubServer routerServer = new StubServer()) {
+            routerServer.on("GET", "/monitoring/in-flight-messages/check", 200,
+                    "{\"messageId\":\"m1\",\"inPipeline\":false}");
             routerServer.on("POST", "/monitoring/in-flight-messages/check-batch", 200,
                     "{\"m1\":true,\"m2\":false}");
 
@@ -197,9 +200,13 @@ class ClientCoreTest {
                     .routerBaseUrl(routerServer.baseUrl())
                     .build();
 
+            assertEquals(false, client.router().inPipeline("m1").inPipeline());
             Map<String, Boolean> result = client.router().inPipelineBatch(List.of("m1", "m2"));
             assertEquals(Map.of("m1", true, "m2", false), result);
-            assertEquals(null, routerServer.requests.getFirst().authorization());
+            assertEquals(2, routerServer.requests.size());
+            for (StubServer.Recorded request : routerServer.requests) {
+                assertEquals("Bearer tok", request.authorization());
+            }
         }
     }
 
