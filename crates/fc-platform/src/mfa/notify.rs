@@ -80,6 +80,21 @@ impl Notifier {
         }
     }
 
+    /// Welcome a user created with a password (Go `AccountCreated`).
+    pub async fn account_created(&self, to: &str) {
+        let name = self.name.resolve().await;
+        self.send(
+            to,
+            "Your account has been created",
+            format!(
+                "<p>Your {name} account has been created.</p>\
+                 <p>Sign in to get started. If two-factor authentication is required \
+                 for your organisation, you'll be guided through setting it up.</p>"
+            ),
+        )
+        .await;
+    }
+
     pub async fn password_changed(&self, to: &str) {
         let name = self.name.resolve().await;
         self.send(

@@ -372,6 +372,12 @@ pub fn build_platform_routes(
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
         password_reset_emailer: password_reset_emailer.clone(),
+        new_user_notifier: Some(crate::mfa::notify::Notifier {
+            email: email_service.clone(),
+            name: crate::mfa::notify::PlatformName {
+                configs: Some(repos.platform_config_repo.clone()),
+            },
+        }),
         create_user_use_case,
         grant_client_access_use_case,
         reset_password_use_case: reset_password_use_case.clone(),

@@ -54,6 +54,22 @@ pub struct CreateUserRequest {
     /// Defaults to true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enforce_password_complexity: Option<bool>,
+
+    /// Send the new user the platform's invitation (default true); false
+    /// suppresses every platform email (Go `sendInvitation`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_invitation: Option<bool>,
+
+    /// Mint the 72-hour set-password link and return it as `inviteLink`
+    /// instead of emailing it (passwordless internal users only); wins over
+    /// `sendInvitation` (Go `returnInviteLink`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_invite_link: Option<bool>,
+
+    /// Where the invitee goes after setting a password: an absolute http(s)
+    /// URL (Go `inviteRedirectUri`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invite_redirect_uri: Option<String>,
 }
 
 /// Update principal request
@@ -369,6 +385,10 @@ pub struct PrincipalResponse {
     pub granted_client_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Only on a create-user answer that asked for `returnInviteLink`: the
+    /// live 72-hour set-password link (Go `InviteLink`). Never logged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_link: Option<String>,
 }
 
 impl From<Principal> for PrincipalResponse {
@@ -392,6 +412,7 @@ impl From<Principal> for PrincipalResponse {
             granted_client_ids: p.assigned_clients,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
+            invite_link: None,
         }
     }
 }
@@ -504,6 +525,8 @@ pub struct PrincipalsState {
     /// user a single-use reset link (same flow as user-initiated
     /// `/auth/password-reset/request`), and the magic link sent on create.
     pub password_reset_emailer: Arc<crate::auth::password_reset_api::PasswordResetEmailer>,
+    /// Welcomes a user created with a password (Go `AccountCreated`).
+    pub new_user_notifier: Option<crate::mfa::notify::Notifier>,
     // Use cases — writes go through these so that events + audit logs are
     // emitted atomically via UnitOfWork.
     pub create_user_use_case:
@@ -609,6 +632,9 @@ pub async fn create_user(
         ));
     }
     crate::checks::require_user_admin(&auth.0, primary_client_id.as_deref())?;
+    // Before anything is written: a rejected redirect must not leave a user
+    // whose invite was never minted (Go createUser).
+    let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
 
     // Partner-merge: if a user already exists for this email, emit a
     // ClientAccessGranted event via the grant use case rather than a fresh
@@ -668,44 +694,70 @@ pub async fn create_user(
         .await?
         .or_not_found("Principal", &event.principal_id)?;
 
-    // Magic-link bootstrap: when no password is supplied by the caller and
-    // the user is INTERNAL-authenticated (we own the password store), send
-    // them a one-time set-password email. The admin never sees a password —
-    // the backend generates a random hash to satisfy the NOT NULL column,
-    // and the recipient picks their own via this link.
-    //
-    // SDK / automation callers that DO send a password (e.g. bulk migration)
-    // skip this step — they've taken responsibility for credential delivery.
-    let should_send_magic_link = req.password.is_none()
-        && idp_type == IdentityProviderType::Internal
-        && created
-            .user_identity
-            .as_ref()
-            .map(|i| !i.email.is_empty())
-            .unwrap_or(false);
-    if should_send_magic_link {
-        // Go `SendInvite`: a 72-hour "set your password" invite.
-        if let Err(e) = state
-            .password_reset_emailer
-            .send_invite(&created, None)
-            .await
-        {
-            // Don't fail the create — the user is in the DB. Surface the
-            // problem in logs; the admin can resend from the detail page.
-            tracing::error!(
-                principal_id = %created.id,
-                error = %e,
-                "User created but magic-link email failed to send"
-            );
-        } else {
-            tracing::info!(
-                principal_id = %created.id,
-                "Sent magic sign-in link to new user"
-            );
-        }
-    }
+    let invite_link = notify_new_user(
+        &state,
+        &created,
+        req.password.as_deref(),
+        req.send_invitation.unwrap_or(true),
+        req.return_invite_link.unwrap_or(false),
+        invite_redirect,
+    )
+    .await;
+    let mut response = PrincipalResponse::from(created);
+    response.invite_link = invite_link;
+    Ok(Json(response))
+}
 
-    Ok(Json(created.into()))
+/// Go `notifyNewUser` (principal/api/api.go:704-745), best-effort, for a
+/// freshly created internal user: a passwordless one gets the "set your
+/// password" invite, one created with a password the "account created"
+/// welcome; federated users nothing. `return_invite_link` wins whenever it
+/// applies: the link is minted and returned and the platform's own invite is
+/// not sent (a second mint would kill the returned link); otherwise
+/// `send_invitation: false` suppresses every platform email. The redirect
+/// rides on whichever invite is minted. Returns the link when one was
+/// returned.
+async fn notify_new_user(
+    state: &PrincipalsState,
+    p: &Principal,
+    password: Option<&str>,
+    send_invitation: bool,
+    return_invite_link: bool,
+    invite_redirect: Option<String>,
+) -> Option<String> {
+    let identity = p.user_identity.as_ref()?;
+    if p.external_identity.is_some() || identity.provider.as_deref() == Some("OIDC") {
+        return None;
+    }
+    let email = identity.email.trim();
+    if email.is_empty() {
+        return None;
+    }
+    let passwordless = password.is_none_or(str::is_empty);
+    let emailer = &state.password_reset_emailer;
+    if return_invite_link && passwordless {
+        return match emailer.invite_link(p, invite_redirect).await {
+            Ok(link) => link,
+            Err(e) => {
+                tracing::warn!(principal_id = %p.id, error = %e, "mint invite link failed");
+                None
+            }
+        };
+    }
+    if !send_invitation {
+        tracing::info!(principal_id = %p.id, "invite suppressed by caller");
+        return None;
+    }
+    if passwordless {
+        if let Err(e) = emailer.send_invite(p, invite_redirect).await {
+            tracing::warn!(principal_id = %p.id, error = %e, "send account invite failed");
+        }
+        return None;
+    }
+    if let Some(notifier) = &state.new_user_notifier {
+        notifier.account_created(email).await;
+    }
+    None
 }
 
 /// Go's per-resource user-admin gate (`requireUserResourceAccess` /
@@ -883,8 +935,7 @@ pub struct CreatePrincipalRequest {
     /// Send the new user an invitation (default true)
     #[serde(default)]
     pub send_invitation: Option<bool>,
-    /// Accepted for Go compatibility; Rust mints no invite link, so none is
-    /// returned
+    /// Return the set-password link as `inviteLink` instead of emailing it
     #[serde(default)]
     pub return_invite_link: Option<bool>,
     /// Where the invitee goes after setting a password (absolute http(s))
@@ -942,7 +993,7 @@ pub async fn create_principal(
         .filter(|c| !c.is_empty())
         .map(str::to_string);
     require_user_admin(ctx, client_id.as_deref())?;
-    resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
+    let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
 
     // Go's CreateUser validation (principal/operations/create.go:39-65),
     // ahead of the use case so its codes are Go's.
@@ -1007,26 +1058,27 @@ pub async fn create_principal(
         .await
         .into_result()?;
 
-    // Go `notifyNewUser` (api.go:704-745): a passwordless internal user is
-    // sent an invitation unless the caller suppresses it.
-    let send_invitation = req.send_invitation.unwrap_or(true);
-    if send_invitation && password.is_none() && idp_type == IdentityProviderType::Internal {
-        if let Some(created) = state.principal_repo.find_by_id(&event.principal_id).await? {
-            if let Err(e) = state
-                .password_reset_emailer
-                .send_reset_email(&created)
-                .await
-            {
-                tracing::warn!(principal_id = %created.id, error = %e, "send account invite failed");
-            }
+    // Go `notifyNewUser` (api.go:704-745).
+    let invite_link = match state.principal_repo.find_by_id(&event.principal_id).await? {
+        Some(created) => {
+            notify_new_user(
+                &state,
+                &created,
+                password.as_deref(),
+                req.send_invitation.unwrap_or(true),
+                req.return_invite_link.unwrap_or(false),
+                invite_redirect,
+            )
+            .await
         }
-    }
+        None => None,
+    };
 
     Ok((
         StatusCode::CREATED,
         Json(CreatePrincipalResponse {
             id: event.principal_id,
-            invite_link: None,
+            invite_link,
         }),
     ))
 }

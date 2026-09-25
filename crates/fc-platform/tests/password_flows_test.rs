@@ -453,3 +453,131 @@ async fn an_invite_link_is_minted_for_the_caller() {
     assert_eq!(purpose, "invite");
     assert_eq!(redirect.as_deref(), Some("https://app.test/home"));
 }
+
+/// Go createUser's invite flags on `POST /api/principals/users` (what
+/// integral's `flowcatalyst:create-user --invite-link / --send-invite /
+/// --invite-redirect-uri` sends): `returnInviteLink` answers the live link
+/// as `inviteLink` (carrying the redirect) instead of emailing it;
+/// `sendInvitation: false` issues nothing; a bad redirect is refused before
+/// anything is written.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn create_user_honours_the_invite_flags() {
+    let app = TestApp::setup().await;
+    let admin = app.anchor_admin_token().await;
+    // ANCHOR users need an anchor domain (Go deriveUserScope).
+    app.repos
+        .anchor_domain_repo
+        .insert(&fc_platform::auth::config_entity::AnchorDomain::new(
+            "flowcatalyst.test",
+        ))
+        .await
+        .unwrap();
+    let create = |email: &str, extra: Value| {
+        let mut body = json!({ "email": email, "name": "Invitee", "scope": "ANCHOR" });
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        body
+    };
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &admin,
+            create(
+                "bad-redirect@flowcatalyst.test",
+                json!({ "returnInviteLink": true, "inviteRedirectUri": "javascript:alert(1)" }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "INVITE_REDIRECT_URI_INVALID");
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("bad-redirect@flowcatalyst.test")
+        .await
+        .unwrap()
+        .is_none());
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &admin,
+            create(
+                "link@flowcatalyst.test",
+                json!({
+                    "sendInvitation": false,
+                    "returnInviteLink": true,
+                    "inviteRedirectUri": "https://integral.test/home"
+                }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let link = body["inviteLink"].as_str().expect("inviteLink").to_string();
+    let raw = link.split("token=").nth(1).unwrap();
+    assert!(link.contains("/auth/set-password?token="), "{link}");
+    let (_, v) = read_json(
+        app.get_unauth(&format!("/auth/password-reset/validate?token={raw}"))
+            .await,
+    )
+    .await;
+    assert_eq!(v["valid"], true, "{v}");
+    let id = body["id"].as_str().unwrap();
+    let redirect: Option<String> = sqlx::query_scalar(
+        "SELECT redirect_uri FROM iam_password_reset_tokens WHERE principal_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(redirect.as_deref(), Some("https://integral.test/home"));
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &admin,
+            create(
+                "quiet@flowcatalyst.test",
+                json!({ "sendInvitation": false }),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("inviteLink").is_none(), "{body}");
+    let tokens: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM iam_password_reset_tokens WHERE principal_id = $1",
+    )
+    .bind(body["id"].as_str().unwrap())
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(tokens, 0, "suppressed");
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &admin,
+            create("mailed@flowcatalyst.test", json!({})),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("inviteLink").is_none());
+    let purpose: String =
+        sqlx::query_scalar("SELECT purpose FROM iam_password_reset_tokens WHERE principal_id = $1")
+            .bind(body["id"].as_str().unwrap())
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(purpose, "invite", "the default emails Go's invite");
+}
