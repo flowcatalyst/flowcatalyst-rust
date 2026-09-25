@@ -2,6 +2,7 @@
 //!
 //! Event subscription management.
 
+pub mod access;
 pub mod api;
 pub mod entity;
 pub mod operations;
