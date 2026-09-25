@@ -129,6 +129,17 @@ impl Runtime {
 mod tests {
     use super::*;
 
+    /// The Rust function host runs WASI components whose entrypoint is the
+    /// `wasi:http/incoming-handler` export. Java's wasm entrypoint rule
+    /// refuses `:` and `/`, so such a component is published under the alias
+    /// `wasi_http_incoming_handler` (fc-fnhost-core `INCOMING_HANDLER_ALIAS`),
+    /// which the unchanged rule must keep accepting.
+    #[test]
+    fn the_component_entrypoint_alias_is_a_valid_wasm_export() {
+        assert!(EntrypointRule::WasmExport.matches("wasi_http_incoming_handler"));
+        assert!(!EntrypointRule::WasmExport.matches("wasi:http/incoming-handler"));
+    }
+
     #[test]
     fn stored_parse_is_exact() {
         assert_eq!("JVM".parse::<Runtime>().unwrap(), Runtime::Jvm);

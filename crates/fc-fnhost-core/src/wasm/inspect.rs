@@ -24,6 +24,13 @@ pub const WASM_MEMORY_OVER_CAP: &str = "WASM_MEMORY_OVER_CAP";
 /// The one entrypoint a component function can have.
 pub const INCOMING_HANDLER: &str = "wasi:http/incoming-handler";
 
+/// A manifest-safe name for [`INCOMING_HANDLER`]. The platform's manifest
+/// rule for a wasm `entrypoint` (Java's `WasmExport`, `[A-Za-z_]\w*`, mirrored
+/// in fc-platform) rejects `:` and `/`, so a component published through the
+/// unchanged management interface (Java's or Rust's) names its entrypoint
+/// with this alias. It means exactly the unversioned incoming handler.
+pub const INCOMING_HANDLER_ALIAS: &str = "wasi_http_incoming_handler";
+
 /// A refusal: the heartbeat reports `LOAD:<reason>`; `detail` goes to the
 /// host's log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,7 +164,9 @@ pub fn check(bytes: &[u8], entrypoint: &str, cap_bytes: u64) -> Result<Accepted,
 fn entrypoint_interface(entrypoint: &str) -> Option<Option<&str>> {
     let entrypoint = entrypoint.trim();
     match entrypoint.split_once('@') {
-        None if entrypoint == INCOMING_HANDLER => Some(None),
+        None if entrypoint == INCOMING_HANDLER || entrypoint == INCOMING_HANDLER_ALIAS => {
+            Some(None)
+        }
         Some((name, version)) if name == INCOMING_HANDLER && is_02(version) => Some(Some(version)),
         _ => None,
     }
@@ -267,6 +276,11 @@ mod tests {
         assert_eq!(
             entrypoint_interface("wasi:http/incoming-handler@0.2.12"),
             Some(Some("0.2.12"))
+        );
+        // The manifest-safe alias the platform's entrypoint rule accepts.
+        assert_eq!(
+            entrypoint_interface("wasi_http_incoming_handler"),
+            Some(None)
         );
         for bad in [
             "handle",
