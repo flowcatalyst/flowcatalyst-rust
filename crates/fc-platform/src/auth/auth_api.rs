@@ -221,7 +221,7 @@ pub async fn login(
             // Go `completeLogin` (endpoint.go:559-611): the session cookie,
             // the recorded success, and the login payload.
             let jar = jar.add(state.session_cookie.build_cookie(session_token));
-            Ok(login_response(&state, jar, principal).await)
+            Ok(login_response(&state, jar, *principal).await)
         }
     }
 }
@@ -259,7 +259,7 @@ async fn login_response(
 pub enum PasswordLogin {
     /// Signed in: set the session cookie carrying `session_token`.
     Session {
-        principal: crate::Principal,
+        principal: Box<crate::Principal>,
         session_token: String,
     },
     /// A second factor is owed first (`mfa_required` /
@@ -407,7 +407,7 @@ pub async fn password_login(
     .await;
 
     Ok(PasswordLogin::Session {
-        principal,
+        principal: Box::new(principal),
         session_token,
     })
 }
