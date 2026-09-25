@@ -4,6 +4,7 @@
 
 mod audit_log;
 mod connections;
+mod dispatch_pools;
 mod event_types;
 mod login;
 mod nav;
