@@ -117,6 +117,17 @@ pub struct UpdateScheduledJobRequest {
     pub target_url: Option<String>,
 }
 
+/// `POST /api/scheduled-jobs/{id}/fire` response: Go's `FireNowResponse`.
+/// `id` is the instance id, kept beside `instanceId` for callers of the
+/// earlier `{id}` shape.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FireNowResponse {
+    pub id: String,
+    pub scheduled_job_id: String,
+    pub instance_id: String,
+}
+
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FireRequest {
@@ -689,7 +700,7 @@ pub async fn delete_scheduled_job(
     operation_id = "postApiScheduledJobsByIdFire",
     params(("id" = String, Path, description = "Scheduled job ID")),
     request_body = FireRequest,
-    responses((status = 202, body = CreatedResponse), (status = 404), (status = 409)),
+    responses((status = 202, body = FireNowResponse), (status = 404), (status = 409)),
     security(("bearer_auth" = []))
 )]
 pub async fn fire_scheduled_job(
@@ -699,7 +710,7 @@ pub async fn fire_scheduled_job(
     // The body is optional, as in Go: a fire with no body (and no
     // Content-Type) is a fire with no correlation id.
     req: Option<Json<FireRequest>>,
-) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<FireNowResponse>), PlatformError> {
     let req = req.map(|Json(r)| r).unwrap_or_default();
     crate::shared::authorization_service::checks::can_fire_scheduled_jobs(&auth.0)?;
     let existing = state
@@ -717,7 +728,11 @@ pub async fn fire_scheduled_job(
     let event = state.fire_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(CreatedResponse::new(event.instance_id)),
+        Json(FireNowResponse {
+            id: event.instance_id.clone(),
+            scheduled_job_id: event.scheduled_job_id,
+            instance_id: event.instance_id,
+        }),
     ))
 }
 
