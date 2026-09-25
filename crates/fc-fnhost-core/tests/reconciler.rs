@@ -243,6 +243,58 @@ async fn a_refused_load_leaves_the_old_version_serving_and_is_retried() {
     assert_eq!(r.serving("app.svc.fn"), Some(2));
 }
 
+/// Owner ruling 12 (Java 8a130505): a pinned version is `Preparing` while
+/// desired but neither prepared nor refused, `Refused` once a failure is
+/// recorded (preparing or loading), and loads once prepared.
+#[tokio::test]
+async fn a_pinned_version_is_preparing_until_it_is_prepared_or_refused() {
+    use fc_fnhost_core::reconciler::PinnedLoad;
+
+    let r = rig();
+    let doc = fakes::document(vec![
+        fakes::entry("app.svc.good", 2, "candidate", "lazy"),
+        fakes::entry("app.svc.bad", 9, "candidate", "lazy"),
+        fakes::entry("app.svc.odd", 3, "candidate", "lazy"),
+    ]);
+    let good = doc.entry_for(&addr("app.svc.good"), 2).unwrap().clone();
+    let bad = doc.entry_for(&addr("app.svc.bad"), 9).unwrap().clone();
+    let odd = doc.entry_for(&addr("app.svc.odd"), 3).unwrap().clone();
+
+    for entry in [&good, &bad] {
+        assert!(r.reconciler.is_preparing(entry));
+        assert!(matches!(
+            r.reconciler.load_pinned(entry).await,
+            PinnedLoad::Preparing
+        ));
+    }
+
+    r.store.fail(
+        "mem://app.svc.bad/9",
+        ArtifactError::DigestMismatch {
+            expected: fakes::digest_for("app.svc.bad", 9),
+            actual: fakes::digest_for("x", 0),
+        },
+    );
+    r.loader.refuse("app.svc.odd@3", "WASM_INVALID");
+    r.control.serve(Answer::Document(doc));
+    r.reconcile().await;
+
+    assert!(!r.reconciler.is_preparing(&good), "prepared");
+    assert!(matches!(
+        r.reconciler.load_pinned(&good).await,
+        PinnedLoad::Loaded(f) if f.version() == 2
+    ));
+    assert!(!r.reconciler.is_preparing(&bad), "refused: digest mismatch");
+    assert!(matches!(
+        r.reconciler.load_pinned(&bad).await,
+        PinnedLoad::Refused
+    ));
+    assert!(
+        matches!(r.reconciler.load_pinned(&odd).await, PinnedLoad::Refused),
+        "prepared, but the loader refuses it"
+    );
+}
+
 #[tokio::test]
 async fn a_full_registry_is_a_failed_entry_not_a_crash() {
     let r = rig_with(Signatures::Off, 1);

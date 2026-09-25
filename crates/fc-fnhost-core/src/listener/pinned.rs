@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use crate::desired::Entry;
 use crate::fingerprint::settings_fingerprint;
 use crate::loader::LoadedFunction;
-use crate::reconciler::Reconciler;
+use crate::reconciler::{PinnedLoad, Reconciler};
 
 pub const CAPACITY: usize = 8;
 
@@ -41,18 +41,21 @@ impl PinnedVersions {
     }
 
     /// The cached version, or a fresh load through
-    /// [`Reconciler::load_pinned`]; `None` when it cannot be loaded (not
-    /// prepared, or refused).
-    pub async fn get_or_load(&self, entry: &Entry) -> Option<Arc<LoadedFunction>> {
+    /// [`Reconciler::load_pinned`], which says why nothing loaded (still
+    /// preparing, or refused).
+    pub async fn get_or_load(&self, entry: &Entry) -> PinnedLoad {
         let key: Key = (entry.address.clone(), entry.version);
         if let Some(hit) = self.touch(&key) {
-            return Some(hit);
+            return PinnedLoad::Loaded(hit);
         }
         let _loading = self.loading.lock().await;
         if let Some(hit) = self.touch(&key) {
-            return Some(hit);
+            return PinnedLoad::Loaded(hit);
         }
-        let loaded = self.reconciler.load_pinned(entry).await?;
+        let loaded = match self.reconciler.load_pinned(entry).await {
+            PinnedLoad::Loaded(loaded) => loaded,
+            miss => return miss,
+        };
         let evicted = {
             let mut cache = self.cache.lock();
             let evicted = (cache.len() >= CAPACITY).then(|| cache.remove(0).1.function);
@@ -68,7 +71,7 @@ impl PinnedVersions {
         if let Some(evicted) = evicted {
             close_later(evicted);
         }
-        Some(loaded)
+        PinnedLoad::Loaded(loaded)
     }
 
     fn touch(&self, key: &Key) -> Option<Arc<LoadedFunction>> {

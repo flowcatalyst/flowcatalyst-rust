@@ -93,6 +93,17 @@ impl ReconcileObserver for NoopObserver {}
 
 type Key = (FunctionAddress, i32);
 
+/// What [`Reconciler::load_pinned`] found.
+pub enum PinnedLoad {
+    Loaded(Arc<LoadedFunction>),
+    /// Desired, but not yet prepared and nothing failed: `503
+    /// VERSION_NOT_READY` with `Retry-After`.
+    Preparing,
+    /// Refused for good (preparing or loading failed): `404
+    /// VERSION_NOT_AVAILABLE`.
+    Refused,
+}
+
 #[derive(Default)]
 struct State {
     etag: Option<String>,
@@ -520,17 +531,44 @@ impl Reconciler {
     }
 
     /// Loads `entry`'s version fresh, outside the registry, for a versioned
-    /// call pinning a candidate (H5). The caller owns the result.
-    pub async fn load_pinned(&self, entry: &Entry) -> Option<Arc<LoadedFunction>> {
-        let path = self.state.lock().prepared.get(&entry.version_id).cloned()?;
+    /// call pinning a candidate (H5). The caller owns the result. Says which
+    /// case it hit when nothing loaded (owner ruling 12): the version is
+    /// still being prepared, or it was refused.
+    pub async fn load_pinned(&self, entry: &Entry) -> PinnedLoad {
+        let path = {
+            let state = self.state.lock();
+            match state.prepared.get(&entry.version_id) {
+                Some(path) => path.clone(),
+                None if state
+                    .failures
+                    .contains_key(&(entry.address.clone(), entry.version)) =>
+                {
+                    return PinnedLoad::Refused
+                }
+                None => return PinnedLoad::Preparing,
+            }
+        };
         match self.attempt_load(&path, entry).await {
-            LoadOutcome::Loaded(instance) => Some(LoadedFunction::new(
+            LoadOutcome::Loaded(instance) => PinnedLoad::Loaded(LoadedFunction::new(
                 entry.address.clone(),
                 entry.version,
                 instance,
             )),
-            _ => None,
+            _ => PinnedLoad::Refused,
         }
+    }
+
+    /// Whether `entry`'s version is still being prepared: desired, not yet
+    /// prepared, and no failure recorded for it (Java `isPreparing`, owner
+    /// ruling 12). It can change between a call that loaded nothing and this
+    /// one; the worst case is one 503 as preparation completes, which a
+    /// retry resolves.
+    pub fn is_preparing(&self, entry: &Entry) -> bool {
+        let state = self.state.lock();
+        !state.prepared.contains_key(&entry.version_id)
+            && !state
+                .failures
+                .contains_key(&(entry.address.clone(), entry.version))
     }
 
     // ── webhook signing secrets ──────────────────────────────────────────

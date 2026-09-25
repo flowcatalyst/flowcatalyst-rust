@@ -30,6 +30,7 @@ use crate::invoke::{self, InvocationContext, InvokeError};
 use crate::loader::LoadedFunction;
 use crate::logging::keys;
 use crate::metrics::ListenerEntry;
+use crate::reconciler::PinnedLoad;
 
 /// A versioned call's body is buffered under this fixed cap before
 /// authentication (its entry, and so its own cap, may not be looked at
@@ -539,18 +540,29 @@ async fn invoke(
             .with_header("Retry-After", "1");
     };
 
-    // Step 8: load.
+    // Step 8: load. Past the token, permission and reach checks, so saying
+    // a pinned version exists leaks nothing: still preparing is 503 with
+    // Retry-After, refused for good 404 (owner ruling 12).
     let loaded = load(shared, entry, versioned).await;
-    let Some((function, in_flight)) = loaded else {
-        drop(grant);
-        if versioned {
+    let (function, in_flight) = match loaded {
+        Ok(loaded) => loaded,
+        Err(LoadMiss::Preparing) => {
+            drop(grant);
+            shared.metrics.refused("unavailable", None, entry_kind);
+            return version_not_ready();
+        }
+        Err(LoadMiss::Missing) if versioned => {
+            drop(grant);
             shared.metrics.refused("not_found", None, entry_kind);
             return HttpAnswer::error(404, "VERSION_NOT_AVAILABLE", "version is not loadable");
         }
-        shared
-            .metrics
-            .refused("unavailable", Some(&entry.address), entry_kind);
-        return unavailable();
+        Err(LoadMiss::Missing) => {
+            drop(grant);
+            shared
+                .metrics
+                .refused("unavailable", Some(&entry.address), entry_kind);
+            return unavailable();
+        }
     };
 
     // Step 9: invoke, with the deadline.
@@ -651,22 +663,49 @@ async fn invoke(
 /// The live registry (unversioned), or the pinned LRU (versioned, and
 /// alias-prefixed public calls), plus the in-flight mark. A version closing
 /// under us (a promote) is retried once against what replaced it.
+/// Why step 8 loaded nothing.
+#[derive(Debug, PartialEq, Eq)]
+enum LoadMiss {
+    /// A pinned version desired but not yet prepared (and not refused).
+    Preparing,
+    /// Refused, or nothing to load.
+    Missing,
+}
+
 async fn load(
     shared: &Arc<Shared>,
     entry: &Entry,
     versioned: bool,
-) -> Option<(Arc<LoadedFunction>, crate::loader::InFlight)> {
+) -> Result<(Arc<LoadedFunction>, crate::loader::InFlight), LoadMiss> {
     for _ in 0..2 {
         let function = if versioned {
-            shared.pinned.get_or_load(entry).await
+            match shared.pinned.get_or_load(entry).await {
+                PinnedLoad::Loaded(function) => function,
+                PinnedLoad::Preparing => return Err(LoadMiss::Preparing),
+                PinnedLoad::Refused => return Err(LoadMiss::Missing),
+            }
         } else {
-            shared.reconciler.ensure_loaded(&entry.address).await
-        }?;
+            shared
+                .reconciler
+                .ensure_loaded(&entry.address)
+                .await
+                .ok_or(LoadMiss::Missing)?
+        };
         if let Some(in_flight) = function.retain() {
-            return Some((function, in_flight));
+            return Ok((function, in_flight));
         }
     }
-    None
+    Err(LoadMiss::Missing)
+}
+
+/// A pinned version still being prepared (owner ruling 12, Java 8a130505).
+fn version_not_ready() -> HttpAnswer {
+    HttpAnswer::error(
+        503,
+        "VERSION_NOT_READY",
+        "the version is still being prepared",
+    )
+    .with_header("Retry-After", "5")
 }
 
 fn unavailable() -> HttpAnswer {

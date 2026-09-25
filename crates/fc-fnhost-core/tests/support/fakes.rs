@@ -153,6 +153,8 @@ impl ControlPlane for FakeControlPlane {
 pub struct FakeStore {
     pub failures: Mutex<HashMap<String, ArtifactError>>,
     pub fetches: Mutex<Vec<String>>,
+    /// References whose fetch waits until released: a version mid-prepare.
+    pub held: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
 }
 
 impl FakeStore {
@@ -171,6 +173,22 @@ impl FakeStore {
     pub fn fetch_count(&self) -> usize {
         self.fetches.lock().len()
     }
+
+    /// Fetches of `artifact_ref` wait until [`FakeStore::release`].
+    #[allow(dead_code)]
+    pub fn hold(&self, artifact_ref: &str) {
+        self.held.lock().insert(
+            artifact_ref.to_owned(),
+            Arc::new(tokio::sync::Semaphore::new(0)),
+        );
+    }
+
+    #[allow(dead_code)]
+    pub fn release(&self, artifact_ref: &str) {
+        if let Some(gate) = self.held.lock().remove(artifact_ref) {
+            gate.close(); // every waiting fetch proceeds
+        }
+    }
 }
 
 #[async_trait]
@@ -182,6 +200,10 @@ impl ArtifactStore for FakeStore {
         _version_id: Option<&str>,
     ) -> Result<Fetched, ArtifactError> {
         self.fetches.lock().push(artifact_ref.to_owned());
+        let gate = self.held.lock().get(artifact_ref).cloned();
+        if let Some(gate) = gate {
+            let _ = gate.acquire().await;
+        }
         if let Some(error) = self.failures.lock().get(artifact_ref) {
             return Err(error.clone());
         }
