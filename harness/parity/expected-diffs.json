@@ -229,5 +229,19 @@
     "pointer": "/**",
     "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
     "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "S2 auth: session surface — check-domain, login, me, history, client selection, change-password, logout, backoff",
+    "step": "auth-me",
+    "pointer": "/scope",
+    "reason": "Rust's /auth/me adds the caller's tenancy tier (ANCHOR/PARTNER/CLIENT) beside Go's fields so the SPA can gate anchor-only pages; every Go field is unchanged.",
+    "ruling": "owner decisions 2026-09-25, follow-up: \"/auth/me should include the caller's scope/tier, so the SPA can gate anchor-only pages\" (and #8)"
+  },
+  {
+    "scenario": "profile-only gate: a role-less USER principal is confined to /auth/*, /portal/*, and GET /api/me",
+    "step": "auth-me",
+    "pointer": "/scope",
+    "reason": "Rust's /auth/me adds the caller's tenancy tier (ANCHOR/PARTNER/CLIENT) beside Go's fields so the SPA can gate anchor-only pages; every Go field is unchanged.",
+    "ruling": "owner decisions 2026-09-25, follow-up: \"/auth/me should include the caller's scope/tier, so the SPA can gate anchor-only pages\" (and #8)"
   }
 ]

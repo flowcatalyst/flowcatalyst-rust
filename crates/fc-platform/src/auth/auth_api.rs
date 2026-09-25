@@ -101,35 +101,24 @@ pub enum AuthMethod {
     Saml,
 }
 
-/// Current user info response
+/// `GET /auth/me`: Go's `meResponse`, the login response shape
+/// (auth/login/endpoint.go:412-430, 656-694), field for field, plus the
+/// caller's tier.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentUserResponse {
+    /// Always empty here; the login response carries `"ok"` (Go reuses the
+    /// login shape without setting it).
+    pub status: String,
+
     /// Principal ID
-    pub id: String,
-
-    /// Principal ID, under Go's name (`principalId`)
     pub principal_id: String,
-
-    /// Principal type (USER, SERVICE)
-    pub principal_type: String,
-
-    /// Email address
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
 
     /// Display name
     pub name: String,
 
-    /// User scope (ANCHOR, PARTNER, CLIENT)
-    pub scope: String,
-
-    /// Client ID (for CLIENT scope users)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-
-    /// Accessible client IDs
-    pub clients: Vec<String>,
+    /// Email address; empty for a principal without one
+    pub email: String,
 
     /// Assigned roles
     pub roles: Vec<String>,
@@ -137,14 +126,26 @@ pub struct CurrentUserResponse {
     /// Effective permissions: every permission the principal's roles grant,
     /// de-duplicated and sorted, then `"*"` when they include the
     /// super-admin `platform:*:*:*` (Go `buildPermissionList`,
-    /// auth/login/endpoint.go:437-450). The SPA gates pages on these.
-    pub permissions: Vec<String>,
+    /// auth/login/endpoint.go:437-450). `null` when there are none, as Go's
+    /// empty list serialises. The SPA gates pages on these.
+    #[schema(nullable)]
+    pub permissions: Option<Vec<String>>,
+
+    /// The principal's home client, `null` when it has none
+    #[schema(nullable)]
+    pub client_id: Option<String>,
 
     /// Whether the account signs in through a federated identity provider
     /// (a linked external identity, or an email domain mapped to an OIDC
     /// provider); the SPA hides password self-service for it (Go
     /// `ssoManaged`, auth/login/endpoint.go:616-634).
     pub sso_managed: bool,
+
+    /// The tenancy tier (`ANCHOR`, `PARTNER`, `CLIENT`), the JWT's `tier`.
+    /// Not in Go's body: added so the SPA can gate anchor-only pages (owner
+    /// decisions 2026-09-25, follow-up "/auth/me should include the
+    /// caller's scope/tier").
+    pub scope: String,
 }
 
 /// Auth service state
@@ -447,22 +448,15 @@ pub async fn get_current_user(
     )?;
 
     Ok(Json(CurrentUserResponse {
-        id: principal.id.clone(),
+        status: String::new(),
         principal_id: principal.id.clone(),
-        principal_type: principal.principal_type.as_str().to_string(),
-        email: principal.email().map(String::from),
         name: principal.name.clone(),
-        scope: principal.scope.as_str().to_string(),
-        // Only a CLIENT-tier principal carries one: the SPA reads a missing
-        // clientId as "may act for other owners" (stores/permissions.ts).
-        client_id: principal
-            .client_id
-            .clone()
-            .filter(|_| principal.scope == crate::UserScope::Client),
-        clients: crate::auth::auth_service::clients_claim(&principal),
+        email: principal.email().unwrap_or_default().to_string(),
         roles,
-        permissions,
+        permissions: Some(permissions).filter(|p| !p.is_empty()),
+        client_id: principal.client_id.clone(),
         sso_managed,
+        scope: principal.scope.as_str().to_string(),
     }))
 }
 
