@@ -524,3 +524,197 @@ async fn clients_are_searched_by_body() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ── Platform config ──────────────────────────────────────────────────────
+
+/// A client user holding `role` (and nothing else).
+fn role_holder_token(app: &TestApp, role: &str) -> String {
+    use fc_platform::service_account::entity::RoleAssignment;
+    let mut p = Principal::new_user("reader@flowcatalyst.test", UserScope::Client)
+        .with_client_id("clt_reader");
+    p.roles = vec![RoleAssignment::new(role)];
+    app.auth_service.generate_access_token(&p).expect("token")
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn config_properties_are_set_read_and_deleted_as_go() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let base = "/api/config/parity-unregistered/section-a";
+
+    let set = assert_status(
+        app.put(
+            &format!("{base}/prop-one"),
+            &admin,
+            json!({ "value": "hello", "description": "d" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    let id = set["id"].as_str().unwrap().to_string();
+    assert_eq!(set["scope"], "GLOBAL");
+    assert!(set.get("clientId").is_none());
+
+    // Update in place.
+    let again = assert_status(
+        app.put(
+            &format!("{base}/prop-one"),
+            &admin,
+            json!({ "value": "hello again" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(again["id"], id.as_str());
+    let got = assert_status(
+        app.get(&format!("{base}/prop-one"), &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["value"], "hello again");
+
+    // A client-scoped write leaves the global one alone.
+    let scoped = assert_status(
+        app.put(
+            &format!("{base}/prop-one?clientId=clt_x"),
+            &admin,
+            json!({ "value": "client value" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(scoped["scope"], "CLIENT");
+    assert_ne!(scoped["id"], id.as_str());
+    let got = assert_status(
+        app.get(&format!("{base}/prop-one"), &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["value"], "hello again");
+
+    // A secret reads back unmasked to an anchor.
+    assert_status(
+        app.put(
+            &format!("{base}/secret-one"),
+            &admin,
+            json!({ "value": "s3kret", "valueType": "SECRET" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    let got = assert_status(
+        app.get(&format!("{base}/secret-one"), &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["value"], "s3kret");
+
+    let (status, body) = read_json(
+        app.put(
+            &format!("{base}/bad"),
+            &admin,
+            json!({ "value": "v", "valueType": "NOPE" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_VALUE_TYPE");
+
+    let list = assert_status(
+        app.get("/api/platform-config/parity-unregistered", &admin)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
+
+    // Delete twice (idempotent), then 404.
+    for _ in 0..2 {
+        let (status, _) = read_json(app.delete(&format!("{base}/prop-one"), &admin).await).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    let (status, body) = read_json(app.get(&format!("{base}/prop-one"), &admin).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // No grant: refused. A read grant: reads, secrets masked, no writes.
+    let reader = role_holder_token(&app, "parity:config-reader");
+    let (status, _) = read_json(app.get(&format!("{base}/secret-one"), &reader).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let grant = assert_status(
+        app.post(
+            "/api/platform-config/parity-unregistered/access",
+            &admin,
+            json!({ "roleCode": "parity:config-reader", "canWrite": false }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let grant_id = grant["id"].as_str().unwrap().to_string();
+    let got = assert_status(
+        app.get(&format!("{base}/secret-one"), &reader).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["value"], "***");
+    let (status, _) = read_json(
+        app.put(
+            &format!("{base}/secret-one"),
+            &reader,
+            json!({ "value": "x" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = read_json(app.delete(&format!("{base}/secret-one"), &reader).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Access grants: list, regrant in place, revoke by id.
+    let list = assert_status(
+        app.get("/api/platform-config/parity-unregistered/access", &admin)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(list["items"][0]["roleCode"], "parity:config-reader");
+    let regrant = assert_status(
+        app.post(
+            "/api/platform-config/parity-unregistered/access",
+            &admin,
+            json!({ "roleCode": "parity:config-reader", "canWrite": true }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(regrant["id"], grant_id.as_str());
+    let (status, _) = read_json(
+        app.post(
+            "/api/platform-config/parity-unregistered/access",
+            &app.anchor_token(),
+            json!({ "roleCode": "x", "canWrite": true }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = read_json(
+        app.delete(&format!("/api/platform-config/access/{grant_id}"), &admin)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = read_json(
+        app.delete(&format!("/api/platform-config/access/{grant_id}"), &admin)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

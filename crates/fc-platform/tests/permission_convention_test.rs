@@ -317,6 +317,18 @@ fn every_write_handler_calls_an_auth_check() {
     }
 }
 
+/// `{appCode}` handlers gated otherwise, as Go gates them.
+const APP_CODE_SKIPLIST: &[&str] = &[
+    // Go's platform-config property routes: an anchor, or a role holding a
+    // platform-config access grant for the application; the application
+    // need not be registered (platformconfig/api/api.go:47-57). The path
+    // parameter is `{appCode}` only because axum requires one name per
+    // position under `/api/config`.
+    "platform_config/go_api.rs::get_config_property",
+    "platform_config/go_api.rs::set_config_property",
+    "platform_config/go_api.rs::delete_config_property",
+];
+
 /// Every handler addressed by `{appCode}` must confine the caller to its
 /// applications (`require_application_access`), after its permission check
 /// when it has one. A permission alone lets one application's service
@@ -341,6 +353,9 @@ fn every_app_code_handler_checks_application_access() {
             extract_handlers(&content, |attr| attr.contains("{appCode}"))
         {
             checked += 1;
+            if APP_CODE_SKIPLIST.contains(&format!("{}::{}", rel, fn_name).as_str()) {
+                continue;
+            }
             let Some(scope_at) = body.find("require_application_access") else {
                 violations.push(format!(
                     "{}:{} fn {} (no application check)",

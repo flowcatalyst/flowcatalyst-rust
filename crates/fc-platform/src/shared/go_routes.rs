@@ -17,11 +17,38 @@ pub struct GoRoutesState {
     pub role_permissions: crate::role::permission_api::RolePermissionsState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
+    pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
 }
 
 impl GoRoutesState {
     pub fn build(repos: &Repositories, auth: &AuthServices, uow: &Arc<PgUnitOfWork>) -> Self {
+        let encryption =
+            crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
         Self {
+            platform_config: crate::platform_config::go_api::GoPlatformConfigState {
+                config_repo: repos.platform_config_repo.clone(),
+                access_repo: repos.platform_config_access_repo.clone(),
+                encryption: encryption.clone(),
+                set_property_use_case: Arc::new(
+                    crate::platform_config::operations::SetPlatformConfigPropertyUseCase::new(
+                        repos.platform_config_repo.clone(),
+                        uow.clone(),
+                        encryption,
+                    ),
+                ),
+                grant_access_use_case: Arc::new(
+                    crate::platform_config::operations::GrantPlatformConfigAccessUseCase::new(
+                        repos.platform_config_access_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                revoke_access_use_case: Arc::new(
+                    crate::platform_config::operations::RevokePlatformConfigAccessUseCase::new(
+                        repos.platform_config_access_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+            },
             client_search: crate::client::search_api::ClientSearchState {
                 client_repo: repos.client_repo.clone(),
             },
@@ -64,5 +91,8 @@ pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
         )
         .merge(crate::client::search_api::client_search_router(
             state.client_search,
+        ))
+        .merge(crate::platform_config::go_api::go_platform_config_router(
+            state.platform_config,
         ))
 }
