@@ -526,3 +526,99 @@ async fn authorize_reads_only_an_active_users_session_cookie() {
         location(&resp)
     );
 }
+
+/// Triage S10 (Java 6a06a7f0 S2.1, S2.4): client selection and passkey
+/// self-service take the session cookie only. The accessible list is the
+/// caller's active clients (one batch load, no per-client query).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn client_selection_and_passkeys_take_the_session_cookie_only() {
+    use axum::http::Method;
+    use fc_platform::domain::{Principal, UserScope};
+    use fc_platform::Client;
+
+    let app = TestApp::setup().await;
+    let mut clients = Vec::new();
+    for (name, identifier) in [("Beta", "beta"), ("Alpha", "alpha"), ("Gone", "gone")] {
+        let mut client = Client::new(name, identifier);
+        if identifier == "gone" {
+            client.suspend("test");
+        }
+        app.repos.client_repo.insert(&client).await.unwrap();
+        clients.push(client);
+    }
+    let partner = Principal::new_user("pat@flowcatalyst.test", UserScope::Partner);
+    app.repos.principal_repo.insert(&partner).await.unwrap();
+    for client in &clients {
+        app.repos
+            .principal_repo
+            .grant_client_access(&partner.id, &client.id)
+            .await
+            .unwrap();
+    }
+    let partner = app
+        .repos
+        .principal_repo
+        .find_by_id(&partner.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let bearer = app.auth_service.generate_access_token(&partner).unwrap();
+    let session = app.auth_service.generate_session_token(&partner).unwrap();
+
+    // A bearer — the user's own, full-authority one — is refused.
+    for path in [
+        "/auth/client/accessible",
+        "/auth/client/current",
+        "/auth/webauthn/credentials",
+    ] {
+        let resp = app.get(path, &bearer).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    let resp = app
+        .post(
+            "/auth/client/switch",
+            &bearer,
+            json!({ "clientId": clients[0].id }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = app
+        .post("/auth/webauthn/register/begin", &bearer, json!({}))
+        .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // The session cookie is accepted.
+    let (status, body) = read_json(
+        app.get_with_session("/auth/client/accessible", &session)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let names: Vec<&str> = body["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Alpha", "Beta"], "active clients, by name: {body}");
+    assert_eq!(body["globalAccess"], false);
+
+    let (status, body) = read_json(
+        app.send_with_session(
+            Method::POST,
+            "/auth/client/switch",
+            &session,
+            Some(json!({ "clientId": clients[1].id })),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["client"]["identifier"], "alpha");
+
+    let resp = app
+        .get_with_session("/auth/webauthn/credentials", &session)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}

@@ -2,6 +2,13 @@
 //!
 //! REST endpoints for client context switching in multi-tenant environment.
 //! Available only in embedded auth mode.
+//!
+//! **Session cookie only, active user only** (Java 6a06a7f0 S2.1). The
+//! switch mints the principal's full authority, which is exactly what the
+//! cookie session holds (it is reloaded on every request), so the minted
+//! token never widens the caller. A bearer, however narrowly an OAuth
+//! client or `scope` confined it, would be widened, so a bearer is refused
+//! like no credential at all.
 
 use axum::{
     extract::State,
@@ -86,6 +93,36 @@ pub struct ClientSelectionState {
 }
 
 impl ClientSelectionState {
+    /// The signed-in user behind the session cookie, as stored now.
+    async fn session_principal(&self, auth: &Authenticated) -> Result<Principal, PlatformError> {
+        auth.0.require_session_user()?;
+        self.principal_repo
+            .find_by_id(&auth.0.principal_id)
+            .await?
+            .filter(|p| p.active)
+            .ok_or_else(|| PlatformError::Unauthorized {
+                message: "Not authenticated".to_string(),
+            })
+    }
+
+    /// The active clients the principal may switch to, in one query: every
+    /// active client for an anchor; otherwise the home and granted ones.
+    async fn accessible_active_clients(
+        &self,
+        principal: &Principal,
+    ) -> Result<Vec<crate::Client>, PlatformError> {
+        let clients = if principal.scope == UserScope::Anchor {
+            self.client_repo.find_active().await?
+        } else {
+            let ids = self.get_accessible_client_ids(principal).await?;
+            self.client_repo.find_by_ids(&ids).await?
+        };
+        Ok(clients
+            .into_iter()
+            .filter(|c| c.status == ClientStatus::Active)
+            .collect())
+    }
+
     /// Add active grants to client IDs list
     async fn add_active_grants(
         &self,
@@ -187,31 +224,20 @@ pub async fn list_accessible_clients(
     State(state): State<ClientSelectionState>,
     auth: Authenticated,
 ) -> Result<Json<AccessibleClientsResponse>, PlatformError> {
-    let principal = state
-        .principal_repo
-        .find_by_id(&auth.0.principal_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Principal", &auth.0.principal_id))?;
+    let principal = state.session_principal(&auth).await?;
 
     let global_access = principal.scope == UserScope::Anchor;
 
-    // Get accessible client IDs
-    let client_ids = state.get_accessible_client_ids(&principal).await?;
-
-    // Load client details
-    let mut clients = Vec::new();
-    for id in &client_ids {
-        if let Some(client) = state.client_repo.find_by_id(id).await? {
-            // Only include active clients
-            if client.status == ClientStatus::Active {
-                clients.push(ClientInfo {
-                    id: client.id,
-                    name: client.name,
-                    identifier: client.identifier,
-                });
-            }
-        }
-    }
+    let mut clients: Vec<ClientInfo> = state
+        .accessible_active_clients(&principal)
+        .await?
+        .into_iter()
+        .map(|client| ClientInfo {
+            id: client.id,
+            name: client.name,
+            identifier: client.identifier,
+        })
+        .collect();
 
     // Sort by name
     clients.sort_by(|a, b| a.name.cmp(&b.name));
@@ -242,11 +268,7 @@ pub async fn switch_client(
     auth: Authenticated,
     Json(req): Json<SwitchClientRequest>,
 ) -> Result<Json<SwitchClientResponse>, PlatformError> {
-    let principal = state
-        .principal_repo
-        .find_by_id(&auth.0.principal_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Principal", &auth.0.principal_id))?;
+    let principal = state.session_principal(&auth).await?;
 
     // Check if user can access the requested client
     if !state.can_access_client(&principal, &req.client_id).await? {
@@ -306,11 +328,7 @@ pub async fn get_current_client(
     auth: Authenticated,
 ) -> Result<Json<CurrentClientResponse>, PlatformError> {
     // Check if user has a home client
-    let principal = state
-        .principal_repo
-        .find_by_id(&auth.0.principal_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Principal", &auth.0.principal_id))?;
+    let principal = state.session_principal(&auth).await?;
 
     let client = if let Some(ref client_id) = principal.client_id {
         if let Some(c) = state.client_repo.find_by_id(client_id).await? {
