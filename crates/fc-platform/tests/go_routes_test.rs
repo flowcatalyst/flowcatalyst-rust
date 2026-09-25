@@ -1329,3 +1329,107 @@ async fn application_service_accounts_attach_and_client_configs_read() {
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+// ── Event types, events, dispatch-job read aliases ──────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn event_type_schemas_and_read_aliases_answer_as_go() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let created = assert_status(
+        app.post(
+            "/api/event-types",
+            &admin,
+            json!({ "code": "parity:orders:order:shipped", "name": "Shipped" }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_string();
+
+    let body = assert_status(
+        app.post(
+            &format!("/api/event-types/{id}/schemas"),
+            &admin,
+            json!({ "version": "2.0", "schema": { "type": "object" } }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert!(body["specVersions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["version"] == "2.0"));
+    for (b, status, code) in [
+        (
+            json!({ "version": "2.0", "schema": {} }),
+            StatusCode::CONFLICT,
+            "VERSION_EXISTS",
+        ),
+        (
+            json!({ "schema": {} }),
+            StatusCode::BAD_REQUEST,
+            "VERSION_REQUIRED",
+        ),
+        (
+            json!({ "version": "3.0" }),
+            StatusCode::BAD_REQUEST,
+            "SCHEMA_REQUIRED",
+        ),
+    ] {
+        let (s, r) = read_json(
+            app.post(&format!("/api/event-types/{id}/schemas"), &admin, b)
+                .await,
+        )
+        .await;
+        assert_eq!(s, status, "{r}");
+        assert_eq!(r["code"], code);
+    }
+    let (s, _) = read_json(
+        app.post(
+            &format!("/api/event-types/{id}/schemas"),
+            &nobody_token(&app),
+            json!({ "version": "4.0", "schema": {} }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // PUT on the BFF tier updates as PATCH does.
+    let (s, _) = read_json(
+        app.put(
+            &format!("/bff/event-types/{id}"),
+            &admin,
+            json!({ "name": "Shipped!", "description": "d" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let got = assert_status(
+        app.get(&format!("/api/event-types/{id}"), &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["name"], "Shipped!");
+
+    // Read aliases answer (empty lists) and are gated.
+    for path in [
+        "/api/events/list-raw",
+        "/bff/events/list-raw",
+        "/api/dispatch-jobs/list-raw",
+        "/bff/dispatch-jobs/list-raw",
+        "/api/dispatch-jobs/event/evn_nope",
+        "/bff/dispatch-jobs/event/evn_nope",
+    ] {
+        let body = assert_status(app.get(path, &admin).await, StatusCode::OK).await;
+        assert!(body.is_array(), "{path}: {body}");
+        let (s, _) = read_json(app.get(path, &nobody_token(&app)).await).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{path}");
+    }
+}

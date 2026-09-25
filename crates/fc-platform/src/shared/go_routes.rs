@@ -19,6 +19,8 @@ pub struct GoRoutesState {
     pub edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState,
     pub principals: crate::principal::go_api::PrincipalGoState,
     pub applications: crate::application::go_api::ApplicationGoState,
+    pub event_types: crate::event_type::go_api::EventTypeGoState,
+    pub read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -43,7 +45,43 @@ impl GoRoutesState {
                 repos.principal_repo.clone(),
             ),
         );
+        let signing = Arc::new(crate::dispatch_job::signing_guard::SigningGuard::new(
+            repos.subscription_repo.clone(),
+            repos.connection_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.application_repo.clone(),
+            repos.principal_repo.clone(),
+        ));
         Self {
+            event_types: crate::event_type::go_api::EventTypeGoState {
+                event_type_repo: repos.event_type_repo.clone(),
+                add_schema_use_case: Arc::new(
+                    crate::event_type::operations::AddSchemaUseCase::new(
+                        repos.event_type_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                bff: crate::shared::bff_event_types_api::BffEventTypesState {
+                    event_type_repo: repos.event_type_repo.clone(),
+                    sync_use_case: Arc::new(
+                        crate::event_type::operations::SyncEventTypesUseCase::new(
+                            repos.event_type_repo.clone(),
+                            uow.clone(),
+                        ),
+                    ),
+                    unit_of_work: uow.clone(),
+                },
+            },
+            read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState {
+                events: crate::event::api::EventsState {
+                    event_repo: repos.event_repo.clone(),
+                    signing: signing.clone(),
+                },
+                dispatch_jobs: crate::dispatch_job::api::DispatchJobsState {
+                    dispatch_job_repo: repos.dispatch_job_repo.clone(),
+                    signing,
+                },
+            },
             applications: crate::application::go_api::ApplicationGoState {
                 principal_repo: repos.principal_repo.clone(),
                 client_config_repo: repos.application_client_config_repo.clone(),
@@ -160,6 +198,12 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::event_type::go_api::event_type_go_router(
+            state.event_types,
+        ))
+        .merge(crate::shared::go_read_aliases_api::read_aliases_router(
+            state.read_aliases,
+        ))
         .merge(crate::application::go_api::application_go_router(
             state.applications,
         ))

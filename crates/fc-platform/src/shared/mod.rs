@@ -27,6 +27,7 @@ pub mod debug_api;
 pub mod dispatch_process_api;
 pub mod dispatch_queue;
 pub mod filter_options_api;
+pub mod go_read_aliases_api;
 pub mod go_routes;
 pub mod health_api;
 pub mod me_api;
