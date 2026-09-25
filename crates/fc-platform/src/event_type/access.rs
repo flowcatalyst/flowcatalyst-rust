@@ -33,3 +33,20 @@ pub fn ensure_modifiable(
     }
     Ok(())
 }
+
+/// Whether the caller may create an event type owned by `client_id`: a
+/// client-owned one needs access to that client, an anchor-level one
+/// (`None`) an anchor user.
+pub fn ensure_can_create(auth: &AuthContext, client_id: Option<&str>) -> Result<(), PlatformError> {
+    match client_id {
+        Some(cid) if !auth.can_access_client(cid) => Err(PlatformError::forbidden(format!(
+            "No access to client: {}",
+            cid
+        ))),
+        Some(_) => Ok(()),
+        None if !auth.is_anchor() => Err(PlatformError::forbidden(
+            "Only anchor users can create anchor-level event types",
+        )),
+        None => Ok(()),
+    }
+}
