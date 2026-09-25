@@ -1703,6 +1703,32 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     };
 
     let principal = match state.principal_repo.find_by_id(principal_id).await {
+        // A client authenticates as a service account, never a user: a USER
+        // principal here would mint that user's full authority for whoever
+        // holds the client secret (Java 6a06a7f0 S2.3).
+        Ok(Some(p)) if p.principal_type != crate::PrincipalType::Service => {
+            warn!(client_id = %client_id, principal_id = %principal_id, "client_credentials refused: linked principal is not a service account");
+            let attempt = LoginAttempt {
+                identifier: Some(client_id.clone()),
+                principal_id: Some(p.id.clone()),
+                failure_reason: Some(
+                    "Client not properly configured (linked principal is not a service account)"
+                        .to_string(),
+                ),
+                ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
+            };
+            if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+                warn!(error = %e, "Failed to log service account login attempt");
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "unauthorized_client".to_string(),
+                    error_description: Some("Client is not configured for this grant".to_string()),
+                }),
+            )
+                .into_response();
+        }
         Ok(Some(p)) if p.active => p,
         Ok(Some(_)) => {
             warn!(client_id = %client_id, "Service account principal is inactive");

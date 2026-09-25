@@ -809,3 +809,51 @@ async fn auth_refresh_refuses_a_client_bound_token() {
     let (status, body) = refresh(&app, &token).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+/// Triage S15 (Java 6a06a7f0 S2.3): a client_credentials client that
+/// names a USER principal mints nothing — it would hand that user's full
+/// authority to whoever holds the client secret.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn client_credentials_requires_a_service_principal() {
+    use fc_platform::auth::oauth_entity::OAuthClient;
+    use fc_platform::domain::{Principal, UserScope};
+    use fc_platform::shared::encryption_service::EncryptionService;
+
+    const APP_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    std::env::set_var("FLOWCATALYST_APP_KEY", APP_KEY);
+    let app = TestApp::setup().await;
+    let secret_ref = EncryptionService::new(APP_KEY)
+        .unwrap()
+        .hash_secret("s3cret-s3cret");
+
+    let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
+    let service = Principal::new_service("svc-reports", "Reports", UserScope::Anchor);
+    app.repos.principal_repo.insert(&service).await.unwrap();
+    for (client_id, principal_id) in [("user-linked", &user.id), ("svc-linked", &service.id)] {
+        let client = OAuthClient::confidential(client_id, client_id)
+            .with_secret_ref(secret_ref.clone())
+            .with_service_account(principal_id.clone());
+        app.repos.oauth_client_repo.insert(&client).await.unwrap();
+    }
+
+    let grant = |client_id: &'static str| async {
+        token_request(
+            &app,
+            &[
+                ("grant_type", "client_credentials"),
+                ("client_id", client_id),
+                ("client_secret", "s3cret-s3cret"),
+            ],
+        )
+        .await
+    };
+    let (status, body) = grant("user-linked").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "unauthorized_client", "{body}");
+    assert!(body.get("access_token").is_none());
+
+    let (status, body) = grant("svc-linked").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["access_token"].is_string());
+}
