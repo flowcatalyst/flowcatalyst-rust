@@ -247,6 +247,8 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 #[derive(Clone)]
 pub struct DispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
+    /// Refuses a job signed by an identity the caller may not use (S5).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 // ============================================================================
@@ -677,6 +679,12 @@ pub async fn create_dispatch_job(
     // Mark as queued
     job.mark_queued();
 
+    // The identity that would sign it must be the caller's to use.
+    state
+        .signing
+        .check_jobs(&auth.0, std::slice::from_ref(&job))
+        .await?;
+
     // Insert into database
     let id = job.id.clone();
     state.dispatch_job_repo.insert(&job).await?;
@@ -798,6 +806,10 @@ pub async fn batch_create_dispatch_jobs(
 
         created_jobs.push(job);
     }
+
+    // Every job's signer must be the caller's to use, before anything is
+    // written.
+    state.signing.check_jobs(&auth.0, &created_jobs).await?;
 
     // Bulk insert; a supplied id that already names a job refuses it all.
     let taken = state

@@ -11,6 +11,7 @@ use sqlx::PgPool;
 
 use crate::principal::entity::UserScope;
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
+use crate::service_account::signing_reach::{AccountReach, SigningAccount};
 use crate::shared::enum_str::decode_opt;
 use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
@@ -129,6 +130,20 @@ impl std::fmt::Debug for StoredWebhookCredentials {
             .field("active", &self.active)
             .finish_non_exhaustive()
     }
+}
+
+/// One row of [`ServiceAccountRepository::find_signing_accounts`].
+#[derive(sqlx::FromRow)]
+struct SigningAccountRow {
+    #[sqlx(rename = "ref")]
+    reference: String,
+    code: String,
+    application_id: Option<String>,
+    client_ids: Option<Vec<String>>,
+    principal_id: Option<String>,
+    scope: Option<String>,
+    client_id: Option<String>,
+    granted: Vec<String>,
 }
 
 pub struct ServiceAccountRepository {
@@ -339,6 +354,73 @@ impl ServiceAccountRepository {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    /// The accounts `references` name, for the signing-reach check
+    /// ([`crate::service_account::signing_reach`]), keyed by reference. A
+    /// reference is the account's own id or its principal's, resolved as
+    /// [`Self::webhook_credentials_by_id`] resolves it for the signer; one
+    /// naming nothing is absent. The reach is the linked principal's (its
+    /// tier decides: ANCHOR none, CLIENT its home client, PARTNER its
+    /// grants), else the account's own client links. One query.
+    pub async fn find_signing_accounts(
+        &self,
+        references: &[String],
+    ) -> Result<std::collections::HashMap<String, SigningAccount>> {
+        if references.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query_as::<_, SigningAccountRow>(
+            "SELECT r.ref, sa.code, sa.application_id, sa.client_ids, \
+                    p.id AS principal_id, p.scope, p.client_id, \
+                    COALESCE(g.clients, '{}'::text[]) AS granted \
+             FROM unnest($1::text[]) AS r(ref) \
+             JOIN iam_service_accounts sa ON sa.id = r.ref \
+                  OR sa.id = (SELECT service_account_id FROM iam_principals WHERE id = r.ref) \
+             LEFT JOIN LATERAL (SELECT id, scope, client_id FROM iam_principals \
+                  WHERE service_account_id = sa.id ORDER BY created_at LIMIT 1) p ON true \
+             LEFT JOIN LATERAL (SELECT array_agg(client_id::text ORDER BY client_id) AS clients \
+                  FROM iam_client_access_grants WHERE principal_id = p.id) g ON true",
+        )
+        .bind(references)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let reach = match (&r.principal_id, r.scope.as_deref()) {
+                    (Some(_), Some("ANCHOR")) => AccountReach::Anchor,
+                    (Some(_), Some("PARTNER")) => AccountReach::of_clients(r.granted),
+                    // CLIENT, or unscoped (read as CLIENT, the narrowest).
+                    (Some(_), _) => AccountReach::of_clients(r.client_id.into_iter().collect()),
+                    (None, _) => AccountReach::of_clients(r.client_ids.unwrap_or_default()),
+                };
+                (
+                    r.reference,
+                    SigningAccount {
+                        code: r.code,
+                        application_id: r.application_id.filter(|a| !a.trim().is_empty()),
+                        reach,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    /// The application the principal acts as: its linked service account's
+    /// `application_id` (Java `SigningReach.callerApplicationId`). `None`
+    /// for a user, an unknown principal, or an account of no application.
+    pub async fn caller_application_id(&self, principal_id: &str) -> Result<Option<String>> {
+        let row = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT sa.application_id FROM iam_principals p \
+             JOIN iam_service_accounts sa ON sa.id = p.service_account_id WHERE p.id = $1",
+        )
+        .bind(principal_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .and_then(|(application_id,)| application_id)
+            .filter(|a| !a.trim().is_empty()))
     }
 
     /// Find service accounts by client ID.

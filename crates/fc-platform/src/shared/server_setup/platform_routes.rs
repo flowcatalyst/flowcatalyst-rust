@@ -96,8 +96,16 @@ pub fn build_platform_routes(
     let events_state = EventsState {
         event_repo: repos.event_repo.clone(),
     };
+    // The one ingest signing guard (S5): dispatch-job ingest on every route.
+    let signing_guard = Arc::new(crate::dispatch_job::signing_guard::SigningGuard::new(
+        repos.subscription_repo.clone(),
+        repos.connection_repo.clone(),
+        repos.service_account_repo.clone(),
+        repos.application_repo.clone(),
+    ));
     let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        signing: signing_guard.clone(),
     };
     let filter_options_state = FilterOptionsState {
         client_repo: repos.client_repo.clone(),
@@ -958,6 +966,7 @@ pub fn build_platform_routes(
     };
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        signing: signing_guard.clone(),
     };
 
     let sdk_events_state = SdkEventsState {

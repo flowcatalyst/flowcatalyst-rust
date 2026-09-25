@@ -24,6 +24,8 @@ use crate::{DispatchJob, DispatchJobRepository, DispatchKind, DispatchMetadata, 
 #[derive(Clone)]
 pub struct SdkDispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
+    /// Refuses a job signed by an identity the caller may not use (S5).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 /// SDK batch dispatch-jobs request. The wrapper key is `items` (1:1 with the
@@ -147,6 +149,12 @@ async fn sdk_batch_create_dispatch_jobs(
         job.mark_queued();
         created_jobs.push(job);
     }
+
+    // The identity each job would be signed with must be one the caller may
+    // use (a subscription of the job's own client; an application's own
+    // account only for that application): a whole-request 403 before
+    // anything is written.
+    state.signing.check_jobs(&auth.0, &created_jobs).await?;
 
     // Bulk insert. A supplied id that already names a job refuses the whole
     // batch 409 DUPLICATE_ID (Java ruling 17c), checked against the live

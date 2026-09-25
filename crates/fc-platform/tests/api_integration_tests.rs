@@ -156,6 +156,12 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
 
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: Arc::new(DispatchJobRepository::new(pool)),
+        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+            Arc::new(fc_platform::SubscriptionRepository::new(pool)),
+            Arc::new(fc_platform::ConnectionRepository::new(pool)),
+            Arc::new(fc_platform::ServiceAccountRepository::new(pool)),
+            application_repo.clone(),
+        )),
     };
 
     let router: Router = Router::new()

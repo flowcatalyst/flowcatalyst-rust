@@ -24,10 +24,11 @@ use std::sync::Arc;
 use tracing::warn;
 
 use super::entity::DispatchJob;
+use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::service_account::outbound_credentials::{ById, OutboundCredentialsResolver};
 use crate::shared::error::Result;
-use crate::{ApplicationRepository, SubscriptionRepository};
+use crate::{ApplicationRepository, Subscription, SubscriptionRepository};
 
 /// What a delivery carries (Java `DeliveryCredentials.Resolved`). `reason`
 /// says why a bare delivery is bare; `signed_by` names the account. Never
@@ -114,33 +115,21 @@ impl DeliveryCredentials {
             Some(id) => self.subscriptions.find_by_id(id).await?,
             None => None,
         };
-        if let Some(sub) = &subscription {
-            if let Some(account) = non_blank(sub.service_account_id.as_deref()) {
-                return self
-                    .named(&format!("subscription {}", sub.code), account)
-                    .await;
-            }
-            if let Some(connection_id) = non_blank(sub.connection_id.as_deref()) {
-                if let Some(connection) = self.connections.find_by_id(connection_id).await? {
-                    if let Some(account) = non_blank(Some(&connection.service_account_id)) {
-                        return self
-                            .named(&format!("connection {}", connection.code), account)
-                            .await;
-                    }
-                }
-            }
-        }
-
-        let application_code = subscription
-            .as_ref()
-            .and_then(|s| non_blank(s.application_code.as_deref()))
-            .map(str::to_string)
-            .or_else(|| leading_segment(&job.code));
-        let Some(application_code) = application_code else {
-            return Ok(Resolved::bare(
-                "no subscription, connection or application names a service account",
-            ));
+        let connection = match subscription.as_ref().and_then(connection_to_load) {
+            Some(connection_id) => self.connections.find_by_id(connection_id).await?,
+            None => None,
         };
+
+        let application_code =
+            match signer_of(&job.code, subscription.as_ref(), connection.as_ref()) {
+                Signer::Named { account_id, who } => return self.named(&who, &account_id).await,
+                Signer::Nobody => {
+                    return Ok(Resolved::bare(
+                        "no subscription, connection or application names a service account",
+                    ))
+                }
+                Signer::OfApplication(code) => code,
+            };
         let Some(application) = self.applications.find_by_code(&application_code).await? else {
             return Ok(Resolved::bare(format!(
                 "application {application_code} does not exist"
@@ -176,6 +165,69 @@ impl DeliveryCredentials {
     }
 }
 
+/// Which identity the resolution order (module doc) signs a job with,
+/// decided from configuration alone, before any credential is looked up
+/// (Java `DeliveryCredentials.signerOf`). [`DeliveryCredentials::resolve`] is
+/// built on it, and so is the ingest guard
+/// ([`crate::dispatch_job::signing_guard`]), which asks whether the caller
+/// may cause that identity's signature: one definition of the order, so the
+/// guard cannot check a different account than the one that will sign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Signer {
+    /// Steps 1-2: an account the subscription (or its connection) names.
+    /// `who` is `subscription <code>` / `connection <code>`.
+    Named { account_id: String, who: String },
+    /// Step 3: this application's oldest active account.
+    OfApplication(String),
+    /// Nothing names an account: a bare delivery.
+    Nobody,
+}
+
+/// The connection whose account step 2 would read: the subscription's, when
+/// the subscription names no account of its own.
+pub fn connection_to_load(subscription: &Subscription) -> Option<&str> {
+    if non_blank(subscription.service_account_id.as_deref()).is_some() {
+        return None;
+    }
+    non_blank(subscription.connection_id.as_deref())
+}
+
+/// [`Signer`] for a job with code `job_code`, its subscription (if it names
+/// one that exists) and that subscription's connection (as
+/// [`connection_to_load`] names it, if it exists).
+pub fn signer_of(
+    job_code: &str,
+    subscription: Option<&Subscription>,
+    connection: Option<&Connection>,
+) -> Signer {
+    if let Some(sub) = subscription {
+        if let Some(account) = non_blank(sub.service_account_id.as_deref()) {
+            return Signer::Named {
+                account_id: account.to_string(),
+                who: format!("subscription {}", sub.code),
+            };
+        }
+        if let Some(connection) =
+            connection.filter(|c| connection_to_load(sub) == Some(c.id.as_str()))
+        {
+            if let Some(account) = non_blank(Some(&connection.service_account_id)) {
+                return Signer::Named {
+                    account_id: account.to_string(),
+                    who: format!("connection {}", connection.code),
+                };
+            }
+        }
+    }
+    match subscription
+        .and_then(|s| non_blank(s.application_code.as_deref()))
+        .map(str::to_string)
+        .or_else(|| leading_segment(job_code))
+    {
+        Some(application_code) => Signer::OfApplication(application_code),
+        None => Signer::Nobody,
+    }
+}
+
 /// Java `String.isBlank` as `blankToNull` uses it.
 fn non_blank(s: Option<&str>) -> Option<&str> {
     s.filter(|v| !v.trim().is_empty())
@@ -199,6 +251,55 @@ mod tests {
         );
         assert_eq!(leading_segment(":invoice"), None);
         assert_eq!(leading_segment("no-colon"), None);
+    }
+
+    fn subscription(
+        account: Option<&str>,
+        connection: Option<&str>,
+        app: Option<&str>,
+    ) -> Subscription {
+        let mut s = Subscription::new("sub-a", "Sub A", "https://example.test/hook");
+        s.service_account_id = account.map(str::to_string);
+        s.connection_id = connection.map(str::to_string);
+        s.application_code = app.map(str::to_string);
+        s
+    }
+
+    #[test]
+    fn the_signer_follows_the_resolution_order() {
+        let mut conn = Connection::new("conn-a", "Conn A", "sac_conn");
+        conn.id = "con_1".into();
+
+        // 1. The subscription's own account wins over its connection's.
+        let sub = subscription(Some("sac_sub"), Some("con_1"), Some("billing"));
+        assert_eq!(
+            signer_of("billing:x:y", Some(&sub), Some(&conn)),
+            Signer::Named {
+                account_id: "sac_sub".into(),
+                who: "subscription sub-a".into()
+            }
+        );
+        // 2. Else its connection's.
+        let sub = subscription(Some(" "), Some("con_1"), Some("billing"));
+        assert_eq!(
+            signer_of("billing:x:y", Some(&sub), Some(&conn)),
+            Signer::Named {
+                account_id: "sac_conn".into(),
+                who: "connection conn-a".into()
+            }
+        );
+        // A connection that is not the subscription's is ignored.
+        let sub = subscription(None, Some("con_2"), Some("billing"));
+        assert_eq!(
+            signer_of("orders:x:y", Some(&sub), Some(&conn)),
+            Signer::OfApplication("billing".into())
+        );
+        // 3. The subscription's application, else the code's leading segment.
+        assert_eq!(
+            signer_of("orders:x:y", None, None),
+            Signer::OfApplication("orders".into())
+        );
+        assert_eq!(signer_of("no-colon", None, None), Signer::Nobody);
     }
 
     #[test]

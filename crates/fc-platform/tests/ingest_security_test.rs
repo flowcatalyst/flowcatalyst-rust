@@ -54,6 +54,96 @@ async fn create_client(app: &TestApp, identifier: &str) -> String {
     client.id
 }
 
+async fn create_application(app: &TestApp, code: &str) -> String {
+    let application = fc_platform::Application::new(code, code.to_uppercase());
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .expect("insert application");
+    application.id
+}
+
+/// A service account and its SERVICE principal, as Go's provisioning leaves
+/// them (a `prn_` principal linked to a `sac_` account). `clients`: none is
+/// an ANCHOR-tier account, one a CLIENT, several a PARTNER (as grants).
+/// Returns (account id, principal id).
+async fn seed_account(
+    app: &TestApp,
+    code: &str,
+    application_id: Option<&str>,
+    clients: &[&str],
+) -> (String, String) {
+    let sac = fc_platform::shared::tsid::generate(fc_platform::EntityType::ServiceAccount);
+    let prn = fc_platform::shared::tsid::generate(fc_platform::EntityType::Principal);
+    sqlx::query(
+        "INSERT INTO iam_service_accounts (id, code, name, application_id, active) VALUES ($1, $2, $2, $3, true)",
+    )
+    .bind(&sac)
+    .bind(code)
+    .bind(application_id)
+    .execute(&app.pool)
+    .await
+    .expect("insert account");
+    let scope = match clients.len() {
+        0 => "ANCHOR",
+        1 => "CLIENT",
+        _ => "PARTNER",
+    };
+    sqlx::query(
+        "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, service_account_id) \
+         VALUES ($1, 'SERVICE', $2, $3, $4, $5, true, $6)",
+    )
+    .bind(&prn)
+    .bind(scope)
+    .bind((clients.len() == 1).then(|| clients[0]))
+    .bind(application_id)
+    .bind(code)
+    .bind(&sac)
+    .execute(&app.pool)
+    .await
+    .expect("insert principal");
+    if clients.len() > 1 {
+        for c in clients {
+            sqlx::query(
+                "INSERT INTO iam_client_access_grants (id, principal_id, client_id, granted_by, granted_at) \
+                 VALUES ($1, $2, $3, 'test', NOW())",
+            )
+            .bind(fc_platform::shared::tsid::generate_untyped())
+            .bind(&prn)
+            .bind(c)
+            .execute(&app.pool)
+            .await
+            .expect("insert grant");
+        }
+    }
+    (sac, prn)
+}
+
+/// The SERVICE principal `principal_id` as a caller, at `scope`.
+fn service_caller(principal_id: &str, scope: UserScope) -> Principal {
+    let mut p = Principal::new_service("sac_unused", "svc", scope);
+    p.id = principal_id.to_string();
+    p
+}
+
+async fn create_subscription(
+    app: &TestApp,
+    code: &str,
+    client_id: Option<&str>,
+    account: Option<&str>,
+) -> String {
+    let mut sub = fc_platform::Subscription::new(code, code, "https://receiver.example.test/hook");
+    sub.client_id = client_id.map(str::to_string);
+    sub.service_account_id = account.map(str::to_string);
+    app.repos
+        .subscription_repo
+        .insert(&sub)
+        .await
+        .expect("insert subscription");
+    sub.id
+}
+
 fn event_item(event_type: &str) -> Value {
     json!({"type": event_type, "source": "test", "data": {"k": "v"}})
 }
@@ -487,4 +577,132 @@ async fn a_batched_dispatch_job_needs_no_service_account() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "VALIDATION");
     assert_eq!(body["message"], "serviceAccountId is required");
+}
+
+// ── S5: signing reach at dispatch-job ingest ────────────────────────────────
+
+async fn post_job(app: &TestApp, token: &str, job: Value) -> (StatusCode, Value) {
+    post(
+        app,
+        "/api/dispatch-jobs/batch",
+        token,
+        json!({"items": [job]}),
+    )
+    .await
+}
+
+/// A job's code prefix names the application whose own account signs it:
+/// only that application (or a super-admin) may ingest it. Other callers,
+/// a plain anchor included, are refused and nothing is written.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn only_the_application_may_ingest_a_job_its_account_signs() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let billing = create_application(&app, "billing").await;
+    let (_, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
+
+    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]);
+    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    for token in [&client_admin, &anchor] {
+        let (status, body) = post_job(&app, token, job_item("billing:invoice:sent")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(
+            body["message"],
+            "dispatch job would be signed by an identity the caller may not use: \
+             application billing signs only its own jobs; the caller is not that application"
+        );
+    }
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM msg_dispatch_jobs").await,
+        0
+    );
+
+    // The application itself, and a super-admin, may.
+    let own = token_for(
+        &app,
+        &service_caller(&billing_prn, UserScope::Anchor),
+        &[JOBS_WRITE],
+    );
+    let (status, body) = post_job(&app, &own, job_item("billing:invoice:sent")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let root = token_for(&app, &anchor_user(), &[JOBS_WRITE, permissions::ADMIN_ALL]);
+    let (status, body) = post_job(&app, &root, job_item("billing:invoice:sent")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // A prefix naming no application signs nothing, so it is not refused.
+    let (status, body) = post_job(&app, &client_admin, job_item("nosuchapp:x:y")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// A non-anchor's job names only a subscription of its own client, and the
+/// account that subscription names must be one the caller may use, however
+/// it is referenced (account id or its principal's id).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_job_signs_only_with_an_account_the_caller_may_use() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let other = create_client(&app, "other").await;
+    let billing = create_application(&app, "billing").await;
+    let (acme_sac, _) = seed_account(&app, "acme-svc", None, &[&acme]).await;
+    let (shared_sac, _) = seed_account(&app, "shared-svc", None, &[&acme, &other]).await;
+    let (_, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
+
+    let foreign_sub = create_subscription(&app, "foreign-sub", Some(&other), None).await;
+    let acme_sub = create_subscription(&app, "acme-sub", Some(&acme), Some(&acme_sac)).await;
+    let shared_sub = create_subscription(&app, "shared-sub", Some(&acme), Some(&shared_sac)).await;
+    // Referenced by the application account's principal id, as Go's
+    // provisioning stores it.
+    let app_sub = create_subscription(&app, "app-sub", Some(&acme), Some(&billing_prn)).await;
+
+    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[JOBS_WRITE]);
+    let with_sub = |sub: &str| {
+        let mut j = job_item("zzz:x:y");
+        j["subscriptionId"] = json!(sub);
+        j
+    };
+
+    let (status, body) = post_job(&app, &client_admin, with_sub(&foreign_sub)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        body["message"],
+        format!("No access to subscription: {foreign_sub}")
+    );
+
+    let (status, body) = post_job(&app, &client_admin, with_sub(&shared_sub)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("reaches clients the caller cannot access"),
+        "{body}"
+    );
+
+    let (status, body) = post_job(&app, &client_admin, with_sub(&app_sub)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("belongs to an application the caller is not"),
+        "{body}"
+    );
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM msg_dispatch_jobs").await,
+        0
+    );
+
+    // Its own client's account is its to use.
+    let (status, body) = post_job(&app, &client_admin, with_sub(&acme_sub)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // An anchor may name any client's subscription and reaches every
+    // client-linked account.
+    let anchor = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let mut job = with_sub(&shared_sub);
+    job["clientId"] = json!(acme);
+    let (status, body) = post_job(&app, &anchor, job).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
