@@ -3,10 +3,11 @@
 //! (`scheduledjob/cron/CronExpression.parse`, validation only) and Java's
 //! `ZoneId.of`.
 //!
-//! Only the grammar is ported: publish refuses what Java refuses, with the
-//! same messages. Evaluating a schedule is the scheduler's job; aligning the
-//! Rust scheduler's cron dialect with this one is part of promote wiring
-//! (P5), which creates the scheduled jobs.
+//! The grammar is ported with Java's field bit sets ([`JavaCron`]): publish
+//! refuses what Java refuses, with the same messages, and promote wiring
+//! translates what Java accepts into what the Rust scheduler evaluates the
+//! same way (`function::cron_dialect`). Evaluating a schedule is the
+//! scheduler's job.
 
 use std::str::FromStr;
 
@@ -73,10 +74,30 @@ fn is_regex_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r')
 }
 
+/// Java's `CronExpression.STAR_BIT`: set on a day field written `*` or `?`
+/// without a step over 1. When either day field has it, a day must match
+/// both day fields; when neither has it, either one.
+pub const STAR_BIT: u64 = 1 << 63;
+
+/// A parsed Java cron expression (Java `CronExpression`): the stripped text,
+/// its six fields as written, and each field's bit set (bit `n` for value
+/// `n`, plus [`STAR_BIT`] on the day fields). Day of week 0 is Sunday.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaCron {
+    pub expression: String,
+    pub fields: [String; FIELD_COUNT],
+    pub bits: [u64; FIELD_COUNT],
+}
+
 /// Java `CronExpression.parse`: `Ok` or `(code, message)`, the code
 /// `INVALID_CRON` (blank, descriptor, per-expression zone, malformed field)
 /// or `CRON_INVALID_SHAPE` (not six fields).
 pub fn parse_cron(text: &str) -> Result<(), (&'static str, String)> {
+    parse_java_cron(text).map(|_| ())
+}
+
+/// [`parse_cron`], keeping what it parsed.
+pub fn parse_java_cron(text: &str) -> Result<JavaCron, (&'static str, String)> {
     if super::java_is_blank(text) {
         return Err(("INVALID_CRON", "cron expressions cannot be empty".into()));
     }
@@ -119,33 +140,41 @@ pub fn parse_cron(text: &str) -> Result<(), (&'static str, String)> {
         &MONTHS,
         &DAYS_OF_WEEK,
     ];
-    for (field, bounds) in fields.iter().zip(bounds) {
-        check_field(field, bounds)
+    let mut bits = [0u64; FIELD_COUNT];
+    for (i, (field, bounds)) in fields.iter().zip(bounds).enumerate() {
+        bits[i] = field_bits(field, bounds)
             .map_err(|why| ("INVALID_CRON", format!("cron expression '{expr}': {why}")))?;
     }
-    Ok(())
+    Ok(JavaCron {
+        expression: expr.to_string(),
+        fields: std::array::from_fn(|i| fields[i].to_string()),
+        bits,
+    })
 }
 
 /// A comma-separated list of ranges; an empty item is malformed.
-fn check_field(field: &str, bounds: &Bounds) -> Result<(), String> {
+fn field_bits(field: &str, bounds: &Bounds) -> Result<u64, String> {
+    let mut bits = 0;
     for item in field.split(',') {
         if item.is_empty() {
             return Err(format!("empty list item in field: {field}"));
         }
-        check_range(item, bounds)?;
+        bits |= range_bits(item, bounds)?;
     }
-    Ok(())
+    Ok(bits)
 }
 
 /// One `*|?|N|N-M|name[-name]` with an optional `/step`.
-fn check_range(expr: &str, r: &Bounds) -> Result<(), String> {
+fn range_bits(expr: &str, r: &Bounds) -> Result<u64, String> {
     let range_and_step: Vec<&str> = expr.split('/').collect();
     if range_and_step.len() > 2 {
         return Err(format!("too many slashes: {expr}"));
     }
     let low_and_high: Vec<&str> = range_and_step[0].split('-').collect();
     let single_value = low_and_high.len() == 1;
+    let mut extra = 0;
     let (start, mut end) = if low_and_high[0] == "*" || low_and_high[0] == "?" {
+        extra = STAR_BIT;
         (r.min as i64, r.max as i64)
     } else {
         let start = int_or_name(low_and_high[0], r.names)?;
@@ -161,6 +190,9 @@ fn check_range(expr: &str, r: &Bounds) -> Result<(), String> {
         step = non_negative_int(range_and_step[1])?;
         if single_value {
             end = r.max as i64; // "N/step" means "N-max/step"
+        }
+        if step > 1 {
+            extra = 0; // a stepped wildcard is a restriction, not "any day"
         }
     }
     if start < r.min as i64 {
@@ -183,7 +215,13 @@ fn check_range(expr: &str, r: &Bounds) -> Result<(), String> {
     if step == 0 {
         return Err(format!("step of range should be a positive number: {expr}"));
     }
-    Ok(())
+    let mut bits = 0u64;
+    let mut i = start;
+    while i <= end {
+        bits |= 1 << i;
+        i += step;
+    }
+    Ok(bits | extra)
 }
 
 fn int_or_name(token: &str, names: &[(&str, u32)]) -> Result<i64, String> {
@@ -228,6 +266,32 @@ pub fn zone_id_valid(id: &str) -> bool {
         }
     }
     region_valid(id)
+}
+
+/// The fixed offset, in seconds east of UTC, that a Java zone id which is
+/// not a region stands for: `Z`, an offset, or `UTC`/`GMT`/`UT` alone or
+/// followed by an offset. `None` for a region id (or an invalid one).
+pub fn java_fixed_offset_seconds(id: &str) -> Option<i32> {
+    if !zone_id_valid(id) {
+        return None;
+    }
+    let offset = if id == "Z" || id.starts_with(['+', '-']) {
+        id
+    } else {
+        let rest = ["UTC", "GMT", "UT"]
+            .iter()
+            .find_map(|prefix| id.strip_prefix(prefix))?;
+        if rest.is_empty() {
+            return Some(0);
+        }
+        rest
+    };
+    if offset == "Z" {
+        return Some(0);
+    }
+    let sign = if offset.starts_with('-') { -1 } else { 1 };
+    let (h, m, s) = offset_parts(&offset[1..])?;
+    Some(sign * (h * 3600 + m * 60 + s) as i32)
 }
 
 /// Java `ZoneOffset.of`.
