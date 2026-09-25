@@ -262,6 +262,22 @@ impl PrincipalRepository {
         }
     }
 
+    /// Replace a principal's stored password hash — infrastructure, not a
+    /// domain change: the lazy re-encoding of a hash the user just proved
+    /// they know the password for (a migrated bcrypt hash, or older argon2
+    /// parameters), made on login. Go writes it the same way, as a direct
+    /// UPDATE with no event or audit (principal/repository.go:760-770,
+    /// called from auth/login/endpoint.go:519-525).
+    pub async fn update_password_hash(&self, principal_id: &str, hash: &str) -> Result<()> {
+        sqlx::query("UPDATE iam_principals SET password_hash = $1, updated_at = $2 WHERE id = $3")
+            .bind(hash)
+            .bind(Utc::now())
+            .bind(principal_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// The USER principals with these emails (matched case-insensitively),
     /// hydrated, in one query plus the batch hydration.
     pub async fn find_users_by_emails(&self, emails: &[String]) -> Result<Vec<Principal>> {

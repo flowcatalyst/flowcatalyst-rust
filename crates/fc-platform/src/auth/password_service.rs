@@ -200,7 +200,15 @@ impl Argon2Config {
 /// Password authentication service
 pub struct PasswordService {
     argon2: Argon2<'static>,
+    config: Argon2Config,
     policy: PasswordPolicy,
+}
+
+/// A bcrypt hash, as PHP's `password_hash` (`$2y$`) and other bcrypt
+/// implementations (`$2a$`, `$2b$`) write it. Go `isBcrypt`
+/// (auth/passwordhash/passwordhash.go:150-152).
+fn is_bcrypt(hash: &str) -> bool {
+    hash.starts_with("$2a$") || hash.starts_with("$2b$") || hash.starts_with("$2y$")
 }
 
 impl PasswordService {
@@ -208,7 +216,11 @@ impl PasswordService {
         let params = config.to_params();
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
-        Self { argon2, policy }
+        Self {
+            argon2,
+            config,
+            policy,
+        }
     }
 
     /// Hash a password using Argon2id
@@ -276,11 +288,44 @@ impl PasswordService {
         Ok(hash.to_string())
     }
 
-    /// Verify a password against a stored hash
+    /// Hash a password with the configured Argon2id parameters and no policy
+    /// check: the lazy upgrade of a stored hash the user just proved they
+    /// know the password for (Go `passwordhash.Hash` in the login rehash,
+    /// auth/login/endpoint.go:519-525).
+    pub fn rehash_password(&self, password: &str) -> Result<String> {
+        let salt = SaltString::generate(&mut OsRng);
+        self.argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map(|h| h.to_string())
+            .map_err(|e| PlatformError::Internal {
+                message: format!("Failed to hash password: {}", e),
+            })
+    }
+
+    /// Verify a password against a stored hash, as Go's `passwordhash.Verify`
+    /// (auth/passwordhash/passwordhash.go:115-148): a bcrypt hash (`$2a$`,
+    /// `$2b$`, `$2y$`) against the first 72 bytes of the password, as PHP's
+    /// `password_verify` does; otherwise a PHC `argon2id` or `argon2i` hash at
+    /// version 19. Anything else is an invalid hash.
     pub fn verify_password(&self, password: &str, hash: &str) -> Result<bool> {
+        if is_bcrypt(hash) {
+            let bytes = password.as_bytes();
+            let bytes = &bytes[..bytes.len().min(72)];
+            return bcrypt::verify(bytes, hash).map_err(|e| PlatformError::Internal {
+                message: format!("Invalid password hash format: {}", e),
+            });
+        }
+
         let parsed_hash = PasswordHash::new(hash).map_err(|e| PlatformError::Internal {
             message: format!("Invalid password hash format: {}", e),
         })?;
+        let variant_ok = parsed_hash.algorithm == Algorithm::Argon2id.ident()
+            || parsed_hash.algorithm == Algorithm::Argon2i.ident();
+        if !variant_ok || parsed_hash.version != Some(Version::V0x13.into()) {
+            return Err(PlatformError::Internal {
+                message: "Invalid password hash format: unsupported algorithm".to_string(),
+            });
+        }
 
         match self
             .argon2
@@ -300,22 +345,24 @@ impl PasswordService {
         }
     }
 
-    /// Check if a password hash needs to be upgraded (e.g., if config changed)
+    /// Whether a stored hash should be re-encoded after a successful login:
+    /// anything that is not an Argon2id hash with the configured parameters
+    /// — a bcrypt hash, an argon2i hash, or older parameters. Go
+    /// `NeedsRehash` (auth/passwordhash/passwordhash.go:172-185).
     pub fn needs_rehash(&self, hash: &str) -> bool {
-        if let Ok(parsed) = PasswordHash::new(hash) {
-            // Check if algorithm is Argon2id
-            if parsed.algorithm != argon2::Algorithm::Argon2id.ident() {
-                return true;
-            }
-
-            // Check params (would need to parse and compare)
-            // For simplicity, we'll just return false here
-            // In production, you'd compare the params in the hash
-
-            false
-        } else {
-            true // Invalid hash format needs rehash
+        let Ok(parsed) = PasswordHash::new(hash) else {
+            return true;
+        };
+        if parsed.algorithm != Algorithm::Argon2id.ident() {
+            return true;
         }
+        let Ok(params) = Params::try_from(&parsed) else {
+            return true;
+        };
+        params.m_cost() != self.config.memory_cost
+            || params.t_cost() != self.config.time_cost
+            || params.p_cost() != self.config.parallelism
+            || params.output_len() != Some(self.config.output_len)
     }
 
     /// Validate password against policy without hashing
@@ -352,6 +399,93 @@ impl Default for PasswordService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A PHP `password_hash()` bcrypt hash: the same algorithm the bcrypt
+    /// crate writes as `$2b$`, spelled `$2y$`.
+    fn laravel_hash(password: &str) -> String {
+        bcrypt::hash(password, 4)
+            .unwrap()
+            .replacen("$2b$", "$2y$", 1)
+    }
+
+    /// Go `passwordhash.Verify` (passwordhash.go:115-133): the three bcrypt
+    /// spellings verify; a wrong password is a mismatch, not an error.
+    #[test]
+    fn bcrypt_hashes_verify_in_every_spelling() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::lenient());
+        let y = laravel_hash("s3cret-Pass");
+        assert!(y.starts_with("$2y$"));
+        assert!(service.verify_password("s3cret-Pass", &y).unwrap());
+        assert!(!service.verify_password("wrong", &y).unwrap());
+        for prefix in ["$2a$", "$2b$"] {
+            let h = y.replacen("$2y$", prefix, 1);
+            assert!(
+                service.verify_password("s3cret-Pass", &h).unwrap(),
+                "{prefix}"
+            );
+        }
+        assert!(service.verify_password("x", "$2y$10$not-a-hash").is_err());
+    }
+
+    /// PHP's `password_verify` (and Go) compare only the first 72 bytes.
+    #[test]
+    fn bcrypt_compares_the_first_72_bytes() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::lenient());
+        let long = "a".repeat(72);
+        let h = laravel_hash(&long);
+        assert!(service
+            .verify_password(&format!("{long}and-more"), &h)
+            .unwrap());
+    }
+
+    /// Laravel's argon2i driver verifies too; argon2d is refused, as Go
+    /// refuses it.
+    #[test]
+    fn argon2i_verifies_and_argon2d_is_refused() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::lenient());
+        let salt = SaltString::generate(&mut OsRng);
+        for (alg, ok) in [(Algorithm::Argon2i, true), (Algorithm::Argon2d, false)] {
+            let h = Argon2::new(alg, Version::V0x13, Argon2Config::testing().to_params())
+                .hash_password(b"pw", &salt)
+                .unwrap()
+                .to_string();
+            assert_eq!(service.verify_password("pw", &h).is_ok(), ok, "{alg:?}");
+        }
+    }
+
+    /// Go `NeedsRehash` (passwordhash.go:172-185): bcrypt, argon2i and other
+    /// parameters are upgraded; a current Argon2id hash is not.
+    #[test]
+    fn legacy_hashes_need_a_rehash() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::lenient());
+        assert!(service.needs_rehash(&laravel_hash("pw")));
+        let current = service.rehash_password("pw").unwrap();
+        assert!(current.starts_with("$argon2id$"));
+        assert!(!service.needs_rehash(&current));
+        assert!(service.verify_password("pw", &current).unwrap());
+
+        let stronger = PasswordService::new(Argon2Config::default(), PasswordPolicy::lenient());
+        assert!(stronger.needs_rehash(&current), "older parameters");
+
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2i = Argon2::new(
+            Algorithm::Argon2i,
+            Version::V0x13,
+            Argon2Config::testing().to_params(),
+        )
+        .hash_password(b"pw", &salt)
+        .unwrap()
+        .to_string();
+        assert!(service.needs_rehash(&argon2i));
+    }
+
+    /// The login rehash hashes whatever the user proved, policy or not.
+    #[test]
+    fn a_rehash_skips_the_policy() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::default());
+        let h = service.rehash_password("x").unwrap();
+        assert!(service.verify_password("x", &h).unwrap());
+    }
 
     #[test]
     fn test_password_policy_default() {

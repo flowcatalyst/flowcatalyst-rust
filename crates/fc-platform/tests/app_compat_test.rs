@@ -13,6 +13,22 @@ use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use support::{read_json, TestApp};
 
+/// An unauthenticated JSON POST (login, logout).
+async fn post_unauth(
+    app: &TestApp,
+    path: &str,
+    body: Value,
+) -> axum::http::Response<axum::body::Body> {
+    use tower::ServiceExt;
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap();
+    app.router.clone().oneshot(req).await.unwrap()
+}
+
 async fn insert_user(app: &TestApp, email: &str, active: bool) -> Principal {
     let mut p = Principal::new_user(email, UserScope::Anchor);
     p.active = active;
@@ -239,4 +255,81 @@ async fn integral_syncs_a_user_with_its_password_hash() {
     )
     .await;
     assert_eq!(status, 400, "{body}");
+}
+
+/// A user integral synced with its Laravel bcrypt hash (`$2y$`) signs in
+/// with the password it always had, and the hash is re-encoded to Argon2id
+/// on that login (Go auth/passwordhash/passwordhash.go:115-185,
+/// auth/login/endpoint.go:510-525).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_synced_laravel_user_signs_in_and_is_rehashed() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let laravel_hash = bcrypt::hash("Tr0ub4dor&3", 10)
+        .unwrap()
+        .replacen("$2b$", "$2y$", 1);
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &token,
+            json!({"principals": [{
+                "email": "sam@inhance.test",
+                "name": "Sam",
+                "roles": [],
+                "passwordHash": laravel_hash
+            }]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let (status, body) = read_json(
+        post_unauth(
+            &app,
+            "/auth/login",
+            json!({"email": "sam@inhance.test", "password": "wrong"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 401, "{body}");
+
+    let (status, body) = read_json(
+        post_unauth(
+            &app,
+            "/auth/login",
+            json!({"email": "sam@inhance.test", "password": "Tr0ub4dor&3"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    let stored = app
+        .repos
+        .principal_repo
+        .find_by_email("sam@inhance.test")
+        .await
+        .unwrap()
+        .unwrap()
+        .user_identity
+        .unwrap()
+        .password_hash
+        .unwrap();
+    assert!(stored.starts_with("$argon2id$"), "{stored}");
+
+    // And the upgraded hash still signs in.
+    let (status, _) = read_json(
+        post_unauth(
+            &app,
+            "/auth/login",
+            json!({"email": "sam@inhance.test", "password": "Tr0ub4dor&3"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
 }

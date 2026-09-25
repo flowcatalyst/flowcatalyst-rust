@@ -210,11 +210,13 @@ pub async fn login(
         }
     };
 
-    // Verify password using Argon2id
-    let password_valid = principal
+    // Verify the password: Argon2id, or a bcrypt hash migrated from a
+    // Laravel app (Go passwordhash.Verify).
+    let stored_hash = principal
         .user_identity
         .as_ref()
-        .and_then(|id| id.password_hash.as_ref())
+        .and_then(|id| id.password_hash.as_deref());
+    let password_valid = stored_hash
         .map(|hash| {
             state
                 .password_service
@@ -252,6 +254,27 @@ pub async fn login(
         return Err(PlatformError::Unauthorized {
             message: "Account is not active".to_string(),
         });
+    }
+
+    // Lazy upgrade: a hash that isn't Argon2id at the current parameters (a
+    // migrated bcrypt hash, say) is re-encoded now the user has proved the
+    // password. Best-effort, as Go's login (auth/login/endpoint.go:519-525):
+    // a failure is logged and the login goes on.
+    if stored_hash.is_some_and(|h| state.password_service.needs_rehash(h)) {
+        match state.password_service.rehash_password(&req.password) {
+            Ok(new_hash) => {
+                if let Err(e) = state
+                    .principal_repo
+                    .update_password_hash(&principal.id, &new_hash)
+                    .await
+                {
+                    tracing::warn!(principal_id = %principal.id, error = %e, "password rehash persist failed; login continues");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(principal_id = %principal.id, error = %e, "password rehash failed; login continues");
+            }
+        }
     }
 
     // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
