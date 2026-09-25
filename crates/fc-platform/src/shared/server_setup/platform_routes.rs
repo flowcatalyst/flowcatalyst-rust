@@ -589,6 +589,45 @@ pub fn build_platform_routes(
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
+
+    // Two-factor authentication (Go's mfa + twofa + mfatoken + notify).
+    let platform_name = crate::mfa::notify::PlatformName {
+        configs: Some(repos.platform_config_repo.clone()),
+    };
+    let two_factor = Arc::new(crate::mfa::TwoFactorLogin {
+        mfa: Arc::new(crate::mfa::MfaService {
+            repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
+            encryption: encryption_service.clone(),
+            email: email_service.clone(),
+            issuer: platform_name.clone(),
+        }),
+        tokens: Arc::new(crate::mfa::MfaTokenIssuer::new(
+            &auth.auth,
+            auth.auth.issuer(),
+        )),
+        policy: crate::mfa::TwoFactorPolicy {
+            mappings: repos.edm_repo.clone(),
+            identity_providers: repos.idp_repo.clone(),
+        },
+        notifier: crate::mfa::notify::Notifier {
+            email: email_service.clone(),
+            name: platform_name,
+        },
+        auth_service: auth.auth.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
+        login_attempt_repo: repos.login_attempt_repo.clone(),
+        audit_log_repo: repos.audit_log_repo.clone(),
+        backoff_policy: backoff_policy.clone(),
+        session_cookie: SessionCookieConfig {
+            name: "fc_session".to_string(),
+            secure: config.session_cookie_secure,
+            same_site: SameSite::Lax,
+            ttl: time::Duration::seconds(86400),
+        },
+        rate_limit_store: config.rate_limit_store.clone(),
+        rate_limit_policies: config.rate_limit_policies.clone(),
+    });
     let embedded_auth_state = AuthState {
         auth_service: auth.auth.clone(),
         principal_repo: repos.principal_repo.clone(),
@@ -607,6 +646,7 @@ pub fn build_platform_routes(
             same_site: SameSite::Lax,
             ttl: time::Duration::seconds(86400),
         },
+        two_factor: Some(two_factor.clone()),
     };
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
@@ -1194,6 +1234,7 @@ pub fn build_platform_routes(
         public: public_api_state,
         password_reset: password_reset_state,
         webauthn: webauthn_state,
+        two_factor,
         dispatch_process: Some(DispatchProcessState {
             dispatch_job_repo: repos.dispatch_job_repo.clone(),
             http_client: reqwest::Client::builder()

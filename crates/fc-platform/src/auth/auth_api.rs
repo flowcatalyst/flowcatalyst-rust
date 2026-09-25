@@ -163,6 +163,11 @@ pub struct AuthState {
     /// `build_platform_routes` so all binaries share the same defaults.
     pub backoff_policy: Arc<BackoffPolicy>,
     pub session_cookie: SessionCookieConfig,
+    /// Two-factor sign-in (Go's login `MFA` + `MFATokens`). When set, a
+    /// user who owes a second factor gets `mfa_required` /
+    /// `enrollment_required` instead of a session, and a completed sign-in
+    /// answers Go's login body.
+    pub two_factor: Option<Arc<crate::mfa::TwoFactorLogin>>,
 }
 
 /// Login with email and password
@@ -184,9 +189,12 @@ pub async fn login(
     State(state): State<AuthState>,
     ClientIp(client_ip): ClientIp,
     jar: CookieJar,
-    Json(req): Json<LoginRequest>,
-) -> Result<impl IntoResponse, PlatformError> {
+    Json(mut req): Json<LoginRequest>,
+) -> Result<axum::response::Response, PlatformError> {
     let ip = client_ip.as_deref();
+    // Lower-cased up front, as Go: emails are stored lower-case, and the
+    // backoff identifier must match across attempts whatever the casing.
+    req.email = req.email.trim().to_lowercase();
 
     // Run the layered backoff check BEFORE lookup so the response timing /
     // shape doesn't leak whether the email exists.
@@ -293,6 +301,29 @@ pub async fn login(
         }
     }
 
+    // Second-factor gate (Go handleLogin, auth/login/endpoint.go:533-552):
+    // a challenge instead of a session when one is owed, failing closed
+    // when the requirement can't be evaluated. Passkey and OIDC sign-ins
+    // never reach here.
+    if let Some(two_factor) = &state.two_factor {
+        match two_factor.maybe_challenge(&jar, &principal).await {
+            Ok(Some(challenge)) => return Ok(challenge),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(principal_id = %principal.id, error = %e, "2FA evaluation failed; denying login");
+                return Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "code": "MFA_EVAL_FAILED",
+                        "message": "could not evaluate two-factor requirement"
+                    })),
+                )
+                    .into_response());
+            }
+        }
+        return Ok(two_factor.complete_login(jar, &principal, None, ip).await);
+    }
+
     // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
     let session_token = state.auth_service.generate_session_token(&principal)?;
 
@@ -319,7 +350,7 @@ pub async fn login(
     };
 
     // Return both the cookie jar and JSON response
-    Ok((jar, Json(response)))
+    Ok((jar, Json(response)).into_response())
 }
 
 /// Logout / revoke token

@@ -882,6 +882,38 @@ impl AuthService {
         self.config.access_token_expiry_secs
     }
 
+    /// The `iss` this service stamps on its tokens.
+    pub fn issuer(&self) -> &str {
+        &self.config.issuer
+    }
+
+    /// A stable HMAC secret derived from the signing key:
+    /// `SHA-256(label || D)`, `D` the RSA private exponent's big-endian
+    /// bytes (Go `mfatoken.NewIssuer`, which derives the 2FA step token
+    /// secret the same way), so every instance sharing the key derives the
+    /// same secret, and Go- and Rust-minted tokens agree. Without an RSA key
+    /// the HS256 secret stands in for `D`.
+    pub fn derived_secret(&self, label: &[u8]) -> [u8; 32] {
+        use rsa::pkcs1::DecodeRsaPrivateKey;
+        use rsa::pkcs8::DecodePrivateKey;
+        use rsa::traits::PrivateKeyParts;
+        use sha2::{Digest, Sha256};
+
+        let d = self.config.rsa_private_key.as_deref().and_then(|pem| {
+            rsa::RsaPrivateKey::from_pkcs8_pem(pem)
+                .or_else(|_| rsa::RsaPrivateKey::from_pkcs1_pem(pem))
+                .ok()
+                .map(|k| k.d().to_bytes_be())
+        });
+        let mut hasher = Sha256::new();
+        hasher.update(label);
+        match d {
+            Some(d) => hasher.update(&d),
+            None => hasher.update(self.config.secret_key.as_bytes()),
+        }
+        hasher.finalize().into()
+    }
+
     /// A short-lived, authority-bearing access token (`token_use: api`, no
     /// `scope`). Go `GenerateAccessToken` (authservice.go:416).
     pub fn generate_access_token(&self, principal: &Principal) -> Result<String> {
