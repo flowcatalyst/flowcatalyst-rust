@@ -28,6 +28,11 @@ incompatibly.
   top-level fields to mask. `OutboxUnitOfWork` honours it.
 
 ### Changed
+- `OutboxManager::createDispatchJob` / `createDispatchJobs`: the outbox
+  payload now carries `id`, the outbox row's own id (the id the method
+  returns). The platform honours a supplied dispatch-job id, so a batch the
+  outbox processor resends after losing the platform's answer is recognised
+  instead of creating the job a second time. No signature changed.
 - Licence: MPL-2.0 (was MIT), by owner ruling. MPL-2.0 is file-level
   copyleft, so applications that depend on the SDK are not affected.
 

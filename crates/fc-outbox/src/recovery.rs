@@ -1,8 +1,9 @@
 //! Crash recovery for stuck outbox items.
 //!
-//! This module provides a background task that periodically checks for items
-//! that have been stuck in PROCESSING state for too long and resets them
-//! to PENDING so they can be reprocessed.
+//! A background task that periodically returns rows stuck IN_PROGRESS for too
+//! long (their processor died mid-dispatch) to PENDING, as Go's recovery
+//! ticker does. [`crate::EnhancedOutboxProcessor`] runs the same pass on its
+//! own; this task is for callers driving the repository themselves.
 
 use crate::repository::OutboxRepository;
 use std::sync::Arc;
@@ -69,7 +70,7 @@ impl RecoveryTask {
         debug!("Checking for stuck outbox items");
         match self
             .repository
-            .recover_stuck_items(self.config.stuck_timeout)
+            .recover_stuck(self.config.stuck_timeout)
             .await
         {
             Ok(count) => {

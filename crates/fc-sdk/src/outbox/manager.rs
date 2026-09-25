@@ -31,6 +31,19 @@ use super::driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 use super::dto::{CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
 use super::error::OutboxError;
 
+/// A dispatch job's outbox payload: the DTO's fields plus `id`, the outbox
+/// row's own id (a 13-character TSID). The platform honours a supplied job id
+/// (owner decision #24), so a batch the outbox resends after losing the
+/// answer can't create the job twice: the platform refuses the known id, and
+/// the processor recognises the refusal as the earlier acceptance.
+pub(crate) fn dispatch_job_payload(job: &CreateDispatchJobDto, id: &str) -> serde_json::Value {
+    let mut payload = job.to_payload();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("id".into(), serde_json::json!(id));
+    }
+    payload
+}
+
 /// Manages outbox message creation.
 pub struct OutboxManager {
     driver: Box<dyn OutboxDriver>,
@@ -113,7 +126,7 @@ impl OutboxManager {
         self.ensure_client_id()?;
 
         let id = tsid::generate_untyped();
-        let payload = serde_json::to_string(&job.to_payload())?;
+        let payload = serde_json::to_string(&dispatch_job_payload(&job, &id))?;
 
         let message = self.build_message(
             id.clone(),
@@ -143,7 +156,7 @@ impl OutboxManager {
         for job in &jobs {
             let id = tsid::generate_untyped();
             ids.push(id.clone());
-            let payload = serde_json::to_string(&job.to_payload())?;
+            let payload = serde_json::to_string(&dispatch_job_payload(job, &id))?;
 
             messages.push(self.build_message(
                 id,
@@ -309,6 +322,39 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&msg.payload).unwrap();
         assert_eq!(payload["type"], "user.registered");
         assert_eq!(payload["source"], "user-svc");
+    }
+
+    fn job() -> CreateDispatchJobDto {
+        CreateDispatchJobDto::new(
+            "orders",
+            "orders:order:shipped",
+            "https://example.test/hook",
+            "{}",
+            "dpl_1",
+        )
+    }
+
+    #[tokio::test]
+    async fn a_dispatch_job_payload_carries_its_outbox_id() {
+        let (mgr, captured) = make_manager("clt_1");
+        let one = mgr.create_dispatch_job(job()).await.unwrap();
+        let many = mgr.create_dispatch_jobs(vec![job(), job()]).await.unwrap();
+
+        let msgs = captured.lock().unwrap();
+        let ids: Vec<&String> = std::iter::once(&one).chain(many.iter()).collect();
+        assert_eq!(msgs.len(), 3);
+        for (msg, id) in msgs.iter().zip(ids) {
+            assert_eq!(&msg.id, id);
+            let payload: serde_json::Value = serde_json::from_str(&msg.payload).unwrap();
+            assert_eq!(payload["id"], id.as_str());
+            // Valid for the platform: 1 to 13 of [A-Za-z0-9_-].
+            assert!(id.len() <= 13 && !id.is_empty());
+            assert!(id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'));
+            assert_eq!(payload["code"], "orders:order:shipped");
+            assert_eq!(msg.payload_size as usize, msg.payload.len());
+        }
     }
 
     #[tokio::test]

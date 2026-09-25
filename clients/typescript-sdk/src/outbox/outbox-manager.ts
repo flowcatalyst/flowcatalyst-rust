@@ -6,6 +6,19 @@ import type { CreateAuditLogDto } from "./create-audit-log-dto.js";
 import { generate } from "./tsid.js";
 
 /**
+ * A dispatch job's outbox payload: the DTO's fields plus `id`, the outbox
+ * row's own id (a 13-character TSID). The platform honours a supplied job id,
+ * so a batch the outbox processor resends after losing the answer can't
+ * create the job twice.
+ */
+export function dispatchJobPayload(
+	job: CreateDispatchJobDto,
+	id: string,
+): Record<string, unknown> {
+	return { ...job.toPayload(), id };
+}
+
+/**
  * Manages outbox message creation for transactional outbox pattern.
  *
  * @example
@@ -94,7 +107,7 @@ export class OutboxManager {
 		this.ensureClientId();
 
 		const id = generate();
-		const payload = JSON.stringify(job.toPayload());
+		const payload = JSON.stringify(dispatchJobPayload(job, id));
 
 		const message = this.buildMessage(
 			id,
@@ -122,7 +135,7 @@ export class OutboxManager {
 		for (const job of jobs) {
 			const id = generate();
 			ids.push(id);
-			const payload = JSON.stringify(job.toPayload());
+			const payload = JSON.stringify(dispatchJobPayload(job, id));
 
 			messages.push(
 				this.buildMessage(id, "DISPATCH_JOB", payload, job.messageGroup, null),

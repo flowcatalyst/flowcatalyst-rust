@@ -18,3 +18,8 @@ sqlx = { workspace = true }
 mongodb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+tower = { workspace = true }

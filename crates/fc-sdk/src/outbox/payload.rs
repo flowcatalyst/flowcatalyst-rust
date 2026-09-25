@@ -15,7 +15,9 @@ use super::error::OutboxError;
 /// Write a dispatch job to the outbox for async processing.
 ///
 /// Dispatch jobs are created when you need the platform to deliver a webhook
-/// to a subscription's connection endpoint.
+/// to a subscription's connection endpoint. The row's payload is
+/// [`DispatchJobPayload::to_outbox_payload`]: the platform's batch item, with
+/// the row id as the job id so a resend can't duplicate the job.
 ///
 /// # Example
 ///
@@ -44,7 +46,7 @@ pub async fn write_dispatch_job(
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
     let id = tsid::generate_untyped();
-    let payload = serde_json::to_value(job)?;
+    let payload = job.to_outbox_payload(&id);
     let payload_size = payload.to_string().len() as i32;
 
     let query = format!(
@@ -226,6 +228,58 @@ pub struct DispatchJobPayload {
     pub idempotency_key: Option<String>,
 }
 
+impl DispatchJobPayload {
+    /// The outbox row's payload: the platform's batch item
+    /// (`POST /api/dispatch-jobs/batch`, Go `BatchItem`), camelCase, with
+    /// `payload` as the string to deliver, and `id` set to the outbox row's
+    /// own id. The platform honours a supplied job id (owner decision #24),
+    /// so a batch resent after a lost answer can't create the job twice.
+    ///
+    /// `mode` is sent upper-case (`IMMEDIATE`, `NEXT_ON_ERROR`,
+    /// `BLOCK_ON_ERROR`) and `retry_strategy` in the platform's spelling
+    /// (`exponential_backoff` → `exponential`, `fixed_delay` → `fixed`).
+    pub fn to_outbox_payload(&self, id: &str) -> serde_json::Value {
+        let payload = match &self.payload {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let retry_strategy = match self.retry_strategy.as_str() {
+            "exponential_backoff" => "exponential",
+            "fixed_delay" => "fixed",
+            other => other,
+        };
+        let mut out = serde_json::json!({
+            "id": id,
+            "code": self.code,
+            "targetUrl": self.target_url,
+            "payload": payload,
+            "mode": self.mode.to_ascii_uppercase(),
+            "dataOnly": self.data_only,
+            "timeoutSeconds": self.timeout_seconds,
+            "maxRetries": self.max_retries,
+            "retryStrategy": retry_strategy,
+        });
+        let obj = out.as_object_mut().expect("a JSON object");
+        let optional = [
+            (
+                "subscriptionId",
+                Some(&self.subscription_id).filter(|s| !s.is_empty()),
+            ),
+            ("eventId", self.event_id.as_ref()),
+            ("serviceAccountId", self.service_account_id.as_ref()),
+            ("dispatchPoolId", self.dispatch_pool_id.as_ref()),
+            ("messageGroup", self.message_group.as_ref()),
+            ("idempotencyKey", self.idempotency_key.as_ref()),
+        ];
+        for (key, value) in optional {
+            if let Some(v) = value {
+                obj.insert(key.into(), serde_json::json!(v));
+            }
+        }
+        out
+    }
+}
+
 fn default_mode() -> String {
     "immediate".to_string()
 }
@@ -384,6 +438,48 @@ mod tests {
         assert_eq!(json["timeout_seconds"], 30);
         assert_eq!(json["max_retries"], 3);
         assert_eq!(json["retry_strategy"], "exponential_backoff");
+    }
+
+    #[test]
+    fn the_outbox_payload_is_the_platforms_batch_item_with_the_row_id() {
+        let djp = DispatchJobPayload {
+            code: "order.created".to_string(),
+            target_url: "https://hook.example.com".to_string(),
+            payload: serde_json::json!({"orderId": "123"}),
+            subscription_id: "sub_abc".to_string(),
+            message_group: Some("orders:1".to_string()),
+            ..Default::default()
+        };
+        let json = djp.to_outbox_payload("0HZXEQ5Y8JY5Z");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "id": "0HZXEQ5Y8JY5Z",
+                "code": "order.created",
+                "targetUrl": "https://hook.example.com",
+                "payload": "{\"orderId\":\"123\"}",
+                "subscriptionId": "sub_abc",
+                "messageGroup": "orders:1",
+                "mode": "IMMEDIATE",
+                "dataOnly": false,
+                "timeoutSeconds": 30,
+                "maxRetries": 3,
+                "retryStrategy": "exponential",
+            })
+        );
+
+        // A string payload is delivered as it is; unknown spellings pass.
+        let raw = DispatchJobPayload {
+            payload: serde_json::json!("<xml/>"),
+            retry_strategy: "fixed_delay".into(),
+            mode: "block_on_error".into(),
+            ..Default::default()
+        }
+        .to_outbox_payload("x");
+        assert_eq!(raw["payload"], "<xml/>");
+        assert_eq!(raw["retryStrategy"], "fixed");
+        assert_eq!(raw["mode"], "BLOCK_ON_ERROR");
+        assert!(raw.get("subscriptionId").is_none());
     }
 
     #[test]

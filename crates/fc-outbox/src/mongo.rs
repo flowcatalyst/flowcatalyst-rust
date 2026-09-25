@@ -1,19 +1,23 @@
 //! MongoDB Outbox Repository Implementation
 //!
-//! Implements the OutboxRepository trait for MongoDB with a single shared
-//! `outbox_messages` collection using a `type` field.
+//! Go's document shape (`flowcatalyst-go/internal/outbox/mongo`): snake_case
+//! fields, the row id in `id`, `status` and `retry_count` as integer codes,
+//! `payload` as a JSON string, timestamps as RFC 3339 strings (UTC, `Z`).
+//!
+//! Go claims with a find followed by an update, which is not atomic. Here each
+//! document is claimed with `findOneAndUpdate` (PENDING → IN_PROGRESS in one
+//! step), so two processors never claim the same document.
 
-use crate::repository::{OutboxRepository, OutboxTableConfig};
+use crate::repository::{parse_text_timestamp, ClaimedBatch, OutboxRepository, OutboxTableConfig};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
-use futures::stream::TryStreamExt;
-use mongodb::bson::{doc, Document};
-use mongodb::options::{FindOptions, IndexOptions};
+use chrono::{SecondsFormat, Utc};
+use fc_common::{OutboxItemType, OutboxStatus};
+use mongodb::bson::{doc, Bson, Document};
+use mongodb::options::{FindOneAndUpdateOptions, IndexOptions, ReturnDocument};
 use mongodb::{Client, Collection, Database, IndexModel};
 use std::time::Duration;
-use tracing::{debug, info, trace};
+use tracing::info;
 
 /// MongoDB implementation of OutboxRepository
 pub struct MongoOutboxRepository {
@@ -21,21 +25,41 @@ pub struct MongoOutboxRepository {
     table_config: OutboxTableConfig,
 }
 
+/// Timestamps as Go writes them (`time.RFC3339`, UTC), so they compare as
+/// text with Go-written documents.
+fn now_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+fn int_field(doc: &Document, key: &str) -> i64 {
+    match doc.get(key) {
+        Some(Bson::Int32(v)) => *v as i64,
+        Some(Bson::Int64(v)) => *v,
+        Some(Bson::Double(v)) => *v as i64,
+        _ => 0,
+    }
+}
+
+fn str_field(doc: &Document, key: &str) -> Option<String> {
+    match doc.get(key) {
+        Some(Bson::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 impl MongoOutboxRepository {
     /// Create a new MongoDB outbox repository with default table config
     pub fn new(client: Client, db_name: &str) -> Self {
-        let database = client.database(db_name);
         Self {
-            database,
+            database: client.database(db_name),
             table_config: OutboxTableConfig::default(),
         }
     }
 
     /// Create with custom table configuration
     pub fn with_config(client: Client, db_name: &str, table_config: OutboxTableConfig) -> Self {
-        let database = client.database(db_name);
         Self {
-            database,
+            database: client.database(db_name),
             table_config,
         }
     }
@@ -45,347 +69,180 @@ impl MongoOutboxRepository {
         &self.database
     }
 
-    /// Get collection for item type
-    fn collection_for_type(&self, item_type: OutboxItemType) -> Collection<Document> {
-        let name = self.table_config.table_for_type(item_type);
+    fn collection(&self, name: &str) -> Collection<Document> {
         self.database.collection(name)
     }
 
-    /// Parse a document into an OutboxItem
-    fn parse_doc(&self, doc: &Document, item_type: OutboxItemType) -> Result<OutboxItem> {
-        let created_at_str = doc.get_str("created_at")?;
-        let created_at: DateTime<Utc> = created_at_str
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid created_at: {}", e))?;
-
-        let updated_at_str = doc.get_str("updated_at")?;
-        let updated_at: DateTime<Utc> = updated_at_str
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Invalid updated_at: {}", e))?;
-
-        let status_code = doc.get_i32("status").unwrap_or(0);
-        let id = doc.get_str("id")?.to_string();
-        let status = OutboxStatus::try_from(status_code)
-            .map_err(|e| anyhow::anyhow!("outbox row {id}: {e}"))?;
-
-        let payload_str = doc.get_str("payload")?;
-        let payload: serde_json::Value = serde_json::from_str(payload_str)?;
-
-        Ok(OutboxItem {
-            id,
-            item_type,
-            message_group: doc.get_str("message_group").ok().map(String::from),
-            payload,
-            status,
-            retry_count: doc.get_i32("retry_count").unwrap_or(0),
-            error_message: doc.get_str("error_message").ok().map(String::from),
-            created_at,
-            updated_at,
-            client_id: doc.get_str("client_id").ok().map(String::from),
-            payload_size: doc.get_i32("payload_size").ok(),
-            headers: doc
-                .get_str("headers")
-                .ok()
-                .and_then(|s| serde_json::from_str(s).ok()),
-        })
-    }
-
-    /// Get current ISO 8601 timestamp string
-    fn now_iso() -> String {
-        Utc::now().to_rfc3339()
+    fn collection_for_type(&self, item_type: OutboxItemType) -> Collection<Document> {
+        self.collection(self.table_config.table_for_type(item_type))
     }
 }
 
 #[async_trait]
 impl OutboxRepository for MongoOutboxRepository {
-    async fn fetch_pending_by_type(
-        &self,
-        item_type: OutboxItemType,
-        limit: u32,
-    ) -> Result<Vec<OutboxItem>> {
-        let collection = self.collection_for_type(item_type);
-        let filter = doc! {
-            "status": OutboxStatus::Pending.code(),
-            "type": item_type.as_str()
-        };
-        let find_options = FindOptions::builder()
-            .sort(doc! { "message_group": 1, "created_at": 1 })
-            .limit(limit as i64)
-            .build();
+    async fn claim_pending(&self, limit: u32) -> Result<ClaimedBatch> {
+        let mut batch = ClaimedBatch::default();
+        for (name, types) in self.table_config.tables_with_types() {
+            let collection = self.collection(name);
+            let type_names: Vec<&str> = types.iter().map(|t| t.as_str()).collect();
+            let options = FindOneAndUpdateOptions::builder()
+                .sort(doc! { "message_group": 1, "created_at": 1, "id": 1 })
+                .return_document(ReturnDocument::After)
+                .build();
+            while batch.len() < limit as usize {
+                let claimed = collection
+                    .find_one_and_update(
+                        doc! {
+                            "status": OutboxStatus::Pending.code(),
+                            "type": { "$in": &type_names },
+                        },
+                        doc! { "$set": {
+                            "status": OutboxStatus::InProgress.code(),
+                            "updated_at": now_iso(),
+                        } },
+                    )
+                    .with_options(options.clone())
+                    .await?;
+                let Some(d) = claimed else { break };
 
-        let mut cursor = collection.find(filter).with_options(find_options).await?;
-        let mut items = Vec::new();
-
-        while let Some(doc) = cursor.try_next().await? {
-            items.push(self.parse_doc(&doc, item_type)?);
+                let payload = match d.get("payload") {
+                    Some(Bson::String(s)) => s.clone(),
+                    Some(other) => other.clone().into_relaxed_extjson().to_string(),
+                    None => String::new(),
+                };
+                let type_str = str_field(&d, "type").unwrap_or_default();
+                batch.push_row(
+                    str_field(&d, "id").unwrap_or_default(),
+                    type_str.parse()?,
+                    str_field(&d, "message_group"),
+                    &payload,
+                    int_field(&d, "retry_count") as i32,
+                    str_field(&d, "error_message").filter(|e| !e.is_empty()),
+                    parse_text_timestamp(&str_field(&d, "created_at").unwrap_or_default()),
+                    parse_text_timestamp(&str_field(&d, "updated_at").unwrap_or_default()),
+                );
+            }
         }
-
-        trace!(
-            collection = %self.table_config.table_for_type(item_type),
-            item_type = %item_type,
-            count = items.len(),
-            "Fetched pending items"
-        );
-
-        Ok(items)
+        Ok(batch)
     }
 
-    async fn mark_in_progress(&self, item_type: OutboxItemType, ids: Vec<String>) -> Result<()> {
+    async fn mark_success(&self, item_type: OutboxItemType, ids: &[String]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-
-        let collection = self.collection_for_type(item_type);
-
-        let filter = doc! {
-            "id": { "$in": &ids },
-            "type": item_type.as_str()
-        };
-        let update = doc! {
-            "$set": {
-                "status": OutboxStatus::InProgress.code(),
-                "updated_at": Self::now_iso()
-            }
-        };
-
-        collection.update_many(filter, update).await?;
-
-        debug!(
-            collection = %self.table_config.table_for_type(item_type),
-            count = ids.len(),
-            "Marked items as IN_PROGRESS"
-        );
-
+        self.collection_for_type(item_type)
+            .delete_many(doc! { "id": { "$in": ids } })
+            .await?;
         Ok(())
     }
 
-    async fn mark_with_status(
+    async fn mark_failed(
         &self,
         item_type: OutboxItemType,
-        ids: Vec<String>,
+        ids: &[String],
         status: OutboxStatus,
-        error_message: Option<String>,
+        error_message: &str,
+        requeue: bool,
     ) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-
-        let collection = self.collection_for_type(item_type);
-
-        let filter = doc! {
-            "id": { "$in": &ids },
-            "type": item_type.as_str()
+        let new_status = if requeue {
+            OutboxStatus::Pending
+        } else {
+            status
         };
-
-        // SUCCESS is terminal — the platform now owns the message. Delete the
-        // outbox document instead of updating it; otherwise the customer's
-        // outbox collection grows unbounded.
-        if matches!(status, OutboxStatus::Success) {
-            collection.delete_many(filter).await?;
-            debug!(
-                collection = %self.table_config.table_for_type(item_type),
-                count = ids.len(),
-                "Deleted successful outbox items"
-            );
-            return Ok(());
-        }
-
-        let mut set_doc = doc! {
-            "status": status.code(),
-            "updated_at": Self::now_iso()
-        };
-
-        if let Some(err) = &error_message {
-            set_doc.insert("error_message", err);
-        }
-
-        let update = doc! { "$set": set_doc };
-        collection.update_many(filter, update).await?;
-
-        debug!(
-            collection = %self.table_config.table_for_type(item_type),
-            status = ?status,
-            count = ids.len(),
-            "Marked items with status"
-        );
-
+        self.collection_for_type(item_type)
+            .update_many(
+                doc! { "id": { "$in": ids } },
+                doc! {
+                    "$set": {
+                        "status": new_status.code(),
+                        "error_message": error_message,
+                        "updated_at": now_iso(),
+                    },
+                    "$inc": { "retry_count": 1 },
+                },
+            )
+            .await?;
         Ok(())
     }
 
-    async fn increment_retry_count(
-        &self,
-        item_type: OutboxItemType,
-        ids: Vec<String>,
-    ) -> Result<()> {
+    async fn release(&self, item_type: OutboxItemType, ids: &[String]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-
-        let collection = self.collection_for_type(item_type);
-
-        let filter = doc! {
-            "id": { "$in": &ids },
-            "type": item_type.as_str()
-        };
-        let update = doc! {
-            "$inc": { "retry_count": 1 },
-            "$set": {
-                "status": OutboxStatus::Pending.code(),
-                "updated_at": Self::now_iso()
-            }
-        };
-
-        collection.update_many(filter, update).await?;
-
-        debug!(
-            collection = %self.table_config.table_for_type(item_type),
-            count = ids.len(),
-            "Incremented retry count"
-        );
-
+        self.collection_for_type(item_type)
+            .update_many(
+                doc! { "id": { "$in": ids }, "status": OutboxStatus::InProgress.code() },
+                doc! { "$set": { "status": OutboxStatus::Pending.code(), "updated_at": now_iso() } },
+            )
+            .await?;
         Ok(())
     }
 
-    async fn fetch_recoverable_items(
-        &self,
-        item_type: OutboxItemType,
-        timeout: Duration,
-        limit: u32,
-    ) -> Result<Vec<OutboxItem>> {
-        let collection = self.collection_for_type(item_type);
-        let cutoff =
-            (Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
-
-        let filter = doc! {
-            "type": item_type.as_str(),
-            "status": {
-                "$in": [
-                    OutboxStatus::InProgress.code(),
-                    OutboxStatus::BadRequest.code(),
-                    OutboxStatus::InternalError.code(),
-                    OutboxStatus::Unauthorized.code(),
-                    OutboxStatus::Forbidden.code(),
-                    OutboxStatus::GatewayError.code(),
-                ]
-            },
-            "updated_at": { "$lt": cutoff }
-        };
-
-        let find_options = FindOptions::builder()
-            .sort(doc! { "created_at": 1 })
-            .limit(limit as i64)
-            .build();
-
-        let mut cursor = collection.find(filter).with_options(find_options).await?;
-        let mut items = Vec::new();
-
-        while let Some(doc) = cursor.try_next().await? {
-            items.push(self.parse_doc(&doc, item_type)?);
-        }
-
-        Ok(items)
-    }
-
-    async fn reset_recoverable_items(
-        &self,
-        item_type: OutboxItemType,
-        ids: Vec<String>,
-    ) -> Result<()> {
+    async fn requeue(&self, item_type: OutboxItemType, ids: &[String]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }
-
-        let collection = self.collection_for_type(item_type);
-
-        let filter = doc! {
-            "id": { "$in": &ids },
-            "type": item_type.as_str()
-        };
-        let update = doc! {
-            "$set": {
-                "status": OutboxStatus::Pending.code(),
-                "updated_at": Self::now_iso()
-            }
-        };
-
-        collection.update_many(filter, update).await?;
-
-        info!(
-            collection = %self.table_config.table_for_type(item_type),
-            count = ids.len(),
-            "Reset recoverable items to PENDING"
-        );
-
+        self.collection_for_type(item_type)
+            .update_many(
+                doc! { "id": { "$in": ids } },
+                doc! { "$set": {
+                    "status": OutboxStatus::Pending.code(),
+                    "retry_count": 0,
+                    "error_message": "",
+                    "updated_at": now_iso(),
+                } },
+            )
+            .await?;
         Ok(())
     }
 
-    async fn fetch_stuck_items(
-        &self,
-        item_type: OutboxItemType,
-        timeout: Duration,
-        limit: u32,
-    ) -> Result<Vec<OutboxItem>> {
-        let collection = self.collection_for_type(item_type);
-        let cutoff =
-            (Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
-
-        let filter = doc! {
-            "type": item_type.as_str(),
-            "status": OutboxStatus::InProgress.code(),
-            "updated_at": { "$lt": cutoff }
-        };
-
-        let find_options = FindOptions::builder()
-            .sort(doc! { "created_at": 1 })
-            .limit(limit as i64)
-            .build();
-
-        let mut cursor = collection.find(filter).with_options(find_options).await?;
-        let mut items = Vec::new();
-
-        while let Some(doc) = cursor.try_next().await? {
-            items.push(self.parse_doc(&doc, item_type)?);
+    async fn recover_stuck(&self, older_than: Duration) -> Result<u64> {
+        // RFC 3339 UTC strings sort as text (Go compares them the same way).
+        let cutoff = (Utc::now() - chrono::Duration::from_std(older_than)?)
+            .to_rfc3339_opts(SecondsFormat::Secs, true);
+        let mut total = 0;
+        for name in self.table_config.unique_tables() {
+            total += self
+                .collection(name)
+                .update_many(
+                    doc! {
+                        "status": OutboxStatus::InProgress.code(),
+                        "updated_at": { "$lt": &cutoff },
+                    },
+                    doc! { "$set": { "status": OutboxStatus::Pending.code(), "updated_at": now_iso() } },
+                )
+                .await?
+                .modified_count;
         }
-
-        Ok(items)
-    }
-
-    async fn reset_stuck_items(&self, item_type: OutboxItemType, ids: Vec<String>) -> Result<()> {
-        self.reset_recoverable_items(item_type, ids).await
+        Ok(total)
     }
 
     async fn init_schema(&self) -> Result<()> {
-        // Create indexes for each unique collection
-        for table_name in self.table_config.unique_tables() {
-            let collection: Collection<Document> = self.database.collection(table_name);
-
-            let pending_index = IndexModel::builder()
-                .keys(doc! { "status": 1, "type": 1, "message_group": 1, "created_at": 1 })
-                .options(
-                    IndexOptions::builder()
-                        .name("idx_pending".to_string())
-                        .build(),
-                )
-                .build();
-            let stuck_index = IndexModel::builder()
-                .keys(doc! { "status": 1, "type": 1, "created_at": 1 })
-                .options(
-                    IndexOptions::builder()
-                        .name("idx_stuck".to_string())
-                        .build(),
-                )
-                .build();
-            let client_index = IndexModel::builder()
-                .keys(doc! { "client_id": 1, "status": 1, "created_at": 1 })
-                .options(
-                    IndexOptions::builder()
-                        .name("idx_client_pending".to_string())
-                        .build(),
-                )
-                .build();
-
-            collection
-                .create_indexes([pending_index, stuck_index, client_index])
+        for name in self.table_config.unique_tables() {
+            let index = |keys: Document, name: &str| {
+                IndexModel::builder()
+                    .keys(keys)
+                    .options(IndexOptions::builder().name(name.to_string()).build())
+                    .build()
+            };
+            self.collection(name)
+                .create_indexes([
+                    index(
+                        doc! { "status": 1, "type": 1, "message_group": 1, "created_at": 1 },
+                        "idx_pending",
+                    ),
+                    index(
+                        doc! { "status": 1, "type": 1, "created_at": 1 },
+                        "idx_stuck",
+                    ),
+                    index(
+                        doc! { "client_id": 1, "status": 1, "created_at": 1 },
+                        "idx_client_pending",
+                    ),
+                ])
                 .await?;
         }
 
@@ -393,7 +250,6 @@ impl OutboxRepository for MongoOutboxRepository {
             collections = ?self.table_config.unique_tables(),
             "Initialized MongoDB outbox indexes"
         );
-
         Ok(())
     }
 
