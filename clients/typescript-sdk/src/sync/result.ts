@@ -14,6 +14,13 @@ export interface CategorySyncResult {
 	deleted: number;
 	syncedCodes: string[];
 	/**
+	 * Principals only: the emails whose `passwordHash` the platform ignored
+	 * because the user already existed. A sync uses a hash only to create a
+	 * user, never to change an existing one's password (owner decision 22 of
+	 * 2026-09-25). Omitted when empty.
+	 */
+	passwordHashIgnored?: string[];
+	/**
 	 * Set when this category could not be fully synced without aborting
 	 * sibling categories — a local configuration error (e.g. a duplicate
 	 * code within one scope) or a scope whose subscriptions were skipped

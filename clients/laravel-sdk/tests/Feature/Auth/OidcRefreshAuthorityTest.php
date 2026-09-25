@@ -134,6 +134,34 @@ final class OidcRefreshAuthorityTest extends TestCase
         );
     }
 
+    /**
+     * Owner ruling 2026-09-25 (backlog item 5): two requests of one session that both
+     * refresh with the same token make ONE exchange. The mock's token is single-use,
+     * as a rotating issuer's is, so a second exchange would fail with invalid_grant.
+     */
+    public function test_two_refreshes_of_one_session_make_one_exchange(): void
+    {
+        $this->app['config']->set('cache.default', 'array');
+        $fresh = $this->freshAccessToken();
+        $this->issuer->queueRefreshTokenOnce('rt_once', [
+            'access_token' => $fresh,
+            'refresh_token' => 'rt_once_rotated',
+            'token_type' => 'Bearer',
+            'expires_in' => 3600,
+        ]);
+        $session = [DefaultOidcUserHandler::SESSION_KEY => $this->storedPrincipal(['roles' => ['integral:viewer']], 'rt_once')];
+
+        foreach ([1, 2] as $request) {
+            $response = $this->withSession($session)->get('/flowcatalyst/refresh');
+            $response->assertRedirect();
+            $response->assertSessionHas(
+                DefaultOidcUserHandler::SESSION_KEY,
+                fn (array $stored): bool => $stored['access_token'] === $fresh
+                    && $stored['refresh_token'] === 'rt_once_rotated',
+            );
+        }
+    }
+
     /** P3b: after a refresh with NO id_token, the previous roles survive (never downgraded to empties). */
     public function test_refresh_without_id_token_keeps_previous_roles(): void
     {

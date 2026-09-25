@@ -311,6 +311,10 @@ export class PrincipalsResource {
 	 * When `removeUnlisted` is true the platform strips SDK-sourced role
 	 * assignments from principals not in the list; principals themselves
 	 * are never deleted by sync.
+	 *
+	 * A `passwordHash` is used only when the sync creates the user; an
+	 * existing user's password is never changed. The response lists those
+	 * users' emails in `passwordHashIgnored` (omitted when empty).
 	 */
 	sync(
 		applicationCode: string,
@@ -339,6 +343,10 @@ export class PrincipalsResource {
 	 * global, matched by email, so an application code adds nothing here.
 	 *
 	 * Pure upsert: roles are never stripped from unlisted users.
+	 *
+	 * A `passwordHash` is used only when the sync creates the user; an
+	 * existing user's password is never changed. The response lists those
+	 * users' emails in `passwordHashIgnored` (omitted when empty).
 	 */
 	syncUsers(
 		principals: SyncUsersData["body"]["principals"],

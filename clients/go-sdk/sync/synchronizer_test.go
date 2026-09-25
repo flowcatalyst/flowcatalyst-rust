@@ -93,3 +93,30 @@ func TestSynchronizerSendsRemoveUnlistedQuery(t *testing.T) {
 
 	assert.Equal(t, "removeUnlisted=true", seen)
 }
+
+// Owner decision 22 of 2026-09-25: the principal sync carries a passwordHash
+// for users it creates, and reports the existing users whose hash it ignored.
+func TestSynchronizerPrincipalsCarryPasswordHashAndReportIgnored(t *testing.T) {
+	var body map[string][]map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(client.SyncResult{
+			ApplicationCode:     "hr",
+			Updated:             1,
+			SyncedCodes:         []string{"a@example.com"},
+			PasswordHashIgnored: []string{"a@example.com"},
+		})
+	}))
+	defer srv.Close()
+
+	s := sync.NewSynchronizer(client.New(srv.URL))
+	set := sync.ForApplication("hr").AddPrincipal(
+		sync.MakePrincipal("a@example.com").WithName("A").WithPasswordHash("$2y$10$hash"),
+	)
+	out := s.Sync(context.Background(), set, sync.PrincipalsOnly())
+
+	require.NotNil(t, out.Principals)
+	assert.Equal(t, []string{"a@example.com"}, out.Principals.PasswordHashIgnored)
+	require.Len(t, body["principals"], 1)
+	assert.Equal(t, "$2y$10$hash", body["principals"][0]["passwordHash"])
+}

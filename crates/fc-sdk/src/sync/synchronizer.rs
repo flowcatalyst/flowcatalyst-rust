@@ -289,6 +289,7 @@ impl DefinitionSynchronizer {
                     .chain(r.archived.iter())
                     .cloned()
                     .collect(),
+                password_hash_ignored: Vec::new(),
                 error: None,
             },
             Err(e) => CategorySyncResult::from_error(format_error(e)),
@@ -317,6 +318,7 @@ impl DefinitionSynchronizer {
                     updated,
                     deleted: 0,
                     synced_codes: vec![r.version],
+                    password_hash_ignored: Vec::new(),
                     error: None,
                 }
             }
@@ -331,6 +333,7 @@ fn from_wire(r: WireSyncResult) -> CategorySyncResult {
         updated: r.updated,
         deleted: r.deleted,
         synced_codes: r.synced_codes,
+        password_hash_ignored: r.password_hash_ignored,
         error: None,
     }
 }

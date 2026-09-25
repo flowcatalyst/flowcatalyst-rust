@@ -118,6 +118,10 @@ type SyncPrincipalItem struct {
 	Name   string   `json:"name"`
 	Roles  []string `json:"roles,omitempty"`
 	Active bool     `json:"active"`
+	// PasswordHash — optional pre-hashed password (bcrypt, argon2), stored
+	// verbatim on a user the sync creates. Ignored for an existing user;
+	// SyncResult.PasswordHashIgnored names those.
+	PasswordHash string `json:"passwordHash,omitempty"`
 }
 
 // SyncPrincipalsRequest — body for the per-app sync endpoint.
@@ -250,7 +254,9 @@ func (r *PrincipalsResource) ResetPassword(ctx context.Context, principalID stri
 // Sync — POST /api/applications/{appCode}/principals/sync. When
 // removeUnlisted is true the platform strips SDK-sourced role
 // assignments from principals not in the list (principals themselves
-// are never deleted by sync).
+// are never deleted by sync). A PasswordHash is used only to create a
+// user; SyncResult.PasswordHashIgnored lists the existing users whose
+// hash was not applied.
 func (r *PrincipalsResource) Sync(ctx context.Context, appCode string, req *SyncPrincipalsRequest, removeUnlisted bool) (*SyncResult, error) {
 	q := ""
 	if removeUnlisted {

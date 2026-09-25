@@ -105,6 +105,9 @@ type PrincipalDefinition struct {
 	Name   string
 	Roles  []string
 	Active bool
+	// PasswordHash — optional pre-hashed password, used only when the sync
+	// creates the user (never applied to an existing one).
+	PasswordHash string
 }
 
 // MakePrincipal starts a PrincipalDefinition for the given email. The
@@ -115,6 +118,13 @@ func MakePrincipal(email string) PrincipalDefinition {
 func (p PrincipalDefinition) WithName(n string) PrincipalDefinition { p.Name = n; return p }
 func (p PrincipalDefinition) WithRoles(roles ...string) PrincipalDefinition {
 	p.Roles = append(p.Roles, roles...)
+	return p
+}
+
+// WithPasswordHash sets a pre-hashed password (bcrypt, argon2) for the
+// platform to store if, and only if, the sync creates this user.
+func (p PrincipalDefinition) WithPasswordHash(hash string) PrincipalDefinition {
+	p.PasswordHash = hash
 	return p
 }
 

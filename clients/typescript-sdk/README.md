@@ -479,6 +479,4 @@ npm run lint
 
 Copyright (c) 2026 Belac (FlowCatalyst).
 
-[MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/) — see [LICENSE](LICENSE).
-File-level copyleft: changes to the SDK's own files must be shared; your
-application that depends on it is not affected.
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) — see [LICENSE](LICENSE).

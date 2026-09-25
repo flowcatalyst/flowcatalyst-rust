@@ -302,6 +302,9 @@ pub struct PrincipalDefinition {
     pub roles: Vec<String>,
     /// Defaults to `true` if not set.
     pub active: Option<bool>,
+    /// Optional pre-hashed password, used only when the sync creates the
+    /// user (never applied to an existing one).
+    pub password_hash: Option<String>,
 }
 
 impl PrincipalDefinition {
@@ -311,6 +314,7 @@ impl PrincipalDefinition {
             name: name.into(),
             roles: Vec::new(),
             active: None,
+            password_hash: None,
         }
     }
 
@@ -324,12 +328,20 @@ impl PrincipalDefinition {
         self
     }
 
+    /// A pre-hashed password (bcrypt, argon2) for the platform to store if,
+    /// and only if, the sync creates this user.
+    pub fn with_password_hash(mut self, hash: impl Into<String>) -> Self {
+        self.password_hash = Some(hash.into());
+        self
+    }
+
     pub(crate) fn into_wire(self) -> SyncPrincipalItem {
         SyncPrincipalItem {
             email: self.email,
             name: self.name,
             roles: self.roles,
             active: self.active.unwrap_or(true),
+            password_hash: self.password_hash,
         }
     }
 }
@@ -504,6 +516,42 @@ impl ScheduledJobDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Owner decision 22 of 2026-09-25: a sync carries a password hash for
+    /// users it creates; the platform reports the existing users it ignored.
+    #[test]
+    fn principal_password_hash_is_sent_only_when_set_and_ignored_list_is_read() {
+        let plain = PrincipalDefinition::make("a@example.com", "A").into_wire();
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("passwordHash")
+            .is_none());
+
+        let hashed = PrincipalDefinition::make("a@example.com", "A")
+            .with_password_hash("$2y$10$hash")
+            .into_wire();
+        assert_eq!(
+            serde_json::to_value(&hashed).unwrap()["passwordHash"],
+            "$2y$10$hash"
+        );
+
+        let result: crate::client::SyncResult = serde_json::from_value(serde_json::json!({
+            "applicationCode": "hr", "created": 0, "updated": 1, "deleted": 0,
+            "syncedCodes": ["a@example.com"], "passwordHashIgnored": ["a@example.com"]
+        }))
+        .unwrap();
+        assert_eq!(
+            result.password_hash_ignored,
+            vec!["a@example.com".to_string()]
+        );
+
+        let omitted: crate::client::SyncResult = serde_json::from_value(serde_json::json!({
+            "applicationCode": "hr", "created": 1, "updated": 0, "deleted": 0,
+            "syncedCodes": ["b@example.com"]
+        }))
+        .unwrap();
+        assert!(omitted.password_hash_ignored.is_empty());
+    }
 
     #[test]
     fn role_definition_wire_round_trip() {

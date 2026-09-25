@@ -16,6 +16,11 @@ final class SyncResult
     /**
      * @param string[] $syncedCodes Codes (or equivalent identifiers) for the
      *                              rows that were created/updated
+     * @param string[] $passwordHashIgnored Principal syncs only: the emails whose
+     *                              `passwordHash` the platform ignored because the
+     *                              user already existed. A sync uses a hash only to
+     *                              create a user, never to change an existing one's
+     *                              password. Empty otherwise.
      */
     public function __construct(
         public readonly string $applicationCode,
@@ -23,6 +28,7 @@ final class SyncResult
         public readonly int $updated,
         public readonly int $deleted,
         public readonly array $syncedCodes,
+        public readonly array $passwordHashIgnored = [],
     ) {}
 
     /**
@@ -41,6 +47,7 @@ final class SyncResult
             updated: (int) ($data['updated'] ?? 0),
             deleted: (int) ($data['deleted'] ?? 0),
             syncedCodes: $syncedCodes,
+            passwordHashIgnored: array_values(array_map('strval', (array) ($data['passwordHashIgnored'] ?? []))),
         );
     }
 }

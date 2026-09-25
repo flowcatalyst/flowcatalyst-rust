@@ -232,6 +232,7 @@ export { ok, err, Result, ResultAsync } from "neverthrow";
 // Delivery-signature verification (scheduled-job firings + dispatch webhooks).
 export {
 	verifyDeliverySignature,
+	checkDeliverySignature,
 	WebhookSignatureError,
 	type WebhookSignatureErrorCode,
 	type VerifyDeliverySignatureParams,

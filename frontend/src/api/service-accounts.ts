@@ -40,6 +40,12 @@ export interface CreateServiceAccountRequest {
 	description?: string;
 	clientIds?: string[];
 	scope?: PrincipalScope;
+	/**
+	 * Grant every application, present and future. Omitted (the default): the
+	 * account starts with no application access. The API refuses it (403)
+	 * unless the caller itself reaches every application.
+	 */
+	allApplications?: boolean;
 }
 
 export interface OAuthCredentials {

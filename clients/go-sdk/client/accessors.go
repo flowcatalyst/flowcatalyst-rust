@@ -64,6 +64,11 @@ func (c *FlowCatalystClient) Me() *MeResource {
 	return &MeResource{c: c}
 }
 
+// ServiceAccounts returns the service-accounts accessor — /api/service-accounts/*.
+func (c *FlowCatalystClient) ServiceAccounts() *ServiceAccountsResource {
+	return &ServiceAccountsResource{c: c}
+}
+
 // Router returns the message-router monitoring accessor. Uses
 // routerBaseURL (or baseURL as fallback) — distinct host from the
 // rest of the API.

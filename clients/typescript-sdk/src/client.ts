@@ -321,22 +321,33 @@ export class FlowCatalystClient {
 			headers: Record<string, string>,
 		) => Promise<{ data?: unknown; error?: unknown; response: Response }>,
 	): ResultAsync<T, SdkError> {
+		// A refresh on 401 is possible in client-credentials mode only.
+		const canRefreshToken = !this.tokenProvider && this.tokenManager !== null;
+		return this.accessToken().andThen((token) =>
+			this.executeWithRetry<T>(fn, token, 0, canRefreshToken),
+		);
+	}
+
+	/**
+	 * The platform bearer token this client authenticates with: the caller's
+	 * own token in user-token mode, else the client-credentials token. Also
+	 * sent to the message router, which verifies the same token
+	 * (`docs/spec/router-api-auth.md` rule 8).
+	 */
+	accessToken(): ResultAsync<string, SdkError> {
 		if (this.tokenProvider) {
 			// User token mode
 			return ResultAsync.fromPromise(this.tokenProvider(), (e) =>
 				authError.tokenExpired(
 					e instanceof Error ? e.message : "Failed to get access token",
 				),
-			).andThen((token) => this.executeWithRetry<T>(fn, token, 0, false));
-		} else if (this.tokenManager) {
-			// Client credentials mode
-			return this.tokenManager
-				.getAccessToken()
-				.mapErr((e): SdkError => e)
-				.andThen((token) => this.executeWithRetry<T>(fn, token, 0, true));
-		} else {
-			return errAsync(authError.tokenExpired("No authentication configured"));
+			);
 		}
+		if (this.tokenManager) {
+			// Client credentials mode
+			return this.tokenManager.getAccessToken().mapErr((e): SdkError => e);
+		}
+		return errAsync(authError.tokenExpired("No authentication configured"));
 	}
 
 	private executeWithRetry<T>(

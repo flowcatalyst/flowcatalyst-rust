@@ -136,6 +136,8 @@ func (s *Synchronizer) runPrincipals(ctx context.Context, app string, defs []Pri
 			Name:   d.Name,
 			Roles:  d.Roles,
 			Active: d.Active,
+
+			PasswordHash: d.PasswordHash,
 		})
 	}
 	res, err := s.client.Principals().Sync(ctx, app, &client.SyncPrincipalsRequest{Principals: items}, removeUnlisted)
@@ -168,5 +170,7 @@ func toCategoryResult(res *client.SyncResult, err error) *CategoryResult {
 		Updated:     res.Updated,
 		Deleted:     res.Deleted,
 		SyncedCodes: res.SyncedCodes,
+
+		PasswordHashIgnored: res.PasswordHashIgnored,
 	}
 }

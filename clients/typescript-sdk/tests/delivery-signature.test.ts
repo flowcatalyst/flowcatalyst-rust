@@ -13,6 +13,7 @@ import {
 	verifyDeliverySignature,
 	WebhookSignatureError,
 } from "../src/webhook/signature.js";
+import { checkDeliverySignature } from "../src/index.js";
 
 const SECRET = "sjdsp-signing-secret-1";
 
@@ -214,4 +215,19 @@ describe("verifyDeliverySignature bearer gate", () => {
 			authorization: "Bearer anything",
 		});
 	});
+});
+
+// Owner ruling 2026-09-25 (item 11): the result-returning form of the same check.
+it("checkDeliverySignature returns ok for a genuine delivery and err with the code otherwise", () => {
+	const secret = "s3cret";
+	const timestamp = new Date().toISOString();
+	const rawBody = '{"a":1}';
+	const signature = createHmac("sha256", secret).update(timestamp).update(rawBody).digest("hex");
+	const good = checkDeliverySignature({ rawBody, signature, timestamp, secret });
+	assert.ok(good.isOk());
+	const tampered = checkDeliverySignature({ rawBody: '{"a":2}', signature, timestamp, secret });
+	assert.ok(tampered.isErr());
+	assert.equal(tampered._unsafeUnwrapErr().code, "invalid_signature");
+	const noSecret = checkDeliverySignature({ rawBody, signature, timestamp, secret: "" });
+	assert.equal(noSecret._unsafeUnwrapErr().code, "missing_secret");
 });
