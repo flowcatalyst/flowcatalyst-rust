@@ -62,9 +62,21 @@ fn diagnose(run: &SideRun, sum: &Summary) -> Option<String> {
         ));
     }
     if sum.jobs == 0 {
-        parts.push(
-            "no dispatch job exists for the scenario: nothing got past ingest / fan-out".into(),
-        );
+        let via_events = run.sent.iter().any(|m| m.kind != "dispatch-job");
+        match run.events {
+            Some((0, _)) if via_events => parts.push(
+                "no event of the scenario was stored: ingest (or the outbox processor) never delivered it to the platform".into(),
+            ),
+            Some((stored, 0)) if via_events => parts.push(format!(
+                "{stored} events stored, none fanned out, no dispatch job: event fan-out is not running or failing (see the platform's ERROR lines under Stacks)"
+            )),
+            Some((stored, fanned)) if via_events => parts.push(format!(
+                "{stored} events stored, {fanned} stamped fanned out, but no dispatch job exists: fan-out matched no subscription (review H7)"
+            )),
+            _ => parts.push(
+                "no dispatch job exists for the scenario: nothing got past ingest".into(),
+            ),
+        }
     } else {
         let queued = sum.job_status.get("QUEUED").copied().unwrap_or(0) as usize;
         let pending = sum.job_status.get("PENDING").copied().unwrap_or(0) as usize;
@@ -506,6 +518,11 @@ impl Report {
                 ("signatures", |s, _| fmt_map(&s.signatures)),
                 ("ingest errors", |s, _| s.ingest_errors.to_string()),
                 ("outbox rows left", |s, _| fmt_map(&s.outbox_left)),
+                ("events stored / fanned out", |_, r| {
+                    r.events
+                        .map(|(a, b)| format!("{a} / {b}"))
+                        .unwrap_or("?".into())
+                }),
                 ("queue (visible, in flight)", |_, r| {
                     r.queue_depth
                         .map(|(a, b)| format!("{a}, {b}"))

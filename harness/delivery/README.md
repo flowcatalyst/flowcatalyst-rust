@@ -115,9 +115,10 @@ HARNESS_ONLY=plain-events cargo test -p fc-delivery-harness --test delivery_run 
 `cargo test -p fc-delivery-harness` (not ignored) only checks that every scenario and
 `expected-diffs.json` parse.
 
-A full two-sided run takes roughly as long as the slowest side's settle times — a few minutes
-when both deliver, up to ~25 minutes when one side delivers nothing and every scenario runs to its
-timeout.
+Both sides run each scenario at the same time, so a run takes as long as the slower side: about
+10 minutes when both deliver (the retry scenarios wait out Go's 30 s deferrals and backoff), about
+35 minutes when one side delivers nothing and every scenario runs to its timeout. Use `--only`
+while iterating.
 
 ## Scenarios
 

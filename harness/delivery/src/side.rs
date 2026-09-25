@@ -63,6 +63,8 @@ pub struct SideRun {
     pub settled: bool,
     pub settle_ms: u64,
     pub disruptions: Vec<String>,
+    /// Events of this scenario in `msg_events`: (stored, fanned out).
+    pub events: Option<(i64, i64)>,
     /// The side's platform-tenant DEFAULT queue after settling: (visible,
     /// in flight).
     pub queue_depth: Option<(u64, u64)>,
@@ -691,6 +693,7 @@ impl Side {
             settle_ms: 0,
             disruptions: Vec::new(),
             queue_depth: None,
+            events: None,
             error: None,
         };
         if let Some(e) = &self.boot_error {
@@ -732,7 +735,19 @@ impl Side {
         run.jobs = self.jobs(&s.name).await.unwrap_or_default();
         run.outbox_left = self.outbox_left(&s.name).await.unwrap_or_default();
         run.queue_depth = self.queue_depth();
+        run.events = self.events(&s.name).await.ok();
         run
+    }
+
+    async fn events(&self, scenario: &str) -> anyhow::Result<(i64, i64)> {
+        let db = self.db.as_ref().ok_or_else(|| anyhow!("no db"))?;
+        let row: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COUNT(fanned_out_at) FROM msg_events WHERE subject LIKE $1",
+        )
+        .bind(format!("{scenario}-%"))
+        .fetch_one(db)
+        .await?;
+        Ok(row)
     }
 
     async fn send(
