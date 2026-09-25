@@ -209,6 +209,7 @@ pub(crate) fn test_caller(
         accessible_clients: clients.iter().map(|s| s.to_string()).collect(),
         permissions: perms.iter().map(|s| s.to_string()).collect(),
         roles: vec![],
+        credential: crate::shared::authorization_service::Credential::BearerToken,
     }
 }
 
