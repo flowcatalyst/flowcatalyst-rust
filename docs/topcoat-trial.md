@@ -16,10 +16,10 @@ no Node/npm toolchain?
 | Piece | Where |
 |---|---|
 | UI crate | `crates/fc-web` (edition 2024) |
-| Pages | `/ui/login`, `/ui/audit-log`, `/ui/event-types`, `/ui/event-types/{id}` |
-| Theme | `crates/fc-web/styles.css`: the Vue app's look (PrimeVue Nora tokens, FlowCatalyst navy chrome) as Tailwind tokens + `.fc-*` component classes |
-| FlowCatalyst components | `crates/fc-web/src/ui.rs`: `page_header`, `filter_select`, `search_input`, `cursor_pager`, `tag`, `code_chips`, `confirm_dialog`, `json_block`, `local_time`, `empty_state`, flash messages |
-| App shell | `crates/fc-web/src/app/shell.rs`: navy sidebar (themed logo, permission-filtered nav, collapse), user menu, layout |
+| Pages | `/ui/login`; list + drawers for event types, subscriptions, connections, dispatch pools, clients, applications, roles (`/ui/authorization/roles`), events, dispatch jobs; the audit log (`/ui/platform/audit-log`). Each section's URL is the SPA's route under `/ui` |
+| Theme | `crates/fc-web/styles.css`: the SPA's look (PrimeVue Nora tokens, the FlowCatalyst density preset, navy chrome) as Tailwind tokens + `.fc-*` component classes |
+| FlowCatalyst components | `crates/fc-web/src/ui.rs` and `src/ui/`: `page_header`, `table_toolbar` (FcTableToolbar), `paginator`, `drawer_frame` / `drawer_header` (EntityDrawer), `form_field` / `detail_field` / `detail_value` (FcFormField, FcDetailField), `filter_select`, `tag`, `code_chips`, `confirm_dialog`, `json_block`, `local_time`, `empty_state`, flash messages |
+| App shell | `crates/fc-web/src/app/shell.rs` + `nav.rs`: navy sidebar (themed logo, the SPA's `navigation.ts` gated by its own `canAccessPath` rule on the server, collapse), SidebarProfile menu, layout |
 | Auth convention test | `crates/fc-web/tests/auth_convention_test.rs` |
 | Asset bundle | written by the process itself on the first start after a build: `crates/fc-web/src/assets.rs` |
 
@@ -53,7 +53,30 @@ axum Router (fc-dev --features web)
 - **CSRF** is handled by Topcoat's origin policy (`Sec-Fetch-Site`/`Origin`)
   on every non-GET request.
 
-### Fit and finish: matching the Vue app
+### Fit and finish: matching the SPA
+
+The reference is the SPA in `frontend/`, which is now Go's production UI:
+list pages whose rows open a non-modal right-hand drawer (`EntityDrawer`),
+`FcTableToolbar` (quick search, a Filters popover with a count badge, Clear
+All), `Fc*` form components, `SidebarProfile`. fc-web mirrors each piece:
+
+- **List + drawer pattern** (`app/event_types.rs` is the worked example):
+  every section URL renders the list; `/{id}` also opens the drawer (so
+  writes redirect back to it and it is linkable), `?edit=true` opens it
+  editing, `/new` (or `/create` for event types, as the SPA) opens the
+  create drawer. The drawer body is a shard keyed by a `selected` signal,
+  so clicking another row swaps it in place and the list keeps its scroll.
+- **Read view and edit form** are both rendered; an `editing` signal
+  toggles them in the browser. Save stays disabled and Discard hidden
+  until the form is dirty (`ui.js`, `data-dirty-form`), as `useDirtyForm`.
+- **Toolbar and paging:** the toolbar is the list's GET form; filters live
+  in a native `popover`; the paginator is links plus a rows-per-page
+  select ("Showing x to y of n …"). Events and dispatch jobs take a result
+  `size` only, no paging (owner rule).
+- **Navigation:** `nav.rs` is `navigation.ts` with the SPA's own access
+  rule (`ROUTE_PERMISSIONS`, `ANCHOR_ROUTES`, audience scope, roleless
+  users) evaluated on the server; ported routes open at `/ui<route>`, the
+  rest open the SPA.
 
 The first pass used Topcoat UI's vendored components and its neutral theme.
 It worked, but it looked like a different product. The second pass replaced
@@ -109,6 +132,19 @@ copying it:
 - `PlatformError::status_code()` and `SessionCookieConfig::password_login()`.
 - `audit::api::enrich_principal_names` and
   `audit::api::enrich_single_principal_name` are now `pub`.
+- `event_type::access::ensure_can_create` and
+  `bff_event_types_api::platform_sync_command`.
+- `subscription::access`, `connection::access`, `client::access`: the
+  client/anchor rules the API handlers had inlined (the handlers call them).
+- `dispatch_pool::access` (the handlers keep their inline copies: switching
+  them over tripped `permission_convention_test`, which counts the inline
+  `is_anchor()` as their only check) and `checks::can_write_dispatch_pools`
+  (Go's `CanWriteDispatchPools`, used by fc-web only).
+- `application::api`: the delete / deactivate cascades and the service
+  account / login client provisioning bodies.
+- `shared::caller_reach::{read_client_filter, ensure_row_visible}` (the
+  events and dispatch-job read handlers) and
+  `DispatchJobRepository::find_attempts` (a new read; see below).
 
 ## Running it
 
@@ -229,54 +265,78 @@ Postgres.
 8. **Maturity.** v0.9, released 2026-09-24. The README says to expect
    breaking changes, and the runtime docs call it "highly experimental".
 
-## Not verified yet
+## Verification
 
-- **Clicked through in Chrome:**
-  - The event-type list.
-  - Opening the drawer from a row (a shard), for both a current and an
-    archived type.
-  - The schema viewer (native modal).
-  - The audit log, and its detail dialog (a shard).
-  - The login email step, compared side by side with the Vue login.
-- **Not clicked through:**
-  - The password step and its show-password toggle. The markup is verified
-    with curl; typing passwords has to be done by a person.
-  - Passkeys.
-  - The user-menu popover and sidebar collapse.
-  - The confirm dialogs.
-  - The Chrome automation session was unreliable, with repeated timeouts on
-    the Vue pages too.
-- **Verified with curl against a running fc-dev:**
-  - Every page renders (200) with the session cookie.
-  - An anonymous request redirects to `/ui/login?next=…`.
-  - Anonymous shard and form POSTs are refused with 401.
-  - A cross-site POST is refused with 403.
-  - A `//evil.com` `next` value is rewritten to `/ui`.
-  - Every trial write succeeds (update, finalise, deprecate, archive), and
-    the BFF read-back confirms the changes.
-  - Unmatched paths (`/`, `/dashboard`, `/event-types`) still get the Vue app.
-- **Integration tests aren't written yet.** The plan called for testcontainers
-  tests driving `fc_web::service`. The curl checks above cover the same
-  scenarios by hand.
+- **Tests:** `cargo test -p fc-platform` (including the route-auth,
+  permission and UoW convention tests) and fc-web's auth convention test.
+- **Screenshots** of every section (list, drawer, edit mode, create
+  drawer, filters) from headless Chrome against a local fc-dev, compared
+  with the Vue templates.
+- **curl against a local fc-dev**, per section: every write succeeds and
+  leaves its `aud_logs` row; refusals re-render with the platform's
+  message; anonymous pages redirect to `/ui/login?next=…`, anonymous shard
+  and form POSTs get 401, cross-site POSTs get 403.
+- **Not verified by a person:** password entry and the show-password
+  toggle, passkeys, and a click-through of every drawer in a real browser
+  (automation drove the clicks). Integration tests driving
+  `fc_web::service` are still not written.
+
+## Differences from the SPA
+
+- Multi-selects are single selects (applications, facets). Searchable
+  pickers are plain selects; chip inputs are one-per-line text areas.
+- Buttons the caller can't use are hidden or disabled; the SPA shows them
+  and lets the server refuse.
+- No column sorting.
+- Where the Rust API can't do what the SPA sends, fc-web leaves the field
+  out rather than pretend (listed under "Existing issues").
+- Subscriptions: fc-web lists paused subscriptions (the API doesn't, so
+  the SPA's Paused filter is empty against Rust) and its drawer saves the
+  dispatch mode through the use case (the API handler drops it).
+- Dispatch pools: fc-web lists every status and requires
+  `can_write_dispatch_pools` for writes, as Go (see below).
 
 ## Existing issues found along the way (not fixed here)
 
-- **Audit log filters:**
-  - The Vue audit log sends `applicationIds`/`clientIds` filters that the API
-    ignores (`AuditLogsQuery` has no such fields).
-- **Vue login:**
-  - After an interaction login it redirects with a GET to
-    `/oidc/interaction/{uid}/login`, and no such route exists.
-  - The OIDC path drops `interaction`.
-  - `switchClient` posts to `/auth/client/{id}`, but the route is
-    `/auth/client/switch`.
-- **Adding a schema:** the BFF ignores the version the user types in.
-- **Archiving event types:**
-  - The "archive only when every schema is deprecated" rule exists only in
-    the Vue page's button state. `ArchiveEventTypeUseCase` archives an event
-    type with a FINALISING schema, and so do the BFF, the API and fc-web
-    (whose button follows the Vue rule).
-  - Worth deciding whether the rule belongs in the use case.
+Backend (main):
+
+- **Dispatch-pool writes have no permission check.** Create, update,
+  archive, suspend and activate in `dispatch_pool/api.rs` check only anchor
+  scope or client reach, and their use cases' `authorize` is empty. Go
+  requires `CanWriteDispatchPools`. `permission_convention_test` passes
+  because it counts the inline `is_anchor()`.
+- `GET /bff/roles` and `/bff/roles/{name}` need only a login (no
+  `can_read_roles`); the BFF role list ignores `source` when an
+  application is also given.
+- `GET /api/subscriptions` never returns paused subscriptions. The
+  subscription update handler drops the dispatch mode; queue, max age,
+  delay, sequence and client-scoped are ignored on create and update;
+  bindings carry no spec version.
+- `GET /api/dispatch-pools` without a client returns only ACTIVE pools.
+- Connection and dispatch-pool creates never store `client_identifier`.
+- Nothing reads dispatch-job attempts back: `find_by_id` leaves `attempts`
+  empty, so `GET /api/dispatch-jobs/{id}/attempts` always answers `[]`
+  (fc-web uses the new `find_attempts`; the handler should too).
+- Missing routes the SPA calls: dispatch-job requeue and sign, docs sync.
+- The dispatch-job read model has no descriptor or client identifier; its
+  list takes no message group, date range or sort.
+- Application website / logo are dropped on create and update.
+- The client list ignores its page parameter; client deactivate is refused
+  while a *disabled* application config row still references the client.
+- `/oauth/token` rejects client credentials sent with HTTP Basic auth
+  (possible Go parity gap; not checked against Go).
+- The SPA's audit log sends `applicationIds` / `clientIds`, which
+  `AuditLogsQuery` ignores.
+- The BFF add-schema handler ignores the version the user enters (Go uses
+  it).
+- The SPA's interaction login redirects with a GET to
+  `/oidc/interaction/{uid}/login`, a route that doesn't exist (already on
+  the cutover checklist).
+
+Dropped from the first trial's list (no longer apply): the OIDC path now
+forwards `interaction`; `switchClient` posts to `/auth/client/switch`;
+archiving an event type with a FINALISING schema matches Go (its use case
+has no such rule either).
 
 ## Recommendation
 
@@ -299,10 +359,11 @@ The risk is Topcoat's youth, not the model:
 
 **Next steps if we continue:**
 
-- Click-through of the unverified pieces (above).
+- A person clicks through the password step, passkeys and each drawer.
 - Embed the asset bundle if a `web` build ever has to be distributed.
-- Port the list pages with the most repetition first (events, dispatch jobs,
-  subscriptions) to grow the component kit.
+- Port the remaining sections (users, service accounts, identity
+  providers, email domains, OAuth clients, CORS, login attempts, scheduled
+  jobs, processes, functions, settings), and multi-select filters.
 - Retire the matching Vue routes and BFF endpoints one by one.
 
 ## Removing the trial
