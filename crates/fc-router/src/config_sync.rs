@@ -412,15 +412,15 @@ impl ConfigSyncService {
 
     /// Single fetch attempt from a specific URL
     async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, ConfigSyncError> {
-        let response = self
-            .http_client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| ConfigSyncError::Request {
-                url: url.to_string(),
-                message: e.to_string(),
-            })?;
+        let response =
+            self.http_client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| ConfigSyncError::Request {
+                    url: url.to_string(),
+                    message: e.to_string(),
+                })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -468,11 +468,14 @@ impl ConfigSyncService {
             pool.rate_limit_per_minute.hash(&mut hasher);
         }
 
-        // Hash queues
+        // Hash queues — every field, as Go's change detection compares the
+        // whole marshalled config. A visibility-timeout change used to hash
+        // the same, so it was never applied.
         for queue in &config.queues {
             queue.name.hash(&mut hasher);
             queue.uri.hash(&mut hasher);
             queue.connections.hash(&mut hasher);
+            queue.visibility_timeout.hash(&mut hasher);
         }
 
         hasher.finish()
@@ -783,6 +786,26 @@ mod tests {
         assert_ne!(hash1, hash2);
     }
 
+    /// A queue's visibility timeout is part of the change detection: a
+    /// config that changes only that must be re-applied (the consumer is
+    /// rebuilt with the new timeout).
+    #[test]
+    fn config_hash_covers_visibility_timeout() {
+        let q = |vt| RouterConfig {
+            processing_pools: vec![],
+            queues: vec![QueueConfig {
+                name: "q".to_string(),
+                uri: "https://sqs/q".to_string(),
+                connections: 1,
+                visibility_timeout: vt,
+            }],
+        };
+        assert_ne!(
+            ConfigSyncService::compute_config_hash(&q(30)),
+            ConfigSyncService::compute_config_hash(&q(120))
+        );
+    }
+
     fn pool(code: &str, concurrency: u32) -> PoolConfig {
         PoolConfig {
             code: code.to_string(),
@@ -956,7 +979,10 @@ mod tests {
 
         // Tick 3: still failing — must NOT raise a second warning for the
         // same streak.
-        let cfg3 = service.fetch_config().await.expect("still served from cache");
+        let cfg3 = service
+            .fetch_config()
+            .await
+            .expect("still served from cache");
         assert_eq!(cfg3.processing_pools[0].code, "P1");
         assert_eq!(
             service.warning_service.warning_count(),
@@ -994,7 +1020,10 @@ mod tests {
         service.fetch_config().await.unwrap(); // tick 1: success
         service.fetch_config().await.unwrap(); // tick 2: fails, served from cache, warns
         assert_eq!(service.warning_service.warning_count(), 1);
-        assert_eq!(service.warning_service.get_unacknowledged_warnings().len(), 1);
+        assert_eq!(
+            service.warning_service.get_unacknowledged_warnings().len(),
+            1
+        );
 
         service.fetch_config().await.unwrap(); // tick 3: recovers
         assert_eq!(
