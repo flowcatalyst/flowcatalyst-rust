@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,6 +128,67 @@ func TestOAuthRefreshToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "refresh_token", state.tokenForm.Get("grant_type"))
 	assert.Equal(t, "old_rt", state.tokenForm.Get("refresh_token"))
+}
+
+// Owner ruling 5 of 2026-09-25: concurrent refreshes of one token share one
+// exchange, and a refresh just after it reuses its result, so the SDK never
+// presents a rotated-out refresh token.
+func TestOAuthRefreshTokenIsSingleFlight(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := requests.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "at-" + string(rune('0'+n)),
+			"token_type":    "Bearer",
+			"expires_in":    3600,
+			"refresh_token": "rt-" + string(rune('0'+n)),
+		})
+	}))
+	defer srv.Close()
+	c := auth.NewOAuthClient(auth.OAuthConfig{IssuerURL: srv.URL, ClientID: "app", ClientSecret: "shh"})
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	results := make([]*auth.TokenResponse, 2)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := c.RefreshToken(ctx, "rt-old")
+			require.NoError(t, err)
+			results[i] = res
+		}(i)
+	}
+	wg.Wait()
+	assert.Equal(t, int32(1), requests.Load(), "joined the in-flight exchange")
+	assert.Equal(t, results[0].AccessToken, results[1].AccessToken)
+
+	again, err := c.RefreshToken(ctx, "rt-old")
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), requests.Load(), "reused the result just after")
+	assert.Equal(t, results[0].RefreshToken, again.RefreshToken)
+
+	_, err = c.RefreshToken(ctx, "rt-other")
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), requests.Load(), "a different refresh token is its own exchange")
+}
+
+func TestOAuthRefreshTokenFailureIsNotRemembered(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	c := auth.NewOAuthClient(auth.OAuthConfig{IssuerURL: srv.URL, ClientID: "app"})
+
+	_, err := c.RefreshToken(context.Background(), "rt")
+	require.Error(t, err)
+	_, err = c.RefreshToken(context.Background(), "rt")
+	require.Error(t, err)
+	assert.Equal(t, int32(2), requests.Load(), "a failure is retried, not reused")
 }
 
 func TestOAuthRevokeToken(t *testing.T) {

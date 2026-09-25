@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,6 +33,23 @@ type OAuthConfig struct {
 type OAuthClient struct {
 	cfg  OAuthConfig
 	http *http.Client
+
+	// Single-flight refresh: one exchange per refresh token, see RefreshToken.
+	refreshMu sync.Mutex
+	refreshes map[string]*refreshCall
+}
+
+// refreshMemo is how long a completed refresh is reused for a caller that
+// read the old refresh token just after the exchange finished.
+const refreshMemo = 10 * time.Second
+
+// refreshCall is one refresh exchange, shared by every caller presenting the
+// same refresh token while it runs and for refreshMemo after it succeeds.
+type refreshCall struct {
+	done    chan struct{}
+	res     *TokenResponse
+	err     error
+	settled time.Time
 }
 
 // NewOAuthClient builds an OAuthClient. Scopes default to openid/profile/email.
@@ -44,7 +62,7 @@ func NewOAuthClient(cfg OAuthConfig) *OAuthClient {
 		http = defaultHTTPClient()
 	}
 	cfg.IssuerURL = strings.TrimRight(cfg.IssuerURL, "/")
-	return &OAuthClient{cfg: cfg, http: http}
+	return &OAuthClient{cfg: cfg, http: http, refreshes: map[string]*refreshCall{}}
 }
 
 // AuthorizeParams is the session-stored side of an authorize-URL call.
@@ -101,7 +119,65 @@ func (c *OAuthClient) ExchangeCode(ctx context.Context, code, codeVerifier strin
 }
 
 // RefreshToken exchanges a refresh token for a fresh access token.
+//
+// Single-flight (owner ruling 5 of 2026-09-25). The platform rotates refresh
+// tokens and revokes the whole family when a rotated-out token is presented
+// again (beyond a 10 s leeway kept for exactly this race), so concurrent
+// requests of one session that each see the access token expire must not
+// each spend it. Callers presenting the same refresh token join one in-flight
+// exchange (a joiner stops waiting when its own ctx ends), and a successful
+// result is reused for 10 s by a caller that read the old token just after.
+// A failure is shared with the callers that joined it, never remembered. Per
+// OAuthClient (share one per process): instances behind a load balancer
+// still rely on the platform's leeway.
 func (c *OAuthClient) RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
+	c.refreshMu.Lock()
+	if c.refreshes == nil { // an OAuthClient not built by NewOAuthClient
+		c.refreshes = map[string]*refreshCall{}
+	}
+	now := time.Now()
+	for key, call := range c.refreshes {
+		if !call.settled.IsZero() && now.Sub(call.settled) >= refreshMemo {
+			delete(c.refreshes, key)
+		}
+	}
+	if call, ok := c.refreshes[refreshToken]; ok {
+		c.refreshMu.Unlock()
+		select {
+		case <-call.done:
+		case <-ctx.Done():
+			return nil, newErr(KindTokenExchange, ctx.Err().Error())
+		}
+		if call.err != nil {
+			return nil, call.err
+		}
+		res := *call.res
+		return &res, nil
+	}
+	call := &refreshCall{done: make(chan struct{})}
+	c.refreshes[refreshToken] = call
+	c.refreshMu.Unlock()
+
+	res, err := c.exchangeRefreshToken(ctx, refreshToken)
+
+	c.refreshMu.Lock()
+	call.res, call.err = res, err
+	if err != nil {
+		delete(c.refreshes, refreshToken)
+	} else {
+		call.settled = time.Now()
+	}
+	close(call.done)
+	c.refreshMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	out := *res
+	return &out, nil
+}
+
+// exchangeRefreshToken is one refresh_token grant against /oauth/token.
+func (c *OAuthClient) exchangeRefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
