@@ -100,7 +100,10 @@ impl QueueManager {
     /// 2. **Drain**: pools stop admitting, each group's *buffered* remainder
     ///    is released back to the broker (R-49 — shutdown never works
     ///    through a backlog against a slow target), and the in-hand
-    ///    deliveries are awaited, bounded by the drain budget.
+    ///    deliveries are awaited, bounded by the drain budget. When anything
+    ///    was released, the stopped poll loops' last receives are awaited
+    ///    too (same budget), so a released message caught by one is handed
+    ///    back rather than left with a receive nobody reads.
     /// 3. **Tear down**: only now are the consumers stopped and the registry
     ///    emptied, and the pools shut down.
     ///
@@ -146,6 +149,28 @@ impl QueueManager {
     pub fn polling_stopped(&self) -> bool {
         self.polling_stopped
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wait until every started poll loop (active or detaching) has exited,
+    /// or `deadline`. Returns whether they all did.
+    pub(crate) async fn await_poll_loops(&self, deadline: tokio::time::Instant) -> bool {
+        let loops: Vec<_> = self
+            .consumers
+            .active()
+            .into_iter()
+            .chain(self.consumers.detaching())
+            .filter(|rc| {
+                rc.poll_task_started
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            })
+            .map(|rc| rc.poll_exited.clone())
+            .collect();
+        let all = future::join_all(loops.iter().map(|t| t.cancelled()));
+        if tokio::time::timeout_at(deadline, all).await.is_ok() {
+            return true;
+        }
+        warn!("Shutdown: a stopped poll loop was still receiving at the drain deadline");
+        false
     }
 
     /// Same as [`Self::shutdown`], but with an explicit drain budget instead
@@ -198,8 +223,9 @@ impl QueueManager {
         }
 
         // Wait for every pool's tracked tasks to finish, bounded by a timeout.
-        let drained = tokio::time::timeout(
-            drain_timeout,
+        let deadline = tokio::time::Instant::now() + drain_timeout;
+        let drained = tokio::time::timeout_at(
+            deadline,
             future::join_all(pools.iter().map(|p| p.wait_drained())),
         )
         .await;
@@ -212,6 +238,17 @@ impl QueueManager {
                 timeout_secs = drain_timeout.as_secs(),
                 "Shutdown drain timed out — some pools still had in-flight work"
             );
+        }
+
+        // What was released is visible on the broker again, and a poll loop
+        // stopped in step 1 may still have a receive in flight (see
+        // `bounded_poll`): wait, within what is left of the budget, for
+        // those receives to finish and hand back whatever they caught, so no
+        // released message is left with a receive whose caller has exited.
+        // Nothing released, nothing to wait for: an idle long poll is left
+        // to the process exit, as before.
+        if released_total > 0 {
+            self.await_poll_loops(deadline).await;
         }
 
         // 3. Tear down. From here nothing more is routed or reconfigured.

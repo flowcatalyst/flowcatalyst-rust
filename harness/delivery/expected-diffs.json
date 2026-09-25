@@ -1,1 +1,51 @@
-[]
+[
+  {
+    "scenario": "worker-restart",
+    "field": "invariant/go/loss",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "accepted",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "lost",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "attempts",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "groupOrder/*",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "jobStatus",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  },
+  {
+    "scenario": "worker-restart",
+    "field": "settled",
+    "reason": "Go defect, timing-dependent: Go's scheduler commits a claim QUEUED and only then publishes it (scheduler/dispatcher.go SubmitBatch: 'A crash between the caller's commit and this publish leaves rows QUEUED for stale recovery'). Its SQS publisher never puts two jobs of one group in one SendMessageBatch, and the claim is ordered by group, so this scenario's 40 jobs in 4 groups go out as ~40 sequential calls. When the SIGKILL lands inside that publish (run 3: after 38), the unpublished jobs stay QUEUED with no queue message until StaleQueuedJobPoller reverts them after StaleAfter = 75 minutes (not env-configurable), far past the settle window: the harness sees them as lost. Rust publishes while its claim transaction is still open and marks only the published jobs QUEUED, so a worker killed mid-publish rolls its claim back to PENDING and the restarted worker publishes it again (at-least-once at the queue; /api/dispatch/process delivers each job once). Whether Go shows the defect depends on where in its ~1 s publish the kill lands, hence intermittent.",
+    "ruling": "owner-decisions-2026-09-25 #31",
+    "intermittent": true
+  }
+]

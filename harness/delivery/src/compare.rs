@@ -422,6 +422,28 @@ pub struct ExpectedDiff {
     pub reason: String,
     /// Owner ruling / decision id (`owner-decisions-2026-09-25 #28`, `X-01` …).
     pub ruling: String,
+    /// The difference only shows when a disruption lands in a window of a
+    /// few hundred milliseconds (a Go defect that depends on timing): an
+    /// entry that matched nothing in a run is then not stale.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub intermittent: bool,
+}
+
+/// The diff field an invariant violation is accepted under:
+/// `invariant/<side>/<kind>`, the kind being the violation's own prefix
+/// (`loss`, `duplicates`, `group-order`, `fifo`, `retry-budget`, `backoff`,
+/// `pool-concurrency`, `signature`, `status`). A side's broken invariant is
+/// a FAIL unless an `expected-diffs.json` entry names it — which is how a
+/// Go defect is cited (decision #31).
+pub fn invariant_field(side: crate::stack::SideKind, violation: &str) -> String {
+    let kind = violation
+        .split(':')
+        .next()
+        .unwrap_or(violation)
+        .trim()
+        .to_lowercase()
+        .replace(' ', "-");
+    format!("invariant/{}/{kind}", side.label())
 }
 
 impl ExpectedDiff {
@@ -451,4 +473,37 @@ pub fn load_expected(path: &std::path::Path) -> anyhow::Result<Vec<ExpectedDiff>
         }
     }
     Ok(v)
+}
+
+#[cfg(test)]
+mod invariant_citation_tests {
+    use super::*;
+    use crate::stack::SideKind;
+
+    #[test]
+    fn a_violation_is_cited_by_side_and_kind() {
+        assert_eq!(
+            invariant_field(SideKind::Go, "loss: 2 of 40 stimuli never accepted"),
+            "invariant/go/loss"
+        );
+        assert_eq!(
+            invariant_field(SideKind::Rust, "group order: g1 accepted as [2, 1]"),
+            "invariant/rust/group-order"
+        );
+        assert_eq!(
+            invariant_field(SideKind::Go, "FIFO: 3 deliveries overtook"),
+            "invariant/go/fifo"
+        );
+    }
+
+    #[test]
+    fn an_entry_may_be_intermittent() {
+        let v: Vec<ExpectedDiff> = serde_json::from_str(
+            r#"[{"scenario": "s", "field": "invariant/go/loss", "reason": "r", "ruling": "x", "intermittent": true},
+                {"scenario": "s", "field": "lost", "reason": "r", "ruling": "x"}]"#,
+        )
+        .unwrap();
+        assert!(v[0].intermittent && !v[1].intermittent);
+        assert!(v[0].matches("s", "invariant/go/loss"));
+    }
 }

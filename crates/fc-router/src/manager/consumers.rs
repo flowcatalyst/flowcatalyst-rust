@@ -64,6 +64,9 @@ async fn wait_for_capacity_or_cancel(
     }
 }
 
+/// Bound on one hand-back nack (see [`QueueManager::hand_back`]).
+const HAND_BACK_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// What one bounded poll produced.
 enum PollOutcome {
     Messages(Vec<fc_common::QueuedMessage>),
@@ -80,40 +83,86 @@ enum PollOutcome {
 
 impl QueueManager {
     /// One `poll()`, bounded by the poll timeout (Go: `consumerPollTimeout`)
-    /// and raced against the consumer's poll token.
+    /// and checked against the consumer's poll token once it returns.
     ///
     /// A poll that runs out the timeout is, for a backend whose `poll()`
     /// blocks by contract (NATS's standing subscription), simply an empty
     /// poll — provided the backend still vouches for its broker link
     /// (`last_broker_activity`); for every other backend, or a NATS
     /// subscription that has died, it is a poll error (Go G13/G14).
+    ///
+    /// A poll that is in flight when the poll token is cancelled is **not
+    /// dropped**: it is finished (still bounded by the poll timeout) and
+    /// whatever it received is handed straight back to the broker (see
+    /// [`Self::hand_back`]). Dropping it abandons the receive on the client
+    /// only: the broker's long poll stays open and hands the next message
+    /// that becomes visible to a caller that is gone, so that message sits
+    /// invisible for the whole visibility timeout. At shutdown the next
+    /// visible messages are exactly the group remainders just released
+    /// (R-49), so a group's head vanished for 30 s while its successors
+    /// were delivered by the replacement router (delivery run 3,
+    /// `router-restart`: g3 `[…,5,7,8,9,6]`).
     async fn bounded_poll(&self, rc: &RunningConsumer) -> PollOutcome {
         rc.polls_started.fetch_add(1, Ordering::SeqCst);
-        let outcome = tokio::select! {
-            _ = rc.stop_poll.cancelled() => PollOutcome::Cancelled,
-            res = tokio::time::timeout(self.poll_timeout, rc.consumer.poll(10)) => match res {
-                Ok(Ok(messages)) if messages.is_empty() => PollOutcome::Empty { waited: false },
-                Ok(Ok(messages)) => PollOutcome::Messages(messages),
-                Ok(Err(fc_queue::QueueError::Stopped)) => PollOutcome::Stopped,
-                Ok(Err(e)) => PollOutcome::Error(e.to_string()),
-                Err(_) => {
-                    let vouched = rc
-                        .consumer
-                        .last_broker_activity()
-                        .is_some_and(|t| t.elapsed() < self.poll_timeout);
-                    if vouched {
-                        PollOutcome::Empty { waited: true }
-                    } else {
-                        PollOutcome::Error(format!(
-                            "poll did not return within {:?}",
-                            self.poll_timeout
-                        ))
-                    }
+        let res = tokio::time::timeout(self.poll_timeout, rc.consumer.poll(10)).await;
+        if rc.stop_poll.is_cancelled() {
+            // Stopped while the receive was in flight: nothing it got may
+            // be routed now, and nothing may be left with a dead caller.
+            if let Ok(Ok(messages)) = res {
+                self.hand_back(rc, messages).await;
+            }
+            rc.polls_returned.fetch_add(1, Ordering::SeqCst);
+            return PollOutcome::Cancelled;
+        }
+        let outcome = match res {
+            Ok(Ok(messages)) if messages.is_empty() => PollOutcome::Empty { waited: false },
+            Ok(Ok(messages)) => PollOutcome::Messages(messages),
+            Ok(Err(fc_queue::QueueError::Stopped)) => PollOutcome::Stopped,
+            Ok(Err(e)) => PollOutcome::Error(e.to_string()),
+            Err(_) => {
+                let vouched = rc
+                    .consumer
+                    .last_broker_activity()
+                    .is_some_and(|t| t.elapsed() < self.poll_timeout);
+                if vouched {
+                    PollOutcome::Empty { waited: true }
+                } else {
+                    PollOutcome::Error(format!(
+                        "poll did not return within {:?}",
+                        self.poll_timeout
+                    ))
                 }
-            },
+            }
         };
         rc.polls_returned.fetch_add(1, Ordering::SeqCst);
         outcome
+    }
+
+    /// Give messages received after the poll token was cancelled straight
+    /// back to the broker, visible at once and never routed. They were never
+    /// tracked, so a plain nack on the receiving consumer is all it takes.
+    async fn hand_back(&self, rc: &RunningConsumer, messages: Vec<fc_common::QueuedMessage>) {
+        if messages.is_empty() {
+            return;
+        }
+        info!(
+            consumer = %rc.identifier(),
+            count = messages.len(),
+            "Poll returned after the consumer was stopped; handing the messages back to the broker"
+        );
+        for m in messages {
+            match tokio::time::timeout(HAND_BACK_TIMEOUT, rc.consumer.nack(&m.receipt_handle, None))
+                .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    warn!(consumer = %rc.identifier(), message_id = %m.message.id, error = %e,
+                    "Hand-back failed; the broker redelivers at its own timeout")
+                }
+                Err(_) => warn!(consumer = %rc.identifier(), message_id = %m.message.id,
+                    "Hand-back timed out; the broker redelivers at its own timeout"),
+            }
+        }
     }
 
     /// Spawn the poll loop for `rc` (Go: `runConsumer`). A second call for
@@ -143,6 +192,8 @@ impl QueueManager {
 
         let manager = self.clone();
         tokio::spawn(async move {
+            // Signals the exit however the loop ends (panics included).
+            let _exited = rc.poll_exited.clone().drop_guard();
             let token = rc.stop_poll.clone();
             let id = rc.identifier().to_string();
             let mut capacity_paused = false;
@@ -984,6 +1035,129 @@ mod consumer_liveness_tests {
             .await;
         assert_eq!(n, 0);
         assert_eq!(factory.builds.load(Ordering::SeqCst), 0);
+    }
+
+    /// Its receive is still in flight when the poll token is cancelled, and
+    /// only then catches a message (a broker long poll handing over a
+    /// message that has just become visible).
+    struct LateReceive {
+        release: tokio::sync::Notify,
+        nacked: parking_lot::Mutex<Vec<(String, Option<u32>)>>,
+        acked: AtomicU32,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for LateReceive {
+        fn identifier(&self) -> &str {
+            "late"
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            self.release.notified().await;
+            Ok(vec![QueuedMessage {
+                message: fc_common::Message {
+                    id: "m-late".to_string(),
+                    pool_code: "DEFAULT-POOL".to_string(),
+                    auth_token: None,
+                    signing_secret: None,
+                    mediation_type: fc_common::MediationType::HTTP,
+                    mediation_target: "http://127.0.0.1:1/x".to_string(),
+                    message_group_id: Some("g".to_string()),
+                    high_priority: false,
+                    dispatch_mode: fc_common::DispatchMode::NextOnError,
+                    dispatch_mode_specified: true,
+                },
+                receipt_handle: "rh-late".to_string(),
+                broker_message_id: Some("b-late".to_string()),
+                queue_identifier: "late".to_string(),
+            }])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            self.acked.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn nack(&self, h: &str, d: Option<u32>) -> QueueResult<()> {
+            self.nacked.lock().push((h.to_string(), d));
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    /// Delivery run 3, `router-restart`: stopping a poll loop must not
+    /// abandon its receive. The receive is finished, and what it caught is
+    /// handed back to the broker at once — never routed, never left with a
+    /// caller that is gone (where it would stay invisible for the whole
+    /// visibility timeout while its group's successors went ahead).
+    #[tokio::test]
+    async fn a_receive_in_flight_at_stop_is_finished_and_handed_back() {
+        let (manager, _hs) = manager_with(None);
+        let c = Arc::new(LateReceive {
+            release: tokio::sync::Notify::new(),
+            nacked: parking_lot::Mutex::new(Vec::new()),
+            acked: AtomicU32::new(0),
+        });
+        manager.add_consumer(c.clone()).await;
+        let rc = manager.consumers.get("late").unwrap();
+        manager.spawn_consumer_poll_task(rc.clone());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        manager.stop_polling();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(
+            !rc.poll_exited.is_cancelled(),
+            "the loop waits for its receive instead of dropping it"
+        );
+
+        c.release.notify_waiters();
+        tokio::time::timeout(Duration::from_secs(2), rc.poll_exited.cancelled())
+            .await
+            .expect("the loop exits once its receive returns");
+        assert_eq!(*c.nacked.lock(), vec![("rh-late".to_string(), None)]);
+        assert_eq!(c.acked.load(Ordering::SeqCst), 0);
+        assert!(manager.in_pipeline.is_empty(), "nothing was routed");
+    }
+
+    /// Shutdown waits (within the drain budget) for a stopped loop's
+    /// receive once it has released something, and gives up at the budget.
+    #[tokio::test]
+    async fn shutdown_waits_for_a_stopped_loop_only_within_the_budget() {
+        let (manager, _hs) = manager_with(None);
+        let c = Arc::new(LateReceive {
+            release: tokio::sync::Notify::new(),
+            nacked: parking_lot::Mutex::new(Vec::new()),
+            acked: AtomicU32::new(0),
+        });
+        manager.add_consumer(c.clone()).await;
+        let rc = manager.consumers.get("late").unwrap();
+        manager.spawn_consumer_poll_task(rc.clone());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        manager.stop_polling();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+        assert!(
+            !manager.await_poll_loops(deadline).await,
+            "gives up at the deadline"
+        );
+
+        let waiter = {
+            let m = manager.clone();
+            tokio::spawn(async move {
+                m.await_poll_loops(tokio::time::Instant::now() + Duration::from_secs(5))
+                    .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        c.release.notify_waiters();
+        assert!(
+            waiter.await.unwrap(),
+            "returns once the receive is handed back"
+        );
+        assert_eq!(c.nacked.lock().len(), 1);
     }
 }
 

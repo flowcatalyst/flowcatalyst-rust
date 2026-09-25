@@ -1,11 +1,13 @@
-//! Publishes a committed claim and reverts what did not publish.
+//! Renders and publishes a claim.
 //!
 //! A port of Go's `MessageGroupDispatcher` (`scheduler/dispatcher.go`): the
-//! whole claim goes to the publisher in one call, in claim order, and only
-//! the ids the publisher reports unpublished go back to PENDING — guarded on
-//! `status = 'QUEUED'` so a job `/api/dispatch/process` has already advanced
-//! is left alone. Ordering comes from the claim order plus the FIFO queue,
-//! not from in-process serialisation.
+//! whole claim goes to the publisher in one call, in claim order, and the
+//! publisher reports exactly which ids it did not publish. Ordering comes
+//! from the claim order plus the FIFO queue, not from in-process
+//! serialisation. Unlike Go, the poller publishes while its claim
+//! transaction is still open and marks only the published ids QUEUED (see
+//! [`super::poller`]); [`revert_unpublished`] remains for a claim that was
+//! committed QUEUED first.
 
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ use sqlx::PgPool;
 use tracing::warn;
 
 use super::auth::DispatchAuthService;
-use super::publisher::{DispatchPublisher, PublishItem};
+use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
 
 /// What the poller hands the dispatcher for one claimed job.
 #[derive(Debug, Clone)]
@@ -32,7 +34,6 @@ pub struct DispatchJobToken {
 }
 
 pub struct MessageGroupDispatcher {
-    pool: PgPool,
     publisher: Arc<dyn DispatchPublisher>,
     auth: DispatchAuthService,
     processing_endpoint: String,
@@ -40,13 +41,11 @@ pub struct MessageGroupDispatcher {
 
 impl MessageGroupDispatcher {
     pub fn new(
-        pool: PgPool,
         publisher: Arc<dyn DispatchPublisher>,
         auth: DispatchAuthService,
         processing_endpoint: String,
     ) -> Self {
         Self {
-            pool,
             publisher,
             auth,
             processing_endpoint,
@@ -71,11 +70,11 @@ impl MessageGroupDispatcher {
         }
     }
 
-    /// Publish the claim; revert exactly the unpublished ids. Returns how
-    /// many were published.
-    pub async fn submit_batch(&self, tokens: Vec<DispatchJobToken>) -> usize {
+    /// Publish a claim, in claim order, and report what did not publish.
+    /// The caller marks only the rest QUEUED.
+    pub async fn publish_claim(&self, tokens: &[DispatchJobToken]) -> PublishOutcome {
         if tokens.is_empty() {
-            return 0;
+            return PublishOutcome::default();
         }
         let total = tokens.len();
         let items: Vec<PublishItem> = tokens
@@ -95,17 +94,11 @@ impl MessageGroupDispatcher {
         }
         metrics::counter!("scheduler.jobs.queued_total")
             .increment((total - outcome.unpublished.len()) as u64);
-        if outcome.unpublished.is_empty() {
-            return total;
+        if !outcome.unpublished.is_empty() {
+            metrics::counter!("scheduler.jobs.dispatch_errors_total")
+                .increment(outcome.unpublished.len() as u64);
         }
-        metrics::counter!("scheduler.jobs.dispatch_errors_total")
-            .increment(outcome.unpublished.len() as u64);
-        let published = total - outcome.unpublished.len();
-        if let Err(e) = revert_unpublished(&self.pool, &outcome.unpublished).await {
-            warn!(count = outcome.unpublished.len(), error = %e,
-                "revert of unpublished jobs failed; stale recovery will reclaim them");
-        }
-        published
+        outcome
     }
 }
 

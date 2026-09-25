@@ -140,6 +140,31 @@ const DEFERRED_MAX_DELAY: Duration = Duration::from_secs(60);
 /// them in their group failed — they were never attempted.
 const SIBLING_NACK_DELAY_SECS: u32 = 10;
 
+/// The nack delay for the untried siblings of a released head: never
+/// shorter than the head's own, so no sibling can become visible before the
+/// head it queued behind. With a shorter one the group's order rested on the
+/// broker refusing a group's later messages while its head is held back —
+/// which SQS FIFO does, but LocalStack's long poll does not, nor a broker
+/// without group locks (delivery run 3, `platform-down`: the head of each
+/// group was released for 30 s after the platform refused it, its siblings
+/// for 10 s, and the siblings were delivered first).
+fn sibling_nack_delay(head_delay: Option<u32>) -> Option<u32> {
+    Some(head_delay.unwrap_or(0).max(SIBLING_NACK_DELAY_SECS))
+}
+
+#[cfg(test)]
+mod sibling_delay_tests {
+    use super::*;
+
+    #[test]
+    fn siblings_are_never_held_back_less_than_their_head() {
+        assert_eq!(sibling_nack_delay(None), Some(SIBLING_NACK_DELAY_SECS));
+        assert_eq!(sibling_nack_delay(Some(3)), Some(SIBLING_NACK_DELAY_SECS));
+        assert_eq!(sibling_nack_delay(Some(30)), Some(30));
+        assert_eq!(sibling_nack_delay(Some(3600)), Some(3600));
+    }
+}
+
 /// Exponential backoff: `min << attempts` (shift capped at 12), floored at
 /// the delay the target asked for, capped at `max` (Go `backoffDelay`).
 fn backoff_delay(attempts: u32, floor_secs: u32, min: Duration, max: Duration) -> Duration {
@@ -674,7 +699,7 @@ async fn release_group(
     nack_all(
         buffered.collect(),
         queue_size,
-        Some(SIBLING_NACK_DELAY_SECS),
+        sibling_nack_delay(head_delay),
     )
     .await;
 }
@@ -1502,7 +1527,12 @@ impl ProcessPool {
                             delay_seconds = ?disposition.nack_delay_secs(),
                             "Released message group to broker"
                         );
-                        nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS)).await;
+                        nack_all(
+                            siblings,
+                            &queue_size,
+                            sibling_nack_delay(disposition.nack_delay_secs()),
+                        )
+                        .await;
                     }
                     BrokerAction::Retry => {
                         // Re-front the head so it is the next message

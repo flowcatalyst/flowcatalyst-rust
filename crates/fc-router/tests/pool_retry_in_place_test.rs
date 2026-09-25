@@ -345,7 +345,9 @@ async fn release_takes_the_whole_group_buffer_across_batches() {
 
     let events = settled(&log, 2).await;
     assert_eq!(events[0], ("m1".into(), Event::Nack(Some(30))));
-    assert!(matches!(events[1], (ref id, Event::Nack(_)) if id == "m2"));
+    // Held back no shorter than its head, so it cannot surface first on a
+    // broker without group locks (delivery run 3, `platform-down`).
+    assert_eq!(events[1], ("m2".into(), Event::Nack(Some(30))));
     assert_eq!(
         mediator.seen(),
         vec!["m1"],
