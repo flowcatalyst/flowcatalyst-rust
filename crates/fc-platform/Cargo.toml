@@ -12,6 +12,8 @@ fc-queue = { path = "../fc-queue" }
 # FunctionAddress, shared with the function host and the guest PDK. Without
 # the Extism envelope, which is the host's business.
 fc-function-abi = { path = "../fc-function-abi", default-features = false }
+# Sigstore verification of a published version's signature bundle.
+fc-function-signing = { path = "../fc-function-signing" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -106,6 +108,8 @@ metrics = { workspace = true }
 # AWS Secrets Manager (for DB credential refresh)
 aws-config = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
+# The s3:// function-artifact store (FC_FN_ARTIFACT_STORE).
+aws-sdk-s3 = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
