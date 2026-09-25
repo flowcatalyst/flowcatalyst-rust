@@ -435,6 +435,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "038_aud_logs_entity_id_width",
             include_str!("../../../../migrations/038_aud_logs_entity_id_width.sql"),
         ),
+        // Go's 054 + 057 (the parts the dispatch pipeline needs): a job's
+        // own queue priority, and what an attempt sent.
+        (
+            "039_dispatch_job_queue_and_attempt_request",
+            include_str!("../../../../migrations/039_dispatch_job_queue_and_attempt_request.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -588,6 +594,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' AND table_name = 'aud_logs' \
                AND column_name = 'entity_id' \
                AND character_maximum_length >= 100)",
+        ),
+        // A database Go migrated to 057 already has both columns.
+        (
+            "039_dispatch_job_queue_and_attempt_request",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' \
+               AND column_name = 'queue') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_job_attempts' \
+               AND column_name = 'request_info')",
         ),
     ];
 
