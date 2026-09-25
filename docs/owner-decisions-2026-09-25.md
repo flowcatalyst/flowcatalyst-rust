@@ -54,6 +54,8 @@ The binding record for the work that follows. It supersedes anything in older do
 | 25 | Anchor is reach, never authority | `/api/roles` writes and client-access grants need anchor **and** the permission (stricter than Go, as #19). |
 | 26 | Session cookie | Adopt Go's design: the cookie carries the subject only and the principal is reloaded per request (immediate deactivation; Go-issued cookies survive cutover; cookie-only routes are distinguishable). |
 | 27 | JS functions | `runtime: js` with a JS bundle artifact, and a **Rust-shaped JS API** modelled on the WIT interfaces (not Java's `@flowcatalyst/function`). |
+| 28 | Pipeline alignment | The message pipeline (outbox → ingest → scheduler → queue → router → `/api/dispatch/process`) is aligned to **Go** as a drop-in, per `docs/reviews/message-pipeline-review-2026-09-25.md`. Correctness is gated by harnesses: Java's mediation conformance corpus, a new Go-vs-Rust delivery harness, and API parity on Java's scenario files. |
+| 29 | Harnesses | The API parity runner is **ported into the Rust repo** (reads Java's scenario JSON, copied with provenance; runs Go and Rust side by side). The mediation conformance corpus is vendored with a Rust runner; where the corpus rules Go's behaviour a defect, **the corpus wins** and each such row is listed as a deliberate deviation from Go. |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
