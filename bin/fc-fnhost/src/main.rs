@@ -18,7 +18,8 @@ fn main() {
         .thread_name("fn-host")
         .build()
         .expect("the tokio runtime builds");
-    // `wasm` runs WASI 0.2 components (fc_fnhost_core::wasm); a `jvm` entry
+    // `component` and `wasm` run WASI 0.2 components (fc_fnhost_core::wasm;
+    // a `wasm` artifact is sniffed and must be a component); a `jvm` entry
     // is reported RUNTIME_UNSUPPORTED (it stays on JVM hosts). The listeners
     // bind regardless, as Java's do; a call to a function no runtime could
     // load is 503 FUNCTION_UNAVAILABLE.
@@ -29,7 +30,7 @@ fn main() {
             &mut stderr,
             |env| {
                 let wasm = WasmRuntime::new(WasmSettings::from_env(env))?;
-                Ok(Loaders::none().with("wasm", Arc::new(WasmLoader::new(wasm))))
+                Ok(Arc::new(WasmLoader::new(wasm)).register(Loaders::none()))
             },
             |env| Some(Arc::new(FnListener::from_env(env)) as Arc<dyn Listener>),
             shutdown_signal(),

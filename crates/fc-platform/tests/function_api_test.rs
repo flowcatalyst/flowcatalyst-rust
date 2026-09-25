@@ -294,6 +294,7 @@ fn function_router(app: &TestApp, encryption: Option<Arc<EncryptionService>>) ->
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits: FunctionLimits::defaults(),
             },
             unit_of_work: app.unit_of_work.clone(),
@@ -358,7 +359,7 @@ async fn functions_crud_reach_and_pagination() {
     assert_error(
         &post(&app, "/api/functions", &anchor, body("nowhere", "wasm")).await,
         StatusCode::NOT_FOUND,
-        "Application_NOT_FOUND",
+        "APPLICATION_NOT_FOUND",
     );
     assert_error(
         &post(&app, "/api/functions", &anchor, body("billing", "python")).await,
@@ -382,7 +383,7 @@ async fn functions_crud_reach_and_pagination() {
     assert_error(
         &post(&app, "/api/functions", &anchor, missing_client).await,
         StatusCode::NOT_FOUND,
-        "Client_NOT_FOUND",
+        "CLIENT_NOT_FOUND",
     );
     assert_error(
         &send_raw(&app, Method::POST, "/api/functions", &anchor, "{not json").await,
@@ -458,7 +459,7 @@ async fn functions_crud_reach_and_pagination() {
         "ADDRESS_INVALID",
     );
     let unknown = get(&app, "/api/functions/billing.invoices.nope", &anchor).await;
-    assert_error(&unknown, StatusCode::NOT_FOUND, "Function_NOT_FOUND");
+    assert_error(&unknown, StatusCode::NOT_FOUND, "FUNCTION_NOT_FOUND");
     assert_eq!(
         unknown.1["message"],
         "Function not found: billing.invoices.nope"
@@ -534,27 +535,27 @@ async fn functions_crud_reach_and_pagination() {
         assert_error(
             &get(&app, &path, &a_manager).await,
             StatusCode::NOT_FOUND,
-            "Function_NOT_FOUND",
+            "FUNCTION_NOT_FOUND",
         );
         assert_error(
             &put(&app, &path, &a_manager, json!({"description": "x"})).await,
             StatusCode::NOT_FOUND,
-            "Function_NOT_FOUND",
+            "FUNCTION_NOT_FOUND",
         );
         assert_error(
             &delete(&app, &path, &a_manager).await,
             StatusCode::NOT_FOUND,
-            "Function_NOT_FOUND",
+            "FUNCTION_NOT_FOUND",
         );
         assert_error(
             &get(&app, &format!("{path}/status"), &a_manager).await,
             StatusCode::NOT_FOUND,
-            "Function_NOT_FOUND",
+            "FUNCTION_NOT_FOUND",
         );
         assert_error(
             &get(&app, &format!("{path}/config"), &a_manager).await,
             StatusCode::NOT_FOUND,
-            "Function_NOT_FOUND",
+            "FUNCTION_NOT_FOUND",
         );
     }
     assert!(app
@@ -587,7 +588,7 @@ async fn functions_crud_reach_and_pagination() {
     assert_error(
         &get(&app, "/api/functions/shipping.labels.print", &a_billing).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
     let no_grants = token(
         &app,
@@ -660,11 +661,17 @@ async fn functions_crud_reach_and_pagination() {
     let (_, updated) = get(&app, path, &anchor).await;
     assert_eq!(updated["description"], "Makes invoices");
     assert_eq!(updated["status"], "DISABLED");
-    assert_error(
-        &put(&app, path, &anchor, json!({"status": "DISABLED"})).await,
-        StatusCode::CONFLICT,
-        "FUNCTION_ALREADY_DISABLED",
-    );
+    // No-ops (the status it has; the same description too): 204, nothing
+    // written (the event counts below include neither).
+    for noop in [
+        json!({"status": "DISABLED"}),
+        json!({"description": "Makes invoices", "status": "DISABLED"}),
+        json!({"description": "Makes invoices"}),
+        json!({}),
+    ] {
+        let (status, body) = put(&app, path, &anchor, noop.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{noop}: {body}");
+    }
     assert_error(
         &put(&app, path, &anchor, json!({"status": "PAUSED"})).await,
         StatusCode::BAD_REQUEST,
@@ -725,7 +732,7 @@ async fn functions_crud_reach_and_pagination() {
     assert_error(
         &get(&app, path, &anchor).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
     let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fn_versions WHERE id = $1")
         .bind(&v)
@@ -847,7 +854,7 @@ async fn status_pools_and_live() {
     assert_error(
         &get(&app, &format!("{path}/status"), &stranger).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
 
     // Pools: anchor and view; only hosts seen within 45 s count.
@@ -1002,7 +1009,7 @@ async fn config_and_secrets() {
     assert_error(
         &get(&app, &format!("{path}/config?version=9"), &anchor).await,
         StatusCode::NOT_FOUND,
-        "FunctionVersion_NOT_FOUND",
+        "FUNCTION_VERSION_NOT_FOUND",
     );
     assert_error(
         &get(&app, &format!("{path}/config?version=x"), &anchor).await,
@@ -1132,7 +1139,7 @@ async fn config_and_secrets() {
     );
     assert!(!settings.has_secret(&fid, "API_KEY").await.unwrap());
     let again = delete(&app, &secret, &anchor).await;
-    assert_error(&again, StatusCode::NOT_FOUND, "FunctionSecret_NOT_FOUND");
+    assert_error(&again, StatusCode::NOT_FOUND, "FUNCTION_SECRET_NOT_FOUND");
     assert_eq!(
         app.event_count_by_type("platform:function:secret:deleted")
             .await,
@@ -1260,7 +1267,7 @@ async fn policies() {
         )
         .await,
         StatusCode::NOT_FOUND,
-        "Client_NOT_FOUND",
+        "CLIENT_NOT_FOUND",
     );
     let dup = json!({"signers": [
         {"issuer": "i", "subject": "s", "runtimes": ["jvm"]},
@@ -1444,17 +1451,17 @@ async fn domains_and_routes() {
     assert_error(
         &get(&app, "/api/function-domains/api.example.org", &b_viewer).await,
         StatusCode::NOT_FOUND,
-        "FunctionDomain_NOT_FOUND",
+        "FUNCTION_DOMAIN_NOT_FOUND",
     );
     assert_error(
         &delete(&app, "/api/function-domains/api.example.org", &b_viewer).await,
         StatusCode::NOT_FOUND,
-        "FunctionDomain_NOT_FOUND",
+        "FUNCTION_DOMAIN_NOT_FOUND",
     );
     assert_error(
         &get(&app, "/api/function-domains/nowhere.io", &anchor).await,
         StatusCode::NOT_FOUND,
-        "FunctionDomain_NOT_FOUND",
+        "FUNCTION_DOMAIN_NOT_FOUND",
     );
     assert_error(
         &get(&app, "/api/function-domains/no_host", &anchor).await,
@@ -1540,7 +1547,7 @@ async fn domains_and_routes() {
         )
         .await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
     assert_error(
         &get(&app, "/api/function-routes", &anchor).await,

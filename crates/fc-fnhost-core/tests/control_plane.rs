@@ -236,11 +236,14 @@ async fn heartbeat_posts_the_report_and_expects_204() {
         pool: "default".into(),
         state: HostState::Active,
         loaded: vec![],
+        runtimes: vec!["component".into(), "wasm".into()],
     };
     r.control.heartbeat(&report).await.unwrap();
     assert_eq!(
         *r.platform.heartbeats.lock(),
-        [r#"{"hostId":"h","pool":"default","state":"ACTIVE","loaded":[]}"#]
+        [
+            r#"{"hostId":"h","pool":"default","state":"ACTIVE","loaded":[],"runtimes":["component","wasm"]}"#
+        ]
     );
     *r.platform.heartbeat_status.lock() = 200;
     assert_eq!(

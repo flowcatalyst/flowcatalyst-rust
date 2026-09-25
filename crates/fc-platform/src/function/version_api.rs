@@ -8,7 +8,7 @@
 //! `platform:function:version:publish`; promote and alias removal by
 //! `platform:function:alias:promote`; the reads by
 //! `platform:function:function:view`. A function out of reach is
-//! `404 Function_NOT_FOUND` everywhere, never a 403.
+//! `404 FUNCTION_NOT_FOUND` everywhere, never a 403.
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -66,7 +66,9 @@ impl SignerResponse {
     }
 }
 
-/// `201` of a publish: `{id, version, state: "PUBLISHED", digest, signer?}`.
+/// `201` of a publish: `{id, version, state: "PUBLISHED", digest, signer?}`;
+/// `200` with the existing version (its own state) when the same digest and
+/// manifest were already published.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PublishResponse {
     pub id: String,
@@ -78,6 +80,17 @@ pub struct PublishResponse {
 }
 
 impl PublishResponse {
+    /// An existing version, for a publish that was a no-op: its own state.
+    fn existing(v: &FunctionVersion) -> PublishResponse {
+        PublishResponse {
+            id: v.id.clone(),
+            version: v.version,
+            state: v.state.name().to_string(),
+            digest: v.digest.value().to_string(),
+            signer: v.signer.as_ref().map(SignerResponse::of),
+        }
+    }
+
     fn of(event: &VersionPublished) -> PublishResponse {
         PublishResponse {
             id: event.version_id.clone(),
@@ -226,6 +239,9 @@ pub struct PromotePlanResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_routes: Option<PublicRoutesActionResponse>,
     pub conflicts: Vec<ConflictResponse>,
+    /// Beyond Java: what would not stop the publish but may stop the
+    /// version running (`POOL_HAS_NO_LIVE_HOSTS`, `POOL_RUNTIME_UNKNOWN`).
+    pub warnings: Vec<ConflictResponse>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -295,6 +311,7 @@ impl PromotePlanResponse {
             schedules: Vec::new(),
             public_routes: None,
             conflicts,
+            warnings: Vec::new(),
         };
         match &plan.wiring {
             Wiring::HttpOnly => base(true),
@@ -443,15 +460,62 @@ impl ConflictResponse {
 }
 
 /// Body of `PUT …/aliases/{alias}`. An absent `version` is 0, which names
-/// no version (Java's `int` record component).
+/// no version (Java's `int` record component). `expectedVersion`, when
+/// given, is the version the caller expects the alias to point at now (`0`:
+/// none yet); a mismatch is `412 ALIAS_VERSION_CONFLICT`. The `If-Match`
+/// header carries the same precondition.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct PromoteRequest {
     #[serde(default)]
     pub version: i32,
+    #[serde(default, rename = "expectedVersion")]
+    pub expected_version: Option<i32>,
+}
+
+/// The promote precondition from the body's `expectedVersion` and the
+/// `If-Match` header (`3`, `"3"` or `W/"3"`): either, or both when they
+/// agree. `400 IF_MATCH_INVALID` for a header that is not a version number,
+/// `400 EXPECTED_VERSION_CONFLICT` when the two disagree.
+fn promote_precondition(
+    body: Option<i32>,
+    headers: &HeaderMap,
+) -> Result<Option<i32>, PlatformError> {
+    let header = match headers.get(header::IF_MATCH) {
+        None => None,
+        Some(raw) => {
+            let text = raw.to_str().unwrap_or("").trim();
+            let text = text.strip_prefix("W/").unwrap_or(text);
+            let text = text
+                .strip_prefix('"')
+                .and_then(|t| t.strip_suffix('"'))
+                .unwrap_or(text);
+            match text.parse::<i32>() {
+                Ok(n) if n >= 0 => Some(n),
+                _ => {
+                    return Err(UseCaseError::validation(
+                        "IF_MATCH_INVALID",
+                        "If-Match must be the version number the alias points at (0 for none)",
+                    )
+                    .into())
+                }
+            }
+        }
+    };
+    match (body, header) {
+        (Some(b), Some(h)) if b != h => Err(UseCaseError::validation(
+            "EXPECTED_VERSION_CONFLICT",
+            format!("expectedVersion {b} and If-Match {h} disagree"),
+        )
+        .into()),
+        (Some(b), _) => Ok(Some(b)),
+        (None, h) => Ok(h),
+    }
 }
 
 /// `200` of a promote: `previousVersion` is the prior target's number,
-/// absent on a first promotion.
+/// absent on a first promotion. `changed` is false when the alias already
+/// named the version (a no-op: nothing written, `previousVersion` is the
+/// version itself).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromoteResponse {
@@ -460,6 +524,7 @@ pub struct PromoteResponse {
     pub version_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_version: Option<i32>,
+    pub changed: bool,
 }
 
 /// One alias.
@@ -484,10 +549,11 @@ pub struct AliasResponse {
     request_body = PublishRequest,
     responses(
         (status = 201, body = PublishResponse),
+        (status = 200, body = PublishResponse, description = "The same digest and manifest are already published: that version, nothing written"),
         (status = 400, description = "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, a manifest code, SIGNATURE_REQUIRED, SIGNATURE_REJECTED or a publish check"),
         (status = 403, description = "PERMISSION_REQUIRED or SIGNER_NOT_PERMITTED"),
-        (status = 404, description = "Function_NOT_FOUND, also when out of reach"),
-        (status = 409, description = "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS or PUBLIC_ROUTE_TAKEN"),
+        (status = 404, description = "FUNCTION_NOT_FOUND, also when out of reach"),
+        (status = 409, description = "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the digest under another manifest) or PUBLIC_ROUTE_TAKEN"),
         (status = 422, description = "ARTIFACT_REF_MISMATCH or ARTIFACT_NOT_UPLOADED"),
         (status = 503, description = "ARTIFACT_STORE_NOT_CONFIGURED"),
     ),
@@ -503,7 +569,7 @@ pub async fn publish_version(
     let address = address_from_path(&address)?;
     let req: PublishRequest = parse_body(&body)?;
     let command = PublishCommand {
-        address,
+        address: address.clone(),
         artifact_ref: req.artifact_ref,
         digest: req.digest,
         signature_bundle: req.signature_bundle,
@@ -514,13 +580,26 @@ pub async fn publish_version(
     // One transaction for the version number's row lock and the commit, as
     // Java's TxOperation.
     let ops = state.ops.clone();
-    let event = state
+    let reach = caller.clone();
+    let outcome = state
         .ops
         .unit_of_work
         .run(move |scoped| async move { ops.publish_in(caller, scoped).run(command, ctx).await })
         .await
-        .into_result()?;
-    Ok((StatusCode::CREATED, Json(PublishResponse::of(&event))))
+        .into_result();
+    match outcome {
+        Ok(event) => Ok((StatusCode::CREATED, Json(PublishResponse::of(&event)))),
+        Err(e) if e.is_unchanged() => {
+            let number = e.details()["version"]
+                .as_i64()
+                .and_then(|n| i32::try_from(n).ok())
+                .ok_or_else(|| PlatformError::from(e.clone()))?;
+            let f = reachable_function(&state, &address, &reach).await?;
+            let v = version_or_not_found(&state, &f, number).await?;
+            Ok((StatusCode::OK, Json(PublishResponse::existing(&v))))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Validate a manifest as a publish would, writing nothing.
@@ -586,7 +665,19 @@ pub async fn check_manifest(
                     .trigger_sync
                     .plan(&f, &manifest, next, alias, &caller)
                     .await?;
-                plan_response = Some(PromotePlanResponse::of(&plan));
+                let mut response = PromotePlanResponse::of(&plan);
+                response.warnings = state
+                    .ops
+                    .publish_checks
+                    .pool_warnings(&manifest)
+                    .await?
+                    .into_iter()
+                    .map(|w| ConflictResponse {
+                        code: w.code.to_string(),
+                        message: w.message,
+                    })
+                    .collect();
+                plan_response = Some(response);
             }
         }
     }
@@ -635,7 +726,7 @@ pub async fn list_versions(
         (status = 200, body = VersionResponse),
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -683,8 +774,8 @@ async fn version_or_not_found(
         (status = 200, body = VersionResponse),
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
-        (status = 409, description = "VERSION_IS_LIVE, VERSION_ALIASED or VERSION_ALREADY_RETIRED"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
+        (status = 409, description = "VERSION_IS_LIVE or VERSION_ALIASED. Retiring a retired version is a no-op: 200 with it, nothing written"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -697,7 +788,7 @@ pub async fn retire_version(
     let address = address_from_path(&address)?;
     let number = parse_version_number(&version)?;
     let caller = state.caller(&auth.0).await?;
-    state
+    match state
         .ops
         .retire(caller.clone())
         .run(
@@ -708,7 +799,12 @@ pub async fn retire_version(
             ExecutionContext::from_auth(&auth.0),
         )
         .await
-        .into_result()?;
+        .into_result()
+    {
+        // Already retired: a no-op, answered with the version as it is.
+        Err(e) if !e.is_unchanged() => return Err(e.into()),
+        _ => {}
+    }
     let f = reachable_function(&state, &address, &caller).await?;
     let v = version_or_not_found(&state, &f, number).await?;
     Ok(Json(VersionResponse::summary(&v, f.is_live(&v.id))))
@@ -728,8 +824,9 @@ pub async fn retire_version(
         (status = 200, body = PromoteResponse),
         (status = 400, description = "ALIAS_INVALID, ADDRESS_INVALID or INVALID_JSON"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
-        (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED or PUBLIC_ROUTE_TAKEN"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
+        (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED or PUBLIC_ROUTE_TAKEN. An alias already naming the version is a no-op: 200 with changed false"),
+        (status = 412, description = "ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -737,27 +834,47 @@ pub async fn promote(
     State(state): State<FunctionsState>,
     auth: Authenticated,
     Path((address, alias)): Path<(String, String)>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<PromoteResponse>, PlatformError> {
     checks::require_permission(&auth.0, FUNCTION_PROMOTE)?;
     let address = address_from_path(&address)?;
     let req: PromoteRequest = parse_body(&body)?;
+    let expected_version = promote_precondition(req.expected_version, &headers)?;
     let command = PromoteCommand {
-        address,
-        alias,
+        address: address.clone(),
+        alias: alias.clone(),
         version: req.version,
+        expected_version,
     };
     let caller = state.caller(&auth.0).await?;
+    let reach = caller.clone();
     let ctx = ExecutionContext::from_auth(&auth.0);
     // One transaction for the alias change and the wiring, as Java's
     // TxOperation.
     let ops = state.ops.clone();
-    let event = state
+    let outcome = state
         .ops
         .unit_of_work
         .run(move |scoped| async move { ops.promote_in(caller, scoped).run(command, ctx).await })
         .await
-        .into_result()?;
+        .into_result();
+    let event = match outcome {
+        Ok(event) => event,
+        // The alias already names this version: nothing written.
+        Err(e) if e.is_unchanged() => {
+            let f = reachable_function(&state, &address, &reach).await?;
+            let v = version_or_not_found(&state, &f, req.version).await?;
+            return Ok(Json(PromoteResponse {
+                alias,
+                version: v.version,
+                version_id: v.id,
+                previous_version: Some(v.version),
+                changed: false,
+            }));
+        }
+        Err(e) => return Err(e.into()),
+    };
     let previous_version = match &event.previous_version_id {
         Some(id) => state.versions.find_by_id(id).await?.map(|v| v.version),
         None => None,
@@ -767,6 +884,7 @@ pub async fn promote(
         version: event.version,
         version_id: event.version_id,
         previous_version,
+        changed: true,
     }))
 }
 
@@ -782,7 +900,7 @@ pub async fn promote(
         (status = 204),
         (status = 400, description = "ADDRESS_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or Alias_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or ALIAS_NOT_FOUND"),
         (status = 409, description = "ALIAS_PROTECTED"),
     ),
     security(("bearer_auth" = []))
@@ -896,4 +1014,54 @@ pub async fn upload_artifact(
         digest: digest.value().to_string(),
         bytes: received.bytes,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn if_match(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    #[test]
+    fn the_promote_precondition_comes_from_the_body_or_if_match() {
+        let none = HeaderMap::new();
+        assert_eq!(promote_precondition(None, &none).unwrap(), None);
+        assert_eq!(promote_precondition(Some(3), &none).unwrap(), Some(3));
+        for value in ["3", "\"3\"", "W/\"3\"", " 3 "] {
+            assert_eq!(
+                promote_precondition(None, &if_match(value)).unwrap(),
+                Some(3),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            promote_precondition(Some(3), &if_match("\"3\"")).unwrap(),
+            Some(3)
+        );
+        assert_eq!(promote_precondition(None, &if_match("0")).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn a_bad_or_disagreeing_if_match_is_a_400() {
+        let code = |r: Result<Option<i32>, PlatformError>| match r.unwrap_err() {
+            PlatformError::Coded { status, code, .. } => (status.as_u16(), code),
+            other => panic!("{other:?}"),
+        };
+        for value in ["*", "latest", "-1", "\"\""] {
+            assert_eq!(
+                code(promote_precondition(None, &if_match(value))),
+                (400, "IF_MATCH_INVALID".to_string()),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            code(promote_precondition(Some(2), &if_match("3"))),
+            (400, "EXPECTED_VERSION_CONFLICT".to_string())
+        );
+    }
 }

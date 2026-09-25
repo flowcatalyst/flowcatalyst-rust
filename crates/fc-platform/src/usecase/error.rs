@@ -92,6 +92,22 @@ pub enum ErrorKind {
     /// `ArtifactHttpException.storeNotConfigured`). HTTP 503.
     #[serde(rename = "UnavailableError")]
     Unavailable,
+    /// The write would change nothing: the resource is already in the
+    /// requested state (the same digest published again, an alias promoted
+    /// to the version it already names, an active function activated, a
+    /// retired version retired). The use case stops before its commit, so
+    /// no event and no audit row are written. A handler that knows the
+    /// operation answers `200` with the existing resource instead; anything
+    /// else renders it as the `409` the operation answered before no-ops
+    /// were idempotent, with the same code, so an older caller that
+    /// tolerated the 409 keeps working.
+    #[serde(rename = "UnchangedError")]
+    Unchanged,
+    /// The caller's precondition no longer holds (an optimistic
+    /// `expectedVersion` / `If-Match` that another write has overtaken).
+    /// HTTP 412.
+    #[serde(rename = "PreconditionFailedError")]
+    PreconditionFailed,
 }
 
 impl ErrorKind {
@@ -99,12 +115,13 @@ impl ErrorKind {
     pub fn http_status_code(self) -> u16 {
         match self {
             Self::Validation => 400,
-            Self::BusinessRule | Self::Concurrency => 409,
+            Self::BusinessRule | Self::Concurrency | Self::Unchanged => 409,
             Self::NotFound => 404,
             Self::Forbidden => 403,
             Self::Internal => 500,
             Self::Unprocessable => 422,
             Self::Unavailable => 503,
+            Self::PreconditionFailed => 412,
         }
     }
 }
@@ -192,6 +209,30 @@ impl UseCaseError {
     /// Create an unavailable error (HTTP 503).
     pub fn unavailable(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Unavailable, code, message, HashMap::new())
+    }
+
+    /// A no-op write ([`ErrorKind::Unchanged`]): `code` is the one the
+    /// operation's `409` carried before no-ops became idempotent.
+    pub fn unchanged(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self::new(ErrorKind::Unchanged, code, message, details)
+    }
+
+    /// Create a precondition failure (HTTP 412), with details.
+    pub fn precondition_failed(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self::new(ErrorKind::PreconditionFailed, code, message, details)
+    }
+
+    /// Whether this is a no-op write rather than a failure.
+    pub fn is_unchanged(&self) -> bool {
+        self.kind == ErrorKind::Unchanged
     }
 
     /// Create a concurrency error.
@@ -283,6 +324,7 @@ impl From<PlatformError> for UseCaseError {
                 403 => Self::new(ErrorKind::Forbidden, code, message, details),
                 404 => Self::not_found_with_details(code, message, details),
                 409 => Self::business_rule_with_details(code, message, details),
+                412 => Self::new(ErrorKind::PreconditionFailed, code, message, details),
                 422 => Self::new(ErrorKind::Unprocessable, code, message, details),
                 503 => Self::new(ErrorKind::Unavailable, code, message, details),
                 _ => Self::internal(code, message),
@@ -328,6 +370,15 @@ impl From<UseCaseError> for PlatformError {
                 details,
             },
             ErrorKind::BusinessRule => PlatformError::BusinessRule { code, message },
+            // Unintercepted, a no-op is the historical conflict: same code,
+            // same status.
+            ErrorKind::Unchanged if !details.is_empty() => PlatformError::Coded {
+                status: axum::http::StatusCode::CONFLICT,
+                code,
+                message,
+                details,
+            },
+            ErrorKind::Unchanged => PlatformError::BusinessRule { code, message },
             ErrorKind::NotFound => PlatformError::Coded {
                 status: axum::http::StatusCode::NOT_FOUND,
                 code,
@@ -354,6 +405,12 @@ impl From<UseCaseError> for PlatformError {
             },
             ErrorKind::Unavailable => PlatformError::Coded {
                 status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                code,
+                message,
+                details,
+            },
+            ErrorKind::PreconditionFailed => PlatformError::Coded {
+                status: axum::http::StatusCode::PRECONDITION_FAILED,
                 code,
                 message,
                 details,
@@ -425,7 +482,9 @@ mod tests {
         assert!(err.details().contains_key("email"));
     }
 
-    /// HTTP status + JSON body of a `PlatformError` response.
+    /// HTTP status + JSON body of a `PlatformError` response, with `code`
+    /// checked to equal `error` and then left out (so the expectations
+    /// below read as Java's envelope).
     async fn render(err: PlatformError) -> (u16, serde_json::Value) {
         use axum::response::IntoResponse;
         let resp = err.into_response();
@@ -433,7 +492,34 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
+        let mut body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let code = body
+            .as_object_mut()
+            .unwrap()
+            .remove("code")
+            .expect("every error body carries `code`");
+        assert_eq!(code, body["error"], "`code` equals `error`: {body}");
+        (status, body)
+    }
+
+    /// The raw envelope: `error`, `code`, `message` and `details`, in that
+    /// order.
+    #[tokio::test]
+    async fn every_error_body_carries_code_equal_to_error() {
+        use axum::response::IntoResponse;
+        let resp = PlatformError::from(UseCaseError::validation_with_details(
+            "BAD",
+            "bad",
+            details! { "field" => "name" },
+        ))
+        .into_response();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&bytes).unwrap(),
+            r#"{"error":"BAD","code":"BAD","message":"bad","details":{"field":"name"}}"#
+        );
     }
 
     /// Java's artifact statuses (422, 503) and a conflict's details reach
@@ -474,12 +560,42 @@ mod tests {
                 ErrorKind::Unprocessable,
             ),
             (UseCaseError::unavailable("B", "b"), ErrorKind::Unavailable),
+            (
+                UseCaseError::precondition_failed("C", "c", HashMap::new()),
+                ErrorKind::PreconditionFailed,
+            ),
         ] {
             assert_eq!(UseCaseError::from(PlatformError::from(err)).kind(), kind);
         }
         // A conflict with no details keeps the plain body.
         let (_, body) = render(UseCaseError::business_rule("X", "x").into()).await;
         assert!(body.get("details").is_none());
+    }
+
+    /// A no-op nobody intercepts renders as the conflict it used to be:
+    /// same status, code, message and details.
+    #[tokio::test]
+    async fn an_unintercepted_no_op_is_the_historical_conflict() {
+        let noop =
+            UseCaseError::unchanged("VERSION_DIGEST_EXISTS", "dup", details! { "version" => 3 });
+        assert!(noop.is_unchanged());
+        assert_eq!(noop.http_status_code(), 409);
+        let (status, body) = render(noop.into()).await;
+        assert_eq!(status, 409);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "VERSION_DIGEST_EXISTS", "message": "dup", "details": {"version": 3}})
+        );
+        let (status, body) =
+            render(UseCaseError::unchanged("ALIAS_UNCHANGED", "same", HashMap::new()).into()).await;
+        assert_eq!(
+            (status, body),
+            (
+                409,
+                serde_json::json!({"error": "ALIAS_UNCHANGED", "message": "same"})
+            )
+        );
+        assert!(!UseCaseError::business_rule("X", "x").is_unchanged());
     }
 
     /// Converting a `PlatformError` into a `UseCaseError` and back must

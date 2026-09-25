@@ -122,6 +122,7 @@ fn router(
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits,
             },
             unit_of_work: app.unit_of_work.clone(),
@@ -367,14 +368,37 @@ async fn upload_publish_list_get_and_retire() {
     );
     assert_eq!(app.audit_count_for(&fid).await, 2, "create + publish");
 
-    // The same digest again: 409 naming the existing version.
-    let dup = post(
+    // The same digest and manifest again: a no-op, 200 with the existing
+    // version, and nothing written.
+    let (status, again) = post(
         &r,
         &format!("{path}/versions"),
         &t,
         publish_body(&platform_ref, &digest),
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again, published,
+        "the existing version, as the publish answered it"
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:function:version:published")
+            .await,
+        1,
+        "no event for a no-op"
+    );
+    assert_eq!(
+        app.audit_count_for(&fid).await,
+        2,
+        "no audit row for a no-op"
+    );
+    assert_eq!(version_count(&app, &fid).await, 1);
+
+    // The same digest under another manifest: still 409, naming the version.
+    let mut other = publish_body(&platform_ref, &digest);
+    other["manifest"]["warm"] = json!(true);
+    let dup = post(&r, &format!("{path}/versions"), &t, other).await;
     assert_error(&dup, StatusCode::CONFLICT, "VERSION_DIGEST_EXISTS");
     assert_eq!(dup.1["details"]["version"], 1);
     assert_eq!(
@@ -430,7 +454,7 @@ async fn upload_publish_list_get_and_retire() {
     assert_error(
         &get(&r, &format!("{path}/versions/9"), &t).await,
         StatusCode::NOT_FOUND,
-        "FunctionVersion_NOT_FOUND",
+        "FUNCTION_VERSION_NOT_FOUND",
     );
 
     // Status and config read the real versions now.
@@ -447,7 +471,8 @@ async fn upload_publish_list_get_and_retire() {
         json!([{"version": 2, "keys": ["GREETING"]}])
     );
 
-    // Retire 1: 200, the list shape, RETIRED with retiredAt; then again 409.
+    // Retire 1: 200, the list shape, RETIRED with retiredAt; then again a
+    // no-op: 200 with the same version, no second event.
     let (status, retired) = post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await;
     assert_eq!(status, StatusCode::OK, "{retired}");
     assert_eq!(retired["state"], "RETIRED");
@@ -458,10 +483,14 @@ async fn upload_publish_list_get_and_retire() {
             .await,
         1
     );
-    assert_error(
-        &post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await,
-        StatusCode::CONFLICT,
-        "VERSION_ALREADY_RETIRED",
+    let (status, again) = post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, retired);
+    assert_eq!(
+        app.event_count_by_type("platform:function:version:retired")
+            .await,
+        1,
+        "no event for a no-op"
     );
 
     // The live version never retires; a named alias blocks it too.
@@ -558,7 +587,7 @@ async fn upload_checks_run_in_javas_order() {
         None,
     )
     .await;
-    assert_error(&got, StatusCode::NOT_FOUND, "Function_NOT_FOUND");
+    assert_error(&got, StatusCode::NOT_FOUND, "FUNCTION_NOT_FOUND");
     // Then the digest's shape, then the declared length.
     let got = upload(&r, "billing.svc.up", "sha256:ABC", &t, bytes.clone(), None).await;
     assert_error(&got, StatusCode::BAD_REQUEST, "DIGEST_INVALID");
@@ -705,7 +734,7 @@ async fn publish_refuses_bad_refs_unreachable_disabled_and_bad_manifests() {
     assert_error(
         &post(&r, path, &other_client, publish_body("oci://r/c", &digest)).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
     let viewer = token(&app, UserScope::Anchor, &[], &[FUNCTION_VIEW]).await;
     assert_error(
@@ -768,7 +797,7 @@ async fn publish_checks_and_the_manifest_check() {
     // The check route lists every problem, in Java's order, and writes nothing.
     let schedules = json!({"runtime": "wasm", "entrypoint": "handle", "endpoints": webhook,
         "subscriptions": [{"eventType": "billing:invoices:invoice:created", "path": "/events/x"}],
-        "schedules": [{"cron": "0 * * * *", "timezone": "Mars/Olympus", "path": "/events/tick"}]});
+        "schedules": [{"cron": "0 * * *", "timezone": "Mars/Olympus", "path": "/events/tick"}]});
     let (status, check) = post(
         &r,
         &format!("{path}/manifest/check"),
@@ -795,11 +824,14 @@ async fn publish_checks_and_the_manifest_check() {
     );
     assert_eq!(
         check["errors"][1]["message"],
-        "cron expression '0 * * * *' invalid: cron expression must have 6 \
-         whitespace-separated fields (sec min hour dom mon dow), got 5: '0 * * * *'"
+        "cron expression '0 * * *' invalid: cron expression must have 5 or 6 \
+         whitespace-separated fields ([sec] min hour dom mon dow), got 4: '0 * * *'"
     );
     assert_eq!(check["errors"][0]["details"], json!({}));
-    assert!(check.get("plan").is_none(), "no plan for an invalid manifest");
+    assert!(
+        check.get("plan").is_none(),
+        "no plan for an invalid manifest"
+    );
     // A manifest problem carries its pointer.
     let (_, bad) = post(
         &r,
@@ -827,9 +859,56 @@ async fn publish_checks_and_the_manifest_check() {
             "pool": {"action": "create", "key": pool, "changedFields": []},
             "subscriptions": [], "schedules": [],
             "publicRoutes": {"action": "unchanged", "added": [], "removed": []},
-            "conflicts": []}})
+            "conflicts": [],
+            "warnings": [{"code": "POOL_HAS_NO_LIVE_HOSTS",
+                "message": "no host in pool 'default' has sent a heartbeat recently; the version stays PUBLISHED until one loads it"}]}})
     );
     assert_eq!(version_count(&app, &fid).await, 0);
+
+    // A pool whose every live host reports its runtimes, none this one, is
+    // refused; one host that says nothing makes it a warning instead.
+    sqlx::query(
+        "INSERT INTO fn_hosts (id, pool, state, loaded, runtimes) \
+         VALUES ('jvm-host', 'default', 'ACTIVE', '[]', '[\"jvm\"]')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (_, refused) = post(
+        &r,
+        &format!("{path}/manifest/check"),
+        &t,
+        json!({"manifest": manifest()}),
+    )
+    .await;
+    assert_eq!(refused["valid"], false, "{refused}");
+    assert_eq!(refused["errors"][0]["code"], "POOL_RUNTIME_UNSUPPORTED");
+    assert_eq!(
+        refused["errors"][0]["message"],
+        "no live host in pool 'default' can load runtime 'wasm'"
+    );
+    sqlx::query(
+        "INSERT INTO fn_hosts (id, pool, state, loaded) VALUES ('silent-host', 'default', 'ACTIVE', '[]')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (_, unknown) = post(
+        &r,
+        &format!("{path}/manifest/check"),
+        &t,
+        json!({"manifest": manifest()}),
+    )
+    .await;
+    assert_eq!(unknown["valid"], true, "{unknown}");
+    assert_eq!(
+        unknown["plan"]["warnings"][0]["code"],
+        "POOL_RUNTIME_UNKNOWN"
+    );
+    sqlx::query("DELETE FROM fn_hosts WHERE id IN ('jvm-host', 'silent-host')")
+        .execute(&app.pool)
+        .await
+        .unwrap();
 
     // Resolve both: the event type exists, the application signs.
     sqlx::query(

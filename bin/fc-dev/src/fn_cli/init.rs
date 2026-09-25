@@ -1,10 +1,15 @@
-//! `fn init <dir> --runtime wasm --lang rust` (Java `fn init`,
+//! `fn init <dir> [--runtime component|wasm] --lang rust` (Java `fn init`,
 //! `function-manifest-authoring.md` M3): scaffolds a Rust function from
 //! `templates/function-rust`, which is compiled into fc-dev, so neither
 //! `cargo generate` nor a network call is needed. The template's two
 //! placeholders are filled in-process: `{{project-name}}` (the kebab-case
 //! name) and `{{crate_name}}` (its snake-case form). `manifest.json` gains
 //! a `$schema` pointing at the platform's manifest schema.
+//!
+//! The manifest says `runtime: component` (its entrypoint defaults to
+//! `wasi:http/incoming-handler`). `--runtime wasm` writes the same component
+//! as `runtime: wasm` with the `wasi_http_incoming_handler` entrypoint, for
+//! a platform that predates `component` (Java's).
 //!
 //! Local only: it never contacts the platform. It refuses when any file it
 //! would write already exists, and then writes nothing.
@@ -44,9 +49,10 @@ pub struct InitArgs {
     /// The directory to write the project into.
     pub dir: PathBuf,
 
-    /// The function runtime. fc-dev's host runs `wasm` (WASI 0.2
-    /// components); JVM functions are scaffolded by Java's fcdev.
-    #[arg(long, default_value = "wasm")]
+    /// The function runtime. fc-dev's host runs WASI 0.2 components:
+    /// `component`, or `wasm` for a platform without `component`. JVM
+    /// functions are scaffolded by Java's fcdev.
+    #[arg(long, default_value = "component")]
     pub runtime: String,
 
     /// The guest language.
@@ -67,21 +73,21 @@ pub struct InitArgs {
 }
 
 pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliError> {
-    match args.runtime.to_ascii_lowercase().as_str() {
-        "wasm" => {}
-        "jvm" => {
-            return Err(CliError::Usage(
+    let as_wasm =
+        match args.runtime.to_ascii_lowercase().as_str() {
+            "component" => false,
+            "wasm" => true,
+            "jvm" => return Err(CliError::Usage(
                 "fc-dev's function host runs wasm components; scaffold a JVM function with Java's \
                  `fcdev fn init --runtime jvm`"
                     .into(),
-            ))
-        }
-        other => {
-            return Err(CliError::Usage(format!(
-                "--runtime must be wasm, got \"{other}\""
-            )))
-        }
-    }
+            )),
+            other => {
+                return Err(CliError::Usage(format!(
+                    "--runtime must be component or wasm, got \"{other}\""
+                )))
+            }
+        };
     if !args.lang.eq_ignore_ascii_case("rust") {
         return Err(CliError::Usage(format!(
             "--lang must be rust (the one wasm template), got \"{}\"",
@@ -106,12 +112,19 @@ pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliEr
             None => None,
         };
 
-    let files = render(
+    let mut files = render(
         &project_name,
         &platform_url,
         pdk_path.as_deref(),
         args.manifest_only,
     );
+    if as_wasm {
+        for (rel, text) in &mut files {
+            if rel == "manifest.json" {
+                *text = as_wasm_manifest(text);
+            }
+        }
+    }
     let existing: Vec<String> = files
         .iter()
         .map(|(rel, _)| args.dir.join(rel))
@@ -183,6 +196,16 @@ pub fn render(
             (rel.to_string(), text)
         })
         .collect()
+}
+
+/// The template's `runtime: component` as `runtime: wasm` plus the
+/// component's manifest-safe entrypoint.
+fn as_wasm_manifest(manifest: &str) -> String {
+    manifest.replacen(
+        "\"runtime\": \"component\",",
+        "\"runtime\": \"wasm\",\n  \"entrypoint\": \"wasi_http_incoming_handler\",",
+        1,
+    )
 }
 
 /// `"$schema"` as the manifest's first key.
@@ -257,7 +280,7 @@ mod tests {
     fn init_args(dir: PathBuf) -> InitArgs {
         InitArgs {
             dir,
-            runtime: "wasm".into(),
+            runtime: "component".into(),
             lang: "rust".into(),
             name: None,
             manifest_only: false,
@@ -321,8 +344,28 @@ mod tests {
             manifest["$schema"],
             "http://localhost:9999/api/schemas/function-manifest.json"
         );
+        assert_eq!(manifest["runtime"], "component");
+        assert!(manifest.get("entrypoint").is_none(), "it defaults");
+    }
+
+    #[test]
+    fn runtime_wasm_writes_the_component_under_the_entrypoint_alias() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("legacy");
+        let (code, _, err) = run_init(&args(
+            tmp.path(),
+            InitArgs {
+                runtime: "wasm".into(),
+                ..init_args(dir.clone())
+            },
+        ));
+        assert_eq!(code, 0, "{err}");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
+                .unwrap();
         assert_eq!(manifest["runtime"], "wasm");
         assert_eq!(manifest["entrypoint"], "wasi_http_incoming_handler");
+        assert_eq!(manifest["config"], serde_json::json!(["GREETING"]));
     }
 
     #[test]

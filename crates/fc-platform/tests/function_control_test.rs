@@ -969,6 +969,33 @@ async fn a_batch_must_be_one_to_a_hundred_unique_dedup_ids_with_bounded_object_d
         assert_eq!(r.status, StatusCode::BAD_REQUEST, "{code}");
         assert_eq!(r.error(), code);
     }
+
+    // The limit is on `data`'s bytes as received: escapes and whitespace
+    // count. 50 000 `\u0041` escapes are 300 000 bytes on the wire and
+    // 50 000 once unescaped; the wire size is what is refused.
+    let data = format!(r#"{{"v": "{}"}}"#, "\\u0041".repeat(50_000));
+    let body = format!(
+        r#"{{"hostId": "{host_id}", "address": "{}", "version": 1, "events": [{{"type": "{t}", "dedupId": "raw", "data": {data}}}]}}"#,
+        f.address
+    );
+    let r = h
+        .send(
+            Method::POST,
+            "/control/functions/events",
+            Some(&h.host.clone()),
+            Some(body),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    assert_eq!(r.error(), "EVENT_DATA_TOO_LARGE");
+    assert_eq!(
+        r.json()["message"],
+        format!(
+            "events[0].data is {} bytes, which exceeds the limit of 262144",
+            data.len()
+        )
+    );
 }
 
 #[tokio::test]
@@ -1136,7 +1163,7 @@ async fn an_artifact_streams_from_the_store_and_anything_else_is_404() {
         .get("/control/functions/artifacts/fnv_nosuch", Some(&h.host))
         .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
-    assert_eq!(r.error(), "FunctionVersion_NOT_FOUND");
+    assert_eq!(r.error(), "FUNCTION_VERSION_NOT_FOUND");
     let oci = publish(&h, &f, 2, "arts", Some("oci://registry/x@sha256:00")).await;
     let r = h
         .get(

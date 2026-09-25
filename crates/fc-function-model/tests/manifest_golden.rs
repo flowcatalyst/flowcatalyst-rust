@@ -281,9 +281,25 @@ fn value_types_match_java() {
             })
             .map_err(|e| ("IllegalStateException".to_string(), e.to_string()))
     });
-    value_table("runtime", |raw| {
-        use_case(Runtime::parse_strict(raw), |r| r.as_str().to_string())
-    });
+    // The one deviation (owner decision 5): Rust adds `component`, so it
+    // parses, and the RUNTIME_INVALID message lists it.
+    let golden = golden();
+    for row in golden["values"]["runtime"].as_array().unwrap() {
+        let input = row["input"].as_str().unwrap();
+        let expected = match (input, row.get("ok")) {
+            ("component", _) => Ok("COMPONENT".to_string()),
+            (_, Some(ok)) => Ok(ok.as_str().unwrap().to_string()),
+            (_, None) => Err((
+                row["code"].as_str().unwrap().to_string(),
+                row["message"]
+                    .as_str()
+                    .unwrap()
+                    .replace("jvm or wasm", "jvm, wasm or component"),
+            )),
+        };
+        let got = use_case(Runtime::parse_strict(input), |r| r.as_str().to_string());
+        assert_eq!(got, expected, "runtime: {input:?}");
+    }
     value_table("httpMethod", |raw| {
         use_case(HttpMethod::parse_strict(raw), |m| m.as_str().to_string())
     });

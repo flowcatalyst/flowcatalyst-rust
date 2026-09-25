@@ -43,7 +43,7 @@ pub use fc_function_model::{
     FunctionOwner, Hostname, HttpMethod, InvalidPoolUrl, JsonNode, JsonNumber, JsonParseError,
     Limits, Manifest, ManifestProblem, ManifestRejected, NonPositiveLimit, PathParams,
     PoolUrlTemplate, PublicRoute, RouteMatch, RoutePattern, Runtime, ScheduleSpec, Segment,
-    SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError,
+    SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError, WasmKind,
     LIVE_ALIAS,
 };
 

@@ -8,14 +8,22 @@
 //! answers is what is published (`POST …/versions`). `--artifact-ref`
 //! (`oci://` / `s3://`) publishes by reference instead.
 //!
-//! Deploy: publish, then promote `live`. A `VERSION_DIGEST_EXISTS` answer
-//! promotes the version it names instead of failing, and an
-//! `ALIAS_UNCHANGED` answer is "already live", so deploying the same
-//! artifact twice succeeds.
+//! Deploy: publish, then promote `live`. Deploying the same artifact twice
+//! succeeds: the platform answers a republish of the same digest and
+//! manifest `200` with the existing version, and a promote to the version
+//! the alias already names `200` with `changed: false`. An older platform
+//! answered both `409` (`VERSION_DIGEST_EXISTS` naming the version,
+//! `ALIAS_UNCHANGED`); those answers are still taken the same way.
 //!
 //! Promote: polls `…/status` once a second until the version is `READY`
 //! (`--wait 0` skips the wait), then `PUT …/aliases/{alias}`. A timeout
 //! prints each host's state for the version and exits 1.
+//!
+//! Both promote optimistically: the alias's version is read before the
+//! wait (or given with `--expected-version`) and sent as `If-Match`, so a
+//! promote made by someone else meanwhile is `412 ALIAS_VERSION_CONFLICT`
+//! rather than silently overwritten. A header, not the body's
+//! `expectedVersion`, so an older platform simply ignores it.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -81,6 +89,11 @@ pub struct PromoteArgs {
     #[arg(long, default_value = "live")]
     pub alias: String,
 
+    /// The version the alias must point at now (0: none yet); default, the
+    /// one it points at when the command starts.
+    #[arg(long, value_name = "N")]
+    pub expected_version: Option<i64>,
+
     /// How long to wait for READY before giving up (0 promotes at once).
     #[arg(long, value_name = "DURATION", default_value = "60s", value_parser = parse_duration)]
     pub wait: Duration,
@@ -121,42 +134,64 @@ pub async fn deploy(ctx: &Ctx<'_>, args: &DeployArgs, io: &mut Io<'_>) -> Result
     let client = ctx.client()?;
     let version = match publish_version(&client, &address, &args.publish).await {
         Ok(published) => published.version,
-        Err(e) if e.code() == Some("VERSION_DIGEST_EXISTS") => match &e {
-            CliError::Platform { details, .. } => match details["version"].as_i64() {
-                Some(v) => v,
-                None => return Err(e),
-            },
-            _ => return Err(e),
-        },
-        Err(e) => return Err(e),
+        Err(e) => older_platform_existing_version(&e).ok_or(e)?,
     };
-    let promoted =
-        match promote_when_ready(ctx, &client, &address, "live", version, args.wait, io).await {
-            Err(e) if e.code() == Some("ALIAS_UNCHANGED") => {
-                json!({"alias": "live", "version": version})
-            }
-            other => other?,
-        };
+    let expected = alias_version(&client, &address, "live").await?;
+    let promoted = match promote_when_ready(
+        ctx, &client, &address, "live", version, expected, args.wait, io,
+    )
+    .await
+    {
+        Err(e) if is_older_platform_unchanged_alias(&e) => {
+            json!({"alias": "live", "version": version, "changed": false})
+        }
+        other => other?,
+    };
     match ctx.output() {
-        OutputMode::Text => writeln!(
-            io.out,
-            "{address}: version {} deployed and live",
-            promoted["version"].as_i64().unwrap_or(version)
-        )?,
+        OutputMode::Text => {
+            let version = promoted["version"].as_i64().unwrap_or(version);
+            if promoted["changed"] == Value::Bool(false) {
+                writeln!(io.out, "{address}: version {version} is already live")?
+            } else {
+                writeln!(io.out, "{address}: version {version} deployed and live")?
+            }
+        }
         OutputMode::Json => print_json(io.out, &promoted)?,
     }
     Ok(0)
 }
 
+/// An older platform's `409 VERSION_DIGEST_EXISTS`: the version it names,
+/// which a current platform answers `200` with instead.
+fn older_platform_existing_version(e: &CliError) -> Option<i64> {
+    match e {
+        CliError::Platform { code, details, .. } if code == "VERSION_DIGEST_EXISTS" => {
+            details["version"].as_i64()
+        }
+        _ => None,
+    }
+}
+
+/// An older platform's `409 ALIAS_UNCHANGED`, which a current platform
+/// answers `200` with `changed: false` instead.
+fn is_older_platform_unchanged_alias(e: &CliError) -> bool {
+    e.code() == Some("ALIAS_UNCHANGED")
+}
+
 pub async fn promote(ctx: &Ctx<'_>, args: &PromoteArgs, io: &mut Io<'_>) -> Result<i32, CliError> {
     let address = args.address_opts.resolve(args.address.as_deref())?;
     let client = ctx.client()?;
+    let expected = match args.expected_version {
+        Some(v) => v,
+        None => alias_version(&client, &address, &args.alias).await?,
+    };
     let promoted = promote_when_ready(
         ctx,
         &client,
         &address,
         &args.alias,
         args.version,
+        expected,
         args.wait,
         io,
     )
@@ -287,12 +322,33 @@ pub fn read_manifest(path: &Path) -> Result<Value, CliError> {
     })
 }
 
+/// The version `alias` points at now, `0` when it has none.
+async fn alias_version(client: &FnClient, address: &str, alias: &str) -> Result<i64, CliError> {
+    let aliases = client
+        .get(&format!("/api/functions/{address}/aliases"))
+        .await?
+        .unwrap_or(Value::Null);
+    Ok(version_of_alias(&aliases, alias))
+}
+
+fn version_of_alias(aliases: &Value, alias: &str) -> i64 {
+    aliases
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| a["alias"] == alias)
+        .and_then(|a| a["version"].as_i64())
+        .unwrap_or(0)
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn promote_when_ready(
     ctx: &Ctx<'_>,
     client: &FnClient,
     address: &str,
     alias: &str,
     version: i64,
+    expected_version: i64,
     wait: Duration,
     io: &mut Io<'_>,
 ) -> Result<Value, CliError> {
@@ -314,9 +370,10 @@ async fn promote_when_ready(
         }
     }
     Ok(client
-        .put(
+        .put_with_headers(
             &format!("/api/functions/{address}/aliases/{alias}"),
             json!({"version": version}),
+            &[("if-match", format!("\"{expected_version}\""))],
         )
         .await?
         .unwrap_or(Value::Null))
@@ -387,6 +444,41 @@ fn print_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_older_platforms_no_op_conflicts_are_still_taken_as_success() {
+        let dup = CliError::Platform {
+            code: "VERSION_DIGEST_EXISTS".into(),
+            message: "dup".into(),
+            status: 409,
+            details: json!({"version": 4}),
+        };
+        assert_eq!(older_platform_existing_version(&dup), Some(4));
+        let other = CliError::Platform {
+            code: "FUNCTION_DISABLED".into(),
+            message: "x".into(),
+            status: 409,
+            details: Value::Null,
+        };
+        assert_eq!(older_platform_existing_version(&other), None);
+        let unchanged = CliError::Platform {
+            code: "ALIAS_UNCHANGED".into(),
+            message: "x".into(),
+            status: 409,
+            details: Value::Null,
+        };
+        assert!(is_older_platform_unchanged_alias(&unchanged));
+        assert!(!is_older_platform_unchanged_alias(&other));
+    }
+
+    #[test]
+    fn the_expected_version_is_the_aliases_or_zero() {
+        let aliases = json!([{"alias": "live", "version": 3}, {"alias": "qa", "version": 1}]);
+        assert_eq!(version_of_alias(&aliases, "live"), 3);
+        assert_eq!(version_of_alias(&aliases, "qa"), 1);
+        assert_eq!(version_of_alias(&aliases, "canary"), 0);
+        assert_eq!(version_of_alias(&Value::Null, "live"), 0);
+    }
 
     #[test]
     fn ready_is_the_version_in_state_ready() {

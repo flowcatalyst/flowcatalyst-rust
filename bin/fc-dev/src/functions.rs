@@ -393,7 +393,7 @@ pub async fn start_host(
     .map_err(|e| anyhow!("{e}"))?;
     let wasm = WasmRuntime::new(WasmSettings::from_env(&env))
         .map_err(|e| anyhow!("cannot start the WASM runtime: {e}"))?;
-    let loaders = Loaders::none().with("wasm", Arc::new(WasmLoader::new(wasm)));
+    let loaders = Arc::new(WasmLoader::new(wasm)).register(Loaders::none());
     let listener: Arc<dyn Listener> = Arc::new(FnListener::from_env(&env));
     let mut host = FnHost::new(env, loaders, Some(listener))
         .map_err(|e| anyhow!("cannot create the function cache directory: {e}"))?;

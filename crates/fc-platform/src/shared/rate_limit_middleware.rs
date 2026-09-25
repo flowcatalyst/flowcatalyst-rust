@@ -137,11 +137,10 @@ pub async fn rate_limit_per_ip(
             // governor returns the cell at which the request would be allowed.
             let wait = not_until.wait_time_from(DefaultClock::default().now());
             let secs = wait.as_secs().max(1);
-            let body = ApiError {
-                error: "TOO_MANY_REQUESTS".to_string(),
-                message: "rate limit exceeded for this IP; back off and retry".to_string(),
-                details: None,
-            };
+            let body = ApiError::new(
+                "TOO_MANY_REQUESTS",
+                "rate limit exceeded for this IP; back off and retry",
+            );
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, secs.to_string())],

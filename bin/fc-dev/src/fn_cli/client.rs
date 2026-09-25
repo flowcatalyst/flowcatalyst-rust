@@ -110,17 +110,40 @@ impl FnClient {
         self.send(Method::PUT, path, Some(body)).await
     }
 
+    /// A `PUT` with extra headers (the promote's `If-Match` precondition).
+    pub async fn put_with_headers(
+        &self,
+        path: &str,
+        body: Value,
+        headers: &[(&str, String)],
+    ) -> Result<Option<Value>, CliError> {
+        self.send_with(Method::PUT, path, Some(body), headers).await
+    }
+
     async fn send(
         &self,
         method: Method,
         path: &str,
         body: Option<Value>,
     ) -> Result<Option<Value>, CliError> {
+        self.send_with(method, path, body, &[]).await
+    }
+
+    async fn send_with(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        headers: &[(&str, String)],
+    ) -> Result<Option<Value>, CliError> {
         let url = format!("{}{path}", self.base);
         let mut request = self
             .http
             .request(method, &url)
             .bearer_auth(self.bearer_token().await?);
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
         if let Some(body) = body {
             request = request
                 .header(CONTENT_TYPE, "application/json")

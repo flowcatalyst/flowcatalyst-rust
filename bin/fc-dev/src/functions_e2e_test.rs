@@ -10,9 +10,10 @@
 //! 1. `fn config set` creates the function from the manifest and sets its
 //!    config; `fn secret set` its secret (from a file, never an argument).
 //! 2. `fn publish` uploads the component and publishes version 1.
-//! 3. `fn deploy` of the same component recovers the version from
-//!    `VERSION_DIGEST_EXISTS`, waits for `READY` (the host registers the
-//!    candidate) and promotes it live; a second `fn deploy` is a no-op.
+//! 3. `fn deploy` of the same component gets version 1 back (a republish
+//!    of the same digest and manifest is a `200` no-op), waits for `READY`
+//!    (the host registers the candidate) and promotes it live; a second
+//!    `fn deploy` is a no-op (`changed: false`).
 //! 4. The promote wired the subscription to the host's URL, and
 //!    `fn invoke` reaches the function, unversioned and versioned.
 //!

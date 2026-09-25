@@ -25,13 +25,29 @@ mod string_or_number {
     }
 }
 
-/// Standard API error response
+/// Standard API error response: the same envelope as
+/// [`ErrorResponse`](crate::shared::error::ErrorResponse), `code` equal to
+/// `error`. Build it with [`ApiError::new`].
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ApiError {
     pub error: String,
+    pub code: String,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
+}
+
+impl ApiError {
+    /// `code` set to `error`, no details.
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        let code = code.into();
+        Self {
+            error: code.clone(),
+            code,
+            message: message.into(),
+            details: None,
+        }
+    }
 }
 
 /// Pagination parameters.

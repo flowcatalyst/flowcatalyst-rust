@@ -112,15 +112,17 @@ impl Caller {
 }
 
 /// Java's canonical not-found (`UseCaseException.resourceNotFound`):
-/// `<Resource>_NOT_FOUND`, `<Resource> not found: <id>`.
+/// `<Resource> not found: <id>`, with the code in UPPER_SNAKE
+/// (`FUNCTION_VERSION_NOT_FOUND`; owner decision 5). Java appends
+/// `_NOT_FOUND` to the name as given.
 pub fn resource_not_found(resource: &str, id: &str) -> UseCaseError {
     UseCaseError::not_found(
-        format!("{resource}_NOT_FOUND"),
+        crate::shared::error::not_found_code(resource),
         format!("{resource} not found: {id}"),
     )
 }
 
-/// Load-or-404, out-of-reach-or-404: `Function_NOT_FOUND` either way.
+/// Load-or-404, out-of-reach-or-404: `FUNCTION_NOT_FOUND` either way.
 pub async fn function_by_address(
     functions: &FunctionRepository,
     address: &FunctionAddress,
@@ -133,7 +135,7 @@ pub async fn function_by_address(
 }
 
 /// The claim covering `hostname` (the hostname itself or its zone), or
-/// `FunctionDomain_NOT_FOUND` when there is none or it is out of reach.
+/// `FUNCTION_DOMAIN_NOT_FOUND` when there is none or it is out of reach.
 pub async fn domain_by_hostname(
     domains: &FunctionDomainRepository,
     hostname: &Hostname,
@@ -259,7 +261,7 @@ pub(crate) mod tests {
     #[test]
     fn not_found_has_javas_shape() {
         let err = resource_not_found("Function", "a.b.c");
-        assert_eq!(err.code(), "Function_NOT_FOUND");
+        assert_eq!(err.code(), "FUNCTION_NOT_FOUND");
         assert_eq!(err.message(), "Function not found: a.b.c");
         assert_eq!(err.http_status_code(), 404);
     }

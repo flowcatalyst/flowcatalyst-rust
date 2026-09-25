@@ -12,6 +12,13 @@
 //!   old one serving;
 //! - an unreadable desired-state entry is reported `FAILED` and protects its
 //!   address from unloading;
+//! - **what to unload is derived here**, as the difference between what this
+//!   host holds and what the document names (owner decision 5). The
+//!   document's `unload` list is read but ignored: it is the platform's
+//!   guess from the last heartbeats, which lags by a beat and churns the
+//!   ETag, and it could close an old version whose replacement failed,
+//!   against new-before-old. The platform keeps sending it for one release,
+//!   for JVM hosts;
 //! - failures are never cached: every failed entry is retried next cycle.
 //!
 //! [`ReconcileLoop`]: crate::reconcile_loop::ReconcileLoop
@@ -564,32 +571,69 @@ impl Reconciler {
 
     // ── step 4: unload ───────────────────────────────────────────────────
 
+    /// Step 4, derived from the document alone (its `unload` list is not
+    /// consulted):
+    /// - 4a: a loaded address that is no longer live at all (gone, disabled,
+    ///   only a candidate now) is closed, unless an unreadable entry
+    ///   protects it. An address whose live version moved on keeps serving
+    ///   the old one until the new one loads (new before old, step 3), even
+    ///   when the new one fails: that failure is what the heartbeat reports;
+    /// - 4b: what was prepared or failed for a version the document no
+    ///   longer names is forgotten, so the maps track the document;
+    /// - 4c: an idle lazy function is closed but keeps its route.
     async fn unload(&self, document: &DesiredDocument, now: DateTime<Utc>) {
-        let mut keep: HashSet<FunctionAddress> = document
+        let live: HashMap<FunctionAddress, i32> = document
             .functions
             .iter()
             .filter(|e| e.role == Role::Live)
-            .map(|e| e.address.clone())
+            .map(|e| (e.address.clone(), e.version))
             .collect();
         // An entry the host could not even read never unloads a good version.
-        keep.extend(document.unreadable.iter().map(|u| u.address.clone()));
+        let protected: HashSet<FunctionAddress> = document
+            .unreadable
+            .iter()
+            .map(|u| u.address.clone())
+            .collect();
+        let named: HashSet<Key> = document
+            .functions
+            .iter()
+            .map(|e| (e.address.clone(), e.version))
+            .chain(
+                document
+                    .unreadable
+                    .iter()
+                    .map(|u| (u.address.clone(), u.version)),
+            )
+            .collect();
+        let keep: HashSet<FunctionAddress> = live.keys().chain(protected.iter()).cloned().collect();
 
-        // 4a: the document's own unload list, exact (address, version).
-        for unload in &document.unload {
-            self.unload_exact(&unload.address, unload.version).await;
-        }
-        // 4b: loaded or lazily routed, but no longer live at all.
+        // 4a: loaded, but the address is no longer live.
         for snapshot in self.registry.snapshot() {
             if !keep.contains(&snapshot.address) {
                 self.close_and_remove(&snapshot.address).await;
             }
         }
-        // Routes and per-address load locks go with the address, or the
-        // maps only ever grow over the life of the process.
-        self.state
-            .lock()
-            .lazy_routes
-            .retain(|address, _| keep.contains(address));
+        // 4b: prepared or failed versions the document no longer names.
+        {
+            let mut state = self.state.lock();
+            let gone: Vec<Key> = state
+                .version_id_by_key
+                .keys()
+                .filter(|key| !named.contains(*key))
+                .cloned()
+                .collect();
+            for key in gone {
+                if let Some(version_id) = state.version_id_by_key.remove(&key) {
+                    state.prepared.remove(&version_id);
+                }
+            }
+            state.failures.retain(|key, _| named.contains(key));
+            // Routes and per-address load locks go with the address, or the
+            // maps only ever grow over the life of the process.
+            state
+                .lazy_routes
+                .retain(|address, _| keep.contains(address));
+        }
         self.load_locks
             .lock()
             .retain(|address, _| keep.contains(address));
@@ -605,29 +649,6 @@ impl Reconciler {
                 self.close_and_remove(&snapshot.address).await;
             }
         }
-    }
-
-    async fn unload_exact(&self, address: &FunctionAddress, version: i32) {
-        if self
-            .registry
-            .peek(address)
-            .is_some_and(|f| f.version() == version)
-        {
-            self.close_and_remove(address).await;
-        }
-        let mut state = self.state.lock();
-        if state
-            .lazy_routes
-            .get(address)
-            .is_some_and(|route| route.version == version)
-        {
-            state.lazy_routes.remove(address);
-        }
-        let key: Key = (address.clone(), version);
-        if let Some(version_id) = state.version_id_by_key.remove(&key) {
-            state.prepared.remove(&version_id);
-        }
-        state.failures.remove(&key);
     }
 
     async fn close_and_remove(&self, address: &FunctionAddress) {
@@ -688,6 +709,7 @@ impl Reconciler {
                 HostState::Active
             },
             loaded,
+            runtimes: self.loaders.runtimes(),
         }
     }
 

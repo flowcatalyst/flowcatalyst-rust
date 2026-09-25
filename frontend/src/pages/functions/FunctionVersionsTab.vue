@@ -7,6 +7,7 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useConfirm } from "primevue/useconfirm";
 import { toast } from "@/utils/errorBus";
+import { ApiError } from "@/api/client";
 import {
 	functionsApi,
 	type AliasResponse,
@@ -141,15 +142,23 @@ async function submitPromote() {
 	const v = promoteTarget.value;
 	if (!v || !promoteAliasValid.value || promoteWouldBeNoOp.value) return;
 	const alias = promoteAliasName.value.trim();
+	// Optimistic: the version this page shows the alias at (0: none yet), so
+	// a promote made elsewhere since is a 412, not silently overwritten.
+	const expectedVersion = aliases.value.find((a) => a.alias === alias)?.version ?? 0;
 	promoting.value = true;
 	try {
-		await functionsApi.promote(props.address, v.version, alias);
+		await functionsApi.promote(props.address, v.version, alias, expectedVersion);
 		toast.success("Success", `Version ${v.version} promoted to ${alias}`);
 		showPromoteDialog.value = false;
 		await Promise.all([loadVersions(props.address), loadAliases(props.address)]);
 		emit("changed");
-	} catch {
-		// surfaced by the global error toast (e.g. SETTINGS_MISSING, PUBLIC_ROUTE_TAKEN)
+	} catch (e) {
+		// Surfaced by the global error toast (e.g. SETTINGS_MISSING,
+		// PUBLIC_ROUTE_TAKEN). A 412 means the aliases moved: show them as
+		// they are now.
+		if (e instanceof ApiError && e.status === 412) {
+			await loadAliases(props.address);
+		}
 	} finally {
 		promoting.value = false;
 	}

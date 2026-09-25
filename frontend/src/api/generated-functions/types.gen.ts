@@ -13,6 +13,10 @@ export type ErrorResponse = {
      */
     error: string;
     /**
+     * the same machine-readable code as `error` (beyond Java: every error body carries both)
+     */
+    code: string;
+    /**
      * a human-readable message
      */
     message: string;
@@ -28,7 +32,7 @@ export type CreateFunctionRequest = {
     applicationCode: string;
     serviceName: string;
     name: string;
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     description?: string;
     clientId?: string;
 };
@@ -51,7 +55,7 @@ export type FunctionResponse = {
     name: string;
     applicationId: string;
     clientId?: string;
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     description?: string;
     status: 'ACTIVE' | 'DISABLED';
     live?: FunctionResponseLive;
@@ -82,8 +86,11 @@ export type SignerResponse = {
  * The publish-time manifest, as parsed by Manifest#parseStrict — only runtime/entrypoint are mandatory, everything else defaults.
  */
 export type PublishManifestRequest = {
-    runtime: 'jvm' | 'wasm';
-    entrypoint: string;
+    runtime: 'jvm' | 'wasm' | 'component';
+    /**
+     * Optional for runtime component (default wasi:http/incoming-handler); required otherwise.
+     */
+    entrypoint?: string;
     pool?: string;
     warm?: boolean;
     limits?: {
@@ -191,6 +198,9 @@ export type ManifestSubscription = {
 };
 
 export type ManifestSchedule = {
+    /**
+     * 6 fields (sec min hour dom mon dow) or 5 (min hour dom mon dow, seconds 0); anything else is CRON_INVALID
+     */
     cron: string;
     timezone?: string;
     path: string;
@@ -218,7 +228,7 @@ export type ManifestDbRef = {
  * The resolved manifest as the server writes it back (Manifest#toJson) — every key always present.
  */
 export type Manifest = {
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     entrypoint: string;
     pool: string;
     warm: boolean;
@@ -255,6 +265,10 @@ export type VersionResponse = {
 
 export type PromoteRequest = {
     version: number;
+    /**
+     * Optional precondition: the version the alias points at now (0: none yet). A mismatch is 412 ALIAS_VERSION_CONFLICT and writes nothing.
+     */
+    expectedVersion?: number;
 };
 
 export type PromoteResponse = {
@@ -262,6 +276,10 @@ export type PromoteResponse = {
     version: number;
     versionId: string;
     previousVersion?: number;
+    /**
+     * false when the alias already named this version: nothing was written, and previousVersion is the version itself
+     */
+    changed: boolean;
 };
 
 /**
@@ -357,6 +375,10 @@ export type PromotePlanResponse = {
     schedules?: Array<ScheduleActionResponse>;
     publicRoutes?: PublicRoutesActionResponse;
     conflicts: Array<ConflictResponse>;
+    /**
+     * What would not stop the publish but may stop the version running: POOL_HAS_NO_LIVE_HOSTS, POOL_RUNTIME_UNKNOWN.
+     */
+    warnings: Array<ConflictResponse>;
 };
 
 export type AliasResponse = {
@@ -455,7 +477,7 @@ export type SetSecretRequest = {
 export type PolicySignerRequest = {
     issuer: string;
     subject: string;
-    runtimes?: Array<'jvm' | 'wasm'>;
+    runtimes?: Array<'jvm' | 'wasm' | 'component'>;
 };
 
 export type PolicyCeilingsRequest = {
@@ -473,7 +495,7 @@ export type PutPolicyRequest = {
 export type PolicySignerResponse = {
     issuer: string;
     subject: string;
-    runtimes: Array<'jvm' | 'wasm'>;
+    runtimes: Array<'jvm' | 'wasm' | 'component'>;
 };
 
 export type PolicyCeilingsResponse = {
@@ -529,6 +551,10 @@ export type HeartbeatRequest = {
     pool: string;
     state: 'ACTIVE' | 'DRAINING';
     loaded?: Array<HeartbeatLoadedEntry>;
+    /**
+     * Beyond Java: the manifest runtimes this host loads (e.g. ["component","wasm"]). Read tolerantly; absent means the host does not say, and publish then assumes nothing about its pool.
+     */
+    runtimes?: Array<string>;
 };
 
 export type EmitEventItem = {
@@ -712,7 +738,7 @@ export type DeleteFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -750,7 +776,7 @@ export type GetFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -788,7 +814,7 @@ export type UpdateFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -797,7 +823,7 @@ export type UpdateFunctionError = UpdateFunctionErrors[keyof UpdateFunctionError
 
 export type UpdateFunctionResponses = {
     /**
-     * Updated
+     * Updated, or already so: a request that changes nothing (the status the function has, the same description) writes nothing and is still 204
      */
     204: void;
 };
@@ -822,7 +848,7 @@ export type GetFunctionStatusErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -881,7 +907,7 @@ export type ListFunctionVersionsErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -919,15 +945,15 @@ export type PublishFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
-     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS
+     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version), POOL_RUNTIME_UNSUPPORTED (every live host of the pool reports its runtimes, none this one)
      */
     409: ErrorResponse;
     /**
-     * ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED
+     * ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED, ARTIFACT_RUNTIME_MISMATCH (runtime component and the uploaded artifact is not a WASI component)
      */
     422: ErrorResponse;
     /**
@@ -939,6 +965,10 @@ export type PublishFunctionVersionErrors = {
 export type PublishFunctionVersionError = PublishFunctionVersionErrors[keyof PublishFunctionVersionErrors];
 
 export type PublishFunctionVersionResponses = {
+    /**
+     * The same digest and manifest are already published: that version, in its own state. Nothing is written (a no-op).
+     */
+    200: PublishResponse;
     /**
      * The published version
      */
@@ -965,7 +995,7 @@ export type CheckManifestErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1007,7 +1037,7 @@ export type GetFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1049,7 +1079,7 @@ export type RetireFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1062,7 +1092,7 @@ export type RetireFunctionVersionError = RetireFunctionVersionErrors[keyof Retir
 
 export type RetireFunctionVersionResponses = {
     /**
-     * The retired version
+     * The retired version; retiring a retired version is a no-op answering it as it is
      */
     200: VersionResponse;
 };
@@ -1091,7 +1121,7 @@ export type DeleteFunctionAliasErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, Alias_NOT_FOUND
+     * FUNCTION_NOT_FOUND, ALIAS_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1113,6 +1143,12 @@ export type DeleteFunctionAliasResponse = DeleteFunctionAliasResponses[keyof Del
 
 export type PromoteFunctionAliasData = {
     body: PromoteRequest;
+    headers?: {
+        /**
+         * Optional precondition, the same as the body's `expectedVersion`: the version number the alias points at now (`3`, `"3"` or `W/"3"`; `0` for none). A mismatch is 412 ALIAS_VERSION_CONFLICT; a value that is not a version number is 400 IF_MATCH_INVALID, and one that disagrees with `expectedVersion` 400 EXPECTED_VERSION_CONFLICT.
+         */
+        'If-Match'?: string;
+    };
     path: {
         /**
          * the function's `application.service.name` address
@@ -1129,7 +1165,7 @@ export type PromoteFunctionAliasData = {
 
 export type PromoteFunctionAliasErrors = {
     /**
-     * ALIAS_INVALID
+     * ALIAS_INVALID, IF_MATCH_INVALID, EXPECTED_VERSION_CONFLICT
      */
     400: ErrorResponse;
     /**
@@ -1137,20 +1173,24 @@ export type PromoteFunctionAliasErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
-     * VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED, SETTINGS_MISSING
+     * VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING
      */
     409: ErrorResponse;
+    /**
+     * ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version (details: alias, expectedVersion, currentVersion)
+     */
+    412: ErrorResponse;
 };
 
 export type PromoteFunctionAliasError = PromoteFunctionAliasErrors[keyof PromoteFunctionAliasErrors];
 
 export type PromoteFunctionAliasResponses = {
     /**
-     * The promotion result
+     * The promotion result; changed is false when the alias already named the version (a no-op, nothing written)
      */
     200: PromoteResponse;
 };
@@ -1175,7 +1215,7 @@ export type ListFunctionAliasesErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1217,7 +1257,7 @@ export type UploadFunctionArtifactErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1272,7 +1312,7 @@ export type GetFunctionConfigErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1315,7 +1355,7 @@ export type SetFunctionConfigErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1358,7 +1398,7 @@ export type ListFunctionSecretsErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1400,7 +1440,7 @@ export type DeleteFunctionSecretErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionSecret_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_SECRET_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1446,7 +1486,7 @@ export type SetFunctionSecretErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1644,7 +1684,7 @@ export type ReleaseFunctionDomainErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionDomain_NOT_FOUND
+     * FUNCTION_DOMAIN_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1686,7 +1726,7 @@ export type GetFunctionDomainErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionDomain_NOT_FOUND
+     * FUNCTION_DOMAIN_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1728,7 +1768,7 @@ export type ListFunctionRoutesErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1874,7 +1914,7 @@ export type DownloadFunctionArtifactErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionVersion_NOT_FOUND
+     * FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**

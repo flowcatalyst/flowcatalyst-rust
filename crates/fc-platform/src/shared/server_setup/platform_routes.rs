@@ -1052,6 +1052,7 @@ pub fn build_platform_routes(
                 functions: repos.function_repo.clone(),
                 domains: repos.function_domain_repo.clone(),
                 routes: repos.function_route_repo.clone(),
+                hosts: repos.function_host_repo.clone(),
                 limits: function_limits,
             },
             unit_of_work: unit_of_work.clone(),

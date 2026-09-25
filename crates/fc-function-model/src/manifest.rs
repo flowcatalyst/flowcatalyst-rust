@@ -460,6 +460,10 @@ impl Manifest {
             .get("entrypoint")
             .map(JsonNode::scalar_text)
             .unwrap_or_default();
+        let entrypoint = match runtime.default_entrypoint() {
+            Some(default) if java_is_blank(&entrypoint) => default.to_string(),
+            _ => entrypoint,
+        };
         if java_is_blank(&entrypoint) {
             return Err(UnreadableManifest("manifest entrypoint is unreadable"));
         }
@@ -516,7 +520,7 @@ fn parse_runtime(c: &mut Collector, root: &JsonNode, function_runtime: Runtime) 
         c.add("RUNTIME_INVALID", Runtime::invalid_message(), "/runtime");
         return None;
     };
-    if runtime != function_runtime {
+    if !function_runtime.accepts_manifest(runtime) {
         c.add(
             "RUNTIME_MISMATCH",
             format!(
@@ -543,6 +547,10 @@ fn parse_entrypoint(
         .map(JsonNode::scalar_text)
         .unwrap_or_default();
     if java_is_blank(&raw) {
+        // A component's only export is its default (normalised in).
+        if let Some(default) = runtime.and_then(Runtime::default_entrypoint) {
+            return Some(default.to_string());
+        }
         c.add(
             "ENTRYPOINT_REQUIRED",
             "entrypoint is required",

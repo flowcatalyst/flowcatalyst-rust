@@ -101,6 +101,7 @@ fn router_hashing(app: &TestApp, hasher: fn(&str) -> String) -> Router {
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits,
             },
             unit_of_work: app.unit_of_work.clone(),
@@ -787,7 +788,11 @@ async fn promote_and_remove_alias_codes() {
         "VERSION_NOT_READY",
     );
     let missing = promote(&r, &t, path, "live", 99).await;
-    assert_error(&missing, StatusCode::NOT_FOUND, "FunctionVersion_NOT_FOUND");
+    assert_error(
+        &missing,
+        StatusCode::NOT_FOUND,
+        "FUNCTION_VERSION_NOT_FOUND",
+    );
     assert_eq!(
         missing.1["message"],
         "FunctionVersion not found: billing.svc.codes#99"
@@ -795,7 +800,7 @@ async fn promote_and_remove_alias_codes() {
     assert_error(
         &promote(&r, &t, "/api/functions/billing.svc.nope", "live", 1).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
 
     sqlx::query("UPDATE fn_versions SET state = 'READY', ready_at = NOW() WHERE function_id = $1")
@@ -822,11 +827,86 @@ async fn promote_and_remove_alias_codes() {
     assert_eq!(status, StatusCode::OK, "{out}");
     // A function with no triggers still gets its pool.
     assert_eq!(links(&app, &fid).await.len(), 1);
-    let unchanged = promote(&r, &t, path, "live", v1).await;
-    assert_error(&unchanged, StatusCode::CONFLICT, "ALIAS_UNCHANGED");
+    assert_eq!(out["changed"], true);
+    let changes = events_of_type(&app, "platform:function:alias:changed").await;
+    // The alias already names v1: a no-op, 200 with changed false and
+    // nothing written.
+    let (status, unchanged) = promote(&r, &t, path, "live", v1).await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
     assert_eq!(
-        unchanged.1["message"],
-        "alias already points at this version"
+        unchanged,
+        json!({"alias": "live", "version": v1, "versionId": out["versionId"], "previousVersion": v1, "changed": false})
+    );
+    assert_eq!(
+        events_of_type(&app, "platform:function:alias:changed").await,
+        changes,
+        "no event for a no-op"
+    );
+
+    // The optional precondition: qa has no version yet (0), so a stale
+    // expectation is 412 and writes nothing; the right one promotes.
+    let stale = send(
+        &r,
+        Method::PUT,
+        &format!("{path}/aliases/qa"),
+        &t,
+        Some(json!({"version": v1, "expectedVersion": 3})),
+    )
+    .await;
+    assert_error(
+        &stale,
+        StatusCode::PRECONDITION_FAILED,
+        "ALIAS_VERSION_CONFLICT",
+    );
+    assert_eq!(
+        stale.1["details"],
+        json!({"alias": "qa", "expectedVersion": 3, "currentVersion": 0})
+    );
+    assert_eq!(
+        stale.1["message"],
+        "alias 'qa' points at no version, not the expected version 3"
+    );
+    let (status, body) = send(
+        &r,
+        Method::PUT,
+        &format!("{path}/aliases/qa"),
+        &t,
+        Some(json!({"version": v1, "expectedVersion": 0})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["changed"], true);
+    // If-Match carries the same precondition.
+    let if_match = |value: &'static str| {
+        let r = r.clone();
+        let t = t.clone();
+        async move {
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri(format!("{path}/aliases/qa"))
+                .header("authorization", format!("Bearer {t}"))
+                .header("content-type", "application/json")
+                .header("if-match", value)
+                .body(Body::from(json!({"version": v1}).to_string()))
+                .unwrap();
+            read_json(r.oneshot(req).await.unwrap()).await
+        }
+    };
+    assert_error(
+        &if_match("\"7\"").await,
+        StatusCode::PRECONDITION_FAILED,
+        "ALIAS_VERSION_CONFLICT",
+    );
+    assert_error(
+        &if_match("latest").await,
+        StatusCode::BAD_REQUEST,
+        "IF_MATCH_INVALID",
+    );
+    let (status, body) = if_match("W/\"1\"").await;
+    assert_eq!(
+        (status, &body["changed"]),
+        (StatusCode::OK, &json!(false)),
+        "{body}"
     );
 
     // Aliases: qa → v1, live cannot be removed, an unknown one is 404.
@@ -852,7 +932,7 @@ async fn promote_and_remove_alias_codes() {
         None,
     )
     .await;
-    assert_error(&unknown, StatusCode::NOT_FOUND, "Alias_NOT_FOUND");
+    assert_error(&unknown, StatusCode::NOT_FOUND, "ALIAS_NOT_FOUND");
     assert_eq!(unknown.1["message"], "Alias not found: nope");
     let (status, _) = send(&r, Method::DELETE, &format!("{path}/aliases/qa"), &t, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

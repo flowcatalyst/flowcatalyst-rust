@@ -11,13 +11,13 @@
     },
     "runtime": {
       "type": "string",
-      "enum": ["jvm", "wasm"],
-      "description": "The runtime this version executes in. Must match the function's own runtime, or publish fails with RUNTIME_MISMATCH."
+      "enum": ["jvm", "wasm", "component"],
+      "description": "The runtime this version executes in. component: a WASI 0.2 component exporting wasi:http/incoming-handler (Rust function hosts; the platform checks the artifact is a component at publish). wasm: a wasm artifact, which a Rust host loads when it is a component. Must match the function's own runtime (wasm and component are interchangeable), or publish fails with RUNTIME_MISMATCH."
     },
     "entrypoint": {
       "type": "string",
       "minLength": 1,
-      "description": "jvm: a binary class name implementing io.flowcatalyst.function.Function (^[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*$), else ENTRYPOINT_INVALID. wasm: an export name (^[A-Za-z_]\\w*$)."
+      "description": "jvm: a binary class name implementing io.flowcatalyst.function.Function (^[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*$), else ENTRYPOINT_INVALID. wasm: an export name (^[A-Za-z_]\\w*$); a component published as wasm names wasi_http_incoming_handler. component: optional, wasi:http/incoming-handler (optionally @0.2.x, the default) or wasi_http_incoming_handler. Required for jvm and wasm (ENTRYPOINT_REQUIRED)."
     },
     "pool": {
       "type": "string",
@@ -160,7 +160,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "cron": { "type": "string", "minLength": 1, "description": "The cron expression." },
+          "cron": { "type": "string", "minLength": 1, "description": "The cron expression: 6 fields (sec min hour dom mon dow) or 5 (min hour dom mon dow, seconds 0). Day of week 0-6 with 0 = Sunday, or sun-sat; when both day fields are restricted, either matches. Anything else is CRON_INVALID." },
           "timezone": { "type": "string", "description": "An optional IANA timezone name." },
           "path": {
             "type": "string",
@@ -245,17 +245,28 @@
       "description": "Outbound hosts this version may call."
     }
   },
-  "required": ["runtime", "entrypoint"],
+  "required": ["runtime"],
   "additionalProperties": false,
-  "if": {
-    "properties": { "runtime": { "const": "jvm" } },
-    "required": ["runtime"]
-  },
-  "then": {
-    "properties": {
-      "limits": {
-        "properties": { "wasmMemoryMb": false }
+  "allOf": [
+    {
+      "if": {
+        "properties": { "runtime": { "const": "jvm" } },
+        "required": ["runtime"]
+      },
+      "then": {
+        "properties": {
+          "limits": {
+            "properties": { "wasmMemoryMb": false }
+          }
+        }
       }
+    },
+    {
+      "if": {
+        "properties": { "runtime": { "const": "component" } },
+        "required": ["runtime"]
+      },
+      "else": { "required": ["entrypoint"] }
     }
-  }
+  ]
 }

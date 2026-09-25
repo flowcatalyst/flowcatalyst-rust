@@ -178,7 +178,7 @@ pub async fn list_domains(
     responses(
         (status = 200, body = DomainResponse),
         (status = 400, description = "HOSTNAME_INVALID"),
-        (status = 404, description = "FunctionDomain_NOT_FOUND, also when out of reach"),
+        (status = 404, description = "FUNCTION_DOMAIN_NOT_FOUND, also when out of reach"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -235,7 +235,7 @@ pub async fn release_domain(
     responses(
         (status = 200, body = Vec<FunctionRouteResponse>),
         (status = 400, description = "FUNCTION_ROUTE_FILTER_REQUIRED, ADDRESS_INVALID or HOSTNAME_INVALID"),
-        (status = 404, description = "Function_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND"),
     ),
     security(("bearer_auth" = []))
 )]

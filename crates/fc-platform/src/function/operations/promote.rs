@@ -3,7 +3,7 @@
 //!
 //! **Promote**, in Java's order: the alias name (`400 ALIAS_INVALID`, before
 //! anything is read), load and reach (`404`), the version (`404
-//! FunctionVersion_NOT_FOUND`), `409 VERSION_NOT_READY` for a version no
+//! FUNCTION_VERSION_NOT_FOUND`), `409 VERSION_NOT_READY` for a version no
 //! host has verified yet (a retired one falls through to
 //! `VERSION_RETIRED`), `409 SETTINGS_MISSING`, the promote plan, then the
 //! function's own `VERSION_RETIRED`, `FUNCTION_DISABLED` and
@@ -11,6 +11,14 @@
 //! alias change (`platform:function:alias:changed`), with the public routes
 //! when promoting `live` changes them, and the rest of the wiring through
 //! [`TriggerSync::apply`], each object with its own event.
+//!
+//! **An optional precondition** (owner decision 5, beyond Java):
+//! `expectedVersion` (or `If-Match`) names the version the caller believes
+//! the alias points at, `0` for "no version yet". Checked right after the
+//! function is loaded and before anything else about the version, it
+//! answers `412 ALIAS_VERSION_CONFLICT` (details `alias`, `expectedVersion`,
+//! `currentVersion`) when another promote got there first. Absent, nothing
+//! changes.
 //!
 //! **Wiring is `live`-only**: a named alias is HTTP-only by ruling and
 //! never reaches the wiring, since its version's manifest must not be
@@ -21,7 +29,7 @@
 //! the alias change back too.
 //!
 //! **Remove alias** deletes a named pointer: `409 ALIAS_PROTECTED` for
-//! `live`, `404 Alias_NOT_FOUND` for one the function lacks. HTTP-only, no
+//! `live`, `404 ALIAS_NOT_FOUND` for one the function lacks. HTTP-only, no
 //! wiring.
 
 use std::sync::Arc;
@@ -54,6 +62,10 @@ pub struct PromoteCommand {
     pub address: FunctionAddress,
     pub alias: String,
     pub version: i32,
+    /// The version the caller expects the alias to point at now (`0`: none
+    /// yet); `None` checks nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_version: Option<i32>,
 }
 
 impl AuditMasked for PromoteCommand {}
@@ -142,6 +154,30 @@ impl<U: UnitOfWork> PromoteVersionUseCase<U> {
     ) -> Result<Prepared, UseCaseError> {
         let mut function =
             function_by_address(&self.functions, &command.address, &self.caller).await?;
+        if let Some(expected) = command.expected_version {
+            let current = match function.version_id_of(&command.alias) {
+                Some(id) => self.versions.find_by_id(id).await?.map_or(0, |v| v.version),
+                None => 0,
+            };
+            if current != expected {
+                return Err(UseCaseError::precondition_failed(
+                    "ALIAS_VERSION_CONFLICT",
+                    format!(
+                        "alias '{}' {}, not the expected version {expected}",
+                        command.alias,
+                        match current {
+                            0 => "points at no version".to_string(),
+                            n => format!("points at version {n}"),
+                        }
+                    ),
+                    crate::details! {
+                        "alias" => command.alias,
+                        "expectedVersion" => expected,
+                        "currentVersion" => current,
+                    },
+                ));
+            }
+        }
         let version = self
             .versions
             .find_by_function_and_version(&function.id, command.version)

@@ -54,8 +54,10 @@ const canSubmit = computed(
 );
 
 // The manifest's own `runtime` decides what the artifact input accepts. A
-// `wasm` artifact must be a WASI 0.2 component for a Rust host (a core
-// module is refused with WASM_CORE_MODULE_UNSUPPORTED there).
+// `component` (or `wasm`, for a Rust host) artifact must be a WASI 0.2
+// component: the platform refuses a core module for `component` at publish
+// (ARTIFACT_RUNTIME_MISMATCH); a Rust host refuses one under `wasm` at load
+// (WASM_CORE_MODULE_UNSUPPORTED).
 const artifactRuntime = computed<"jvm" | "wasm">(() =>
 	parsed.value.manifest?.runtime === "jvm" ? "jvm" : "wasm",
 );

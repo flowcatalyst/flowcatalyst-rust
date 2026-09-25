@@ -87,18 +87,26 @@ export function manifestSchemaUrl(): string {
 }
 
 /**
- * The "New manifest" template for a function's runtime. `wasm` is a WASI 0.2
- * component exporting `wasi:http/incoming-handler`, named by the
- * manifest-safe entrypoint alias the Rust host accepts; `jvm` is the template
- * Java's `fn init --manifest-only` writes. Both have one platform-authenticated
+ * The "New manifest" template for a function's runtime. `component` is a
+ * WASI 0.2 component exporting `wasi:http/incoming-handler`, its default
+ * entrypoint, so none is written; `wasm` is the same component under the
+ * manifest-safe entrypoint alias the Rust host accepts (what a platform
+ * without `component` takes); `jvm` is the template Java's
+ * `fn init --manifest-only` writes. Each has one platform-authenticated
  * `GET /hello` endpoint.
  */
-export function newManifestModel(runtime: FunctionRuntime = "wasm"): ManifestModel {
-	return {
-		runtime,
-		entrypoint: runtime === "wasm" ? "wasi_http_incoming_handler" : "com.example.fn.Handler",
-		endpoints: [{ path: "/hello", auth: "platform", methods: ["GET"] }],
-	};
+export function newManifestModel(runtime: FunctionRuntime = "component"): ManifestModel {
+	const endpoints: ManifestModel["endpoints"] = [
+		{ path: "/hello", auth: "platform", methods: ["GET"] },
+	];
+	switch (runtime) {
+		case "component":
+			return { runtime, endpoints };
+		case "wasm":
+			return { runtime, entrypoint: "wasi_http_incoming_handler", endpoints };
+		default:
+			return { runtime, entrypoint: "com.example.fn.Handler", endpoints };
+	}
 }
 
 export function cloneManifestModel(model: ManifestModel): ManifestModel {

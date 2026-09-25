@@ -106,6 +106,13 @@ impl Loaders {
     pub fn supports(&self, runtime: &str) -> bool {
         self.by_runtime.contains_key(runtime)
     }
+
+    /// The runtimes with a loader, sorted: what the heartbeat reports.
+    pub fn runtimes(&self) -> Vec<String> {
+        let mut runtimes: Vec<String> = self.by_runtime.keys().cloned().collect();
+        runtimes.sort();
+        runtimes
+    }
 }
 
 /// One loaded version: its instance plus the bookkeeping to unload it

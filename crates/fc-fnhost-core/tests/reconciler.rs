@@ -456,47 +456,101 @@ async fn not_modified_sends_the_etag_reloads_nothing_and_heartbeats() {
 
 // ── R7: unloading ────────────────────────────────────────────────────────
 
+/// Owner decision 5: the host derives what to unload from what it holds
+/// and what the document names, with no `unload` list at all. An address
+/// gone from the document closes. One whose live version moved on to a
+/// version that cannot be fetched keeps serving the old one (new before
+/// old), where a platform `unload` list naming v1 used to close it.
 #[tokio::test]
-async fn the_unload_list_and_no_longer_live_both_close_and_remove() {
+async fn what_is_no_longer_live_closes_without_an_unload_list() {
     let r = rig();
     r.serve(vec![
-        fakes::entry("app.svc.listed", 1, "live", "warm"),
+        fakes::entry("app.svc.moved", 1, "live", "warm"),
         fakes::entry("app.svc.gone", 1, "live", "warm"),
         fakes::entry("app.svc.kept", 1, "live", "warm"),
     ]);
     r.reconcile().await;
-    // listed's v2 is live but cannot be fetched, so only the unload list can close v1
     r.store
-        .fail("mem://app.svc.listed/2", ArtifactError::NotFound);
-    r.control.serve(Answer::Document(fakes::document_json(json!({
-        "functions": [fakes::entry("app.svc.listed", 2, "live", "warm"), fakes::entry("app.svc.kept", 1, "live", "warm")],
-        "unload": [{"address": "app.svc.listed", "version": 1}]
-    }))));
+        .fail("mem://app.svc.moved/2", ArtifactError::NotFound);
+    r.serve(vec![
+        fakes::entry("app.svc.moved", 2, "live", "warm"),
+        fakes::entry("app.svc.kept", 1, "live", "warm"),
+    ]);
     r.reconcile().await;
-    assert!(r
-        .loader
-        .instance("app.svc.listed@1")
-        .closed
-        .load(Ordering::SeqCst));
-    assert!(r
-        .loader
-        .instance("app.svc.gone@1")
-        .closed
-        .load(Ordering::SeqCst));
-    assert!(!r
-        .loader
-        .instance("app.svc.kept@1")
-        .closed
-        .load(Ordering::SeqCst));
+    for (instance, closed) in [
+        ("app.svc.moved@1", false),
+        ("app.svc.gone@1", true),
+        ("app.svc.kept@1", false),
+    ] {
+        assert_eq!(
+            r.loader.instance(instance).closed.load(Ordering::SeqCst),
+            closed,
+            "{instance}"
+        );
+    }
     assert_eq!(r.serving("app.svc.gone"), None);
-    assert_eq!(r.serving("app.svc.listed"), None);
+    assert_eq!(r.serving("app.svc.moved"), Some(1));
     assert!(!r.reconciler.has_load_lock(&addr("app.svc.gone")));
     assert_eq!(
         r.states(),
         [
-            st("app.svc.listed", 2, "FAILED:ARTIFACT:NotFound"),
+            st("app.svc.moved", 2, "FAILED:ARTIFACT:NotFound"),
             st("app.svc.kept", 1, "LOADED")
         ]
+    );
+}
+
+/// The document's `unload` list is not acted on: naming the version that
+/// is still live closes nothing (the platform keeps sending the list for a
+/// release, for JVM hosts).
+#[tokio::test]
+async fn the_documents_unload_list_is_ignored() {
+    let r = rig();
+    r.serve(vec![fakes::entry("app.svc.fn", 1, "live", "warm")]);
+    r.reconcile().await;
+    r.control
+        .serve(Answer::Document(fakes::document_json(json!({
+            "functions": [fakes::entry("app.svc.fn", 1, "live", "warm")],
+            "unload": [{"address": "app.svc.fn", "version": 1}]
+        }))));
+    r.reconcile().await;
+    assert_eq!(r.serving("app.svc.fn"), Some(1));
+    assert!(!r
+        .loader
+        .instance("app.svc.fn@1")
+        .closed
+        .load(Ordering::SeqCst));
+    assert_eq!(r.states(), [st("app.svc.fn", 1, "LOADED")]);
+}
+
+/// A version the document stops naming (a candidate that was retired, say)
+/// is forgotten: its failure is dropped and its prepared artifact too, so
+/// naming it again fetches it again.
+#[tokio::test]
+async fn a_version_the_document_stops_naming_is_forgotten() {
+    let r = rig();
+    r.store.fail("mem://app.svc.fn/2", ArtifactError::NotFound);
+    r.serve(vec![
+        fakes::entry("app.svc.fn", 1, "live", "warm"),
+        fakes::entry("app.svc.fn", 2, "candidate", "lazy"),
+        fakes::entry("app.svc.fn", 3, "candidate", "lazy"),
+    ]);
+    r.reconcile().await;
+    assert!(r.reconciler.failure(&addr("app.svc.fn"), 2).is_some());
+    let fetches = r.store.fetch_count();
+    r.serve(vec![fakes::entry("app.svc.fn", 1, "live", "warm")]);
+    r.reconcile().await;
+    assert_eq!(r.reconciler.failure(&addr("app.svc.fn"), 2), None);
+    assert_eq!(r.serving("app.svc.fn"), Some(1), "live is untouched");
+    r.serve(vec![
+        fakes::entry("app.svc.fn", 1, "live", "warm"),
+        fakes::entry("app.svc.fn", 3, "candidate", "lazy"),
+    ]);
+    r.reconcile().await;
+    assert_eq!(
+        r.store.fetch_count(),
+        fetches + 1,
+        "version 3 was forgotten, so it is fetched again"
     );
 }
 

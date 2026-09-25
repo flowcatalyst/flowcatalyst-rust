@@ -250,7 +250,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -296,7 +296,7 @@
         },
         "responses": {
           "204": {
-            "description": "Updated"
+            "description": "Updated, or already so: a request that changes nothing (the status the function has, the same description) writes nothing and is still 204"
           },
           "400": {
             "description": "FUNCTION_IMMUTABLE_FIELD, STATUS_INVALID",
@@ -319,7 +319,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -368,7 +368,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -426,7 +426,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -523,6 +523,16 @@
               }
             }
           },
+          "200": {
+            "description": "The same digest and manifest are already published: that version, in its own state. Nothing is written (a no-op).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishResponse"
+                }
+              }
+            }
+          },
           "400": {
             "description": "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, MANIFEST_REQUIRED, MANIFEST_UNKNOWN_FIELD, MANIFEST_INVALID, RUNTIME_INVALID, RUNTIME_MISMATCH, ENTRYPOINT_REQUIRED, ENTRYPOINT_INVALID, POOL_INVALID, LIMIT_INVALID, LIMIT_OVER_CEILING, LIMIT_NOT_APPLICABLE, ENDPOINT_INVALID, ENDPOINT_AUTH_REQUIRED, ROUTE_AMBIGUOUS, SUBSCRIPTION_INVALID, SUBSCRIPTION_DUPLICATE, SUBSCRIPTION_PATH_NOT_WEBHOOK, SCHEDULE_INVALID, SCHEDULE_DUPLICATE, SCHEDULE_PATH_NOT_WEBHOOK, PUBLIC_ROUTE_INVALID, PUBLIC_ROUTE_DUPLICATE, DB_INVALID, CONFIG_INVALID, SIGNATURE_REQUIRED, SIGNATURE_REJECTED",
             "content": {
@@ -544,7 +554,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -554,7 +564,7 @@
             }
           },
           "409": {
-            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS",
+            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version), POOL_RUNTIME_UNSUPPORTED (every live host of the pool reports its runtimes, none this one)",
             "content": {
               "application/json": {
                 "schema": {
@@ -564,7 +574,7 @@
             }
           },
           "422": {
-            "description": "ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED",
+            "description": "ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED, ARTIFACT_RUNTIME_MISMATCH (runtime component and the uploaded artifact is not a WASI component)",
             "content": {
               "application/json": {
                 "schema": {
@@ -633,7 +643,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -701,7 +711,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -778,7 +788,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -825,7 +835,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The retired version",
+            "description": "The retired version; retiring a retired version is a no-op answering it as it is",
             "content": {
               "application/json": {
                 "schema": {
@@ -855,7 +865,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -908,6 +918,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "description": "Optional precondition, the same as the body's `expectedVersion`: the version number the alias points at now (`3`, `\"3\"` or `W/\"3\"`; `0` for none). A mismatch is 412 ALIAS_VERSION_CONFLICT; a value that is not a version number is 400 IF_MATCH_INVALID, and one that disagrees with `expectedVersion` 400 EXPECTED_VERSION_CONFLICT.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -922,7 +941,7 @@
         },
         "responses": {
           "200": {
-            "description": "The promotion result",
+            "description": "The promotion result; changed is false when the alias already named the version (a no-op, nothing written)",
             "content": {
               "application/json": {
                 "schema": {
@@ -932,7 +951,7 @@
             }
           },
           "400": {
-            "description": "ALIAS_INVALID",
+            "description": "ALIAS_INVALID, IF_MATCH_INVALID, EXPECTED_VERSION_CONFLICT",
             "content": {
               "application/json": {
                 "schema": {
@@ -952,7 +971,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -962,7 +981,17 @@
             }
           },
           "409": {
-            "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED, SETTINGS_MISSING",
+            "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version (details: alias, expectedVersion, currentVersion)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1020,7 +1049,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, Alias_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, ALIAS_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1091,7 +1120,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1168,7 +1197,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1286,7 +1315,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1371,7 +1400,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1448,7 +1477,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1538,7 +1567,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1606,7 +1635,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND, FunctionSecret_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND, FUNCTION_SECRET_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -1971,7 +2000,7 @@
             }
           },
           "404": {
-            "description": "FunctionDomain_NOT_FOUND",
+            "description": "FUNCTION_DOMAIN_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -2020,7 +2049,7 @@
             }
           },
           "404": {
-            "description": "FunctionDomain_NOT_FOUND",
+            "description": "FUNCTION_DOMAIN_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -2110,7 +2139,7 @@
             }
           },
           "404": {
-            "description": "Function_NOT_FOUND",
+            "description": "FUNCTION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -2387,7 +2416,7 @@
             }
           },
           "404": {
-            "description": "FunctionVersion_NOT_FOUND",
+            "description": "FUNCTION_VERSION_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -2432,6 +2461,10 @@
             "type": "string",
             "description": "the machine-readable error code"
           },
+          "code": {
+            "type": "string",
+            "description": "the same machine-readable code as `error` (beyond Java: every error body carries both)"
+          },
           "message": {
             "type": "string",
             "description": "a human-readable message"
@@ -2444,6 +2477,7 @@
         },
         "required": [
           "error",
+          "code",
           "message"
         ],
         "additionalProperties": false
@@ -2464,7 +2498,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "description": {
@@ -2542,7 +2577,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "description": {
@@ -2638,11 +2674,13 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "entrypoint": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional for runtime component (default wasi:http/incoming-handler); required otherwise."
           },
           "pool": {
             "type": "string"
@@ -2866,8 +2904,7 @@
           }
         },
         "required": [
-          "runtime",
-          "entrypoint"
+          "runtime"
         ],
         "additionalProperties": false
       },
@@ -3084,7 +3121,8 @@
         "type": "object",
         "properties": {
           "cron": {
-            "type": "string"
+            "type": "string",
+            "description": "6 fields (sec min hour dom mon dow) or 5 (min hour dom mon dow, seconds 0); anything else is CRON_INVALID"
           },
           "timezone": {
             "type": "string"
@@ -3154,7 +3192,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "entrypoint": {
@@ -3309,6 +3348,11 @@
         "properties": {
           "version": {
             "type": "integer"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional precondition: the version the alias points at now (0: none yet). A mismatch is 412 ALIAS_VERSION_CONFLICT and writes nothing."
           }
         },
         "required": [
@@ -3330,12 +3374,17 @@
           },
           "previousVersion": {
             "type": "integer"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "false when the alias already named this version: nothing was written, and previousVersion is the version itself"
           }
         },
         "required": [
           "alias",
           "version",
-          "versionId"
+          "versionId",
+          "changed"
         ],
         "additionalProperties": false
       },
@@ -3619,6 +3668,13 @@
             "items": {
               "$ref": "#/components/schemas/ConflictResponse"
             }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictResponse"
+            },
+            "description": "What would not stop the publish but may stop the version running: POOL_HAS_NO_LIVE_HOSTS, POOL_RUNTIME_UNKNOWN."
           }
         },
         "required": [
@@ -3626,7 +3682,8 @@
           "toVersion",
           "settingsMissing",
           "httpOnly",
-          "conflicts"
+          "conflicts",
+          "warnings"
         ],
         "additionalProperties": false
       },
@@ -3994,7 +4051,8 @@
               "type": "string",
               "enum": [
                 "jvm",
-                "wasm"
+                "wasm",
+                "component"
               ]
             }
           }
@@ -4053,7 +4111,8 @@
               "type": "string",
               "enum": [
                 "jvm",
-                "wasm"
+                "wasm",
+                "component"
               ]
             }
           }
@@ -4252,6 +4311,13 @@
             "items": {
               "$ref": "#/components/schemas/HeartbeatLoadedEntry"
             }
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Beyond Java: the manifest runtimes this host loads (e.g. [\"component\",\"wasm\"]). Read tolerantly; absent means the host does not say, and publish then assumes nothing about its pool."
           }
         },
         "required": [

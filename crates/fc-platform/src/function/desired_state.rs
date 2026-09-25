@@ -26,6 +26,10 @@
 //! reports that the document no longer names; and `publicRoutes`: the routes
 //! of every function whose live version is in the pool.
 //!
+//! `unload` is deprecated (owner decision 5): the Rust host derives what to
+//! unload from its own loaded set and this document, and ignores the list.
+//! It is still sent, unchanged, for one release, for JVM hosts.
+//!
 //! A corrupt candidate or alias version is skipped with an ERROR (a host
 //! never unloads anything for it). A corrupt **live** version fails the
 //! whole build with `500 CORRUPT_ROW` when it could be in this pool: leaving
