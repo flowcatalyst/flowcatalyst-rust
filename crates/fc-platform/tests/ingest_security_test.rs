@@ -446,3 +446,45 @@ async fn supplied_event_ids_are_honoured_and_idempotent() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "INVALID_ID");
 }
+
+/// The Laravel SDK's outbox dispatch-job item (CreateDispatchJobDto::toPayload)
+/// names no service account and no client: Go's batch accepts it, and so does
+/// this one. The single create still requires the account, with Go's 400.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_batched_dispatch_job_needs_no_service_account() {
+    let app = TestApp::setup().await;
+    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let laravel_item = json!({
+        "source": "integral",
+        "code": "t:laravel:job:run",
+        "targetUrl": "https://receiver.example.test/hook",
+        "payload": "{\"k\":\"v\"}",
+        "payloadContentType": "application/json",
+        "dataOnly": true,
+        "messageGroup": "t:laravel:1",
+        "mode": "IMMEDIATE",
+        "timeoutSeconds": 30,
+        "maxRetries": 3
+    });
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &token,
+        json!({"items": [laravel_item.clone()]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (account,): (Option<String>,) = sqlx::query_as(
+        "SELECT service_account_id FROM msg_dispatch_jobs WHERE code = 't:laravel:job:run'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(account, None);
+
+    let (status, body) = post(&app, "/api/dispatch-jobs", &token, laravel_item).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "VALIDATION");
+    assert_eq!(body["message"], "serviceAccountId is required");
+}

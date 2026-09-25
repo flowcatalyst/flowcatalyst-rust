@@ -296,8 +296,12 @@ pub struct CreateDispatchJobRequest {
     #[serde(default)]
     pub data_only: bool,
 
-    /// Service account for authentication
-    pub service_account_id: String,
+    /// Service account for authentication. Required by the single create
+    /// (400 `VALIDATION` without it); optional on the batch routes, as in Go
+    /// (`BatchItem.ServiceAccountID`), whose outbox items — the Laravel SDK's
+    /// among them — carry none.
+    #[serde(default)]
+    pub service_account_id: Option<String>,
 
     /// Client ID
     pub client_id: Option<String>,
@@ -581,6 +585,15 @@ pub async fn create_dispatch_job(
         crate::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
     )?;
 
+    // Go's single create requires the account (dispatch_job_create.go:92-94).
+    let Some(service_account_id) = crate::shared::caller_reach::non_blank(req.service_account_id)
+    else {
+        return Err(PlatformError::bad_request_code(
+            "VALIDATION",
+            "serviceAccountId is required",
+        ));
+    };
+
     // The client the job is written under (owner decision #24).
     let client_id = crate::shared::caller_reach::require_writable_client(&auth.0, req.client_id)?;
 
@@ -651,7 +664,7 @@ pub async fn create_dispatch_job(
         job.payload_content_type = content_type;
     }
 
-    job.service_account_id = Some(req.service_account_id);
+    job.service_account_id = Some(service_account_id);
     job.mode = mode;
     job.retry_strategy = retry_strategy;
     job.data_only = req.data_only;
@@ -775,7 +788,7 @@ pub async fn batch_create_dispatch_jobs(
             job.max_retries = max_retries;
         }
 
-        job.service_account_id = Some(job_req.service_account_id);
+        job.service_account_id = crate::shared::caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.data_only = job_req.data_only;
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {

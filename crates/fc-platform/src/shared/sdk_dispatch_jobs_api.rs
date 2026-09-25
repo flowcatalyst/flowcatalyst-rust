@@ -130,7 +130,8 @@ async fn sdk_batch_create_dispatch_jobs(
             job.payload_content_type = content_type;
         }
 
-        job.service_account_id = Some(job_req.service_account_id);
+        // Optional, as in Go's BatchItem: an outbox item carries none.
+        job.service_account_id = crate::shared::caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.retry_strategy = retry_strategy;
         job.data_only = job_req.data_only;
