@@ -271,11 +271,7 @@ impl VersionState {
 }
 
 /// The keyless signer a version's bundle was verified against.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SignerIdentity {
-    pub issuer: String,
-    pub subject: String,
-}
+pub use fc_function_model::SignerIdentity;
 
 /// A published, immutable function version (Java `FunctionVersion`): its
 /// artifact, digest, signer and manifest never change once published; only

@@ -6,6 +6,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
+use fc_function_model::DnsLabel;
 use rand::Rng;
 
 use crate::signature::{Signatures, SignaturesMode};
@@ -81,19 +82,6 @@ pub(crate) fn parse_bool(raw: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
-}
-
-/// A DNS label: 1-63 characters of `a-z`, `0-9` and `-`, not starting or
-/// ending with `-`. No normalisation.
-pub fn is_dns_label(raw: &str) -> bool {
-    let bytes = raw.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 63
-        && bytes
-            .iter()
-            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
-        && bytes[0] != b'-'
-        && bytes[bytes.len() - 1] != b'-'
 }
 
 /// The heartbeat's host-id rule: 1-100 characters of `[A-Za-z0-9._:-]`.
@@ -288,7 +276,7 @@ impl HostEnv {
         let mut bad: Vec<String> = Vec::new();
 
         let pool_raw = env.or("FC_FN_POOL", "default");
-        if !is_dns_label(pool_raw) {
+        if !DnsLabel::is_valid(pool_raw) {
             bad.push(format!("FC_FN_POOL (not a valid DNS label: '{pool_raw}')"));
         }
         let platform_url = required(env, "FC_FN_PLATFORM_URL", &mut bad);

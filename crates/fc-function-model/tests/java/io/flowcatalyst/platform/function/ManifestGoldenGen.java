@@ -13,9 +13,9 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.function.Function;
 
-/// Golden-file generator for fc-platform's function module. Runs Java's REAL
+/// Golden-file generator for the function model (fc-function-model). Runs Java's REAL
 /// `Manifest.check` / `parseStrict` / `readStored` / `toJson` and the value
-/// types' parsers over every case in `tests/data/function/manifest-cases.json`
+/// types' parsers over every case in `tests/data/manifest-cases.json`
 /// and writes what Java answered to `manifest-golden.json`. The Rust tests
 /// feed the same inputs to the Rust port and require the same answers, and
 /// the same normalised bytes.
@@ -28,10 +28,10 @@ import java.util.function.Function;
 /// SP=/tmp/pin/server/src/main/java:/tmp/pin/usecase/src/main/java:/tmp/pin/sdk/src/main/java:/tmp/pin/function-api/src/main/java
 /// CP=<jackson-databind-3.1.5>:<jackson-core-3.1.5>:<jackson-annotations-2.22>:<slf4j-api>
 /// javac -proc:none -d /tmp/golden -cp $CP -sourcepath $SP \
-///     crates/fc-platform/tests/java/io/flowcatalyst/platform/function/ManifestGoldenGen.java
+///     crates/fc-function-model/tests/java/io/flowcatalyst/platform/function/ManifestGoldenGen.java
 /// java -cp /tmp/golden:$CP io.flowcatalyst.platform.function.ManifestGoldenGen \
-///     crates/fc-platform/tests/data/function/manifest-cases.json \
-///     crates/fc-platform/tests/data/function/manifest-golden.json
+///     crates/fc-function-model/tests/data/manifest-cases.json \
+///     crates/fc-function-model/tests/data/manifest-golden.json
 /// ```
 public final class ManifestGoldenGen {
 

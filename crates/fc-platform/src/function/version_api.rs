@@ -560,7 +560,9 @@ pub async fn check_manifest(
     match Manifest::check(req.manifest.as_ref(), f.runtime, &state.limits, &ceilings) {
         Err(rejected) => {
             for problem in rejected.problems() {
-                errors.push(ManifestErrorResponse::of(&problem.to_use_case_error()));
+                errors.push(ManifestErrorResponse::of(
+                    &problem.to_validation_error().into(),
+                ));
             }
         }
         Ok(manifest) => {

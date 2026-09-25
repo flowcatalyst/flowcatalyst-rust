@@ -1104,7 +1104,7 @@ async fn an_artifact_streams_from_the_store_and_anything_else_is_404() {
     let h = harness().await;
     let f = function(&h, "art", Some("clt_x")).await;
     let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-    let digest = Digest::from_sha256(&<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+    let digest = Digest::from_sha256(&<sha2::Sha256 as sha2::Digest>::digest(&bytes).into());
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), &bytes).unwrap();
     h.store.put(&f.id, &digest, file.path()).await.unwrap();

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 use fc_function_abi::{permission_matches, Caller, MultiMap};
+use fc_function_model::{EndpointAuth, HttpMethod, PathParams, RoutePattern};
 use futures::FutureExt;
 use http::request::Parts;
 use http::HeaderMap;
@@ -27,9 +28,7 @@ use crate::desired::{DesiredDocument, Entry, Role};
 use crate::invoke::{self, InvocationContext, InvokeError};
 use crate::loader::LoadedFunction;
 use crate::logging::keys;
-use crate::manifest::{EndpointAuth, HttpMethod};
 use crate::metrics::ListenerEntry;
-use crate::route_pattern::{PathParams, RoutePattern};
 
 /// A versioned call's body is buffered under this fixed cap before
 /// authentication (its entry, and so its own cap, may not be looked at
@@ -241,25 +240,27 @@ enum EndpointMatch {
 
 fn match_endpoint(entry: &Entry, function_path: &str, method: &str) -> EndpointMatch {
     let endpoints = &entry.manifest.endpoints;
-    let Some((index, params)) =
-        RoutePattern::first_match(endpoints.iter().map(|e| &e.path), function_path)
+    let Some(matched) = RoutePattern::first_match(endpoints.iter().map(|e| &e.path), function_path)
     else {
         return EndpointMatch::NotFound;
     };
     // The first endpoint declaring the matched pattern.
-    let index = endpoints
-        .iter()
-        .position(|e| e.path == endpoints[index].path)
-        .unwrap_or(index);
+    let Some(index) = endpoints.iter().position(|e| &e.path == matched.pattern) else {
+        return EndpointMatch::NotFound;
+    };
     let effective = endpoints[index].effective_methods();
-    if !effective.is_empty() && !HttpMethod::parse(method).is_some_and(|m| effective.contains(&m)) {
+    if !effective.is_empty()
+        && !method
+            .parse::<HttpMethod>()
+            .is_ok_and(|m| effective.contains(&m))
+    {
         return EndpointMatch::MethodNotAllowed(effective);
     }
-    EndpointMatch::Ok(index, params)
+    EndpointMatch::Ok(index, matched.params)
 }
 
 fn method_not_allowed(allowed: &[HttpMethod]) -> HttpAnswer {
-    let allow: Vec<&str> = allowed.iter().map(|m| m.name()).collect();
+    let allow: Vec<&str> = allowed.iter().map(|m| m.as_str()).collect();
     HttpAnswer::error(
         405,
         "METHOD_NOT_ALLOWED",
@@ -294,7 +295,13 @@ async fn handle_entry(
             entry.manifest.endpoints.iter().map(|e| &e.path),
             &function_path,
         )
-        .map(|(index, _)| &entry.manifest.endpoints[index]);
+        .and_then(|m| {
+            entry
+                .manifest
+                .endpoints
+                .iter()
+                .find(|e| &e.path == m.pattern)
+        });
         if let Some(endpoint) = by_path {
             if let Some(policy) = &endpoint.cors {
                 let answer = cors::preflight(endpoint, policy, &call.parts.headers);

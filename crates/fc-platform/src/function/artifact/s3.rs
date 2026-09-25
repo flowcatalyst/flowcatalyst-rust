@@ -347,7 +347,7 @@ mod tests {
     }
 
     fn digest_of(bytes: &[u8]) -> Digest {
-        Digest::from_sha256(&Sha256::digest(bytes))
+        Digest::from_sha256(&Sha256::digest(bytes).into())
     }
 
     fn source(text: &str) -> std::path::PathBuf {

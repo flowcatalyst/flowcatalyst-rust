@@ -364,7 +364,7 @@ mod tests {
                            .github/workflows/extremely-dangerous-oidc-beacon.yml@refs/heads/main";
 
     fn digest_of(bytes: &[u8]) -> Digest {
-        Digest::from_sha256(&Sha256::digest(bytes))
+        Digest::from_sha256(&Sha256::digest(bytes).into())
     }
 
     fn required() -> Signatures {

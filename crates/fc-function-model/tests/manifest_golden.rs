@@ -1,4 +1,4 @@
-//! Agreement with Java's own code. `tests/data/function/manifest-golden.json`
+//! Agreement with Java's own code. `tests/data/manifest-golden.json`
 //! was written by running Java's `Manifest.check` / `parseStrict` /
 //! `readStored` / `toJson` and the value types' parsers at `0118cdca`
 //! (`tests/java/io/flowcatalyst/platform/function/ManifestGoldenGen.java`)
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use fc_platform::function::{
+use fc_function_model::{
     ClientCeilings, Digest, DnsLabel, EndpointAuth, FunctionAddressPattern, FunctionLimits,
     Hostname, HttpMethod, JsonNode, Manifest, PoolUrlTemplate, RoutePattern, Runtime, Segment,
     SettingKey,
@@ -19,7 +19,7 @@ use fc_platform::function::{
 
 fn data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/function")
+        .join("tests/data")
         .join(name)
 }
 
@@ -51,9 +51,7 @@ fn ceilings(case: &Value) -> ClientCeilings {
     }
 }
 
-fn problems_of(
-    rejected: &fc_platform::function::ManifestRejected,
-) -> Vec<(String, String, String)> {
+fn problems_of(rejected: &fc_function_model::ManifestRejected) -> Vec<(String, String, String)> {
     rejected
         .problems()
         .iter()
@@ -143,12 +141,12 @@ fn manifest_check_matches_java() {
                     expected["thrown"]["message"].as_str().unwrap(),
                     "{name}"
                 );
-                assert!(err.details().is_empty(), "{name}");
+                assert_eq!(err.pointer(), None, "{name}");
                 if name.starts_with("single/") {
                     assert_eq!(rejected.problems().len(), 1, "{name}: no cascades");
                 }
-                let first = rejected.problems()[0].to_use_case_error();
-                assert_eq!(first.details()["pointer"], want[0].2.as_str(), "{name}");
+                let first = rejected.problems()[0].to_validation_error();
+                assert_eq!(first.pointer(), Some(want[0].2.as_str()), "{name}");
             }
             "exception" => {
                 // Java throws Jackson's JsonNodeException (a 500) for an
@@ -221,7 +219,7 @@ fn value_table(section: &str, parse: impl Fn(&str) -> Result<String, (String, St
 }
 
 fn use_case<T>(
-    result: Result<T, fc_platform::UseCaseError>,
+    result: Result<T, fc_function_model::ValidationError>,
     render: impl Fn(T) -> String,
 ) -> Result<String, (String, String)> {
     result

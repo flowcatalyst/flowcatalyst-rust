@@ -1,0 +1,20 @@
+[package]
+name = "fc-function-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FlowCatalyst function model: the manifest and the function value types, shared by the platform and the function host (Java's one set of platform/function classes)"
+
+[dependencies]
+# Pure: no database, no async runtime, no HTTP. This crate must build for
+# wasm32-unknown-unknown (`cargo check -p fc-function-model --target
+# wasm32-unknown-unknown`), so a guest can link it.
+fc-function-abi = { path = "../fc-function-abi", default-features = false }
+indexmap = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+# raw_value: `JsonNode`'s serde impls pass the raw text through, so key order
+# and big integers survive a request DTO.
+serde_json = { workspace = true, features = ["raw_value"] }
+hex = { workspace = true }

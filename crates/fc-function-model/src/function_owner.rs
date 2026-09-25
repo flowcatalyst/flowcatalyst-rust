@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::java_is_blank;
+use crate::java::is_blank as java_is_blank;
 
 /// Who a function, domain or client policy belongs to: the platform itself
 /// or one client. `fn_functions.client_id` and `fn_domains.client_id` are

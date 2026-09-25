@@ -32,20 +32,21 @@
 
 use std::collections::HashSet;
 
-use fc_common::DispatchMode;
 use indexmap::IndexMap;
 
-use super::dns_label::DnsLabel;
-use super::endpoint_auth::EndpointAuth;
-use super::function_limits::{ClientCeilings, FunctionLimits};
-use super::hostname::Hostname;
-use super::http_method::HttpMethod;
-use super::json::JsonNode;
-use super::route_pattern::RoutePattern;
-use super::runtime::Runtime;
-use super::setting_key::SettingKey;
-use super::{java_is_blank, LIVE_ALIAS};
-use crate::usecase::UseCaseError;
+use crate::dns_label::DnsLabel;
+use crate::endpoint_auth::EndpointAuth;
+use crate::function_limits::{ClientCeilings, FunctionLimits};
+use crate::hostname::Hostname;
+use crate::http_method::HttpMethod;
+use crate::java::is_blank as java_is_blank;
+use crate::json::JsonNode;
+use crate::route_pattern::RoutePattern;
+use crate::runtime::Runtime;
+use crate::setting_key::SettingKey;
+use crate::subscription_mode::SubscriptionMode;
+use crate::ValidationError;
+use crate::LIVE_ALIAS;
 
 /// A version's manifest, with every applicable default resolved.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +103,18 @@ pub struct Endpoint {
 impl Endpoint {
     /// 1 MiB.
     pub const DEFAULT_MAX_BODY_BYTES: i32 = 1_048_576;
+
+    /// The methods the host lets through: a `webhook` endpoint is always
+    /// exactly `POST`, whatever is stored (spec `function-host-listener.md`
+    /// §2 step 4); otherwise the declared methods, where empty means every
+    /// method.
+    pub fn effective_methods(&self) -> Vec<HttpMethod> {
+        if self.auth == EndpointAuth::Webhook {
+            vec![HttpMethod::Post]
+        } else {
+            self.methods.clone()
+        }
+    }
 }
 
 /// An event-type subscription the platform creates at promote. `path` is a
@@ -112,7 +125,7 @@ pub struct SubscriptionSpec {
     pub event_type: String,
     pub path: RoutePattern,
     /// [`Manifest::DEFAULT_SUBSCRIPTION_MODE`] when absent.
-    pub mode: DispatchMode,
+    pub mode: SubscriptionMode,
     pub max_retries: i32,
     pub timeout_seconds: i32,
     /// `false` when absent: a function sees the whole envelope.
@@ -171,15 +184,10 @@ pub struct ManifestProblem {
 }
 
 impl ManifestProblem {
-    /// The check route's error entry: the problem as a validation error with
-    /// `details.pointer`.
-    pub fn to_use_case_error(&self) -> UseCaseError {
-        let mut details = std::collections::HashMap::new();
-        details.insert(
-            "pointer".to_string(),
-            serde_json::Value::String(self.pointer.clone()),
-        );
-        UseCaseError::validation_with_details(self.code, self.message.clone(), details)
+    /// The check route's error entry: the problem as a validation error
+    /// carrying its pointer (the platform's `details.pointer`).
+    pub fn to_validation_error(&self) -> ValidationError {
+        ValidationError::new(self.code, self.message.clone()).with_pointer(self.pointer.clone())
     }
 }
 
@@ -194,10 +202,11 @@ impl ManifestRejected {
         &self.problems
     }
 
-    /// What publish rejects with: the first problem's code and message.
-    pub fn first_error(&self) -> UseCaseError {
+    /// What publish rejects with: the first problem's code and message, and
+    /// no pointer.
+    pub fn first_error(&self) -> ValidationError {
         let first = &self.problems[0];
-        UseCaseError::validation(first.code, first.message.clone())
+        ValidationError::new(first.code, first.message.clone())
     }
 }
 
@@ -216,8 +225,9 @@ const DISPATCH_MODE_INVALID_MESSAGE: &str =
     "mode must be IMMEDIATE, NEXT_ON_ERROR or BLOCK_ON_ERROR";
 
 // The parser's key set per object, which `function-manifest.schema.json`'s
-// `properties` must equal (see the schema drift test).
-pub(crate) const TOP_KEYS: &[&str] = &[
+// `properties` must equal (the platform's schema drift test reads them).
+#[doc(hidden)]
+pub const TOP_KEYS: &[&str] = &[
     "runtime",
     "entrypoint",
     "pool",
@@ -232,8 +242,10 @@ pub(crate) const TOP_KEYS: &[&str] = &[
     "db",
     "httpAllow",
 ];
-pub(crate) const LIMITS_KEYS: &[&str] = &["maxDurationMs", "maxConcurrency", "wasmMemoryMb"];
-pub(crate) const ENDPOINT_KEYS: &[&str] = &[
+#[doc(hidden)]
+pub const LIMITS_KEYS: &[&str] = &["maxDurationMs", "maxConcurrency", "wasmMemoryMb"];
+#[doc(hidden)]
+pub const ENDPOINT_KEYS: &[&str] = &[
     "path",
     "auth",
     "methods",
@@ -241,7 +253,8 @@ pub(crate) const ENDPOINT_KEYS: &[&str] = &[
     "maxBodyBytes",
     "timeoutMs",
 ];
-pub(crate) const SUBSCRIPTION_KEYS: &[&str] = &[
+#[doc(hidden)]
+pub const SUBSCRIPTION_KEYS: &[&str] = &[
     "eventType",
     "path",
     "mode",
@@ -249,10 +262,14 @@ pub(crate) const SUBSCRIPTION_KEYS: &[&str] = &[
     "timeoutSeconds",
     "dataOnly",
 ];
-pub(crate) const SCHEDULE_KEYS: &[&str] = &["cron", "timezone", "path", "payload"];
-pub(crate) const PUBLIC_ROUTE_KEYS: &[&str] = &["hostname", "pathPrefix", "aliasPrefixes"];
-pub(crate) const CORS_KEYS: &[&str] = &["origins", "methods", "headers", "allowCredentials"];
-pub(crate) const DB_KEYS: &[&str] = &["name", "secretRef", "poolSize"];
+#[doc(hidden)]
+pub const SCHEDULE_KEYS: &[&str] = &["cron", "timezone", "path", "payload"];
+#[doc(hidden)]
+pub const PUBLIC_ROUTE_KEYS: &[&str] = &["hostname", "pathPrefix", "aliasPrefixes"];
+#[doc(hidden)]
+pub const CORS_KEYS: &[&str] = &["origins", "methods", "headers", "allowCredentials"];
+#[doc(hidden)]
+pub const DB_KEYS: &[&str] = &["name", "secretRef", "poolSize"];
 /// `$schema` points an editor at the JSON Schema: accepted at the top level,
 /// type-checked, never written back.
 const SCHEMA_KEY: &str = "$schema";
@@ -329,7 +346,7 @@ impl Manifest {
     pub const DEFAULT_POOL: &'static str = "default";
     /// A subscription's `mode` when absent. Not the router's default
     /// (`NEXT_ON_ERROR`): a manifest author who wants ordering asks for it.
-    pub const DEFAULT_SUBSCRIPTION_MODE: DispatchMode = DispatchMode::Immediate;
+    pub const DEFAULT_SUBSCRIPTION_MODE: SubscriptionMode = SubscriptionMode::Immediate;
     /// A subscription's `dataOnly` when absent.
     pub const DEFAULT_SUBSCRIPTION_DATA_ONLY: bool = false;
 
@@ -340,7 +357,7 @@ impl Manifest {
         function_runtime: Runtime,
         defaults: &FunctionLimits,
         ceilings: &ClientCeilings,
-    ) -> Result<Result<Manifest, ManifestRejected>, super::json::JsonParseError> {
+    ) -> Result<Result<Manifest, ManifestRejected>, crate::json::JsonParseError> {
         let root = JsonNode::parse(text)?;
         Ok(Self::check(
             Some(&root),
@@ -424,7 +441,7 @@ impl Manifest {
         function_runtime: Runtime,
         defaults: &FunctionLimits,
         ceilings: &ClientCeilings,
-    ) -> Result<Manifest, UseCaseError> {
+    ) -> Result<Manifest, ValidationError> {
         Self::check(root, function_runtime, defaults, ceilings).map_err(|r| r.first_error())
     }
 
@@ -471,6 +488,15 @@ impl Manifest {
     /// `None` only when the document is not an object.
     pub fn peek_stored_pool(root: &JsonNode) -> Option<DnsLabel> {
         root.is_object().then(|| read_pool(root))
+    }
+
+    /// Whether any endpoint authenticates with `webhook`: what decides that
+    /// a version is handed its application's signing secret (Java
+    /// `DesiredState.hasWebhookEndpoint`, `Reconciler.hasWebhookEndpoint`).
+    pub fn has_webhook_endpoint(&self) -> bool {
+        self.endpoints
+            .iter()
+            .any(|e| e.auth == EndpointAuth::Webhook)
     }
 
     /// The normalised stored form.
@@ -1341,13 +1367,8 @@ fn parse_subscription(
 
 /// Java `DispatchMode.tryParseStrict`: the exact constant name, nothing
 /// else (unlike the router's lenient reader).
-fn dispatch_mode_strict(raw: &str) -> Option<DispatchMode> {
-    match raw {
-        "IMMEDIATE" => Some(DispatchMode::Immediate),
-        "NEXT_ON_ERROR" => Some(DispatchMode::NextOnError),
-        "BLOCK_ON_ERROR" => Some(DispatchMode::BlockOnError),
-        _ => None,
-    }
+fn dispatch_mode_strict(raw: &str) -> Option<SubscriptionMode> {
+    raw.parse().ok()
 }
 
 fn parse_subscription_mode(
@@ -1355,7 +1376,7 @@ fn parse_subscription_mode(
     node: &JsonNode,
     dotted: &str,
     pointer: &str,
-) -> Option<DispatchMode> {
+) -> Option<SubscriptionMode> {
     let Some(mode) = present(node.get("mode")) else {
         return Some(Manifest::DEFAULT_SUBSCRIPTION_MODE);
     };

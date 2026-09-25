@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::usecase::UseCaseError;
+use crate::ValidationError;
 
 /// A config or secret key name, shared by `fn_config` / `fn_secrets` and by
 /// a manifest's `config`, `secrets` and `db[].secretRef` entries:
@@ -34,9 +34,9 @@ impl SettingKey {
     }
 
     /// `SETTING_KEY_INVALID` unless `value` follows the rule.
-    pub fn parse(value: &str) -> Result<SettingKey, UseCaseError> {
+    pub fn parse(value: &str) -> Result<SettingKey, ValidationError> {
         if !Self::is_valid(value) {
-            return Err(UseCaseError::validation(
+            return Err(ValidationError::new(
                 "SETTING_KEY_INVALID",
                 Self::invalid_message(value),
             ));

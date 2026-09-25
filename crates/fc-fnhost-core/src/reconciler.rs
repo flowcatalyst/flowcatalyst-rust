@@ -317,7 +317,7 @@ impl Reconciler {
     /// A runtime this host has no loader for is never fetched: the artifact
     /// could never run here, so it fails fast as `RUNTIME_UNSUPPORTED`.
     async fn fetch_and_verify(&self, entry: &Entry) -> Result<PathBuf, String> {
-        if !self.loaders.supports(&entry.manifest.runtime) {
+        if !self.loaders.supports(entry.manifest.runtime.wire_value()) {
             return Err(RUNTIME_UNSUPPORTED.to_owned());
         }
         let fetched = self
@@ -392,7 +392,7 @@ impl Reconciler {
     }
 
     async fn attempt_load(&self, path: &std::path::Path, entry: &Entry) -> LoadOutcome {
-        match self.loaders.get(&entry.manifest.runtime) {
+        match self.loaders.get(entry.manifest.runtime.wire_value()) {
             Some(loader) => {
                 loader
                     .load(LoadRequest {
@@ -405,7 +405,10 @@ impl Reconciler {
             }
             None => LoadOutcome::Failed {
                 code: RUNTIME_UNSUPPORTED.to_owned(),
-                detail: format!("no loader for runtime {}", entry.manifest.runtime),
+                detail: format!(
+                    "no loader for runtime {}",
+                    entry.manifest.runtime.wire_value()
+                ),
             },
         }
     }

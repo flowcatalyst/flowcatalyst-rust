@@ -2,8 +2,8 @@
 
 use std::fmt;
 
-use super::dns_label::DnsLabel;
-use crate::usecase::UseCaseError;
+use crate::dns_label::DnsLabel;
+use crate::ValidationError;
 
 /// A public route's hostname: lower-cased, at most 253 characters, at least
 /// two [`DnsLabel`]s, with no trailing dot, wildcard, port or IP literal (an
@@ -20,9 +20,9 @@ impl Hostname {
          with no trailing dot, wildcard, port or IP literal";
 
     /// `HOSTNAME_INVALID` for anything that is not a hostname.
-    pub fn parse(raw: &str) -> Result<Hostname, UseCaseError> {
+    pub fn parse(raw: &str) -> Result<Hostname, ValidationError> {
         Self::try_parse(raw)
-            .ok_or_else(|| UseCaseError::validation("HOSTNAME_INVALID", Self::INVALID_MESSAGE))
+            .ok_or_else(|| ValidationError::new("HOSTNAME_INVALID", Self::INVALID_MESSAGE))
     }
 
     /// [`Hostname::parse`] without the error.
