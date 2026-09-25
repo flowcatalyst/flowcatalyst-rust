@@ -214,6 +214,41 @@ pub async fn login(
         }
     }
 
+    // SSO enforcement (Go handleLogin, auth/login/endpoint.go:481-498): a
+    // domain mapped to an OIDC identity provider signs in there, and the
+    // password path is closed even for a user still carrying a hash from
+    // before the domain moved. The domain's method is public (check-domain),
+    // so the refusal says so.
+    if let Some((_, domain)) = req.email.split_once('@').filter(|(_, d)| !d.is_empty()) {
+        if let Ok(Some(mapping)) = state
+            .email_domain_mapping_repo
+            .find_by_email_domain(domain)
+            .await
+        {
+            if let Ok(Some(idp)) = state
+                .identity_provider_repo
+                .find_by_id(&mapping.identity_provider_id)
+                .await
+            {
+                if idp.r#type == IdentityProviderType::Oidc {
+                    record_user_login_attempt(
+                        &state.login_attempt_repo,
+                        Some(&req.email),
+                        None,
+                        ip,
+                        LoginOutcome::Failure,
+                        Some("SSO required"),
+                    )
+                    .await;
+                    return Err(PlatformError::forbidden_code(
+                        "SSO_REQUIRED",
+                        "This email domain signs in through its identity provider; password login is disabled",
+                    ));
+                }
+            }
+        }
+    }
+
     // Find principal by email
     let principal = match state.principal_repo.find_by_email(&req.email).await? {
         Some(p) => p,

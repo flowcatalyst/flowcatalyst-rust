@@ -768,3 +768,42 @@ async fn a_user_changes_their_password_with_their_second_factor() {
     assert_eq!(attempts[0]["failureReason"], "INVALID_CREDENTIALS");
     assert_eq!(attempts[1]["outcome"], "SUCCESS");
 }
+
+/// Go handleLogin's SSO enforcement: a domain mapped to an OIDC provider
+/// closes the password path, even for a user who still has a hash.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_sso_domain_closes_the_password_path() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let (status, idp) = read_json(
+        app.post(
+            "/api/identity-providers",
+            &token,
+            json!({
+                "code": "corp-sso",
+                "name": "Corp SSO",
+                "type": "OIDC",
+                "oidcIssuerUrl": "https://sso.corp.test",
+                "oidcClientId": "platform"
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{idp}");
+    let (status, body) = create_mapping(
+        &app,
+        &token,
+        "corp.test",
+        idp["id"].as_str().unwrap(),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    seed_user(&app, "legacy@corp.test").await;
+
+    let (status, body, _) = login(&app, "legacy@corp.test", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "SSO_REQUIRED");
+}
