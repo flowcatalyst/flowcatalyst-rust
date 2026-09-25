@@ -954,6 +954,7 @@ pub fn build_platform_routes(
         sync_openapi_use_case: sync_openapi_use_case.clone(),
         app_access: app_access.clone(),
         trigger_objects: repos.function_trigger_object_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
     };
 
     let sdk_audit_batch_state = SdkAuditBatchState {

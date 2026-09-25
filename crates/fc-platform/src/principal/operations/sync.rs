@@ -34,6 +34,11 @@ pub struct SyncPrincipalInput {
     /// Whether the user is active (default: true)
     #[serde(default = "default_active")]
     pub active: bool,
+    /// A password hash (e.g. Laravel's bcrypt `$2y$`) stored verbatim on a
+    /// user this sync creates; login verifies it and re-encodes it. Never
+    /// applied to an existing user (decision #22). Masked in the audit row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
 }
 
 fn default_active() -> bool {
@@ -163,6 +168,17 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                     principal.name = input.name.clone();
                     principal.active = input.active;
                     principal.updated_at = chrono::Utc::now();
+                    if input
+                        .password_hash
+                        .as_deref()
+                        .is_some_and(|h| !h.is_empty())
+                    {
+                        // Decision #22: a hash is used only to create.
+                        tracing::info!(
+                            principal_id = %principal.id,
+                            "principal sync: passwordHash ignored for an existing principal"
+                        );
+                    }
 
                     if let Err(e) = self.principal_repo.update(&principal).await {
                         return Err(UseCaseError::commit(format!(
@@ -178,6 +194,14 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                     principal.name = input.name.clone();
                     principal.active = input.active;
                     principal.roles = role_assignments;
+                    // Go sdksync/api.go:527: carry a migrated credential
+                    // verbatim so the user keeps their password.
+                    if let (Some(hash), Some(identity)) = (
+                        input.password_hash.as_deref().filter(|h| !h.is_empty()),
+                        principal.user_identity.as_mut(),
+                    ) {
+                        identity.password_hash = Some(hash.to_string());
+                    }
 
                     if let Err(e) = self.principal_repo.insert(&principal).await {
                         return Err(UseCaseError::commit(format!(

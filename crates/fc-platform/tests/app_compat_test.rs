@@ -681,3 +681,140 @@ async fn replayed_events_are_stored_once_and_acknowledged() {
         .unwrap()
         .starts_with("hr:grading:grading-record:submitted-"));
 }
+
+/// Decision #22 (owner ruling 4, Java f4cd1bc2): a sync's `passwordHash` is
+/// used only to create the user. Re-running integral's sync with a new hash
+/// leaves the stored one, applies the rest, and names the email.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_sync_never_replaces_an_existing_users_password_hash() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let original = "$2y$10$eImiTXuWVxfM37uY4JANjQ==eImiTXuWVxfM37uY4JANjQ.original";
+    let rotated = "$2y$10$eImiTXuWVxfM37uY4JANjQ==eImiTXuWVxfM37uY4JANjQ.rotated";
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &token,
+            json!({"principals": [{"email": "keep@inhance.test", "name": "Keep", "passwordHash": original}]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.get("passwordHashIgnored").is_none(), "{body}");
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &token,
+            json!({"principals": [
+                {"email": "Keep@Inhance.test", "name": "Kept", "passwordHash": rotated},
+                {"email": "fresh@inhance.test", "name": "Fresh", "passwordHash": rotated}
+            ]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["passwordHashIgnored"], json!(["keep@inhance.test"]));
+    let hash_of = |email: &'static str| {
+        let app = &app;
+        async move {
+            let p = app
+                .repos
+                .principal_repo
+                .find_by_email(email)
+                .await
+                .unwrap()
+                .unwrap();
+            (
+                p.name.clone(),
+                p.user_identity.unwrap().password_hash.unwrap(),
+            )
+        }
+    };
+    assert_eq!(
+        hash_of("keep@inhance.test").await,
+        ("Kept".to_string(), original.to_string())
+    );
+    assert_eq!(hash_of("fresh@inhance.test").await.1, rotated);
+}
+
+/// hr and rfp's `sync-test-principals` runs through the application-scoped
+/// sync, which must carry the hash for the users it creates (Go
+/// sdksync/api.go:485-527; the cutover blocker in the 2026-09-25 triage):
+/// the Laravel `$2y$` hash signs in, and a re-run leaves it alone.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_application_sync_carries_the_hash_for_new_users() {
+    use fc_platform::role::entity::permissions;
+    let app = TestApp::setup().await;
+    let hr = fc_platform::application::entity::Application::new("hr", "HR");
+    app.repos.application_repo.insert(&hr).await.unwrap();
+    // The app's sync principal: reaches every application, may sync users.
+    let syncer = Principal::new_user("hr-sync@inhance.test", UserScope::Anchor);
+    app.repos.principal_repo.insert(&syncer).await.unwrap();
+    let token = app
+        .auth_service
+        .generate_access_token_with_scope(
+            &syncer,
+            &[permissions::iam::USER_CREATE.to_string()],
+            None,
+        )
+        .unwrap();
+    let laravel_hash = bcrypt::hash("Hr-Test-Pa55", 10)
+        .unwrap()
+        .replacen("$2b$", "$2y$", 1);
+
+    let sync = |hash: String| {
+        let (app, token) = (&app, token.clone());
+        async move {
+            read_json(
+                app.post(
+                    "/api/applications/hr/principals/sync",
+                    &token,
+                    json!({"principals": [{
+                        "email": "tester@inhance.test", "name": "Tester",
+                        "roles": ["hr:employee"], "passwordHash": hash
+                    }]}),
+                )
+                .await,
+            )
+            .await
+        }
+    };
+    let (status, body) = sync(laravel_hash.clone()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["created"], 1);
+    assert!(body.get("passwordHashIgnored").is_none(), "{body}");
+
+    let (status, body) = read_json(
+        post_unauth(
+            &app,
+            "/auth/login",
+            json!({"email": "tester@inhance.test", "password": "Hr-Test-Pa55"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    // A re-run with another hash changes nothing about the password.
+    let other = bcrypt::hash("Other-Pa55", 10).unwrap();
+    let (status, body) = sync(other).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["updated"], 1);
+    assert_eq!(body["passwordHashIgnored"], json!(["tester@inhance.test"]));
+    let (status, _) = read_json(
+        post_unauth(
+            &app,
+            "/auth/login",
+            json!({"email": "tester@inhance.test", "password": "Hr-Test-Pa55"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+}

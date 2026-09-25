@@ -7,9 +7,11 @@
 //!
 //! For each entry, the email lower-cased:
 //! - an existing user keeps its non-`SDK_SYNC` roles, takes the entry's roles
-//!   as its `SDK_SYNC` set, and takes the entry's name and active flag; a
-//!   non-empty `passwordHash` replaces the stored hash, an omitted one keeps
-//!   it. One `platform:iam:user:updated` event.
+//!   as its `SDK_SYNC` set, and takes the entry's name and active flag. Its
+//!   stored password hash is never touched: a `passwordHash` on the entry is
+//!   ignored, whoever the caller (owner decision #22, ruling 4; Java
+//!   f4cd1bc2), logged by principal id and reported by the route
+//!   ([`password_hashes_ignored`]). One `platform:iam:user:updated` event.
 //! - a new user is created CLIENT-tier with no home client, with the entry's
 //!   name, active flag, roles and hash. One `platform:iam:user:created` event.
 //!
@@ -215,8 +217,13 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
                     p.name = input.name.clone();
                     p.active = input.active;
                     p.updated_at = now;
-                    if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
-                        identity.password_hash = Some(hash.to_string());
+                    if hash.is_some() {
+                        // Decision #22: a hash is used only to create. Password
+                        // changes go through the explicit, audited routes.
+                        tracing::info!(
+                            principal_id = %p.id,
+                            "principal sync: passwordHash ignored for an existing principal"
+                        );
                     }
                     row_events.push(RowEvent::Updated(UserUpdated::new(
                         ctx,
@@ -276,6 +283,34 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
         };
         Ok((batch, row_events, rollup))
     }
+}
+
+/// The emails, lower-cased and without repeats, whose entry carries a
+/// `passwordHash` for a user that already exists, so the sync will not apply
+/// it (decision #22). Read before the sync runs, for the caller's response
+/// (Java `SyncPrincipals.passwordHashesIgnored`). One query.
+pub async fn password_hashes_ignored<'a>(
+    principal_repo: &PrincipalRepository,
+    entries: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+) -> crate::shared::error::Result<Vec<String>> {
+    let mut with_hash: Vec<String> = Vec::new();
+    for (email, hash) in entries {
+        let email = email.to_lowercase();
+        if hash.is_some_and(|h| !h.is_empty()) && !with_hash.contains(&email) {
+            with_hash.push(email);
+        }
+    }
+    if with_hash.is_empty() {
+        return Ok(with_hash);
+    }
+    let existing: Vec<String> = principal_repo
+        .find_users_by_emails(&with_hash)
+        .await?
+        .iter()
+        .filter_map(|p| p.email().map(str::to_lowercase))
+        .collect();
+    with_hash.retain(|e| existing.contains(e));
+    Ok(with_hash)
 }
 
 #[cfg(test)]

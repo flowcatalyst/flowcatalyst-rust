@@ -1481,6 +1481,11 @@ pub struct SyncUsersResponse {
     /// Users deactivated by the sync: always 0 (it removes nothing)
     pub deleted: u32,
     pub synced_emails: Vec<String>,
+    /// The emails whose `passwordHash` was ignored because the user already
+    /// existed (decision #22: a hash is used only to create). Omitted when
+    /// empty, as Java's `passwordHashIgnored`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub password_hash_ignored: Vec<String>,
 }
 
 /// Sync users (declarative upsert by email; no application scope)
@@ -1514,6 +1519,13 @@ pub async fn sync_users(
     crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_sync_principals(&auth.0)?;
 
+    let password_hash_ignored = crate::principal::operations::password_hashes_ignored(
+        &state.principal_repo,
+        req.principals
+            .iter()
+            .map(|p| (p.email.as_str(), p.password_hash.as_deref())),
+    )
+    .await?;
     let command = SyncUsersCommand {
         principals: req.principals,
     };
@@ -1536,6 +1548,7 @@ pub async fn sync_users(
         updated: event.updated,
         deleted: event.deactivated,
         synced_emails: event.synced_emails,
+        password_hash_ignored,
     }))
 }
 

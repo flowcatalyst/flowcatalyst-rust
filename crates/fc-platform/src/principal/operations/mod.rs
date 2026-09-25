@@ -29,5 +29,5 @@ pub use grant_client_access::{GrantClientAccessCommand, GrantClientAccessUseCase
 pub use reset_password::{ResetPasswordCommand, ResetPasswordUseCase};
 pub use revoke_client_access::{RevokeClientAccessCommand, RevokeClientAccessUseCase};
 pub use sync::{SyncPrincipalInput, SyncPrincipalsCommand, SyncPrincipalsUseCase};
-pub use sync_users::{SyncUserInput, SyncUsersCommand, SyncUsersUseCase};
+pub use sync_users::{password_hashes_ignored, SyncUserInput, SyncUsersCommand, SyncUsersUseCase};
 pub use update::{UpdateUserCommand, UpdateUserUseCase};
