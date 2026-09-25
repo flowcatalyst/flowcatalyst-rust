@@ -6,21 +6,12 @@ authors.workspace = true
 # Shared by the function host (AGPL) and the guest PDK (an SDK), so it takes the
 # SDK licence, like fc-sdk.
 license = "MPL-2.0"
-description = "FlowCatalyst function ABI: the guest-facing types of Java's function-api, and the Extism JSON envelope"
-
-[features]
-default = ["extism-abi"]
-# The Extism JSON envelope (Java `fnhost/wasm/WasmAbi.java`, `HostFunctions.java`):
-# the invocation input, the reply parser and the `fc_emit_event` JSON. Everything
-# else in the crate is independent of how the host talks to a guest.
-extism-abi = ["dep:serde", "dep:serde_json", "indexmap/serde"]
+description = "FlowCatalyst function ABI: the guest-facing types of Java's function-api"
 
 [dependencies]
 # No tokio, no std-only I/O: this crate must build for wasm32-unknown-unknown.
 indexmap = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Agreement test: the guest-side permission rule against the platform's own.

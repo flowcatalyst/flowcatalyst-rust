@@ -18,12 +18,6 @@
 //! | [`OutboundEvent`], [`EventEmitError`], [`emit_error`] codes | `OutboundEvent.java`, `EventEmitException.java`, `fnhost/wasm/HostFunctions.java` |
 //! | [`Webhook::event`], [`Webhook::schedule`], [`Event`], [`Schedule`] | `Webhook.java`, `Event.java`, `Schedule.java`, `WebhookJson.java` |
 //!
-//! [`extism_abi`] (feature `extism-abi`, on by default) holds the Extism JSON
-//! envelope Java's WASM host speaks: the invocation input
-//! ([`extism_abi::Request`]), the reply parser, base64 body handling and the
-//! `fc_emit_event` JSON. If the Rust host moves to WASI components, that
-//! module is dropped and nothing else changes.
-//!
 //! # Fidelity
 //!
 //! Where Java's behaviour is observable on the wire it is reproduced exactly,
@@ -46,9 +40,6 @@ mod response;
 mod timestamp;
 mod webhook;
 mod webhook_json;
-
-#[cfg(feature = "extism-abi")]
-pub mod extism_abi;
 
 pub use address::{FunctionAddress, InvalidAddress};
 pub use caller::{permission_matches, Caller, Principal};

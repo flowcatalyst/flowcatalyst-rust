@@ -53,7 +53,7 @@ json = ["dep:serde", "dep:serde_json", "indexmap/serde"]
 log = ["dep:log"]
 
 [dependencies]
-fc-function-abi = { path = "../fc-function-abi", default-features = false }
+fc-function-abi = { path = "../fc-function-abi" }
 fc-function-pdk-macros = { path = "macros", version = "=0.1.0" }
 wasip2 = { workspace = true }
 # Already in the tree through fc-function-abi (its `MultiMap`); named here
