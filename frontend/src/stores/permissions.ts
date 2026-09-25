@@ -213,6 +213,7 @@ export const ROUTE_PERMISSIONS: Record<string, RoutePermission> = {
 	"/functions": "platform:function:function:view",
 	"/functions/new": "platform:function:function:manage",
 	"/function-domains": "platform:function:function:view",
+	"/function-domains/new": "platform:function:domain:manage",
 	"/function-policies": "platform:function:policy:manage",
 
 	// Portal plane (client-delegable via platform:portal-administrator)

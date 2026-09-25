@@ -492,17 +492,22 @@ const router = createRouter({
 						},
 					],
 				},
-				// Functions (Go has none; Java's function UI, as Rust's SPA had it)
+				// Functions (Go has none; Java's function UI). Create, domain and
+				// policy pages open in a drawer over their list; a function's own
+				// page (versions, config, invoke, routes) and the manifest editor
+				// are full pages, like Go's role editor and login theme page.
 				{
 					path: "functions",
 					name: "functions",
 					component: () => import("@/pages/functions/FunctionListPage.vue"),
-				},
-				{
-					path: "functions/new",
-					name: "function-create",
-					component: () =>
-						import("@/pages/functions/FunctionCreatePage.vue"),
+					children: [
+						{
+							path: "new",
+							name: "function-create",
+							component: () =>
+								import("@/pages/functions/FunctionCreateDrawer.vue"),
+						},
+					],
 				},
 				{
 					path: "functions/:address",
@@ -521,24 +526,34 @@ const router = createRouter({
 					name: "function-domains",
 					component: () =>
 						import("@/pages/function-domains/FunctionDomainListPage.vue"),
-				},
-				{
-					path: "function-domains/:hostname",
-					name: "function-domain-detail",
-					component: () =>
-						import("@/pages/function-domains/FunctionDomainDetailPage.vue"),
+					children: [
+						{
+							path: "new",
+							name: "function-domain-claim",
+							component: () =>
+								import("@/pages/function-domains/FunctionDomainClaimDrawer.vue"),
+						},
+						{
+							path: ":hostname",
+							name: "function-domain-detail",
+							component: () =>
+								import("@/pages/function-domains/FunctionDomainDetailDrawer.vue"),
+						},
+					],
 				},
 				{
 					path: "function-policies",
 					name: "function-policies",
 					component: () =>
 						import("@/pages/function-policies/FunctionPolicyListPage.vue"),
-				},
-				{
-					path: "function-policies/:owner",
-					name: "function-policy-detail",
-					component: () =>
-						import("@/pages/function-policies/FunctionPolicyDetailPage.vue"),
+					children: [
+						{
+							path: ":owner",
+							name: "function-policy-detail",
+							component: () =>
+								import("@/pages/function-policies/FunctionPolicyDetailDrawer.vue"),
+						},
+					],
 				},
 				// Events
 				{

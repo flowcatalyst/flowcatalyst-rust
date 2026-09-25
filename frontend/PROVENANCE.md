@@ -73,3 +73,10 @@ platform-granted sources.
   their routes, a "Functions" nav group, their `ROUTE_PERMISSIONS` entries, `/function-policies` in
   `ANCHOR_ROUTES`, and Rust's function tests (`tests/functions/`, adjusted to Go's permission rule:
   the permissions `/auth/me` sends decide, a role name alone grants nothing).
+- Restyled to Go's idiom where cheap: the function, domain and policy lists use `FcTableToolbar`
+  (filters in its popup) and a drawer outlet; create (`FunctionCreateDrawer`), domain claim and
+  detail (`FunctionDomainClaimDrawer`, `FunctionDomainDetailDrawer`) and policy detail
+  (`FunctionPolicyDetailDrawer`) are `EntityDrawer` child routes built from `FcFormSection` /
+  `FcFormField` / `FcDetailField` / `FcFormActions`. A function's own page (tabs: versions, config &
+  secrets, invoke, public routes; publish dialog) and the manifest editor stay full pages, as Rust
+  had them.
