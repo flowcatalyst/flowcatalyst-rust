@@ -482,7 +482,9 @@ mod tests {
         assert!(err.details().contains_key("email"));
     }
 
-    /// HTTP status + JSON body of a `PlatformError` response.
+    /// HTTP status + JSON body of a `PlatformError` response, with `code`
+    /// checked to equal `error` and then left out (so the expectations
+    /// below read as Java's envelope).
     async fn render(err: PlatformError) -> (u16, serde_json::Value) {
         use axum::response::IntoResponse;
         let resp = err.into_response();
@@ -490,7 +492,34 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
+        let mut body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let code = body
+            .as_object_mut()
+            .unwrap()
+            .remove("code")
+            .expect("every error body carries `code`");
+        assert_eq!(code, body["error"], "`code` equals `error`: {body}");
+        (status, body)
+    }
+
+    /// The raw envelope: `error`, `code`, `message` and `details`, in that
+    /// order.
+    #[tokio::test]
+    async fn every_error_body_carries_code_equal_to_error() {
+        use axum::response::IntoResponse;
+        let resp = PlatformError::from(UseCaseError::validation_with_details(
+            "BAD",
+            "bad",
+            details! { "field" => "name" },
+        ))
+        .into_response();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&bytes).unwrap(),
+            r#"{"error":"BAD","code":"BAD","message":"bad","details":{"field":"name"}}"#
+        );
     }
 
     /// Java's artifact statuses (422, 503) and a conflict's details reach

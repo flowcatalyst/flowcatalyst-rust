@@ -2461,6 +2461,10 @@
             "type": "string",
             "description": "the machine-readable error code"
           },
+          "code": {
+            "type": "string",
+            "description": "the same machine-readable code as `error` (beyond Java: every error body carries both)"
+          },
           "message": {
             "type": "string",
             "description": "a human-readable message"
@@ -2473,6 +2477,7 @@
         },
         "required": [
           "error",
+          "code",
           "message"
         ],
         "additionalProperties": false

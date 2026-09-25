@@ -214,10 +214,14 @@ impl<T> NotFoundExt<T> for Option<T> {
     }
 }
 
-/// Error response body
+/// Error response body: `{error, code, message, details?}`. `code` always
+/// equals `error` (owner decision 5, additive): `error` is the envelope Go
+/// and Java send, `code` the name clients reach for first.
 #[derive(Debug, serde::Serialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
+    /// The same machine-readable code as `error`.
+    pub code: String,
     pub message: String,
     /// Structured details, only when the error has some (Java's
     /// `@JsonInclude(NON_EMPTY)` on `HttpError.details`).
@@ -288,6 +292,7 @@ impl IntoResponse for PlatformError {
         } = &self
         {
             let body = ErrorResponse {
+                code: error_code.clone(),
                 error: error_code,
                 message: self.to_string(),
                 details: None,
@@ -317,6 +322,7 @@ impl IntoResponse for PlatformError {
             _ => None,
         };
         let body = ErrorResponse {
+            code: error_code.clone(),
             error: error_code,
             message,
             details,

@@ -106,11 +106,7 @@ fn extract_ip(headers: &HeaderMap) -> Option<String> {
 }
 
 fn too_many_requests_response(retry_after_secs: u32, message: &str) -> Response {
-    let body = ApiError {
-        error: "TOO_MANY_REQUESTS".to_string(),
-        message: message.to_string(),
-        details: None,
-    };
+    let body = ApiError::new("TOO_MANY_REQUESTS", message.to_string());
     (
         StatusCode::TOO_MANY_REQUESTS,
         [(

@@ -13,6 +13,10 @@ export type ErrorResponse = {
      */
     error: string;
     /**
+     * the same machine-readable code as `error` (beyond Java: every error body carries both)
+     */
+    code: string;
+    /**
      * a human-readable message
      */
     message: string;

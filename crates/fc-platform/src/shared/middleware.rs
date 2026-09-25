@@ -110,11 +110,7 @@ pub struct AuthError {
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let body = ApiError {
-            error: "UNAUTHORIZED".to_string(),
-            message: self.message,
-            details: None,
-        };
+        let body = ApiError::new("UNAUTHORIZED", self.message);
         (self.status, Json(body)).into_response()
     }
 }

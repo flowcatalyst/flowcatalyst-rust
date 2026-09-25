@@ -141,6 +141,7 @@ fn invalid_credentials() -> Response {
         StatusCode::UNAUTHORIZED,
         Json(serde_json::json!({
             "error": "INVALID_CREDENTIALS",
+            "code": "INVALID_CREDENTIALS",
             "message": "passkey authentication failed",
         })),
     )

@@ -40,7 +40,6 @@ use crate::api::{
     email_domain_mappings_router,
     event_types_router,
     events_api_router,
-    processes_router,
     // OpenApiRouter routes
     events_router,
     filter_options_router,
@@ -55,6 +54,7 @@ use crate::api::{
     password_reset_router,
     platform_config_router,
     principals_router,
+    processes_router,
     public_router,
     roles_router,
     scheduled_jobs_router,
@@ -358,10 +358,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_EVENTS, events_api_router(self.events.clone()))
             .nest(PATH_BFF_EVENTS, events_router(self.events))
             .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
-            .nest(
-                PATH_API_PROCESSES,
-                processes_router(self.processes.clone()),
-            )
+            .nest(PATH_API_PROCESSES, processes_router(self.processes.clone()))
             .nest(PATH_BFF_PROCESSES, processes_router(self.processes))
             .nest(
                 PATH_API_SCHEDULED_JOBS,
@@ -468,12 +465,19 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                             )),
                     )
                     .property(
+                        "code",
+                        ObjectBuilder::new()
+                            .schema_type(Type::String)
+                            .description(Some("The same machine-readable code as `error`")),
+                    )
+                    .property(
                         "message",
                         ObjectBuilder::new()
                             .schema_type(Type::String)
                             .description(Some("Human-readable error message suitable for display")),
                     )
                     .required("error")
+                    .required("code")
                     .required("message")
                     .into(),
             );
@@ -520,7 +524,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // 4. Merge plain Router routes (not in Swagger)
         let app = Router::new()
             .merge(router)
-            .nest(PATH_BFF_DEVELOPER, bff_developer_router(bff_developer_state))
+            .nest(
+                PATH_BFF_DEVELOPER,
+                bff_developer_router(bff_developer_state),
+            )
             // BFF
             .nest(PATH_BFF_ROLES, bff_roles_router(self.bff_roles).into())
             // Temporary (docs/spec/audit-redaction.md, Java repo).
@@ -676,10 +683,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                         let body = body.clone();
                         async move {
                             (
-                                [(
-                                    axum::http::header::CONTENT_TYPE,
-                                    "application/json",
-                                )],
+                                [(axum::http::header::CONTENT_TYPE, "application/json")],
                                 body,
                             )
                         }
