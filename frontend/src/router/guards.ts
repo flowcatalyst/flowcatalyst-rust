@@ -1,6 +1,10 @@
 import type { NavigationGuardNext, RouteLocationNormalized } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import { usePermissionsStore, getRoutePermission } from "@/stores/permissions";
+import {
+	usePermissionsStore,
+	getRoutePermission,
+	isPlatformAdminRole,
+} from "@/stores/permissions";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
 import { checkSession } from "@/api/auth";
 
@@ -192,18 +196,7 @@ export function createRoutePermissionGuard() {
 		const roles = authStore.user?.roles || [];
 
 		// Platform admins bypass all permission checks
-		const adminRoles = [
-			"platform:super-admin",
-			"platform:admin",
-		];
-		if (
-			roles.some(
-				(role) =>
-					adminRoles.includes(role) ||
-					(role.toLowerCase().includes("platform") &&
-						role.toLowerCase().includes("admin")),
-			)
-		) {
+		if (isPlatformAdminRole(roles)) {
 			next();
 			return;
 		}
