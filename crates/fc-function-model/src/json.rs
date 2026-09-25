@@ -2,7 +2,7 @@
 //!
 //! The manifest parser needs two things `serde_json::Value` cannot promise
 //! in this crate: object keys in document order (problems are reported in
-//! document order, and `preserve_order` is off in the workspace), and
+//! document order, and a crate feature should not decide that), and
 //! integers of any size kept exactly (a schedule's `payload` is opaque and
 //! stored as given).
 //!

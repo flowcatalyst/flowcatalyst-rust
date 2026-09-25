@@ -12,9 +12,11 @@ description = "FlowCatalyst function ABI: the guest-facing types of Java's funct
 # No tokio, no std-only I/O: this crate must build for wasm32-unknown-unknown.
 indexmap = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true }
-# raw_value: a webhook's `data` / `payload` pass through as their raw text.
-serde_json = { workspace = true, features = ["raw_value"] }
+# Not the workspace's serde_json: that one has `preserve_order`, which a guest
+# (the PDK links this crate) has no use for. raw_value: a webhook's `data` /
+# `payload` pass through as their raw text.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
 # Default features off: no clock, so nothing that needs a JS host on
 # wasm32-unknown-unknown.
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }

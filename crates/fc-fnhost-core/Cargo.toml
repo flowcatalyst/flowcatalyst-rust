@@ -19,9 +19,9 @@ futures = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
-# preserve_order: every JSON document this crate writes (heartbeat, emit) or
-# reads back byte-for-byte keeps Jackson's key order.
-serde_json = { workspace = true, features = ["preserve_order"] }
+# Nothing here depends on key order (the workspace turns `preserve_order` on
+# for every build; see the root Cargo.toml).
+serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
