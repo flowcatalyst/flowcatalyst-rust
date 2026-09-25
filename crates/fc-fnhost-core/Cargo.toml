@@ -8,6 +8,7 @@ description = "FlowCatalyst function host: environment, logging, observability, 
 
 [dependencies]
 fc-function-abi = { path = "../fc-function-abi" }
+fc-function-signing = { path = "../fc-function-signing" }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -43,12 +44,6 @@ http-body-util = "0.1"
 rsa = "0.9"
 prometheus-client = "0.23"
 gethostname = "1"
-# Sigstore verification is a port of Java's JDK-only SignatureVerifier on the
-# RustCrypto stack that is already in the lock file (see signature/mod.rs).
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
-p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
-x509-cert = { version = "0.2", default-features = false, features = ["std"] }
-der = { version = "0.7", features = ["std"] }
 # The WASM runtime (H4): WASI 0.2 components on plain wasmtime, the engine the
 # F0 density spike chose (docs/function-runner-density.md §6). Pinned exactly:
 # a `.cwasm` is only valid for the wasmtime that wrote it, and the spike's
@@ -66,5 +61,9 @@ wasmparser = { version = "0.258", default-features = false, features = ["std", "
 wat = "1"
 tempfile = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
-# Test-only: SPKI encoding for the TestSigstore port's generated keys.
-p256 = { version = "0.13", features = ["alloc"] }
+# Test-only: the TestSigstore port (tests/support/sigstore.rs) builds its own
+# root CA, leaf certificate and Merkle proofs to feed the reconciler tests
+# that exercise fc-function-signing's verifier.
+p256 = { version = "0.13", features = ["alloc", "ecdsa", "pkcs8", "std"] }
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+der = { version = "0.7", features = ["std"] }

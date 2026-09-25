@@ -1,22 +1,7 @@
 //! Small helpers that reproduce JDK / Jackson behaviour the Java host relies
 //! on, so parsing decisions land the same way on both hosts.
 
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use base64::Engine;
 use serde_json::Value;
-
-/// `java.util.Base64.getDecoder()`: the standard alphabet, padding optional,
-/// no whitespace, lenient about trailing bits.
-pub(crate) const JAVA_BASE64: GeneralPurpose = GeneralPurpose::new(
-    &base64::alphabet::STANDARD,
-    GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-        .with_decode_allow_trailing_bits(true),
-);
-
-pub(crate) fn b64_decode(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    JAVA_BASE64.decode(text)
-}
 
 /// `Character.isWhitespace`, the rule `String.isBlank` uses.
 pub(crate) fn is_java_whitespace(c: char) -> bool {
@@ -72,11 +57,6 @@ pub(crate) fn as_java_int(node: Option<&Value>) -> Option<i32> {
     }
 }
 
-/// `new String(bytes, UTF_8)`: malformed sequences become U+FFFD.
-pub(crate) fn utf8_lossy(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 /// `String.length()`, in UTF-16 code units.
 pub(crate) fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
@@ -103,13 +83,6 @@ mod tests {
         assert_eq!(as_string(v.get("b"), None).as_deref(), Some("true"));
         assert_eq!(as_string(v.get("o"), Some("d")).as_deref(), Some("d"));
         assert_eq!(as_string(v.get("missing"), None), None);
-    }
-
-    #[test]
-    fn base64_padding_is_optional() {
-        assert_eq!(b64_decode("YQ").unwrap(), b"a");
-        assert_eq!(b64_decode("YQ==").unwrap(), b"a");
-        assert!(b64_decode("Y Q==").is_err());
     }
 
     #[test]
