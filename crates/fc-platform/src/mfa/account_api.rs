@@ -43,7 +43,7 @@ pub struct AccountState {
 async fn principal_from_session(
     s: &AccountState,
     auth: &Authenticated,
-) -> Result<Principal, Response> {
+) -> Result<Principal, Box<Response>> {
     match s
         .two_factor
         .principal_repo
@@ -51,7 +51,7 @@ async fn principal_from_session(
         .await
     {
         Ok(Some(p)) if p.active => Ok(p),
-        _ => Err(unauthorized("Not authenticated")),
+        _ => Err(Box::new(unauthorized("Not authenticated"))),
     }
 }
 
@@ -97,11 +97,11 @@ async fn change_password(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let req: ChangePasswordRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let tf = &s.two_factor;
     // A federated account manages its password at the identity provider.
@@ -199,7 +199,7 @@ async fn change_password(
 async fn send_email_code(State(s): State<Arc<AccountState>>, auth: Authenticated) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let confirmed = match s.two_factor.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
@@ -252,7 +252,7 @@ struct LoginHistoryItem {
 async fn login_history(State(s): State<Arc<AccountState>>, auth: Authenticated) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let email = email_of(&p).trim().to_lowercase();
     if email.is_empty() {

@@ -137,13 +137,13 @@ pub(crate) fn too_many_requests(retry_after_secs: u32) -> Response {
 }
 
 /// Go `decodeJSON`: a malformed body is 400 `INVALID_JSON`.
-pub(crate) fn decode<T: for<'de> Deserialize<'de>>(body: &Bytes) -> Result<T, Response> {
+pub(crate) fn decode<T: for<'de> Deserialize<'de>>(body: &Bytes) -> Result<T, Box<Response>> {
     serde_json::from_slice(body).map_err(|_| {
-        coded(
+        Box::new(coded(
             StatusCode::BAD_REQUEST,
             "INVALID_JSON",
             "malformed request body",
-        )
+        ))
     })
 }
 
@@ -375,8 +375,8 @@ impl TwoFactorLogin {
         &self,
         token: &str,
         purpose: Purpose,
-    ) -> Result<Principal, Response> {
-        let invalid = || unauthorized("Invalid or expired session");
+    ) -> Result<Principal, Box<Response>> {
+        let invalid = || Box::new(unauthorized("Invalid or expired session"));
         let subject = self.tokens.parse(token, purpose).ok_or_else(invalid)?;
         match self.principal_repo.find_by_id(&subject).await {
             Ok(Some(p)) if p.active => Ok(p),
@@ -482,14 +482,14 @@ async fn verify(
 ) -> Response {
     let req: VerifyRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.mfa_token, Purpose::Pending)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let ip = ip.as_deref();
     let email = email_of(&p).to_lowercase();
@@ -586,14 +586,14 @@ async fn challenge_email(
 ) -> Response {
     let req: TokenOnly = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.mfa_token, Purpose::Pending)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let email = email_of(&p);
     if email.is_empty() {
@@ -634,14 +634,14 @@ struct EnrollConfirmRequest {
 async fn enroll_totp_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) -> Response {
     let req: TokenOnly = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.enroll_token, Purpose::Enroll)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if !s
         .policy
@@ -671,14 +671,14 @@ async fn enroll_totp_confirm(
 ) -> Response {
     let req: EnrollConfirmRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.enroll_token, Purpose::Enroll)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match s.mfa.confirm_totp_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
@@ -701,14 +701,14 @@ async fn enroll_totp_confirm(
 async fn enroll_email_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) -> Response {
     let req: TokenOnly = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.enroll_token, Purpose::Enroll)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if !s
         .policy
@@ -741,14 +741,14 @@ async fn enroll_email_confirm(
 ) -> Response {
     let req: EnrollConfirmRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let p = match s
         .principal_from_token(&req.enroll_token, Purpose::Enroll)
         .await
     {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match s.mfa.confirm_email_enrollment(&p.id, &req.code).await {
         Ok(true) => {}

@@ -35,10 +35,10 @@ const ALL_METHODS: [&str; 2] = ["TOTP", "EMAIL_PIN"];
 async fn principal_from_session(
     s: &TwoFactorLogin,
     auth: &Authenticated,
-) -> Result<Principal, Response> {
+) -> Result<Principal, Box<Response>> {
     match s.principal_repo.find_by_id(&auth.0.principal_id).await {
         Ok(Some(p)) if p.active => Ok(p),
-        _ => Err(unauthorized("Not authenticated")),
+        _ => Err(Box::new(unauthorized("Not authenticated"))),
     }
 }
 
@@ -65,7 +65,7 @@ struct StatusResponse {
 async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let confirmed = match s.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
@@ -100,7 +100,7 @@ async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Re
 async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if !s
         .policy
@@ -135,11 +135,11 @@ async fn totp_confirm(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let req: CodeRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match s.mfa.confirm_totp_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
@@ -161,7 +161,7 @@ async fn totp_confirm(
 async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if !s
         .policy
@@ -196,11 +196,11 @@ async fn email_confirm(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let req: CodeRequest = match decode(&body) {
         Ok(r) => r,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match s.mfa.confirm_email_enrollment(&p.id, &req.code).await {
         Ok(true) => {}
@@ -235,7 +235,7 @@ async fn remove_method(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let Ok(method_type) = method.parse::<MethodType>() else {
         return coded(
@@ -281,7 +281,7 @@ async fn regenerate_recovery_codes(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let confirmed = match s.mfa.confirmed_methods(&p.id).await {
         Ok(c) => c,
@@ -316,7 +316,7 @@ async fn list_trusted_devices(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match s.mfa.list_trusted_devices(&p.id).await {
         Ok(devices) => Json(json!({ "devices": devices })).into_response(),
@@ -332,7 +332,7 @@ async fn revoke_trusted_device(
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     if s.mfa.revoke_trusted_device(&p.id, &id).await.is_err() {
         return server_error("REVOKE_FAILED", "could not revoke device");
