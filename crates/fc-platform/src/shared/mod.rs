@@ -10,6 +10,7 @@ pub mod enum_str;
 pub mod error;
 pub mod log_throttle;
 pub mod middleware;
+pub mod profile_only;
 pub mod tsid;
 // APIs
 pub mod application_roles_sdk_api;
