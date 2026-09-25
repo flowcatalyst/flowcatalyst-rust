@@ -351,7 +351,7 @@ Two corrections followed. **SUB-7**: sync honours `mode` again (`92ac82aa`), bec
 **A17**: sync rejects unknown pool codes again (`ef2cc2da`), per the owner ruling of 2026-09-24; SUB-6 in
 `docs/owner-questions.md` still says "deferred" and should record that ruling.
 
-### Reference changed to Java (owner, 2026-09-24)
+### Reference changed to Java (owner, 2026-09-24; superseded by Go below)
 
 On 2026-09-24 the owner made Java the reference for the Rust platform: "You can use Java as the reference now."
 Precedence is now owner rulings, then Java (`../flowcatalyst-javalin` at `0118cdca`; its code wins over its
@@ -381,31 +381,66 @@ Java:
   `FIXED_DELAY` aliases (still read), and the service-account codes and scopes already stored (read as
   they are).
 
-### Remaining deviations from Java
+### Reference changed back to Go (owner, 2026-09-25)
 
-| Area | Rust | Java | Go | Why |
-|---|---|---|---|---|
-| Out-of-scope application | 404 | 403 `FORBIDDEN` (`Checks.java:138-143`) | 403 | Owner ruling (404 identical to not-found) |
-| Service-account create with `applicationId` | 400 | confines the account to it (`CreateServiceAccountWithCredentials.java:116-118`) | accepted | Owner ruling: no application access on create |
-| Unrecognised service-account `scope` | 400 | stored as sent (free-form tag, `CreateCommand.java:14`) | stored as sent | X-06 |
-| Stored `signing_algorithm`, `assignment_source` | strict enums (unknown is a read error) | free strings (`RoleAssignment.java:6-12`) | free strings | X-06; P4 checked the stored values against the prod audit |
-| Unknown sync pool code | 400 `DISPATCH_POOL_NOT_FOUND` | ignored (`SyncSubscriptions.java:198-201`) | ignored | Owner ruling 2026-09-24 (A17) |
-| Subscription sync `mode` | honoured | ignored (`SyncSubscriptions.java:187`) | ignored | Owner ruling SUB-7 |
-| Application scope on scheduled-jobs sync, SDK app-role routes, `/api/config*`, `/api/config-access*` | checked | not checked (config: no per-application restriction, `config-permissions.md` §A.2) | not checked | Owner request (A15) |
-| Client list `status` | filters when given (strict) | ignored | no filter | Additive; X-06 for bad values |
-| Config-access grant routes | still served, own anchor + permission gate; grants no longer open property routes | withdrawn (`config-permissions.md` §A.3) | served | Removal left for cutover (Go still serves them; the table stays) |
-| SECRET config values | masked for everyone | unmasked for `config:manage` holders (`PlatformConfigApi.java:121-125`) | unmasked for anchors | Needs decrypt-on-read of mixed Go/Rust rows; small follow-up, security-sensitive |
-| Service-account create gate | anchor | any of `service-account:create/update/delete`, no client-access check (`ServiceAccountApi.java:167`) | write permission | Security: Java's gate lets a non-anchor holder create a client-less account, which is ANCHOR tier. Owner to confirm |
-| OAuth client routes | anchor only | anchor plus the per-action `platform:auth:oauth-client:*` permission (`OAuthClientApi.java:202-225`) | — | Part of the read/write permission-check gap below |
-| Handler-level error bodies | `VALIDATION_ERROR` / `NOT_FOUND` / `FORBIDDEN` with prefixed messages | the specific code (`<Resource>_NOT_FOUND`, …), plain message | specific code | Too large: every handler-level `PlatformError::validation`/`not_found` needs a code |
-| JSON nulls | `null` fields sent | omitted (`Json.java:52-54`, `NON_ABSENT`) | mostly omitted (`omitempty`) | Too large: every DTO needs `skip_serializing_if` |
-| Timestamps | `to_rfc3339()` (`+00:00`, variable precision) or chrono serde (`Z`, variable) | exactly six fractional digits and `Z` (`MicroInstantSerializer.java`) | same as Java | Too large: 94 `to_rfc3339` sites in 29 files plus ~40 `DateTime` DTO fields |
-| `$schema` on bodies, pagination, path-param names, 204s | differ | see `docs/java-parity-plan.md` §1.2 | — | Lane L0 |
-| OAuth client event payloads and message group | Rust fields; message group `platform:oauthclient:{id}` | `clientName` on created/updated, no message group (`EventMetadata.java:56`) | — | Small; payload shape is a consumer contract |
-| Application scope source (DB vs token claim); service-account id used as principal id | differ | claim-based; separate ids | — | Too large |
-| Read routes without a view-permission check | many | checked | checked | Too large; security-relevant |
-| Missing routes: `connections/sync`, `docs/sync`, subscription-sync `clientId` | absent | present (`SdkSyncApi.java:100-110`) | present | Too large (lane L4d) |
-| Built-in role catalogue | Rust's own set (config codes aligned in `5de4c4dd`) | `PlatformRoles.java` | own set | Out of scope; role sync rewrites built-in roles at start |
+`docs/owner-decisions-2026-09-25.md` makes **Go** the reference for existing platform behaviour again (Rust
+replaces Go in production); Java stays the reference only for new features such as the function runner. The six
+Java-driven commits above were re-checked against flowcatalyst-go at HEAD 73a6918:
+
+| Commit | Verdict | Go evidence | Result |
+|---|---|---|---|
+| `cca61675` pool sweep needs no anchor | Go differs: reverted | `dispatchpool/operations/sync.go:96-108` | `removeUnlisted` needs anchor or `platform:*:*:*`, else 403 `ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP` |
+| `5de4c4dd` config routes by config permission | Go differs: reverted | `platformconfig/api/api.go:49-57,92-100,149-157`, `operations/set_property.go:60-73` | anchor passes, anyone else needs a config-access grant for the application; A15 check kept (owner) |
+| `69e69f47` OAuth events `platform:admin:oauth-client:*` | Go agrees: kept | `auth/operations/events.go:14-41` | payloads then aligned to Go's `ToDataJSON` (`:81-236`) |
+| `ceb1f002` use-case error codes in the body | Go agrees: kept | `shared/httperror/httperror.go:20-81` (`{error: code, message, details?}`) | — |
+| `6a8c6e24` IDP secret without app key is 400 | Go agrees: kept | `identityprovider/api/api.go:47-53` | — |
+| `cd1da9cf` service-account code rule, `CODE_EXISTS` | Go agrees, except order: fixed | `serviceaccount/operations/create_credentials.go:65-98` | `app:` is checked before the format, as Go |
+
+Also aligned to Go in the same pass:
+- **OAuth client routes**: anchor plus the per-action `platform:auth:oauth-client:*` permission, with Go's
+  `ANCHOR_REQUIRED` / `PERMISSION_REQUIRED` bodies (`shared/auth/auth.go:704-709,732-742`).
+- **Service-account routes**: reads need `platform:iam:service-account:view` (they had no check at all); create and
+  update need any of create/update/delete, delete needs delete (`auth.go:675-693`); regenerate and role assignment
+  stay anchor-only with Go's body. Rust keeps anchor on the writes too (see the table).
+- **Config property routes**: a set answers 200 whether it created or updated, a delete of an absent property is
+  204 (idempotent), and a missing property is 404 `Config_NOT_FOUND` (Go's spelling) (`platformconfig/api/api.go:36,107,163-165`).
+- **Built-in roles (decision #12)**: `role::entity::roles` now has Go's catalogue (`seed/roles.go`,
+  `seed/permissions.go`): `client-admin`, `router` and `portal-administrator` added; connection sync on
+  `messaging-admin`; docs, config and CORS codes on `admin` and `admin-readonly`; IDP and email-domain-mapping
+  codes on `iam-admin` and `iam-readonly`; config, CORS, IDP and email-domain-mapping reads on `viewer`; the
+  developer API credential on `developer`; connection and docs sync on `application-service`. `tests/role_catalogue_go_parity_test.rs` pins it. The function-runner roles and grants
+  (`function-publisher`, `function-host`, the function codes on `messaging-admin`) are Rust additions from Java.
+  Java's `platform:admin:config:manage` is gone; Go's `config:update` is what the roles hold.
+
+**Data written by Go that Rust must still read** is unchanged from the list above, except that
+`platform:admin:config:update` is now simply Go's code rather than an alias for `manage`.
+
+### Remaining deviations from Go (existing behaviour)
+
+Final state after the 2026-09-25 re-check. Function-runner behaviour follows Java and is not listed.
+
+| Area | Rust | Go | Why |
+|---|---|---|---|
+| Out-of-scope application | 404 | 403 `FORBIDDEN` (`sdksync/api.go:136-141`) | Owner ruling (404 identical to not-found) |
+| Service-account create with `applicationId` (or `allApplications`) | 400 / not accepted | confines the account to it (`create_credentials.go:152-164`) | Owner ruling: no application access on create |
+| Unrecognised service-account `scope` | 400 | stored as sent | X-06 |
+| Stored `signing_algorithm`, `assignment_source` | strict enums (unknown is a read error) | free strings | X-06; P4 checked the stored values against the prod audit |
+| Unknown sync pool code | 400 `DISPATCH_POOL_NOT_FOUND` | left unset (`subscription/operations/sync.go:99-100,374-386`) | Owner ruling 2026-09-24 (A17) |
+| Subscription sync `mode` | honoured | accepted, not applied (`subscription/operations/sync.go:26`) | Owner ruling SUB-7 |
+| Application scope on scheduled-jobs sync, SDK app-role routes, `/api/config*`, `/api/config-access*` | checked | not checked | Owner request (A15) |
+| Service-account create, update, delete | anchor **and** Go's permission | permission only (`auth.go:687-693`) | Security: a non-anchor holder could create or relink a client-less account, which is ANCHOR tier. Identical to Go for every anchor caller. Owner to confirm |
+| Client list `status` | filters when given (strict) | ignored (`client/api/api.go:59-70`) | Additive; no app sends it (integral calls `list()` bare) |
+| SECRET config values | masked for everyone | unmasked for anchors (`platformconfig/api/api.go:65-66,109-110`) | Rust encrypts them at rest (A13); unmasking needs decrypt-on-read. Admin UI only, no app reads config |
+| Handler-level error bodies | `VALIDATION_ERROR` / `NOT_FOUND` / `FORBIDDEN` with prefixed messages; most `can_*` checks answer `FORBIDDEN "Cannot …"` | the specific code; `PERMISSION_REQUIRED "permission required: <code>"`, `ANCHOR_REQUIRED` (`auth.go:352-481`) | Too large: every handler-level error and ~60 `can_*` checks need Go's code |
+| JSON nulls | `null` fields sent | mostly omitted (`omitempty`) | Too large: every DTO needs `skip_serializing_if` |
+| Timestamps | `to_rfc3339()` or chrono serde, variable precision | six fractional digits (`shared/jsontime/jsontime.go:33`) | Too large: 94 `to_rfc3339` sites plus ~40 `DateTime` DTO fields |
+| Domain event types | about 40 types differ: `platform:iam:{client,role,roles,anchor-domain,auth-config,idp-role-mapping,passkey}:*`, `platform:admin:{idp,edm,scheduledjob,config,config-access}:*` and others | `platform:admin:{client,role,roles,anchor-domain,auth-config,idp-role-mapping,passkey,identity-provider,email-domain-mapping,scheduled-job,platform-config}:*`, … (each domain's `operations/events.go`) | Subscribers match on type, so this is a cutover blocker for anyone subscribed to platform events. Needs its own pass (and stored-type aliases for rows Rust already wrote) |
+| Event `data` | payload plus the flattened metadata (`event_id`, `event_type`, …) | payload only (`ToDataJSON`) | Additive for consumers; global to `DomainEvent` serialisation |
+| IDP client-secret refs | every non-blank value encrypted to `encrypted:`; reads refuse anything else | secret-manager refs (`aws-sm://`, `aws-ps://`, `gcp-sm://`, `vault://`, `env://`, `literal:`) stored verbatim and resolved at read; unknown schemes 400 (`shared/encryption/secretref.go`) | Read compatibility: a Go row holding a secret-manager ref fails at login in Rust, and the A13 backfill (`shared/secret_backfill.rs`) would seal the ref string itself. Check prod before cutover |
+| Application scope source | DB lookup per request | token `applications` claim (`shared/auth/application_scope.go`) | Belongs with the JWT-claims work (decision #3) |
+| Read routes without a view-permission check | many (service accounts now checked) | checked | Too large; security-relevant |
+| Missing routes | `connections/sync`, `docs/sync`, `POST /api/processes/sync`, subscription-sync `clientId`, `GET /api/dispatch/router-config` | present (`sdksync/api.go:97-110`, `dispatch/api.go:30-49`) | Lane L4d. The published Laravel SDK's definition sync calls `connections/sync` when definitions declare connections; the `router` role exists for `router-config` |
+| `client-admin` / `portal-administrator` enforcement | roles exist; no client-confined user admin, no portal-user routes | `auth.RequireUserAdmin`, `/api/portal-users` | Principal-routes work (another lane) |
 
 ### To tighten later (owner note, 2026-09-24)
 
