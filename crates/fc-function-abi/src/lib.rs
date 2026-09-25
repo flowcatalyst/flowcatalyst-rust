@@ -36,7 +36,8 @@ mod address;
 mod caller;
 mod error;
 mod event;
-mod java;
+#[doc(hidden)]
+pub mod java;
 mod response;
 mod timestamp;
 mod webhook;
