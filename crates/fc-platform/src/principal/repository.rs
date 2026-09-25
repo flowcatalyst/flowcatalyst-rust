@@ -1317,3 +1317,78 @@ impl PrincipalRepository {
             .collect())
     }
 }
+
+impl PrincipalRepository {
+    /// The OIDC-federated users of an email domain (Go
+    /// `FindUsersByEmailDomain` filtered to `idp_type = 'OIDC'`), for an
+    /// email-domain mapping moving to an internal provider.
+    pub async fn find_oidc_user_ids_by_email_domain(&self, domain: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM iam_principals \
+             WHERE type = 'USER' AND email_domain = lower($1) AND idp_type = 'OIDC' \
+             ORDER BY id",
+        )
+        .bind(domain)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Hand federated users back to the internal provider inside `tx` (Go
+    /// `MoveMappingTx`): provider INTERNAL, no external identity, and the
+    /// roles their IdP synced dropped.
+    pub async fn reset_to_internal_in_tx(
+        &self,
+        ids: &[String],
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE iam_principals SET idp_type = 'INTERNAL', external_idp_id = NULL, \
+             updated_at = NOW() WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query(
+            "DELETE FROM iam_principal_roles \
+             WHERE principal_id = ANY($1) AND assignment_source = 'IDP_SYNC'",
+        )
+        .bind(ids)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+}
+
+impl PrincipalRepository {
+    /// Go `LookupVersion` (principal/repository.go:74): the later of the
+    /// principal's own `updated_at` and its roles' newest `updated_at`.
+    pub async fn lookup_version(&self, id: &str) -> Result<Option<DateTime<Utc>>> {
+        let row: Option<(Option<DateTime<Utc>>,)> = sqlx::query_as(
+            "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) \
+                 FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name \
+                 WHERE pr.principal_id = p.id), p.updated_at)) \
+             FROM iam_principals p WHERE p.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// The emails of `emails` that already belong to a principal (lower-cased).
+    pub async fn existing_emails(&self, emails: &[String]) -> Result<Vec<String>> {
+        if emails.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT lower(email) FROM iam_principals WHERE lower(email) = ANY($1)")
+                .bind(emails)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+}

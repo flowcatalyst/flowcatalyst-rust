@@ -9,6 +9,7 @@ pub mod create;
 pub mod deactivate;
 pub mod delete;
 pub mod events;
+pub mod mint_token;
 pub mod regenerate_secret;
 pub mod regenerate_token;
 pub mod update;

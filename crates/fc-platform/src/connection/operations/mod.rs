@@ -5,6 +5,7 @@
 pub mod create;
 pub mod delete;
 pub mod events;
+pub mod sync;
 pub mod update;
 
 pub use create::{CreateConnectionCommand, CreateConnectionUseCase};

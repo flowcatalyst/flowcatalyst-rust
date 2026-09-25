@@ -18,6 +18,7 @@
 //! - `operations` - Use case operations (where applicable)
 
 // Core aggregates
+pub mod app_docs;
 pub mod application;
 pub mod application_openapi_spec;
 pub mod client;
@@ -27,6 +28,7 @@ pub mod service_account;
 
 // Event platform aggregates
 pub mod dispatch_job;
+pub mod dispatch_job_actions;
 pub mod function;
 pub mod dispatch_pool;
 pub mod event;

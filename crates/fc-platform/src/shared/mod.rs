@@ -25,15 +25,21 @@ pub mod bff_scheduled_jobs_api;
 pub mod client_selection_api;
 pub mod debug_api;
 pub mod dispatch_process_api;
+pub mod dispatch_queue;
 pub mod filter_options_api;
+pub mod go_read_aliases_api;
+pub mod go_routes;
 pub mod health_api;
 pub mod me_api;
 pub mod monitoring_api;
+pub mod openapi_api;
 pub mod platform_config_api;
 pub mod public_api;
+pub mod router_config_api;
 pub mod sdk_audit_batch_api;
 pub mod sdk_dispatch_jobs_api;
 pub mod sdk_sync_api;
+pub mod sdk_sync_go_api;
 pub mod well_known_api;
 
 // Server setup helpers (shared across fc-server, fc-platform-server, fc-dev)

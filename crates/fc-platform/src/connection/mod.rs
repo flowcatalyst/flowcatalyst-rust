@@ -6,6 +6,7 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod sync_plan;
 
 pub use api::{connections_router, ConnectionsState};
 pub use entity::{Connection, ConnectionStatus};

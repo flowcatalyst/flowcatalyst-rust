@@ -688,3 +688,23 @@ impl crate::usecase::Persist<Subscription> for SubscriptionRepository {
         Ok(())
     }
 }
+
+impl SubscriptionRepository {
+    /// The codes of the subscriptions using each of `connection_ids`, as
+    /// `(connection_id, code)` by code (Go `FindCodesByConnectionID`, batched).
+    pub async fn codes_by_connection_ids(
+        &self,
+        connection_ids: &[String],
+    ) -> crate::shared::error::Result<Vec<(String, String)>> {
+        if connection_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(sqlx::query_as(
+            "SELECT connection_id, code FROM msg_subscriptions \
+             WHERE connection_id = ANY($1) ORDER BY code",
+        )
+        .bind(connection_ids)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+}

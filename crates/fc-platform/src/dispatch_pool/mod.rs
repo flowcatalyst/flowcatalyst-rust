@@ -6,6 +6,7 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod router_config_repository;
 
 // Re-export main types
 pub use api::{dispatch_pools_router, DispatchPoolsState};

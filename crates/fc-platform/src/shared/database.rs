@@ -474,6 +474,17 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "047_portal_apps",
             include_str!("../../../../migrations/047_portal_apps.sql"),
         ),
+        // Go's 056: application-scoped connections (application_code,
+        // source) and the (application_code, client_id, code) uniqueness.
+        (
+            "050_connection_application_scope",
+            include_str!("../../../../migrations/050_connection_application_scope.sql"),
+        ),
+        // Go's 044: application-synced documentation.
+        (
+            "051_app_docs",
+            include_str!("../../../../migrations/051_app_docs.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -687,6 +698,22 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'portal_identities' \
                AND column_name = 'invite_expires_at')",
+        ),
+        // A database Go migrated to 056 has the column and the new index.
+        (
+            "050_connection_application_scope",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_connections' \
+               AND column_name = 'source') \
+             AND EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' \
+               AND indexname = 'uq_msg_subscriptions_app_client_code')",
+        ),
+        // A database Go migrated to 044 has the table.
+        (
+            "051_app_docs",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'app_docs')",
         ),
     ];
 

@@ -3,8 +3,10 @@
 //! Use cases for managing email domain mappings.
 
 pub mod create;
+pub mod create_rules;
 pub mod delete;
 pub mod events;
+pub mod move_provider;
 pub mod update;
 
 pub use create::{

@@ -938,7 +938,6 @@ pub fn roles_router(state: RolesState) -> OpenApiRouter {
         .routes(routes!(get_roles_by_source))
         .routes(routes!(get_roles_by_application_id))
         .routes(routes!(get_role, update_role, delete_role))
-        .routes(routes!(grant_permission))
-        .routes(routes!(revoke_permission))
+        // Grant/revoke by role name: `role::permission_api` (Go's operations).
         .with_state(state)
 }
