@@ -5,7 +5,7 @@
 
 use axum::{
     extract::FromRequestParts,
-    http::{header::AUTHORIZATION, header::COOKIE, request::Parts, HeaderValue, StatusCode},
+    http::{header::AUTHORIZATION, header::COOKIE, request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -78,8 +78,9 @@ use crate::shared::api_common::ApiError;
 use crate::{AuthContext, AuthService, AuthorizationService};
 use std::sync::Arc;
 
-/// Default session cookie name
-const SESSION_COOKIE_NAME: &str = "fc_session";
+/// The platform session cookie's name (Go `SessionCookieName`,
+/// shared/middleware/middleware.go:115).
+pub const SESSION_COOKIE_NAME: &str = "fc_session";
 
 /// Application state containing shared services
 #[derive(Clone)]
@@ -115,20 +116,116 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// Extract token from session cookie
-fn extract_session_cookie(parts: &Parts) -> Option<String> {
-    parts
-        .headers
-        .get(COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies
-                .split(';')
-                .map(|c| c.trim())
-                .find(|c| c.starts_with(SESSION_COOKIE_NAME))
-                .and_then(|c| c.split('=').nth(1))
-                .map(|v| v.to_string())
-        })
+/// The value of the platform session cookie, if the request carries one
+/// (exact name match; an empty value counts as none).
+pub fn extract_session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get_all(COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(name, _)| name.trim() == SESSION_COOKIE_NAME)
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// The credential a request presents (Go `extractToken`,
+/// shared/middleware/middleware.go:122-138): an `Authorization` header
+/// decides on its own — a Bearer token, or nothing when it names another
+/// scheme (the request declared its intent, so the cookie is not
+/// consulted); without one, the session cookie.
+enum Presented {
+    Bearer(String),
+    SessionCookie(String),
+    Nothing,
+}
+
+fn presented_credential(parts: &Parts) -> Presented {
+    if let Some(header) = parts.headers.get(AUTHORIZATION) {
+        const PREFIX: &str = "Bearer ";
+        return match header.to_str() {
+            Ok(h) if h.len() > PREFIX.len() && h[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) => {
+                match h[PREFIX.len()..].trim() {
+                    "" => Presented::Nothing,
+                    token => Presented::Bearer(token.to_string()),
+                }
+            }
+            _ => Presented::Nothing,
+        };
+    }
+    match extract_session_cookie(&parts.headers) {
+        Some(token) => Presented::SessionCookie(token),
+        None => Presented::Nothing,
+    }
+}
+
+/// What a request authenticates as.
+enum Authentication {
+    Context(AuthContext),
+    /// No credential, or a session cookie that no longer signs anyone in
+    /// (invalid, expired, or its principal unknown, inactive or no USER):
+    /// the browser replays a stale cookie on every call, so it reads as
+    /// logged out rather than as an error (Go `Authenticator`).
+    Anonymous {
+        stale_session: bool,
+    },
+}
+
+/// Authenticate the request (Go `introspect`,
+/// shared/middleware/middleware.go:148-224). A bearer is self-contained;
+/// a session cookie carries only its subject, whose principal and
+/// authority are reloaded from the database on every request, so a
+/// deactivation or role change applies at once.
+async fn authenticate(
+    app_state: &AppState,
+    parts: &Parts,
+) -> std::result::Result<Authentication, AuthError> {
+    match presented_credential(parts) {
+        Presented::Nothing => Ok(Authentication::Anonymous {
+            stale_session: false,
+        }),
+        Presented::Bearer(token) => {
+            let unauthorized = |e: crate::PlatformError| AuthError {
+                status: StatusCode::UNAUTHORIZED,
+                message: e.to_string(),
+            };
+            let claims = app_state
+                .auth_service
+                .validate_token(&token)
+                .map_err(unauthorized)?;
+            let context = app_state
+                .authz_service
+                .build_context(&claims)
+                .await
+                .map_err(unauthorized)?;
+            Ok(Authentication::Context(context))
+        }
+        Presented::SessionCookie(token) => {
+            let Ok(session) = app_state.auth_service.validate_session_token(&token) else {
+                return Ok(Authentication::Anonymous {
+                    stale_session: true,
+                });
+            };
+            match app_state
+                .authz_service
+                .session_context(&session.principal_id)
+                .await
+            {
+                Ok(Some(context)) => Ok(Authentication::Context(context)),
+                Ok(None) => Ok(Authentication::Anonymous {
+                    stale_session: true,
+                }),
+                Err(e) => {
+                    tracing::error!(error = %e, "session principal lookup failed");
+                    Err(AuthError {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        message: "Session lookup failed".to_string(),
+                    })
+                }
+            }
+        }
+    }
 }
 
 impl<S> FromRequestParts<S> for Authenticated
@@ -142,45 +239,23 @@ where
         let app_state = parts
             .extensions
             .get::<AppState>()
+            .cloned()
             .ok_or_else(|| AuthError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 message: "Auth service not configured".to_string(),
             })?;
 
-        // Try to extract token from Authorization header first, then from session cookie
-        let token = parts
-            .headers
-            .get(AUTHORIZATION)
-            .and_then(|v: &HeaderValue| v.to_str().ok())
-            .and_then(crate::auth::auth_service::extract_bearer_token)
-            .map(String::from)
-            .or_else(|| extract_session_cookie(parts))
-            .ok_or_else(|| AuthError {
+        match authenticate(&app_state, parts).await? {
+            Authentication::Context(context) => Ok(Authenticated(context)),
+            Authentication::Anonymous { stale_session } => Err(AuthError {
                 status: StatusCode::UNAUTHORIZED,
-                message: "Missing authentication token".to_string(),
-            })?;
-
-        // Validate token
-        let claims =
-            app_state
-                .auth_service
-                .validate_token(&token)
-                .map_err(|e: crate::PlatformError| AuthError {
-                    status: StatusCode::UNAUTHORIZED,
-                    message: e.to_string(),
-                })?;
-
-        // Build auth context with resolved permissions
-        let context = app_state
-            .authz_service
-            .build_context(&claims)
-            .await
-            .map_err(|e: crate::PlatformError| AuthError {
-                status: StatusCode::UNAUTHORIZED,
-                message: e.to_string(),
-            })?;
-
-        Ok(Authenticated(context))
+                message: if stale_session {
+                    "Session expired or invalid".to_string()
+                } else {
+                    "Missing authentication token".to_string()
+                },
+            }),
+        }
     }
 }
 
@@ -203,35 +278,13 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Get AppState from extensions
-        let Some(app_state) = parts.extensions.get::<AppState>() else {
+        let Some(app_state) = parts.extensions.get::<AppState>().cloned() else {
             return Ok(OptionalAuth(None));
         };
-
-        // Try to extract token from Authorization header first, then from session cookie
-        let token = parts
-            .headers
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(crate::auth::auth_service::extract_bearer_token)
-            .map(String::from)
-            .or_else(|| extract_session_cookie(parts));
-
-        let Some(token) = token else {
-            return Ok(OptionalAuth(None));
-        };
-
-        // Try to validate token
-        let Ok(claims) = app_state.auth_service.validate_token(&token) else {
-            return Ok(OptionalAuth(None));
-        };
-
-        // Try to build context
-        let Ok(context) = app_state.authz_service.build_context(&claims).await else {
-            return Ok(OptionalAuth(None));
-        };
-
-        Ok(OptionalAuth(Some(context)))
+        match authenticate(&app_state, parts).await {
+            Ok(Authentication::Context(context)) => Ok(OptionalAuth(Some(context))),
+            _ => Ok(OptionalAuth(None)),
+        }
     }
 }
 
@@ -400,7 +453,7 @@ mod tests {
             .unwrap();
         let (parts, _) = req.into_parts();
 
-        let token = extract_session_cookie(&parts);
+        let token = extract_session_cookie(&parts.headers);
         assert_eq!(token, Some("my-token-value".to_string()));
     }
 
@@ -412,7 +465,7 @@ mod tests {
             .unwrap();
         let (parts, _) = req.into_parts();
 
-        let token = extract_session_cookie(&parts);
+        let token = extract_session_cookie(&parts.headers);
         assert_eq!(token, Some("abc123".to_string()));
     }
 
@@ -424,7 +477,7 @@ mod tests {
             .unwrap();
         let (parts, _) = req.into_parts();
 
-        let token = extract_session_cookie(&parts);
+        let token = extract_session_cookie(&parts.headers);
         assert_eq!(token, None);
     }
 
@@ -433,7 +486,7 @@ mod tests {
         let req = Request::builder().body(()).unwrap();
         let (parts, _) = req.into_parts();
 
-        let token = extract_session_cookie(&parts);
+        let token = extract_session_cookie(&parts.headers);
         assert_eq!(token, None);
     }
 
@@ -450,7 +503,7 @@ mod tests {
             .unwrap();
         let (parts, _) = req.into_parts();
 
-        let token = extract_session_cookie(&parts);
+        let token = extract_session_cookie(&parts.headers);
         // "  fc_session=spaced-token  " → trimmed to "fc_session=spaced-token  "
         // starts_with("fc_session") → true, split('=').nth(1) → "spaced-token  "
         // BUT the value is "spaced-token  " only if trailing spaces are in the value.
@@ -585,21 +638,44 @@ mod tests {
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
     }
 
-    // ─── Authenticated Extractor: Cookie Fallback Tests ────────────────────
+    // ─── Authenticated Extractor: Session Cookie Tests ─────────────────────
 
+    /// Only a session token signs a browser in: an access token placed in
+    /// the cookie is refused (it may be narrowed, delegated, or a service
+    /// account's).
     #[tokio::test]
-    async fn test_authenticated_cookie_fallback_when_no_auth_header() {
+    async fn test_an_access_token_is_not_a_session_cookie() {
         let auth_service = test_auth_service();
         let token = generate_token_no_roles(&auth_service);
 
         let mut parts = make_parts_with_app_state(None, Some(&format!("fc_session={}", token)));
 
-        let result = Authenticated::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_ok());
+        let err = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert!(err.message.contains("Session"), "{}", err.message);
 
-        let auth = result.unwrap();
-        assert_eq!(auth.0.email, Some("test@example.com".to_string()));
-        assert_eq!(auth.0.scope, UserScope::Anchor);
+        let mut parts = make_parts_with_app_state(None, Some(&format!("fc_session={}", token)));
+        let opt = OptionalAuth::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert!(opt.0.is_none());
+    }
+
+    /// A valid session token whose principal cannot be reloaded (here: no
+    /// principal store) reads as logged out.
+    #[tokio::test]
+    async fn test_a_session_without_a_principal_is_logged_out() {
+        let auth_service = test_auth_service();
+        let principal = Principal::new_user("test@example.com", UserScope::Anchor);
+        let token = auth_service.generate_session_token(&principal).unwrap();
+
+        let mut parts = make_parts_with_app_state(None, Some(&format!("fc_session={}", token)));
+        let err = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -613,8 +689,33 @@ mod tests {
             Some("fc_session=invalid-cookie-token"),
         );
 
-        let result = Authenticated::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_ok());
+        let auth = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert!(!auth.via_session_cookie());
+    }
+
+    /// Go `extractToken`: the Bearer scheme is case-insensitive.
+    #[tokio::test]
+    async fn test_bearer_scheme_is_case_insensitive() {
+        let auth_service = test_auth_service();
+        let token = generate_token_no_roles(&auth_service);
+        let mut parts = make_parts_with_app_state(Some(&format!("bearer {}", token)), None);
+        assert!(Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .is_ok());
+    }
+
+    /// Go `extractToken`: an Authorization header of another scheme
+    /// declares the caller's intent; the cookie is not consulted.
+    #[tokio::test]
+    async fn test_another_scheme_does_not_fall_back_to_the_cookie() {
+        let mut parts =
+            make_parts_with_app_state(Some("Basic dXNlcjpwYXNz"), Some("fc_session=anything"));
+        let err = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("Missing authentication token"));
     }
 
     #[tokio::test]
@@ -626,6 +727,21 @@ mod tests {
 
         let err = result.unwrap_err();
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_session_cookie_name_must_match_exactly() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            axum::http::HeaderValue::from_static("fc_session_old=a; x=1"),
+        );
+        assert_eq!(extract_session_cookie(&headers), None);
+        headers.insert(
+            header::COOKIE,
+            axum::http::HeaderValue::from_static("fc_session_old=a; fc_session=b"),
+        );
+        assert_eq!(extract_session_cookie(&headers), Some("b".to_string()));
     }
 
     // ─── Authenticated Extractor: Missing AppState ─────────────────────────
@@ -786,22 +902,6 @@ mod tests {
         let result = OptionalAuth::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().0.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_optional_auth_cookie_fallback() {
-        let auth_service = test_auth_service();
-        let token = generate_token_no_roles(&auth_service);
-
-        let mut parts = make_parts_with_app_state(None, Some(&format!("fc_session={}", token)));
-
-        let result = OptionalAuth::from_request_parts(&mut parts, &()).await;
-        assert!(result.is_ok());
-
-        let opt_auth = result.unwrap();
-        assert!(opt_auth.0.is_some());
-        let ctx = opt_auth.0.unwrap();
-        assert_eq!(ctx.scope, UserScope::Anchor);
     }
 
     // ─── ClientIp Extractor Tests ──────────────────────────────────────────

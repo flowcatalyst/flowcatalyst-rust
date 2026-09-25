@@ -87,8 +87,12 @@ impl RefreshToken {
     /// Use `generate_token_pair()` to create both the raw token and entity.
     pub fn new(token_hash: impl Into<String>, principal_id: impl Into<String>) -> Self {
         let now = Utc::now();
+        let id = tsid::generate_untyped();
         Self {
-            id: tsid::generate_untyped(),
+            // A fresh token roots its own rotation family, so even the
+            // first token of a login is caught if replayed after rotation.
+            token_family: Some(id.clone()),
+            id,
             token_hash: token_hash.into(),
             principal_id: principal_id.into(),
             oauth_client_id: None,
@@ -96,7 +100,6 @@ impl RefreshToken {
             accessible_clients: vec![],
             revoked: false,
             revoked_at: None,
-            token_family: None,
             replaced_by: None,
             created_at: now,
             expires_at: now + Duration::days(REFRESH_TOKEN_EXPIRY_DAYS),
@@ -135,6 +138,28 @@ impl RefreshToken {
     pub fn with_token_family(mut self, family: impl Into<String>) -> Self {
         self.token_family = Some(family.into());
         self
+    }
+
+    /// The token that replaces this one on rotation, and its raw value
+    /// (handed to the caller once). It keeps this token's lineage — OAuth
+    /// client binding, scopes, accessible clients — stays in its family (a
+    /// legacy token without one roots the family at its own id), and
+    /// inherits its expiry: the family's absolute cap, never extended by
+    /// rotating (Go `grantstore.Rotate`, Java `RefreshRotation.successorOf`).
+    pub fn successor(&self) -> (String, Self) {
+        let (raw, mut next) = Self::generate_token_pair(&self.principal_id);
+        next.oauth_client_id = self.oauth_client_id.clone();
+        next.scopes = self.scopes.clone();
+        next.accessible_clients = self.accessible_clients.clone();
+        next.expires_at = self.expires_at;
+        next.token_family = Some(self.family());
+        (raw, next)
+    }
+
+    /// The rotation family this token belongs to: its recorded family, or
+    /// for a legacy token that predates tracking, its own id.
+    pub fn family(&self) -> String {
+        self.token_family.clone().unwrap_or_else(|| self.id.clone())
     }
 
     /// Check if the token is valid (not expired and not revoked)
@@ -248,6 +273,39 @@ mod tests {
         let token = token.with_oauth_client("oauth-client-456");
 
         assert_eq!(token.oauth_client_id, Some("oauth-client-456".to_string()));
+    }
+
+    #[test]
+    fn a_new_token_roots_its_family() {
+        let (_, token) = RefreshToken::generate_token_pair("principal-123");
+        assert_eq!(token.token_family.as_deref(), Some(token.id.as_str()));
+    }
+
+    /// The successor keeps the lineage and the family, and inherits the
+    /// expiry instead of a fresh 30 days.
+    #[test]
+    fn the_successor_inherits_lineage_family_and_expiry() {
+        let (_, stored) = RefreshToken::generate_token_pair("prn_1");
+        let mut stored = stored
+            .with_oauth_client("oc_planner")
+            .with_scopes(vec!["openid".to_string(), "offline_access".to_string()])
+            .with_accessible_clients(vec!["clt_A".to_string()]);
+        stored.expires_at = Utc::now() + Duration::days(2);
+
+        let (raw, next) = stored.successor();
+        assert_eq!(RefreshToken::hash_token(&raw), next.token_hash);
+        assert_ne!(next.id, stored.id);
+        assert_eq!(next.principal_id, "prn_1");
+        assert_eq!(next.oauth_client_id.as_deref(), Some("oc_planner"));
+        assert_eq!(next.scopes, stored.scopes);
+        assert_eq!(next.accessible_clients, stored.accessible_clients);
+        assert_eq!(next.expires_at, stored.expires_at);
+        assert_eq!(next.token_family, stored.token_family);
+
+        // A legacy token (no family) roots the family at its own id.
+        stored.token_family = None;
+        let (_, next) = stored.successor();
+        assert_eq!(next.token_family.as_deref(), Some(stored.id.as_str()));
     }
 
     #[test]

@@ -166,6 +166,7 @@ pub(crate) mod tests {
                 accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
                 permissions: HashSet::new(),
                 roles: vec![],
+                credential: crate::shared::authorization_service::Credential::BearerToken,
             },
             match apps {
                 None => ApplicationScope::All,

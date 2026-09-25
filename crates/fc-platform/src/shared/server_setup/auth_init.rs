@@ -115,7 +115,10 @@ pub fn init_auth_services(
     };
 
     let auth = Arc::new(AuthService::new(auth_config));
-    let authz = Arc::new(AuthorizationService::new(repos.role_repo.clone()));
+    let authz = Arc::new(
+        AuthorizationService::new(repos.role_repo.clone())
+            .with_session_principals(repos.principal_repo.clone()),
+    );
     let password = Arc::new(PasswordService::default());
     let oidc_sync = Arc::new(OidcSyncService::new(
         repos.principal_repo.clone(),

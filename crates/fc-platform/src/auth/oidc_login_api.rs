@@ -122,6 +122,36 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Error response carrying a machine-readable `code` beside the message.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CodedErrorResponse {
+    pub code: String,
+    pub error: String,
+}
+
+fn coded_error(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
+    (
+        status,
+        Json(CodedErrorResponse {
+            code: code.to_string(),
+            error: error.into(),
+        }),
+    )
+        .into_response()
+}
+
+/// Owner ruling 2026-09-25, item 3 (Java ecb622fe): a multi-tenant
+/// provider's shared keys sign tokens for any tenant, and the `email` claim
+/// is settable by any tenant admin, so a mapping to one that pins no tenant
+/// binds the login to nobody. Such rows predate the save-time rule; a login
+/// through one is refused.
+fn tenant_not_pinned(
+    idp: &IdentityProvider,
+    mapping: &crate::email_domain_mapping::entity::EmailDomainMapping,
+) -> bool {
+    idp.oidc_multi_tenant && !mapping.is_tenant_pinned()
+}
+
 // ==================== Endpoints ====================
 
 /// Check authentication method for email domain
@@ -298,16 +328,18 @@ pub async fn oidc_login(
     {
         Ok(Some(m)) => m,
         Ok(None) => {
-            return (
+            // A user's typo or a stale link, not a server fault (owner
+            // ruling 2026-09-25, item 8; Java 93367448). A mapped domain
+            // whose provider is broken stays a 500 below.
+            info!(domain = %domain, "OIDC login for an email domain with no mapping");
+            return coded_error(
                 StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!(
-                        "No authentication configuration found for domain: {}",
-                        domain
-                    ),
-                }),
-            )
-                .into_response();
+                "EMAIL_DOMAIN_NOT_MAPPED",
+                format!(
+                    "No authentication configuration found for domain: {}",
+                    domain
+                ),
+            );
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup email domain mapping");
@@ -378,6 +410,19 @@ pub async fn oidc_login(
             }),
         )
             .into_response();
+    }
+
+    if tenant_not_pinned(&idp, &mapping) {
+        warn!(
+            domain = %domain,
+            identity_provider = %idp.code,
+            "OIDC login refused: multi-tenant identity provider pins no tenant"
+        );
+        return coded_error(
+            StatusCode::FORBIDDEN,
+            "TENANT_NOT_PINNED",
+            "This identity provider accepts any tenant and this domain pins none",
+        );
     }
 
     // Generate state, nonce, and PKCE
@@ -522,6 +567,16 @@ pub async fn oidc_callback(
         }
     };
 
+    // The mapping may have changed since the login began.
+    if tenant_not_pinned(&idp, &mapping) {
+        warn!(
+            domain = %mapping.email_domain,
+            identity_provider = %idp.code,
+            "OIDC login refused: multi-tenant identity provider pins no tenant"
+        );
+        return error_redirect("This sign-in method is not configured for your organisation");
+    }
+
     // Exchange code for tokens
     let callback_url = get_callback_url(&state, &host, &uri);
     let tokens = match exchange_code_for_tokens_from_idp(
@@ -569,7 +624,11 @@ pub async fn oidc_callback(
     }
 
     // Validate tenant ID if required by the mapping
-    if let Some(ref required_tenant_id) = mapping.required_oidc_tenant_id {
+    if let Some(required_tenant_id) = mapping
+        .required_oidc_tenant_id
+        .as_ref()
+        .filter(|_| mapping.is_tenant_pinned())
+    {
         if let Some(ref tid) = claims.tenant_id {
             if tid != required_tenant_id {
                 warn!(
@@ -621,8 +680,9 @@ pub async fn oidc_callback(
         }
     };
 
-    // Issue session token using the principal (which has roles already synced)
-    let session_token = match state.auth_service.generate_access_token(&principal) {
+    // The session cookie carries the subject only; the principal's
+    // authority is reloaded on every request.
+    let session_token = match state.auth_service.generate_session_token(&principal) {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "Failed to issue session token");
@@ -958,6 +1018,8 @@ enum IdTokenError {
     MissingClaim(&'static str),
     #[error("Invalid issuer for multi-tenant IDP: {0}")]
     InvalidIssuer(String),
+    #[error("ID token audience {0} does not include this client")]
+    InvalidAudience(serde_json::Value),
     #[error("Nonce mismatch")]
     NonceMismatch,
     #[error("No email claim in ID token")]
@@ -1040,7 +1102,9 @@ async fn validate_id_token_with_jwks(
         // we'll validate manually with pattern matching after decode.
         // Setting iss to None skips validation (empty set would reject all issuers).
         validation.iss = None;
-        validation.validate_aud = false; // audience may vary per tenant
+        // Only the issuer varies per tenant; `aud` is checked by hand below
+        // (jsonwebtoken's check runs with the issuer's, which is off here).
+        validation.validate_aud = false;
     } else {
         validation.set_issuer(&[issuer_url]);
         validation.set_audience(&[expected_client_id]);
@@ -1065,6 +1129,13 @@ async fn validate_id_token_with_jwks(
     // For multi-tenant: manually validate issuer against pattern
     if idp.oidc_multi_tenant && !is_valid_issuer_for_idp(idp, &issuer) {
         return Err(IdTokenError::InvalidIssuer(issuer));
+    }
+    // ...and the audience against our registered client id: it is OUR
+    // client_id at every tenant, so skipping it would accept an ID token
+    // minted for a different relying party at the same IdP (Go
+    // `VerifyIDToken`, bridge/oidc.go:246-260).
+    if idp.oidc_multi_tenant && !audience_contains(&payload["aud"], expected_client_id) {
+        return Err(IdTokenError::InvalidAudience(payload["aud"].clone()));
     }
 
     // Validate nonce
@@ -1127,6 +1198,16 @@ async fn validate_id_token_with_jwks(
 }
 
 /// Validate issuer against IDP configuration (exact match or pattern)
+/// Whether an `aud` claim, in either RFC 7519 form (a string or an array
+/// of strings), names `client_id` (Go `audienceContains`).
+fn audience_contains(aud: &serde_json::Value, client_id: &str) -> bool {
+    match aud {
+        serde_json::Value::String(a) => a == client_id,
+        serde_json::Value::Array(auds) => auds.iter().any(|a| a.as_str() == Some(client_id)),
+        _ => false,
+    }
+}
+
 fn is_valid_issuer_for_idp(idp: &IdentityProvider, issuer: &str) -> bool {
     // Exact match against configured issuer URL
     if let Some(ref issuer_url) = idp.oidc_issuer_url {
@@ -1619,4 +1700,106 @@ pub fn oidc_login_router(state: OidcLoginApiState) -> Router {
         )
         .route("/oidc/session/end", get(session_end))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::jwks_cache::{JwkKey, Jwks};
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use serde_json::json;
+
+    const TENANT_ISSUER: &str = "https://login.microsoftonline.com/tenant-a/v2.0";
+
+    /// A multi-tenant Entra-style IdP whose client id is `our-client`, and
+    /// the key its JWKS (seeded, no network) publishes.
+    async fn multi_tenant_idp() -> (IdentityProvider, JwksCache, EncodingKey) {
+        use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, RsaPublicKey};
+        let (private_pem, public_pem) =
+            crate::auth::auth_service::AuthConfig::generate_rsa_keys(None).unwrap();
+        let public = RsaPublicKey::from_public_key_pem(&public_pem).unwrap();
+        let jwk = JwkKey {
+            kty: "RSA".to_string(),
+            key_use: Some("sig".to_string()),
+            kid: Some("k1".to_string()),
+            alg: Some("RS256".to_string()),
+            n: Some(URL_SAFE_NO_PAD.encode(public.n().to_bytes_be())),
+            e: Some(URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())),
+            x: None,
+            y: None,
+            crv: None,
+        };
+        let mut idp = IdentityProvider::new("entra", "Entra", IdentityProviderType::Oidc);
+        idp.oidc_issuer_url = Some("https://login.microsoftonline.com/common/v2.0".to_string());
+        idp.oidc_client_id = Some("our-client".to_string());
+        idp.oidc_multi_tenant = true;
+        idp.oidc_issuer_pattern =
+            Some(r"^https://login\.microsoftonline\.com/[^/]+/v2\.0$".to_string());
+        let cache = JwksCache::new(900);
+        cache
+            .seed(
+                idp.oidc_issuer_url.as_deref().unwrap(),
+                Jwks { keys: vec![jwk] },
+            )
+            .await;
+        let key = EncodingKey::from_rsa_pem(private_pem.as_bytes()).unwrap();
+        (idp, cache, key)
+    }
+
+    fn id_token(key: &EncodingKey, aud: serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("k1".to_string());
+        let now = chrono::Utc::now().timestamp();
+        encode(
+            &header,
+            &json!({
+                "iss": TENANT_ISSUER,
+                "sub": "ext-sub",
+                "aud": aud,
+                "exp": now + 300,
+                "iat": now,
+                "nonce": "n-1",
+                "email": "ada@acme.test",
+                "tid": "tenant-a"
+            }),
+            key,
+        )
+        .unwrap()
+    }
+
+    /// Go `VerifyIDToken` (bridge/oidc.go:246-260): a multi-tenant IdP
+    /// re-applies the audience check, so an ID token minted for another
+    /// relying party at the same IdP is refused.
+    #[tokio::test]
+    async fn multi_tenant_id_token_must_name_our_client() {
+        let (idp, cache, key) = multi_tenant_idp().await;
+
+        for aud in [json!("our-client"), json!(["other", "our-client"])] {
+            let claims =
+                validate_id_token_with_jwks(&id_token(&key, aud.clone()), &idp, "n-1", &cache)
+                    .await
+                    .unwrap_or_else(|e| panic!("{aud}: {e}"));
+            assert_eq!(claims.tenant_id.as_deref(), Some("tenant-a"));
+        }
+
+        for aud in [json!("someone-else"), json!(["someone-else"]), json!(null)] {
+            let err =
+                validate_id_token_with_jwks(&id_token(&key, aud.clone()), &idp, "n-1", &cache)
+                    .await
+                    .unwrap_err();
+            assert!(
+                matches!(err, IdTokenError::InvalidAudience(_)),
+                "{aud}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn audience_contains_reads_both_forms() {
+        assert!(audience_contains(&json!("c"), "c"));
+        assert!(audience_contains(&json!(["a", "c"]), "c"));
+        assert!(!audience_contains(&json!(["a"]), "c"));
+        assert!(!audience_contains(&json!("a"), "c"));
+        assert!(!audience_contains(&json!(null), "c"));
+    }
 }

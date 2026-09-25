@@ -211,7 +211,6 @@ pub struct OAuthState {
 )]
 pub async fn authorize(
     State(state): State<OAuthState>,
-    headers: HeaderMap,
     jar: axum_extra::extract::cookie::CookieJar,
     Query(req): Query<AuthorizeRequest>,
 ) -> Response {
@@ -365,29 +364,31 @@ pub async fn authorize(
         }
     }
 
-    // Check if user is already authenticated (has valid session cookie).
-    // If so, skip the login redirect and issue the authorization code directly.
-    let session_token = jar
-        .get("fc_session")
-        .map(|c| c.value().to_string())
-        .or_else(|| {
-            headers
-                .get(header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(extract_bearer_token)
-                .map(|t| t.to_string())
-        });
+    // The signed-in user: the session cookie only (owner ruling 2026-09-25,
+    // item 6; Java 66281bc7), never a Bearer, and only for a principal that
+    // exists, is active and is a USER (Java S2.2). An API or identity
+    // access token may be narrowed, delegated to an OAuth client or a
+    // service account's; a code minted from one would hand a relying party
+    // a user session nobody signed in to. Anything else is "no session".
+    let session = match signed_in_user(&state, &jar).await {
+        Ok(session) => session,
+        Err(e) => {
+            error!(error = %e, client_id = %req.client_id, "session principal lookup failed");
+            return error_redirect(
+                &req.redirect_uri,
+                "server_error",
+                "Internal error",
+                req.state.as_deref(),
+            );
+        }
+    };
 
     // Handle `prompt` parameter (OIDC Core Section 3.1.2.1)
     let force_login = if let Some(ref prompt) = req.prompt {
         match prompt.as_str() {
             "none" => {
                 // prompt=none: if user is not authenticated, return login_required error
-                let has_valid_session = session_token
-                    .as_ref()
-                    .and_then(|t| state.auth_service.validate_token(t).ok())
-                    .is_some();
-                if !has_valid_session {
+                if session.is_none() {
                     return error_redirect(
                         &req.redirect_uri,
                         "login_required",
@@ -408,55 +409,55 @@ pub async fn authorize(
     };
 
     if !force_login {
-        if let Some(ref token) = session_token {
-            if let Ok(claims) = state.auth_service.validate_token(token) {
-                // Check max_age: if session is older than max_age seconds, force re-authentication
-                let session_too_old = req.max_age.is_some_and(|max_age| {
-                    let now = Utc::now().timestamp();
-                    now - claims.iat > max_age
-                });
+        if let Some(ref session) = session {
+            // Check max_age: if session is older than max_age seconds,
+            // force re-authentication. An unknown issue time never
+            // forces it; max_age=0 always does.
+            let session_too_old = req.max_age.is_some_and(|max_age| {
+                let now = Utc::now().timestamp();
+                max_age <= 0 || session.issued_at.is_some_and(|iat| now - iat > max_age)
+            });
 
-                if !session_too_old {
-                    // User is authenticated — issue authorization code immediately
-                    let auth_code_str = generate_random_string(64);
-                    let mut auth_code = AuthorizationCode {
-                        scope: req.scope.clone(),
-                        nonce: req.nonce.clone(),
-                        state: req.state.clone(),
-                        ..AuthorizationCode::new(
-                            auth_code_str.clone(),
-                            req.client_id.clone(),
-                            claims.sub.clone(),
-                            req.redirect_uri.clone(),
-                        )
-                    };
+            if !session_too_old {
+                // User is authenticated — issue authorization code immediately
+                let auth_code_str = generate_random_string(64);
+                let mut auth_code = AuthorizationCode {
+                    scope: req.scope.clone(),
+                    nonce: req.nonce.clone(),
+                    state: req.state.clone(),
+                    ..AuthorizationCode::new(
+                        auth_code_str.clone(),
+                        req.client_id.clone(),
+                        session.principal_id.clone(),
+                        req.redirect_uri.clone(),
+                    )
+                };
 
-                    auth_code = auth_code.with_pkce(pkce.clone());
+                auth_code = auth_code.with_pkce(pkce.clone());
 
-                    if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
-                        error!(error = %e, "Failed to store authorization code");
-                        return error_redirect(
-                            &req.redirect_uri,
-                            "server_error",
-                            "Failed to create authorization code",
-                            req.state.as_deref(),
-                        );
-                    }
-
-                    let mut redirect_url = format!(
-                        "{}?code={}",
-                        req.redirect_uri,
-                        urlencoding::encode(&auth_code_str)
+                if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
+                    error!(error = %e, "Failed to store authorization code");
+                    return error_redirect(
+                        &req.redirect_uri,
+                        "server_error",
+                        "Failed to create authorization code",
+                        req.state.as_deref(),
                     );
-                    if let Some(ref s) = req.state {
-                        redirect_url.push_str(&format!("&state={}", urlencoding::encode(s)));
-                    }
+                }
 
-                    info!(client_id = %req.client_id, principal_id = %claims.sub, "Issued authorization code (authenticated session)");
-                    return Redirect::temporary(&redirect_url).into_response();
-                } // !session_too_old
-            } // validate_token Ok
-        } // session_token Some
+                let mut redirect_url = format!(
+                    "{}?code={}",
+                    req.redirect_uri,
+                    urlencoding::encode(&auth_code_str)
+                );
+                if let Some(ref s) = req.state {
+                    redirect_url.push_str(&format!("&state={}", urlencoding::encode(s)));
+                }
+
+                info!(client_id = %req.client_id, principal_id = %session.principal_id, "Issued authorization code (authenticated session)");
+                return Redirect::temporary(&redirect_url).into_response();
+            } // !session_too_old
+        } // session Some
     } // !force_login
 
     // User is not authenticated — proceed with login flow
@@ -529,6 +530,27 @@ pub async fn authorize(
     }
 
     Redirect::temporary(&login_url).into_response()
+}
+
+/// The user signed in to this browser: the platform session cookie, when it
+/// verifies as a session token and its principal exists, is active and is
+/// a USER. `Ok(None)` is "no session" (send the user to log in).
+async fn signed_in_user(
+    state: &OAuthState,
+    jar: &axum_extra::extract::cookie::CookieJar,
+) -> Result<Option<crate::auth::auth_service::SessionIdentity>, PlatformError> {
+    let Some(cookie) = jar.get(crate::shared::middleware::SESSION_COOKIE_NAME) else {
+        return Ok(None);
+    };
+    let Ok(session) = state.auth_service.validate_session_token(cookie.value()) else {
+        return Ok(None);
+    };
+    Ok(state
+        .principal_repo
+        .find_by_id(&session.principal_id)
+        .await?
+        .filter(|p| p.active && p.principal_type == crate::PrincipalType::User)
+        .map(|_| session))
 }
 
 /// Check `provided` against one stored secret ref and, when it matches a
@@ -1216,13 +1238,25 @@ async fn handle_authorization_code_grant(
         }
     }
 
-    // Get the principal
+    // Get the principal. One deactivated since the code was issued gets no
+    // tokens (Java S2.2).
     let principal = match state
         .principal_repo
         .find_by_id(&auth_code.principal_id)
         .await
     {
-        Ok(Some(p)) => p,
+        Ok(Some(p)) if p.active => p,
+        Ok(Some(_)) => {
+            warn!(principal_id = %auth_code.principal_id, client_id = %auth_code.client_id, "authorization code refused: principal is not active");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Account is not active".to_string()),
+                }),
+            )
+                .into_response();
+        }
         Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1366,44 +1400,21 @@ async fn handle_refresh_token_grant(
         }
     };
 
-    // Hash the provided token and look it up
-    let token_hash = RefreshToken::hash_token(&refresh_token_str);
-
-    let stored_token = match state
-        .refresh_token_repo
-        .find_valid_by_hash(&token_hash)
-        .await
+    // Rotate: atomic single use, family reuse detection with a 10 s
+    // sibling leeway, the client binding, and the family's inherited
+    // expiry (see `refresh_rotation`).
+    let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
+    let rotated = match crate::auth::refresh_rotation::rotate(
+        &*state.refresh_token_repo,
+        &refresh_token_str,
+        requesting_client_id,
+    )
+    .await
     {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: Some("Invalid or expired refresh token".to_string()),
-                }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            error!(error = %e, "Failed to lookup refresh token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // P1-3: Validate that the requesting client_id matches the stored token's oauth_client_id
-    if let Some(ref stored_client_id) = stored_token.oauth_client_id {
-        let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
-        if requesting_client_id != Some(stored_client_id.as_str()) {
+        Ok(Ok(rotated)) => rotated,
+        Ok(Err(crate::auth::refresh_rotation::Rejection::Refused { token_client_id })) => {
             warn!(
-                stored_client_id = %stored_client_id,
+                stored_client_id = %token_client_id,
                 requesting_client_id = ?requesting_client_id,
                 "Refresh token client binding mismatch"
             );
@@ -1416,20 +1427,29 @@ async fn handle_refresh_token_grant(
             )
                 .into_response();
         }
-    }
-
-    // Revoke the old token (token rotation for security)
-    if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
-        error!(error = %e, "Failed to revoke old refresh token");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "server_error".to_string(),
-                error_description: None,
-            }),
-        )
-            .into_response();
-    }
+        Ok(Err(_)) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Invalid or expired refresh token".to_string()),
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to rotate refresh token");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+    let stored_token = rotated.stored;
 
     // Find the principal
     let principal = match state
@@ -1533,30 +1553,7 @@ async fn handle_refresh_token_grant(
         None
     };
 
-    // Generate new refresh token (rotation)
-    let (raw_token, token_entity) = RefreshToken::generate_token_pair(&principal.id);
-    let token_entity = token_entity
-        .with_accessible_clients(stored_token.accessible_clients.clone())
-        .with_scopes(stored_token.scopes.clone());
-
-    // Preserve oauth_client_id on rotated token
-    let token_entity = if let Some(ref cid) = stored_token.oauth_client_id {
-        token_entity.with_oauth_client(cid.clone())
-    } else {
-        token_entity
-    };
-
-    if let Err(e) = state.refresh_token_repo.insert(&token_entity).await {
-        error!(error = %e, "Failed to store new refresh token");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "server_error".to_string(),
-                error_description: None,
-            }),
-        )
-            .into_response();
-    }
+    let raw_token = rotated.new_raw;
 
     info!(principal_id = %principal.id, "Token refreshed via refresh_token grant");
 
@@ -1706,6 +1703,32 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     };
 
     let principal = match state.principal_repo.find_by_id(principal_id).await {
+        // A client authenticates as a service account, never a user: a USER
+        // principal here would mint that user's full authority for whoever
+        // holds the client secret (Java 6a06a7f0 S2.3).
+        Ok(Some(p)) if p.principal_type != crate::PrincipalType::Service => {
+            warn!(client_id = %client_id, principal_id = %principal_id, "client_credentials refused: linked principal is not a service account");
+            let attempt = LoginAttempt {
+                identifier: Some(client_id.clone()),
+                principal_id: Some(p.id.clone()),
+                failure_reason: Some(
+                    "Client not properly configured (linked principal is not a service account)"
+                        .to_string(),
+                ),
+                ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
+            };
+            if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+                warn!(error = %e, "Failed to log service account login attempt");
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "unauthorized_client".to_string(),
+                    error_description: Some("Client is not configured for this grant".to_string()),
+                }),
+            )
+                .into_response();
+        }
         Ok(Some(p)) if p.active => p,
         Ok(Some(_)) => {
             warn!(client_id = %client_id, "Service account principal is inactive");

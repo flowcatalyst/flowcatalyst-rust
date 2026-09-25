@@ -26,7 +26,6 @@ use crate::shared::middleware::{Authenticated, ClientIp};
 use crate::AuthService;
 use crate::LoginOutcome;
 use crate::PasswordService;
-use crate::RefreshToken;
 use crate::{EmailDomainMappingRepository, IdentityProviderRepository, LoginAttemptRepository};
 use crate::{PrincipalRepository, RefreshTokenRepository};
 
@@ -554,19 +553,32 @@ pub async fn refresh_token(
     State(state): State<AuthState>,
     Json(req): Json<RefreshTokenRequest>,
 ) -> Result<Json<TokenRefreshResponse>, PlatformError> {
-    // Hash the provided token and look it up
-    let token_hash = RefreshToken::hash_token(&req.refresh_token);
-
-    let stored_token = state
-        .refresh_token_repo
-        .find_valid_by_hash(&token_hash)
-        .await?
-        .ok_or_else(|| PlatformError::InvalidToken {
-            message: "Invalid or expired refresh token".to_string(),
-        })?;
-
-    // Revoke the old token (token rotation for security)
-    state.refresh_token_repo.revoke_by_hash(&token_hash).await?;
+    // Rotate through the same contract as the /oauth/token refresh grant
+    // (Go grantstore.Rotate). This endpoint authenticates no client, so a
+    // token issued to an OAuth client is refused and not consumed: it
+    // refreshes through /oauth/token, which checks the client (Go
+    // handleRefresh, auth/login/endpoint.go:352-360).
+    let rotated = match crate::auth::refresh_rotation::rotate(
+        &*state.refresh_token_repo,
+        &req.refresh_token,
+        None,
+    )
+    .await?
+    {
+        Ok(rotated) => rotated,
+        Err(crate::auth::refresh_rotation::Rejection::Refused { .. }) => {
+            return Err(PlatformError::InvalidToken {
+                message: "Token was not issued to this client".to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(PlatformError::InvalidToken {
+                message: "Invalid or expired refresh token".to_string(),
+            });
+        }
+    };
+    let raw_token = rotated.new_raw;
+    let stored_token = rotated.stored;
 
     // Find the principal
     let principal = state
@@ -587,17 +599,10 @@ pub async fn refresh_token(
     // Generate new access token
     let access_token = state.auth_service.generate_access_token(&principal)?;
 
-    // Generate new refresh token (rotation)
-    let (raw_token, token_entity) = RefreshToken::generate_token_pair(&principal.id);
-    let token_entity =
-        token_entity.with_accessible_clients(stored_token.accessible_clients.clone());
-
-    state.refresh_token_repo.insert(&token_entity).await?;
-
     Ok(Json(TokenRefreshResponse {
         access_token,
         token_type: "Bearer".to_string(),
-        expires_in: 3600,
+        expires_in: state.auth_service.access_token_expiry_secs(),
         refresh_token: raw_token,
     }))
 }

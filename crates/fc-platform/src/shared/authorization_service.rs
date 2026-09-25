@@ -41,6 +41,24 @@ pub struct AuthContext {
 
     /// Role codes
     pub roles: Vec<String>,
+
+    /// What the caller authenticated with. Only the session-cookie path of
+    /// the authenticator stamps [`Credential::SessionCookie`]; every other
+    /// construction is a bearer, so a check for a signed-in browser fails
+    /// closed.
+    pub credential: Credential,
+}
+
+/// The credential a request authenticated with (Java
+/// `AuthContext.Credential`, 6a06a7f0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Credential {
+    /// An `Authorization: Bearer` access token: self-contained claims,
+    /// possibly narrowed to a scope or delegated to an OAuth client.
+    BearerToken,
+    /// The platform session cookie: a signed-in user, reloaded from the
+    /// database on this request.
+    SessionCookie,
 }
 
 impl AuthContext {
@@ -55,9 +73,66 @@ impl AuthContext {
             scope: claims.tier,
             email: claims.email.clone(),
             name: claims.name.clone(),
-            accessible_clients: claims.clients.clone(),
+            accessible_clients: claims
+                .clients
+                .iter()
+                .map(|c| client_id_of(c).to_string())
+                .collect(),
             permissions,
             roles: claims.roles.clone(),
+            credential: Credential::BearerToken,
+        }
+    }
+
+    /// The context of a signed-in browser session: the principal as it is
+    /// in the database now (Go `middleware.introspect`'s cookie path,
+    /// shared/middleware/middleware.go:163-183, over `provider.BuildClaims`).
+    /// Clients are the home client and the assigned ones as bare ids, `*`
+    /// for an anchor.
+    pub fn for_session(principal: &crate::Principal, permissions: HashSet<String>) -> Self {
+        let accessible_clients = if principal.scope.is_anchor() {
+            vec!["*".to_string()]
+        } else {
+            let mut clients = principal.assigned_clients.clone();
+            if let Some(home) = principal.client_id.as_ref().filter(|c| !c.is_empty()) {
+                if !clients.contains(home) {
+                    clients.push(home.clone());
+                }
+            }
+            clients
+        };
+        Self {
+            principal_id: principal.id.clone(),
+            principal_type: principal.principal_type,
+            scope: principal.scope,
+            email: principal.email().map(String::from),
+            name: principal.name.clone(),
+            accessible_clients,
+            permissions,
+            roles: crate::auth::auth_service::role_names(principal),
+            credential: Credential::SessionCookie,
+        }
+    }
+
+    /// Whether the caller is a browser session (the platform session
+    /// cookie), as opposed to a bearer token.
+    pub fn via_session_cookie(&self) -> bool {
+        self.credential == Credential::SessionCookie
+    }
+
+    /// Require a signed-in user: the session cookie of an active USER
+    /// principal (the cookie path only authenticates an active one). A
+    /// bearer is refused like no credential at all (401), even when it
+    /// belongs to that user: it may be narrowed or delegated to an OAuth
+    /// client, so it never stands in for the user's own session (Java
+    /// S2.1, S2.4).
+    pub fn require_session_user(&self) -> std::result::Result<(), PlatformError> {
+        if self.via_session_cookie() && self.principal_type == PrincipalType::User {
+            Ok(())
+        } else {
+            Err(PlatformError::Unauthorized {
+                message: "A signed-in browser session is required".to_string(),
+            })
         }
     }
 
@@ -106,6 +181,14 @@ impl AuthContext {
     }
 }
 
+/// The client id in one `clients` claim entry: the claim carries
+/// `id:identifier` pairs (or `*`) and everything inward reasons in bare ids
+/// (Go `auth.ParseClientsClaim`; Java `ScopeClaim`). Client ids never
+/// contain `:`.
+fn client_id_of(entry: &str) -> &str {
+    entry.split_once(':').map_or(entry, |(id, _)| id)
+}
+
 /// Go's `errIdentityTokenNotAPICredential` (shared/middleware/middleware.go:24).
 pub const IDENTITY_TOKEN_NOT_API_CREDENTIAL: &str = "this access token was issued for interactive login and cannot authorize API requests; obtain an API token via the client_credentials grant";
 
@@ -121,6 +204,9 @@ const PERMISSION_CACHE_TTL_SECS: u64 = 60;
 /// Authorization service for checking permissions
 pub struct AuthorizationService {
     role_repo: Arc<RoleRepository>,
+    /// Where a session cookie's principal is reloaded from; without it no
+    /// session authenticates.
+    principals: Option<Arc<PrincipalRepository>>,
     /// Cache: sorted role codes joined by "," → resolved permissions
     permission_cache: DashMap<String, CachedPermissions>,
 }
@@ -129,8 +215,38 @@ impl AuthorizationService {
     pub fn new(role_repo: Arc<RoleRepository>) -> Self {
         Self {
             role_repo,
+            principals: None,
             permission_cache: DashMap::new(),
         }
+    }
+
+    /// Reload session-cookie principals from `principals`.
+    pub fn with_session_principals(mut self, principals: Arc<PrincipalRepository>) -> Self {
+        self.principals = Some(principals);
+        self
+    }
+
+    /// The context for a session cookie's subject, reloaded from the
+    /// database on every request, as Go does: no principal cache, so a
+    /// deactivation, deletion, role or client change takes effect on the
+    /// very next request. Role → permission resolution keeps its usual
+    /// 60-second cache. `None` when the principal is unknown, inactive or
+    /// not a USER (only an interactive login mints a session), or when no
+    /// principal store is configured.
+    pub async fn session_context(&self, principal_id: &str) -> Result<Option<AuthContext>> {
+        let Some(principals) = &self.principals else {
+            return Ok(None);
+        };
+        let Some(principal) = principals.find_by_id(principal_id).await? else {
+            return Ok(None);
+        };
+        if !principal.active || principal.principal_type != PrincipalType::User {
+            return Ok(None);
+        }
+        let permissions = self
+            .resolve_permissions(&crate::auth::auth_service::role_names(&principal))
+            .await?;
+        Ok(Some(AuthContext::for_session(&principal, permissions)))
     }
 
     /// Build an authorization context from JWT claims
@@ -1102,7 +1218,28 @@ mod tests {
             accessible_clients: clients.into_iter().map(String::from).collect(),
             permissions: permissions.into_iter().map(String::from).collect(),
             roles: vec!["test:admin".to_string()],
+            credential: Credential::BearerToken,
         }
+    }
+
+    /// A bearer's `clients` claim carries `id:identifier` pairs (Go
+    /// `buildClients`); client checks and every reader of
+    /// `accessible_clients` take bare ids.
+    #[test]
+    fn clients_claim_pairs_become_bare_ids() {
+        let claims: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "sub": "prn_1", "iss": "i", "aud": "a", "exp": 2, "iat": 1,
+            "type": "SERVICE", "tier": "PARTNER",
+            "clients": ["clt_A:acme", "clt_B"]
+        }))
+        .unwrap();
+        let ctx = AuthContext::from_claims_with_permissions(&claims, HashSet::new());
+        assert_eq!(ctx.accessible_clients, vec!["clt_A", "clt_B"]);
+        assert!(ctx.can_access_client("clt_A"));
+        assert!(ctx.can_access_client("clt_B"));
+        assert!(!ctx.can_access_client("acme"));
+        assert!(!ctx.can_access_client("clt_C"));
+        assert_eq!(client_id_of("*"), "*");
     }
 
     #[test]
@@ -1202,6 +1339,7 @@ mod tests {
             accessible_clients: vec![],
             permissions: HashSet::new(),
             roles: vec![],
+            credential: Credential::BearerToken,
         };
         assert!(!ctx.has_role("admin"));
         assert!(!ctx.has_permission("anything"));

@@ -8,6 +8,7 @@ use super::events::IdentityProviderUpdated;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
+use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 
 /// Command for updating an existing identity provider.
@@ -36,13 +37,19 @@ impl crate::usecase::AuditMasked for UpdateIdentityProviderCommand {}
 /// Use case for updating an existing identity provider.
 pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
+    edm_repo: Arc<EmailDomainMappingRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
-    pub fn new(idp_repo: Arc<IdentityProviderRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        idp_repo: Arc<IdentityProviderRepository>,
+        edm_repo: Arc<EmailDomainMappingRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             idp_repo,
+            edm_repo,
             unit_of_work,
         }
     }
@@ -130,6 +137,25 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         }
 
         idp.updated_at = chrono::Utc::now();
+
+        // A provider that is (or becomes) multi-tenant must not route any
+        // domain whose mapping pins no tenant (owner ruling 2026-09-25,
+        // item 3).
+        if idp.oidc_multi_tenant {
+            let unpinned = self
+                .edm_repo
+                .find_unpinned_domains_for_identity_provider(&idp.id)
+                .await?;
+            if !unpinned.is_empty() {
+                return Err(UseCaseError::validation(
+                    "TENANT_PIN_REQUIRED",
+                    format!(
+                        "A multi-tenant identity provider needs every mapped domain to pin its tenant; set requiredOidcTenantId on: {}",
+                        unpinned.join(", ")
+                    ),
+                ));
+            }
+        }
 
         // Create domain event
         let event = IdentityProviderUpdated::new(ctx, &idp.id, updated_name);

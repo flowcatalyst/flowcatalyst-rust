@@ -128,6 +128,57 @@ pub struct IdTokenClaims {
     pub clients: Vec<String>,
 }
 
+/// The session cookie's claims, in Go's shape (`sessiontoken.Mint` via
+/// `provider.MintSessionToken`, auth/sessiontoken/sessiontoken.go:79-121,
+/// auth/provider/provider.go:285-314): the subject and email only, plus an
+/// empty `tier` and a false `all_applications`, which Go always writes. No
+/// `aud`, `type`, `jti` or `token_use`. Every piece of authority is
+/// reloaded from the database per request, so a role change or a
+/// deactivation takes effect on the next request, and a cookie Go issued
+/// before cutover (same key and issuer) stays valid.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionTokenClaims {
+    pub iss: String,
+    pub sub: String,
+    pub iat: i64,
+    pub nbf: i64,
+    pub exp: i64,
+    /// Always empty: Go mints the cookie without the tier.
+    pub tier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Always false: Go mints the cookie without application access.
+    pub all_applications: bool,
+}
+
+/// What a verified session cookie establishes: who signed in, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionIdentity {
+    /// The principal id (`sub`).
+    pub principal_id: String,
+    /// When the session was minted (`iat`) — the sign-in time, for OIDC
+    /// `max_age`. `None` when the token carries no `iat`.
+    pub issued_at: Option<i64>,
+}
+
+/// The claims a session cookie is read with. Every other token the
+/// platform signs (access tokens, ID tokens) carries at least one of
+/// `token_use`, `type` or `jti`; a session token carries none of them
+/// (Java `TokenClaims.isSessionToken`, 6a06a7f0), so an API or identity
+/// token replayed as the cookie is never a sign-in.
+#[derive(Deserialize)]
+struct SessionTokenWire {
+    sub: String,
+    #[serde(default)]
+    iat: Option<i64>,
+    #[serde(default)]
+    token_use: Option<serde_json::Value>,
+    #[serde(default, rename = "type")]
+    principal_type: Option<serde_json::Value>,
+    #[serde(default)]
+    jti: Option<serde_json::Value>,
+}
+
 /// JWT Claims for access tokens, in Go's shape
 /// (`authservice.AccessTokenClaims`, authservice.go:84-142).
 ///
@@ -883,17 +934,89 @@ impl AuthService {
         ))
     }
 
-    /// A longer-lived, authority-bearing token for cookie sessions. Go
-    /// `GenerateSessionToken` (authservice.go:459).
+    /// The session cookie's token: the subject only, in Go's shape (see
+    /// [`SessionTokenClaims`]), valid for the session lifetime. Go
+    /// `provider.MintSessionToken` (auth/provider/provider.go:285-314).
     pub fn generate_session_token(&self, principal: &Principal) -> Result<String> {
-        self.sign_access(self.access_token_claims(
-            principal,
-            self.config.session_token_expiry_secs,
-            &[],
-            true,
-            None,
-            Utc::now(),
-        ))
+        let claims = self.session_token_claims(principal, Utc::now());
+        let mut header = Header::new(self.algorithm);
+        header.kid = self.key_id.clone();
+        encode(&header, &claims, &self.encoding_key).map_err(|e| PlatformError::Internal {
+            message: format!("Failed to encode session token: {}", e),
+        })
+    }
+
+    /// The session-token claim set, unsigned.
+    pub fn session_token_claims(
+        &self,
+        principal: &Principal,
+        now: chrono::DateTime<Utc>,
+    ) -> SessionTokenClaims {
+        SessionTokenClaims {
+            iss: self.config.issuer.clone(),
+            sub: principal.id.clone(),
+            iat: now.timestamp(),
+            nbf: now.timestamp(),
+            exp: (now + Duration::seconds(self.config.session_token_expiry_secs)).timestamp(),
+            tier: String::new(),
+            email: principal
+                .email()
+                .filter(|e| !e.is_empty())
+                .map(String::from),
+            all_applications: false,
+        }
+    }
+
+    /// Verify a session cookie (Go `sessiontoken.Validate` with the
+    /// platform's issuer and audience, sessiontoken.go:151-209): signature
+    /// under the current or a previous key, `exp`, the issuer, a non-empty
+    /// subject, and an `aud` — when present — that names the platform. On
+    /// top of Go, the token must be the session kind: one carrying
+    /// `token_use`, `type` or `jti` (an access or ID token) is refused.
+    pub fn validate_session_token(&self, token: &str) -> Result<SessionIdentity> {
+        let mut validation = Validation::new(self.algorithm);
+        validation.set_issuer(&[&self.config.issuer]);
+        validation.set_audience(&[&self.config.audience]);
+        validation.set_required_spec_claims(&["exp", "iss", "sub"]);
+
+        let mut decoded = decode::<SessionTokenWire>(token, &self.decoding_key, &validation);
+        if let Err(e) = &decoded {
+            if !matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
+                for prev in &self.previous_keys {
+                    if let Ok(data) =
+                        decode::<SessionTokenWire>(token, &prev.decoding_key, &validation)
+                    {
+                        decoded = Ok(data);
+                        break;
+                    }
+                }
+            }
+        }
+        let claims = match decoded {
+            Ok(data) => data.claims,
+            Err(e) if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) => {
+                return Err(PlatformError::TokenExpired)
+            }
+            Err(e) => {
+                return Err(PlatformError::InvalidToken {
+                    message: e.to_string(),
+                })
+            }
+        };
+        if claims.token_use.is_some() || claims.principal_type.is_some() || claims.jti.is_some() {
+            return Err(PlatformError::InvalidToken {
+                message: "not a session token".to_string(),
+            });
+        }
+        if claims.sub.is_empty() {
+            return Err(PlatformError::InvalidToken {
+                message: "session token has no subject".to_string(),
+            });
+        }
+        Ok(SessionIdentity {
+            principal_id: claims.sub,
+            issued_at: claims.iat,
+        })
     }
 
     /// Generate an OIDC ID token for a principal with its full role list.
@@ -1316,11 +1439,128 @@ mod tests {
             )
             .unwrap();
         assert_eq!(claims.granted_permissions(), granted);
+    }
 
-        let session = s.generate_session_token(&p).unwrap();
-        let claims = s.validate_token(&session).unwrap();
-        assert_eq!(claims.exp - claims.iat, 86400);
-        assert_eq!(claims.token_use.as_deref(), Some(TOKEN_USE_API));
+    /// Go `provider.MintSessionToken` → `sessiontoken.Mint`
+    /// (provider.go:285-314, sessiontoken.go:79-121) for the same principal:
+    /// the subject and email only, an empty `tier`, a false
+    /// `all_applications`, the session lifetime; no `aud`, `type`, `jti`,
+    /// `token_use` or authority.
+    #[test]
+    fn session_token_claims_match_go() {
+        let s = service();
+        assert_eq!(
+            serde_json::to_value(s.session_token_claims(&client_user(), now())).unwrap(),
+            json!({
+                "iss": "https://fc.example.test",
+                "sub": "prn_ADA",
+                "iat": 1_760_000_000,
+                "nbf": 1_760_000_000,
+                "exp": 1_760_086_400,
+                "tier": "",
+                "email": "ada@acme.test",
+                "all_applications": false
+            })
+        );
+        let mut no_email = client_user();
+        no_email.user_identity = None;
+        let v = serde_json::to_value(s.session_token_claims(&no_email, now())).unwrap();
+        assert!(v.get("email").is_none(), "{v}");
+    }
+
+    #[test]
+    fn a_session_token_round_trips_and_is_no_bearer() {
+        let s = service();
+        let token = s.generate_session_token(&client_user()).unwrap();
+        let identity = s.validate_session_token(&token).unwrap();
+        assert_eq!(identity.principal_id, "prn_ADA");
+        assert!(identity.issued_at.is_some());
+        // It carries no `type`: as a bearer it is no access token at all.
+        assert!(s.validate_token(&token).is_err());
+    }
+
+    /// An RS256 cookie exactly as Go mints it (no `kid`, no `aud`, claims
+    /// as `sessiontoken.Mint` writes them) validates under the same key and
+    /// issuer: Go-issued sessions survive the cutover.
+    #[test]
+    fn a_go_issued_session_cookie_is_accepted() {
+        let (private_pem, public_pem) = AuthConfig::generate_rsa_keys(None).unwrap();
+        let s = AuthService::new(AuthConfig {
+            rsa_private_key: Some(private_pem.clone()),
+            rsa_public_key: Some(public_pem),
+            issuer: "https://fc.example.test".to_string(),
+            audience: "https://fc.example.test".to_string(),
+            ..AuthConfig::default()
+        });
+        let now = Utc::now().timestamp();
+        let go_cookie = encode(
+            &Header::new(Algorithm::RS256),
+            &json!({
+                "iss": "https://fc.example.test",
+                "sub": "prn_GO",
+                "iat": now,
+                "nbf": now,
+                "tier": "",
+                "exp": now + 86_400,
+                "email": "go@acme.test",
+                "all_applications": false
+            }),
+            &EncodingKey::from_rsa_pem(private_pem.as_bytes()).unwrap(),
+        )
+        .unwrap();
+        let identity = s.validate_session_token(&go_cookie).unwrap();
+        assert_eq!(identity.principal_id, "prn_GO");
+        assert_eq!(identity.issued_at, Some(now));
+    }
+
+    /// Only a session token is a sign-in: an access token (authority or
+    /// identity), an ID token for a relying party, a foreign issuer, an
+    /// expired or a subject-less token are all refused.
+    #[test]
+    fn only_a_session_token_validates_as_the_cookie() {
+        let s = service();
+        let p = client_user();
+        for (what, token) in [
+            ("access token", s.generate_access_token(&p).unwrap()),
+            (
+                "identity token",
+                s.generate_identity_access_token(&p, Some("oc_hr")).unwrap(),
+            ),
+            ("id token", s.generate_id_token(&p, "oc_hr", None).unwrap()),
+        ] {
+            assert!(s.validate_session_token(&token).is_err(), "{what}");
+        }
+
+        let now = Utc::now().timestamp();
+        let sign = |claims: serde_json::Value| {
+            encode(&Header::new(s.algorithm), &claims, &s.encoding_key).unwrap()
+        };
+        let base = json!({
+            "iss": "https://fc.example.test", "sub": "prn_1",
+            "iat": now, "exp": now + 600
+        });
+        assert!(s.validate_session_token(&sign(base.clone())).is_ok());
+        let mut with_aud = base.clone();
+        with_aud["aud"] = json!("https://fc.example.test");
+        assert!(s.validate_session_token(&sign(with_aud)).is_ok());
+        for (what, patch) in [
+            ("foreign aud", json!({"aud": "oc_hr"})),
+            ("foreign iss", json!({"iss": "https://evil.test"})),
+            ("expired", json!({"exp": now - 3600})),
+            ("empty sub", json!({"sub": ""})),
+            ("jti", json!({"jti": "x"})),
+            ("type", json!({"type": "USER"})),
+            ("token_use", json!({"token_use": "api"})),
+        ] {
+            let mut claims = base.clone();
+            for (k, v) in patch.as_object().unwrap() {
+                claims[k] = v.clone();
+            }
+            assert!(
+                s.validate_session_token(&sign(claims)).is_err(),
+                "{what} accepted"
+            );
+        }
     }
 
     /// AgentPlanner's bearer check (central_agent/flowcatalyst/oidc.py:

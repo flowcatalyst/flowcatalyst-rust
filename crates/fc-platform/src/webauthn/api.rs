@@ -172,6 +172,9 @@ pub async fn register_begin(
     auth: Authenticated,
     Json(req): Json<RegisterBeginRequest>,
 ) -> Result<Json<RegisterBeginResponse>, PlatformError> {
+    // Session cookie only (Java 6a06a7f0 S2.4): a bearer, possibly
+    // delegated to an OAuth client, never manages the user's passkeys.
+    auth.0.require_session_user()?;
     let email = auth
         .0
         .email
@@ -240,6 +243,9 @@ pub async fn register_complete(
     auth: Authenticated,
     Json(req): Json<RegisterCompleteRequest>,
 ) -> Result<Json<RegisterCompleteResponse>, PlatformError> {
+    // Session cookie only (Java 6a06a7f0 S2.4): a bearer, possibly
+    // delegated to an OAuth client, never manages the user's passkeys.
+    auth.0.require_session_user()?;
     let consumed = state
         .ceremony_repo
         .consume_registration(&req.state_id)
@@ -541,6 +547,9 @@ pub async fn list_credentials(
     State(state): State<WebauthnApiState>,
     auth: Authenticated,
 ) -> Result<Json<Vec<CredentialSummary>>, PlatformError> {
+    // Session cookie only (Java 6a06a7f0 S2.4): a bearer, possibly
+    // delegated to an OAuth client, never manages the user's passkeys.
+    auth.0.require_session_user()?;
     let creds = state
         .credential_repo
         .find_by_principal(&auth.0.principal_id)
@@ -575,6 +584,9 @@ pub async fn delete_credential(
     auth: Authenticated,
     Path(credential_id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    // Session cookie only (Java 6a06a7f0 S2.4): a bearer, possibly
+    // delegated to an OAuth client, never manages the user's passkeys.
+    auth.0.require_session_user()?;
     let use_case =
         RevokePasskeyUseCase::new(state.credential_repo.clone(), state.unit_of_work.clone());
     let ctx = ExecutionContext::from_auth(&auth.0);

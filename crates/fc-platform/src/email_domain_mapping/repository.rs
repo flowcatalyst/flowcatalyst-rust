@@ -188,6 +188,24 @@ impl EmailDomainMappingRepository {
         self.hydrate_all(edms).await
     }
 
+    /// The domains routed to `identity_provider_id` whose mapping pins no
+    /// OIDC tenant (a null or blank `required_oidc_tenant_id`), sorted.
+    pub async fn find_unpinned_domains_for_identity_provider(
+        &self,
+        identity_provider_id: &str,
+    ) -> Result<Vec<String>> {
+        let domains = sqlx::query_scalar::<_, String>(
+            "SELECT email_domain FROM tnt_email_domain_mappings
+             WHERE identity_provider_id = $1
+               AND coalesce(btrim(required_oidc_tenant_id), '') = ''
+             ORDER BY email_domain",
+        )
+        .bind(identity_provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(domains)
+    }
+
     pub async fn insert(&self, edm: &EmailDomainMapping) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO tnt_email_domain_mappings
