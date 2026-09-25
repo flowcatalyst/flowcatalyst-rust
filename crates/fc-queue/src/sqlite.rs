@@ -187,20 +187,37 @@ impl QueueConsumer for SqliteQueue {
         let now = Utc::now().timestamp();
         let new_visible_at = now + self.visibility_timeout_seconds as i64;
 
-        // Fetch visible messages, respecting message group ordering
-        // For FIFO: only take the first message from each message group
+        // Candidate group heads, with the same eligibility as the Postgres
+        // queue's (and Go's) claim: the earliest VISIBLE row of its group
+        // (COALESCE(message_group_id, id)), ties on created_at broken by id,
+        // and not behind an earlier row of its group that was released
+        // with a delay (receipt_handle NULL, visible_at in the future) —
+        // otherwise a delayed-nacked head is overtaken by its successor.
         let rows = sqlx::query(
             r#"
-            WITH eligible AS (
-                SELECT id, message_group_id, payload, created_at,
-                       ROW_NUMBER() OVER (PARTITION BY COALESCE(message_group_id, id) ORDER BY created_at) as rn
-                FROM queue_messages
-                WHERE queue_name = ? AND visible_at <= ?
-            )
-            SELECT id, message_group_id, payload, created_at
-            FROM eligible
-            WHERE rn = 1
-            LIMIT ?
+            SELECT m.id, m.message_group_id, m.payload, m.created_at
+              FROM queue_messages m
+             WHERE m.queue_name = ?1
+               AND m.visible_at <= ?2
+               AND NOT EXISTS (
+                     SELECT 1 FROM queue_messages e
+                      WHERE e.queue_name = m.queue_name
+                        AND COALESCE(e.message_group_id, e.id) = COALESCE(m.message_group_id, m.id)
+                        AND e.visible_at <= ?2
+                        AND (e.created_at < m.created_at
+                             OR (e.created_at = m.created_at AND e.id < m.id))
+                   )
+               AND NOT EXISTS (
+                     SELECT 1 FROM queue_messages e
+                      WHERE e.queue_name = m.queue_name
+                        AND COALESCE(e.message_group_id, e.id) = COALESCE(m.message_group_id, m.id)
+                        AND e.receipt_handle IS NULL
+                        AND e.visible_at > ?2
+                        AND (e.created_at < m.created_at
+                             OR (e.created_at = m.created_at AND e.id < m.id))
+                   )
+             ORDER BY m.created_at, m.id
+             LIMIT ?3
             "#,
         )
         .bind(&self.queue_name)
@@ -234,7 +251,20 @@ impl QueueConsumer for SqliteQueue {
             .bind(&self.queue_name)
             .bind(now)
             .fetch_optional(&self.pool)
-            .await?;
+            .await;
+
+            let updated = match updated {
+                Ok(u) => u,
+                // Rows claimed earlier in this loop are already committed:
+                // returning an error here would strand them until their
+                // visibility lapsed. Hand back what was claimed; the rest
+                // are tried on the next poll.
+                Err(e) if !messages.is_empty() => {
+                    warn!(queue = %self.queue_name, error = %e, "Claim failed mid-batch; returning the rows already claimed");
+                    break;
+                }
+                Err(e) => return Err(e.into()),
+            };
 
             let Some(updated_row) = updated else {
                 // Another consumer grabbed this message
@@ -637,6 +667,38 @@ mod tests {
         let messages = queue.poll(10).await.unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].message.id, "msg-2");
+    }
+
+    /// R4, as the Postgres queue and Go: a group head nacked with a delay
+    /// holds its successor back until it is visible again.
+    #[tokio::test]
+    async fn delayed_nack_of_group_head_blocks_its_successor() {
+        let queue = create_test_queue().await;
+        for i in 1..=2 {
+            queue
+                .publish(Message {
+                    id: format!("g-{}", i),
+                    pool_code: "TEST".to_string(),
+                    auth_token: None,
+                    signing_secret: None,
+                    mediation_type: MediationType::HTTP,
+                    mediation_target: "http://localhost:8080".to_string(),
+                    message_group_id: Some("g".to_string()),
+                    high_priority: false,
+                    dispatch_mode: fc_common::DispatchMode::BlockOnError,
+                    dispatch_mode_specified: true,
+                })
+                .await
+                .unwrap();
+        }
+        let head = queue.poll(10).await.unwrap();
+        assert_eq!(head.len(), 1);
+        assert_eq!(head[0].message.id, "g-1");
+        queue.nack(&head[0].receipt_handle, Some(60)).await.unwrap();
+        assert!(
+            queue.poll(10).await.unwrap().is_empty(),
+            "the successor must not overtake a delayed head"
+        );
     }
 
     #[tokio::test]
