@@ -92,7 +92,48 @@ export async function exchangeCode(opts: {
 	return tokenRequest(opts.endpoints, body, opts.clientId);
 }
 
-export async function refreshAccessToken(opts: {
+/**
+ * Single-flight refresh (owner ruling 2026-09-25, backlog "Overnight review" item 5).
+ * The platform rotates refresh tokens, and presenting a rotated-out token twice
+ * revokes the whole family (beyond a 10 s leeway meant for exactly this race).
+ * Concurrent requests of one session that see the access token expire at once
+ * therefore share ONE refresh: an in-flight exchange is joined, and its result is
+ * remembered for {@link REFRESH_MEMO_MS} so a request that read the old token just
+ * after the exchange finished gets the same new tokens instead of spending the old
+ * token again. Per process: instances behind a balancer still rely on the leeway.
+ */
+const REFRESH_MEMO_MS = 10_000;
+const refreshInFlight = new Map<string, Promise<TokenExchangeResult>>();
+const refreshMemo = new Map<string, { result: TokenExchangeResult; expiresAt: number }>();
+
+export function refreshAccessToken(opts: {
+	endpoints: OidcEndpoints;
+	clientId: string;
+	clientSecret: string;
+	refreshToken: string;
+}): Promise<TokenExchangeResult> {
+	const key = opts.refreshToken;
+	const memo = refreshMemo.get(key);
+	if (memo && memo.expiresAt > Date.now()) {
+		return Promise.resolve(memo.result);
+	}
+	refreshMemo.delete(key);
+	const inFlight = refreshInFlight.get(key);
+	if (inFlight) {
+		return inFlight;
+	}
+	const exchange = exchangeRefreshToken(opts)
+		.then((result) => {
+			refreshMemo.set(key, { result, expiresAt: Date.now() + REFRESH_MEMO_MS });
+			setTimeout(() => refreshMemo.delete(key), REFRESH_MEMO_MS).unref?.();
+			return result;
+		})
+		.finally(() => refreshInFlight.delete(key));
+	refreshInFlight.set(key, exchange);
+	return exchange;
+}
+
+async function exchangeRefreshToken(opts: {
 	endpoints: OidcEndpoints;
 	clientId: string;
 	clientSecret: string;

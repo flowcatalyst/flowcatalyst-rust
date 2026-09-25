@@ -29,6 +29,14 @@ incompatibly.
   client-credentials token).
 
 ### Changed
+- The Fastify OIDC session refresh is single-flight (owner ruling 5 of
+  2026-09-25). The platform rotates refresh tokens and revokes the whole
+  family when a rotated-out token is presented again (beyond a 10 s
+  leeway). Concurrent requests of one session now join one in-flight
+  exchange per refresh token, and a request that read the old token just
+  after reuses its result for 10 s. Per process: instances behind a load
+  balancer still rely on the platform's leeway. `refreshAccessToken` keeps
+  its signature.
 - `client.router().inPipeline()` / `inPipelineBatch()` send the platform
   bearer token to the router (`Authorization: Bearer …`). Today's routers
   ignore it; a router that enforces platform tokens (owner ruling 2 of
