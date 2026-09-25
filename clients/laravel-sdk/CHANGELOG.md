@@ -72,8 +72,8 @@ incompatibly.
   returns). The platform honours a supplied dispatch-job id, so a batch the
   outbox processor resends after losing the platform's answer is recognised
   instead of creating the job a second time. No signature changed.
-- Licence: MPL-2.0 (was MIT), by owner ruling. MPL-2.0 is file-level
-  copyleft, so applications that depend on the SDK are not affected.
+- Licence: MIT, as published (owner decision of 2026-09-25, which reverses
+  the earlier move to MPL-2.0). `LICENSE` is the published file.
 
 ## 0.10.26 and earlier
 
