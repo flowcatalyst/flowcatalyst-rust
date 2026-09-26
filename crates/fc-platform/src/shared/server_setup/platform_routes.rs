@@ -880,6 +880,7 @@ pub fn build_platform_routes(
     };
     let public_api_state = PublicApiState {
         config_repo: repos.platform_config_repo.clone(),
+        client_repo: repos.client_repo.clone(),
     };
     let set_platform_config_property_use_case = Arc::new(
         crate::platform_config::operations::SetPlatformConfigPropertyUseCase::new(
