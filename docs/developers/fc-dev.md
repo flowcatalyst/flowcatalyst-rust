@@ -73,9 +73,11 @@ fc-dev upgrade --force   # reinstall even if current
 | `fc-dev init` | Bootstrap a fresh local app: admin user, client, application, service account, `.env`. |
 | `fc-dev fresh` | TRUNCATE every FlowCatalyst-owned table in the DB (keeps schema). |
 | `fc-dev stop` | Stop the running fcdev — Rust, Go or Java — via the shared PID file (SIGTERM, then SIGKILL past `--timeout`). |
+| `fc-dev outbox` | Standalone outbox poller (Go's `fcdev outbox`): flags or `.env` / process env; static token or `client_credentials`; auto-creates the `outbox_messages` table if missing. |
+| `fc-dev outbox create-table` | Create the SDK outbox table (postgres, mysql) or indexes (mongodb) in an app's database. |
 | `fc-dev outbox init` | One-time setup: writes `FC_OUTBOX_*` keys to the project's `.env`. |
-| `fc-dev outbox poll` | Standalone outbox poller. Reads config from `.env` / process env; auto-creates the `outbox_messages` table if missing. |
-| `fc-dev mcp` | Read-only MCP server for LLM clients (stdio or HTTP). |
+| `fc-dev outbox poll` | The earlier form of the poller, from the keys `init` writes. |
+| `fc-dev mcp` | Read-only MCP server for LLM clients (stdio or HTTP). `fc-dev --mcp` runs it inside the dev server. |
 | `fc-dev upgrade` | Replace the running binary with the latest GitHub release. |
 
 `fc-dev --help` and `fc-dev <subcommand> --help` are authoritative for
@@ -299,9 +301,39 @@ isn't included in the embedded Postgres bundle — so the app runs against
 Docker PostGIS, but you still want fc-dev to play the role of "the
 outbox processor sidecar."
 
-`outbox` is split into two subcommands so secrets never appear on the
-command line: `init` writes config into the project's `.env`, then `poll`
-reads from there. Daily use is `fc-dev outbox poll` with no flags.
+`fc-dev outbox` is Go's `fcdev outbox`: every setting is a flag, else its
+environment variable (after loading `--env-file`, default `./.env`, which
+never overrides a variable already set), else its default. With a service
+account's `client_credentials` (`--client-id`/`--client-secret`, or
+`FC_OUTBOX_CLIENT_ID`/`_SECRET`, falling back to `FLOWCATALYST_CLIENT_ID`/
+`_SECRET`) it mints the platform token itself and re-mints it before expiry
+and after a 401; otherwise it sends the static `--auth-token`.
+
+```sh
+fc-dev outbox --source-db-url postgres://user:pass@localhost:5433/myapp \
+  --target-url http://localhost:8080 --client-id … --client-secret …
+fc-dev outbox create-table --db-type mysql --db-url 'user:pass@tcp(localhost:3306)/app'
+```
+
+| Flag | Env (first set wins) / default |
+|---|---|
+| `--env-file` | `.env` |
+| `--source-db-url` | `FC_OUTBOX_SOURCE_DB_URL`, `FC_OUTBOX_DB_URL` *(required)* |
+| `--target-url` | `FC_OUTBOX_PLATFORM_URL`, `FC_OUTBOX_API_URL` / `http://localhost:8080` |
+| `--auth-token` | `FC_OUTBOX_PLATFORM_AUTH_TOKEN`, `FC_OUTBOX_TOKEN` |
+| `--client-id` / `--client-secret` | `FC_OUTBOX_CLIENT_ID` / `_SECRET`, `FLOWCATALYST_CLIENT_ID` / `_SECRET` |
+| `--token-url` | `FC_OUTBOX_TOKEN_URL` / `<target-url>/oauth/token` |
+| `--scope` | `FC_OUTBOX_SCOPE` |
+| `--batch-size`, `--max-in-flight`, `--poll-interval-ms` | `FC_OUTBOX_BATCH_SIZE`, `FC_OUTBOX_MAX_IN_FLIGHT`, `FC_OUTBOX_POLL_INTERVAL_MS` / library defaults |
+
+`create-table` takes `--db-type` (`postgres`/`pg`, `mysql`/`mariadb`,
+`mongodb`/`mongo`; env `FC_OUTBOX_BACKEND`, `FC_OUTBOX_DB_TYPE`), `--db-url`
+(env `FC_OUTBOX_SOURCE_DB_URL`, `FC_OUTBOX_DB_URL`, `FC_OUTBOX_MONGO_URI`; a
+Go MySQL DSN is accepted) and `--db-name` for MongoDB.
+
+fc-dev also keeps its earlier pair, so secrets never appear on the command
+line: `init` writes config into the project's `.env`, then `fc-dev outbox`
+(or `fc-dev outbox poll`) reads from there.
 
 The poller boots **nothing else**: no embedded Postgres, no platform API,
 no queue, no scheduler. Just the outbox processor and an HTTP client.
@@ -329,7 +361,7 @@ any required value is missing (for scripted setup, e.g. CI).
 
 ```sh
 cd ~/code/my-postgis-app
-fc-dev outbox poll
+fc-dev outbox        # or: fc-dev outbox poll
 # reads .env → connects → ensures outbox_messages table exists → polls
 ```
 
@@ -340,7 +372,7 @@ already migrated their database are unaffected. Opt out with
 `--skip-bootstrap` (or `FC_OUTBOX_SKIP_BOOTSTRAP=true`) if you'd rather
 manage the schema entirely from the app side.
 
-Flags (every one also accepts the matching env var; flags override env):
+`poll`'s flags (every one also accepts the matching env var; flags override env):
 
 | Flag | Env / default | Purpose |
 |---|---|---|
@@ -368,9 +400,10 @@ curl -s -X POST http://localhost:8080/oauth/token \
   | jq -r .access_token
 ```
 
-Tokens are short-lived. In practice you'll either pin them in `.env` and
-refresh by re-running the curl + `fc-dev outbox init --token=<new>`, or
-wrap `outbox poll` in a script that refreshes on startup.
+Tokens are short-lived. Rather than pinning one, give `fc-dev outbox` the
+service account's `FC_OUTBOX_CLIENT_ID` / `FC_OUTBOX_CLIENT_SECRET` (or
+`FLOWCATALYST_CLIENT_ID` / `_SECRET`, which `fc-dev init` writes): it mints
+and refreshes the token itself.
 
 ### Why a separate process
 

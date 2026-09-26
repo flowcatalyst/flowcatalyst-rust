@@ -48,12 +48,15 @@ pub const MAX_PLATFORM_BATCH: usize = 1000;
 const ERROR_BODY_LIMIT: usize = 500;
 
 /// HTTP dispatcher configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpDispatcherConfig {
     /// FlowCatalyst API base URL
     pub api_base_url: String,
     /// Optional Bearer token for authentication
     pub api_token: Option<String>,
+    /// Mints the bearer per request (e.g. OAuth `client_credentials`);
+    /// takes precedence over `api_token`. A 401 invalidates it.
+    pub token_source: Option<std::sync::Arc<dyn crate::token::TokenSource>>,
     /// Connect timeout
     pub connect_timeout: Duration,
     /// Request timeout (Go: 30s)
@@ -65,9 +68,22 @@ impl Default for HttpDispatcherConfig {
         Self {
             api_base_url: "http://localhost:8080".to_string(),
             api_token: None,
+            token_source: None,
             connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(30),
         }
+    }
+}
+
+impl std::fmt::Debug for HttpDispatcherConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpDispatcherConfig")
+            .field("api_base_url", &self.api_base_url)
+            .field("api_token", &self.api_token.as_ref().map(|_| "<redacted>"))
+            .field("token_source", &self.token_source.is_some())
+            .field("connect_timeout", &self.connect_timeout)
+            .field("request_timeout", &self.request_timeout)
+            .finish()
     }
 }
 
@@ -267,8 +283,25 @@ impl HttpDispatcher {
         debug!(count = items.len(), item_type = %items[0].item_type, %url, "Sending outbox batch");
 
         let mut request = self.client.post(&url).json(&body);
-        if let Some(token) = self.config.api_token.as_deref().filter(|t| !t.is_empty()) {
-            request = request.bearer_auth(token);
+        match &self.config.token_source {
+            Some(source) => match source.token().await {
+                Ok(token) if !token.is_empty() => request = request.bearer_auth(token),
+                Ok(_) => {}
+                // The platform may be fine; only the mint failed. Retryable,
+                // as Go's `setAuthHeader` error.
+                Err(e) => {
+                    warn!(error = %e, "Outbox token mint failed");
+                    return Answer::Whole(DispatchOutcome::failed(
+                        OutboxStatus::GatewayError,
+                        format!("auth: {e}"),
+                    ));
+                }
+            },
+            None => {
+                if let Some(token) = self.config.api_token.as_deref().filter(|t| !t.is_empty()) {
+                    request = request.bearer_auth(token);
+                }
+            }
         }
 
         let response = match request.send().await {
@@ -284,6 +317,12 @@ impl HttpDispatcher {
 
         let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
+        if status == 401 {
+            // Drop a cached token so the retry mints a fresh one.
+            if let Some(source) = &self.config.token_source {
+                source.invalidate();
+            }
+        }
 
         if (200..300).contains(&status) {
             return Answer::PerItem(match per_item_outcomes(&body, items.len()) {
@@ -769,5 +808,75 @@ mod tests {
                 "/api/audit-logs/batch"
             ]
         );
+    }
+
+    /// A token that goes stale until invalidated.
+    struct Rotating(std::sync::atomic::AtomicBool);
+
+    #[async_trait]
+    impl crate::token::TokenSource for Rotating {
+        async fn token(&self) -> anyhow::Result<String> {
+            Ok(if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+                "good".into()
+            } else {
+                "stale".into()
+            })
+        }
+        fn invalidate(&self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    struct Failing;
+
+    #[async_trait]
+    impl crate::token::TokenSource for Failing {
+        async fn token(&self) -> anyhow::Result<String> {
+            anyhow::bail!("token endpoint 503")
+        }
+    }
+
+    async fn bearer_only(headers: axum::http::HeaderMap) -> (StatusCode, Json<serde_json::Value>) {
+        if headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer good") {
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"results": [{"id": "x", "status": "SUCCESS"}]})),
+            )
+        } else {
+            (StatusCode::UNAUTHORIZED, Json(serde_json::json!({})))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_token_source_supplies_the_bearer_and_a_401_invalidates_it() {
+        let app = Router::new().route("/api/dispatch-jobs/batch", post(bearer_only));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let d = HttpDispatcher::new(HttpDispatcherConfig {
+            api_base_url: format!("http://{addr}"),
+            api_token: Some("ignored".into()),
+            token_source: Some(Arc::new(Rotating(Default::default()))),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            d.send_batch(&[job("a")]).await[0].status,
+            OutboxStatus::Unauthorized
+        );
+        assert!(d.send_batch(&[job("a")]).await[0].is_success());
+    }
+
+    #[tokio::test]
+    async fn a_failed_mint_is_a_retryable_gateway_error() {
+        let d = HttpDispatcher::new(HttpDispatcherConfig {
+            api_base_url: "http://127.0.0.1:1".into(),
+            token_source: Some(Arc::new(Failing)),
+            ..Default::default()
+        })
+        .unwrap();
+        let out = d.send_batch(&[job("a")]).await;
+        assert_eq!(out[0].status, OutboxStatus::GatewayError);
+        assert!(out[0].message.starts_with("auth: "), "{}", out[0].message);
     }
 }

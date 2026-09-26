@@ -10,6 +10,7 @@ pub mod http_dispatcher;
 pub mod recovery;
 pub mod repository;
 pub mod setup;
+pub mod token;
 
 #[cfg(feature = "mongo")]
 pub mod mongo;
@@ -33,6 +34,7 @@ pub use http_dispatcher::{
 };
 pub use recovery::{RecoveryConfig, RecoveryTask};
 pub use repository::{ClaimedBatch, InvalidRow, OutboxRepository, OutboxTableConfig};
+pub use token::{ClientCredentialsTokenSource, TokenSource};
 
 /// Leader election configuration. Re-exported from `fc_common` — a single
 /// unified type replacing the previous per-crate duplicates in fc-outbox and fc-standby.

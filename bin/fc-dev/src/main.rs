@@ -88,10 +88,11 @@ enum Command {
     /// credentials file a running fc-dev writes; the flags override them.
     Mcp(McpArgs),
 
-    /// Standalone outbox poller. Polls an external app's
-    /// `outbox_messages` Postgres table and forwards to a FlowCatalyst
-    /// platform API. Use when the app's database can't be the embedded
-    /// one (e.g. PostGIS in Docker).
+    /// Standalone outbox poller (Go's `fcdev outbox`). Polls an external
+    /// app's `outbox_messages` Postgres table and forwards to a
+    /// FlowCatalyst platform API; `create-table` provisions the table. Use
+    /// when the app's database can't be the embedded one (e.g. PostGIS in
+    /// Docker).
     Outbox(outbox::OutboxArgs),
 
     /// Stop a running fcdev (Rust, Go or Java) via the shared PID file:
