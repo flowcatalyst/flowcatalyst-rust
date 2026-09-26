@@ -108,6 +108,55 @@ dev-debug:
 run:
     FC_DATABASE_URL={{ FC_DATABASE_URL }} cargo run --bin fc-dev
 
+# ─── fcdev: build and run the local dev server ────────────────────────────
+#
+# One step each: install the SPA's locked dependencies (the SPA is Go's; its
+# lockfile differs from the old Vue app's), build fc-dev (its build script
+# builds the SPA), and run it with the embedded Postgres unless
+# FC_DATABASE_URL + FC_EMBEDDED_DB=false say otherwise. Extra arguments go to
+# fc-dev, e.g. `just fcdev --port 8081`.
+#
+#   just fcdev              Go SPA at http://localhost:{{ FC_API_PORT }}/
+#   just fcdev-web          plus the Topcoat UI trial at /ui (--features web)
+#   just fcdev-init …       first run: create the admin (fc-dev init)
+
+# Build fc-dev (SPA dependencies installed from the lockfile first)
+fcdev-build:
+    cd frontend && pnpm install --frozen-lockfile
+    cargo build -p fc-dev
+
+# Build fc-dev with the Topcoat UI trial (fc-web, --features web)
+fcdev-build-web:
+    cd frontend && pnpm install --frozen-lockfile
+    cargo build -p fc-dev --features web
+
+# Build and run fc-dev (Go SPA)
+fcdev *ARGS: fcdev-build (_fcdev-port-free ARGS)
+    target/debug/fc-dev {{ ARGS }}
+
+# Build and run fc-dev with the Topcoat UI at /ui
+fcdev-web *ARGS: fcdev-build-web (_fcdev-port-free ARGS)
+    target/debug/fc-dev {{ ARGS }}
+
+# First run: create the admin and a first application (prompts if no flags)
+fcdev-init *ARGS:
+    target/debug/fc-dev init {{ ARGS }}
+
+# Refuse to start when the API port is taken, naming the process holding it
+[private]
+_fcdev-port-free *ARGS:
+    #!/usr/bin/env bash
+    port="{{ FC_API_PORT }}"
+    args=({{ ARGS }})
+    for i in "${!args[@]}"; do
+      [ "${args[$i]}" = "--port" ] && port="${args[$((i+1))]}"
+      case "${args[$i]}" in --port=*) port="${args[$i]#--port=}";; esac
+    done
+    if holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}') && [ -n "$holder" ]; then
+      echo "✗ Port $port is in use by $holder. Stop it, or pass --port <other>."
+      exit 1
+    fi
+
 # ─── SDKs ─────────────────────────────────────────────────────────────────
 
 # Requires fc-dev (or fc-platform-server) to be serving on FC_API_PORT.
