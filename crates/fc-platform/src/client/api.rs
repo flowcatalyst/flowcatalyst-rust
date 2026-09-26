@@ -60,10 +60,25 @@ pub struct ClientResponse {
     pub name: String,
     pub identifier: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status_changed_at: Option<String>,
+    /// The client's notes, oldest first (Go `ClientResponse.notes`).
+    pub notes: Vec<ClientNoteResponse>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Go's `NoteResponse` (client/api/dto.go).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientNoteResponse {
+    pub category: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<String>,
+    pub added_at: String,
 }
 
 impl From<Client> for ClientResponse {
@@ -75,6 +90,16 @@ impl From<Client> for ClientResponse {
             status: c.status.as_str().to_string(),
             status_reason: c.status_reason,
             status_changed_at: c.status_changed_at.map(|t| t.to_rfc3339()),
+            notes: c
+                .notes
+                .into_iter()
+                .map(|n| ClientNoteResponse {
+                    category: n.category,
+                    text: n.text,
+                    added_by: n.added_by,
+                    added_at: n.added_at.to_rfc3339(),
+                })
+                .collect(),
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
         }
@@ -662,7 +687,7 @@ pub async fn add_note(
     );
 
     Ok(Json(AddNoteResponse {
-        message: "Note added successfully".to_string(),
+        message: "Note added".to_string(),
     }))
 }
 

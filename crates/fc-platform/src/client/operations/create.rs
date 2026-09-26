@@ -13,7 +13,8 @@ use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCas
 /// Identifier format: lowercase alphanumeric with hyphens, 2-50 chars
 fn identifier_pattern() -> &'static Regex {
     static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*[a-z0-9]$").unwrap())
+    // Go's identifierPattern (client/operations/create.go:14).
+    PATTERN.get_or_init(|| Regex::new(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$").unwrap())
 }
 
 /// Command for creating a new client.
@@ -54,7 +55,7 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         if name.is_empty() {
             return Err(UseCaseError::validation(
                 "NAME_REQUIRED",
-                "Client name is required",
+                "name is required",
             ));
         }
         if name.len() > 100 {
@@ -68,19 +69,27 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         if identifier.is_empty() {
             return Err(UseCaseError::validation(
                 "IDENTIFIER_REQUIRED",
-                "Client identifier is required",
+                "identifier is required",
             ));
         }
-        if identifier.len() < 2 || identifier.len() > 50 {
+        if identifier.len() > 50 {
             return Err(UseCaseError::validation(
                 "INVALID_IDENTIFIER_LENGTH",
-                "Client identifier must be between 2 and 50 characters",
+                "Client identifier must be at most 50 characters",
             ));
         }
         if !identifier_pattern().is_match(&identifier) {
             return Err(UseCaseError::validation(
-                "INVALID_IDENTIFIER_FORMAT",
-                "Client identifier must be lowercase alphanumeric with hyphens, starting with a letter",
+                "INVALID_IDENTIFIER",
+                "identifier must be lowercase alphanumeric with optional hyphens (URL-safe)",
+            ));
+        }
+        // Go: client-less dispatch jobs publish to the `{prefix}-platform-*`
+        // queues, so the identifier `platform` is reserved.
+        if identifier == "platform" {
+            return Err(UseCaseError::validation(
+                "RESERVED_IDENTIFIER",
+                "identifier 'platform' is reserved for platform-wide dispatch",
             ));
         }
 
@@ -111,7 +120,7 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "IDENTIFIER_EXISTS",
-                format!("A client with identifier '{}' already exists", identifier),
+                format!("Client with identifier '{}' already exists", identifier),
             ));
         }
 
@@ -150,7 +159,9 @@ mod tests {
         assert!(!identifier_pattern().is_match("UPPERCASE"));
         assert!(!identifier_pattern().is_match("-starts-with-dash"));
         assert!(!identifier_pattern().is_match("ends-with-dash-"));
-        assert!(!identifier_pattern().is_match("a")); // Too short
+        // Go's rule: a single character, or a leading digit, is fine.
+        assert!(identifier_pattern().is_match("a"));
+        assert!(identifier_pattern().is_match("1acme"));
     }
 
     #[test]
