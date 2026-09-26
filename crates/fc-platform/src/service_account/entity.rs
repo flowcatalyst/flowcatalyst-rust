@@ -323,8 +323,13 @@ fn default_active() -> bool {
 impl ServiceAccount {
     pub fn new(code: impl Into<String>, name: impl Into<String>, scope: UserScope) -> Self {
         let now = Utc::now();
+        // Go's model: the account (`iam_service_accounts`, `sac_…`) and the
+        // SERVICE principal that carries its roles and reach (`prn_…`) have
+        // ids of their own. `id` is the principal's; the API answers with
+        // the account's (`service_account_table_id`) and the principal's as
+        // `principalId`.
         Self {
-            id: crate::shared::tsid::generate(crate::EntityType::ServiceAccount),
+            id: crate::shared::tsid::generate(crate::EntityType::Principal),
             code: code.into(),
             name: name.into(),
             description: None,
@@ -338,7 +343,9 @@ impl ServiceAccount {
             all_applications: false,
             accessible_application_ids: vec![],
             webhook_credentials: WebhookCredentials::none(),
-            service_account_table_id: None,
+            service_account_table_id: Some(crate::shared::tsid::generate(
+                crate::EntityType::ServiceAccount,
+            )),
             roles: vec![],
             last_used_at: None,
             created_at: now,
@@ -432,10 +439,14 @@ mod tests {
 
         assert!(!sa.id.is_empty());
         assert!(
-            sa.id.starts_with("sac_"),
-            "ID should have sac_ prefix, got: {}",
+            sa.id.starts_with("prn_"),
+            "the principal id should have the prn_ prefix, got: {}",
             sa.id
         );
+        assert!(sa
+            .service_account_table_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("sac_")));
         assert_eq!(
             sa.id.len(),
             17,

@@ -93,9 +93,11 @@ async fn client_scope_service_account_is_not_anchor() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["serviceAccount"]["scope"], "CLIENT");
     assert_eq!(body["serviceAccount"]["clientIds"], json!([clt]));
-    assert_eq!(body["principalId"], body["serviceAccount"]["id"]);
+    // Go's model: the account and its SERVICE principal have ids of their
+    // own.
+    assert_ne!(body["principalId"], body["serviceAccount"]["id"]);
 
-    let id = body["serviceAccount"]["id"].as_str().unwrap();
+    let id = body["principalId"].as_str().unwrap();
     let p = principal(&app, id).await;
     assert_eq!(p.scope, UserScope::Client);
     assert_eq!(p.client_id.as_deref(), Some(clt.as_str()));
@@ -126,7 +128,7 @@ async fn anchor_scope_service_account_is_still_anchor() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["serviceAccount"]["scope"], "ANCHOR");
 
-    let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
+    let p = principal(&app, body["principalId"].as_str().unwrap()).await;
     assert_eq!(p.scope, UserScope::Anchor);
     let token = token(&app, &p);
     assert_eq!(
@@ -200,7 +202,7 @@ async fn requested_scope_is_stored_and_the_tier_follows_the_links() {
         assert_eq!(status, StatusCode::CREATED, "{code}: {body}");
         assert_eq!(body["serviceAccount"]["scope"], scope, "{code}");
         assert_eq!(body["serviceAccount"]["clientIds"], clients, "{code}");
-        let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
+        let p = principal(&app, body["principalId"].as_str().unwrap()).await;
         assert_eq!(p.scope, tier, "{code}");
     }
 }
@@ -225,7 +227,7 @@ async fn absent_scope_follows_the_client_links() {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{code}: {body}");
         assert!(body["serviceAccount"].get("scope").is_none(), "{code}");
-        let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
+        let p = principal(&app, body["principalId"].as_str().unwrap()).await;
         assert_eq!(p.scope, expected, "{code}");
     }
 
@@ -261,8 +263,12 @@ async fn update_moves_the_principal_reach() {
         json!({ "code": "mover", "name": "Mover", "scope": "CLIENT", "clientIds": [a] }),
     )
     .await;
-    let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
-    let path = format!("/api/service-accounts/{id}");
+    let id = body["principalId"].as_str().unwrap().to_string();
+    // The account is addressed by its own id or its principal's.
+    let path = format!(
+        "/api/service-accounts/{}",
+        body["serviceAccount"]["id"].as_str().unwrap()
+    );
     let admin = app.anchor_admin_token().await;
 
     let resp = app

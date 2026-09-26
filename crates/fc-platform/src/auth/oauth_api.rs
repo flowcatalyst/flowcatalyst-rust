@@ -170,6 +170,8 @@ pub struct UserInfoResponse {
 #[derive(Clone)]
 pub struct OAuthState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
+    /// Stamps a service account's `last_used_at` when it authenticates.
+    pub service_account_repo: Arc<crate::ServiceAccountRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
     /// Role → permission / application resolution for the minted claims
     pub role_repo: Arc<crate::RoleRepository>,
@@ -1856,10 +1858,19 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         }
     };
 
+    // Go `TouchServiceAccountUsed`: authenticating is the account's
+    // day-to-day use. Best-effort; a bookkeeping failure never fails a token.
+    if let Some(sa_id) = principal.service_account_id.as_deref() {
+        if let Err(e) = state.service_account_repo.touch_last_used(sa_id).await {
+            warn!(error = %e, "Failed to stamp service account last_used_at");
+        }
+    }
+
     // Log successful service account login attempt
     let attempt = LoginAttempt {
         identifier: Some(client_id.clone()),
         principal_id: Some(principal.id.clone()),
+        ip_address: caller_ip.clone(),
         ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Success)
     };
     if let Err(e) = state.login_attempt_repo.create(&attempt).await {

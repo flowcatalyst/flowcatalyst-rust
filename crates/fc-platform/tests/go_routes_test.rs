@@ -325,6 +325,7 @@ async fn a_service_account_token_is_minted_and_deactivation_stops_it() {
         .as_str()
         .unwrap()
         .to_string();
+    let principal_id = created["principalId"].as_str().unwrap().to_string();
 
     let body = assert_status(
         app.post(
@@ -340,7 +341,8 @@ async fn a_service_account_token_is_minted_and_deactivation_stops_it() {
     assert_eq!(body["expiresIn"], 3600);
     let token = body["accessToken"].as_str().unwrap();
     let claims = app.auth_service.validate_token(token).expect("valid token");
-    assert_eq!(claims.sub, id);
+    // The token is the account's SERVICE principal's.
+    assert_eq!(claims.sub, principal_id);
     assert_eq!(
         app.event_count_by_type("platform:iam:serviceaccount:token-minted")
             .await,

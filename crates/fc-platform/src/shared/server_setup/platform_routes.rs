@@ -674,6 +674,7 @@ pub fn build_platform_routes(
         external_base_url: config.password_reset_external_base_url.clone(),
     });
     let oauth_state = OAuthState {
+        service_account_repo: repos.service_account_repo.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         role_repo: repos.role_repo.clone(),
@@ -995,6 +996,7 @@ pub fn build_platform_routes(
         regenerate_token_use_case,
         regenerate_secret_use_case,
         create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
+        oauth_client_repo: repos.oauth_client_repo.clone(),
         app_access: app_access.clone(),
     };
 
