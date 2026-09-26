@@ -1,6 +1,7 @@
 //! `/api/principals` against Go's behaviour: a no-op update, application
 //! access read and written in batches, client grants reported with their own
-//! dates, and users created with every application. Requires Docker.
+//! dates, users created with every application, and provision-service-account
+//! recorded as Go's one command. Requires Docker.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -46,6 +47,14 @@ async fn create_user(app: &TestApp, token: &str, email: &str, client_id: &str) -
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body
+}
+
+async fn count(app: &TestApp, sql: &str) -> i64 {
+    let row: (i64,) = sqlx::query_as(sql)
+        .fetch_one(&app.pool)
+        .await
+        .expect("count");
+    row.0
 }
 
 /// Go `UpdateUser` (principal/operations/update.go) saves and records
@@ -274,4 +283,80 @@ async fn new_users_have_every_application() {
         assert_eq!(body["allApplications"], true, "{id}: {body}");
         assert_eq!(body["total"], 0);
     }
+}
+
+/// Go records provision-service-account as its one
+/// `ProvisionServiceAccountCommand` on each of the three audit rows it
+/// writes (service account, application, OAuth client), one event each,
+/// all in one transaction.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn provision_service_account_records_one_command() {
+    std::env::set_var(
+        "FLOWCATALYST_APP_KEY",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    );
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let application = create_app(&app, "mailer").await;
+    let (audits, events) = (
+        count(&app, "SELECT COUNT(*) FROM aud_logs").await,
+        count(&app, "SELECT COUNT(*) FROM msg_events").await,
+    );
+
+    let (status, body) = read_json(
+        app.post(
+            &format!(
+                "/api/applications/{}/provision-service-account",
+                application.id
+            ),
+            &token,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM msg_events").await,
+        events + 3
+    );
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM aud_logs").await,
+        audits + 3
+    );
+    let rows: Vec<(String, String, Value)> = sqlx::query_as(
+        "SELECT entity_type, operation, operation_json FROM aud_logs ORDER BY id DESC LIMIT 3",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    let mut entity_types: Vec<&str> = rows.iter().map(|(t, _, _)| t.as_str()).collect();
+    entity_types.sort();
+    assert_eq!(entity_types.len(), 3);
+    assert!(entity_types.windows(2).all(|w| w[0] != w[1]), "{rows:?}");
+    for (_, operation, json) in &rows {
+        assert_eq!(operation, "ProvisionServiceAccountCommand");
+        assert_eq!(json, &json!({"applicationId": application.id}));
+    }
+
+    // A refused provision (already provisioned) writes nothing.
+    let (status, _) = read_json(
+        app.post(
+            &format!(
+                "/api/applications/{}/provision-service-account",
+                application.id
+            ),
+            &token,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM aud_logs").await,
+        audits + 3
+    );
 }

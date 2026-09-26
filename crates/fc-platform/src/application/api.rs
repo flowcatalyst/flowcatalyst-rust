@@ -940,9 +940,14 @@ pub async fn provision_application_service_account(
     let oauth_public_client_id_for_cmd = oauth_public_client_id.clone();
 
     // One DB tx for all three use cases. If any step fails, all rows
-    // (SA insert, Application update, OAuth client insert) roll back.
+    // (SA insert, Application update, OAuth client insert) roll back. Each
+    // writes its own event; the audit rows all record Go's one
+    // `ProvisionServiceAccountCommand`.
+    let provision_cmd = crate::application::operations::ProvisionServiceAccountCommand {
+        application_id: app_id.clone(),
+    };
     let result = pg_unit_of_work
-        .run(|session| async move {
+        .run_as(&provision_cmd, |session| async move {
             let create_sa_uc =
                 CreateServiceAccountUseCase::new(sa_repo, client_repo, session.clone(), encryption);
             let attach_uc =
