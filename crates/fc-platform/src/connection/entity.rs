@@ -22,6 +22,9 @@ crate::shared::enum_str::str_enum!(ConnectionStatus, "connection status", {
 pub struct Connection {
     pub id: String,
     pub code: String,
+    /// The owning application (`None`: a shared connection, usable from any
+    /// application; Go 056).
+    pub application_code: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub external_id: Option<String>,
@@ -29,6 +32,9 @@ pub struct Connection {
     pub service_account_id: String,
     pub client_id: Option<String>,
     pub client_identifier: Option<String>,
+    /// Who authored it: `UI` (an admin), or `API`/`CODE` (an application's
+    /// sync); see `sync_plan::SOURCE_*`.
+    pub source: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -43,6 +49,7 @@ impl Connection {
         Self {
             id: crate::shared::tsid::generate(crate::EntityType::Connection),
             code: code.into(),
+            application_code: None,
             name: name.into(),
             description: None,
             external_id: None,
@@ -50,6 +57,7 @@ impl Connection {
             service_account_id: service_account_id.into(),
             client_id: None,
             client_identifier: None,
+            source: crate::connection::sync_plan::SOURCE_UI.to_string(),
             created_at: now,
             updated_at: now,
         }

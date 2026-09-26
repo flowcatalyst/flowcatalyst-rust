@@ -2,19 +2,17 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::create::EventTypeBindingInput;
+use super::create::{is_http_url, parse_queue, EventTypeBindingInput};
 use super::events::SubscriptionUpdated;
 use crate::service_account::signing_reach::require_usable_signers;
 use crate::shared::authorization_service::AuthContext;
-use crate::shared::caller_reach::non_blank;
-use crate::subscription::entity::DispatchMode;
+use crate::shared::caller_reach::{check_scope_access, non_blank};
+use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
-use crate::EventTypeBinding;
 use crate::Subscription;
 use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
 
@@ -69,8 +67,26 @@ pub struct UpdateSubscriptionCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_only: Option<bool>,
 
-    /// Who is updating it, for the signing-reach check (never serialised,
-    /// so never in the audit log).
+    /// New dispatch priority: DEFAULT or HIGH_PRIORITY (any case); an
+    /// explicit blank clears it (Go `UpdateCommand.Queue`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
+
+    /// New delivery delay in seconds (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_seconds: Option<i32>,
+
+    /// New maximum message age in seconds (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_age_seconds: Option<i32>,
+
+    /// New custom configuration (replaces the existing entries if given)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_config: Option<Vec<ConfigEntry>>,
+
+    /// Who is updating it, for the scope check and the signing-reach check
+    /// (never serialised, so never in the audit log). `None` is a
+    /// platform-authored update, which neither applies to.
     #[serde(skip)]
     pub caller: Option<AuthContext>,
 }
@@ -106,32 +122,28 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
     type Command = UpdateSubscriptionCommand;
     type Event = SubscriptionUpdated;
 
+    /// Go `UpdateSubscription.Validate`: nothing is required beyond the id
+    /// (an empty update is a no-op write), a name may not be blanked, an
+    /// endpoint must be a http(s) URL and a queue a known priority.
     async fn validate(&self, command: &UpdateSubscriptionCommand) -> Result<(), UseCaseError> {
         if command.subscription_id.trim().is_empty() {
+            return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
+        }
+        if command.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
             return Err(UseCaseError::validation(
-                "SUBSCRIPTION_ID_REQUIRED",
-                "Subscription ID is required",
+                "NAME_REQUIRED",
+                "name cannot be empty",
             ));
         }
-
-        if command.name.is_none()
-            && command.description.is_none()
-            && command.endpoint.is_none()
-            && command.connection_id.is_none()
-            && command.event_types.is_none()
-            && command.dispatch_pool_id.is_none()
-            && command.service_account_id.is_none()
-            && command.mode.is_none()
-            && command.max_retries.is_none()
-            && command.timeout_seconds.is_none()
-            && command.data_only.is_none()
-        {
+        if command.endpoint.as_deref().is_some_and(|e| !is_http_url(e)) {
             return Err(UseCaseError::validation(
-                "NO_UPDATES",
-                "At least one field must be provided for update",
+                "INVALID_ENDPOINT",
+                "endpoint must be a http(s) URL",
             ));
         }
-
+        if let Some(ref queue) = command.queue {
+            parse_queue(queue)?;
+        }
         Ok(())
     }
 
@@ -178,6 +190,11 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
                     command.subscription_id
                 ),
             )?;
+        // Go: per-resource scope on the loaded row (a non-anchor must not
+        // touch another tenant's subscription by guessing its id).
+        if let Some(ref caller) = command.caller {
+            check_scope_access(caller, subscription.client_id.as_deref())?;
+        }
 
         // Where deliveries go and who signs them, before the update.
         let account_before = non_blank(subscription.service_account_id.clone());
@@ -207,32 +224,12 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
             subscription.connection_id = Some(conn_id.clone());
         }
 
+        // Replaced wholesale when given, as Go.
         if let Some(ref new_event_types) = command.event_types {
-            let old_codes: HashSet<String> = subscription
-                .event_types
+            subscription.event_types = new_event_types
                 .iter()
-                .map(|b| b.event_type_code.clone())
+                .map(EventTypeBindingInput::to_binding)
                 .collect();
-
-            let new_bindings: Vec<EventTypeBinding> = new_event_types
-                .iter()
-                .map(|input| {
-                    let mut binding = EventTypeBinding::new(&input.event_type_code);
-                    if let Some(ref filter) = input.filter {
-                        binding = binding.with_filter(filter);
-                    }
-                    binding
-                })
-                .collect();
-
-            let new_codes: HashSet<String> = new_bindings
-                .iter()
-                .map(|b| b.event_type_code.clone())
-                .collect();
-
-            if new_codes != old_codes {
-                subscription.event_types = new_bindings;
-            }
         }
 
         if let Some(ref pool_id) = command.dispatch_pool_id {
@@ -257,6 +254,24 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
 
         if let Some(data_only) = command.data_only {
             subscription.data_only = data_only;
+        }
+
+        if let Some(delay) = command.delay_seconds {
+            subscription.delay_seconds = delay;
+        }
+
+        if let Some(max_age) = command.max_age_seconds {
+            subscription.max_age_seconds = max_age;
+        }
+
+        if let Some(ref config) = command.custom_config {
+            subscription.custom_config = config.clone();
+        }
+
+        // Unlike the set-if-provided fields, an explicit blank clears the
+        // priority (Go): the only way back to the default lane.
+        if let Some(ref queue) = command.queue {
+            subscription.queue = parse_queue(queue)?;
         }
 
         // Whenever the update changes the endpoint, the account or the
@@ -310,6 +325,10 @@ mod tests {
             max_retries: Some(10),
             timeout_seconds: None,
             data_only: None,
+            queue: None,
+            delay_seconds: None,
+            max_age_seconds: None,
+            custom_config: None,
             caller: None,
         };
 

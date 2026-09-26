@@ -804,6 +804,7 @@ pub fn build_platform_routes(
         ));
     let connections_state = ConnectionsState {
         connection_repo: repos.connection_repo.clone(),
+        app_access: app_access.clone(),
         create_use_case: create_conn_use_case,
         update_use_case: update_conn_use_case,
         delete_use_case: delete_conn_use_case,
@@ -1053,6 +1054,7 @@ pub fn build_platform_routes(
         trigger_objects: repos.function_trigger_object_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         application_repo: repos.application_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         unit_of_work: unit_of_work.clone(),
     };
 

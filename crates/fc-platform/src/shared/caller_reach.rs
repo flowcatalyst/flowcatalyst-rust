@@ -107,6 +107,41 @@ pub fn ensure_row_visible(ctx: &AuthContext, client_id: Option<&str>, what: &str
     }
 }
 
+/// Go `auth.CanAccessScope` (shared/auth/auth.go:400): a client's resource
+/// needs that client; a platform resource (`None`) needs anchor scope or
+/// the super-admin wildcard.
+pub fn can_access_scope(ctx: &AuthContext, client_id: Option<&str>) -> bool {
+    match client_id {
+        Some(id) => reaches_client(ctx, id),
+        None => ctx.is_anchor() || ctx.has_permission(crate::permissions::ADMIN_ALL),
+    }
+}
+
+/// Go `auth.CheckScopeAccess` (shared/auth/auth.go:433), the per-resource
+/// scope check under a coarse permission check: 403 `SCOPE_FORBIDDEN`
+/// with Go's two messages.
+pub fn check_scope_access(
+    ctx: &AuthContext,
+    client_id: Option<&str>,
+) -> std::result::Result<(), crate::usecase::UseCaseError> {
+    if can_access_scope(ctx, client_id) {
+        return Ok(());
+    }
+    Err(crate::usecase::UseCaseError::forbidden(
+        "SCOPE_FORBIDDEN",
+        if client_id.is_some() {
+            "no access to this resource's client"
+        } else {
+            "anchor scope required for this resource"
+        },
+    ))
+}
+
+/// [`check_scope_access`] for a handler.
+pub fn require_scope_access(ctx: &AuthContext, client_id: Option<&str>) -> Result<()> {
+    check_scope_access(ctx, client_id).map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,11 +2,9 @@
 //! `fc-web` UI. Permission checks come first; these decide whether the
 //! caller reaches *this* pool (or client).
 //!
-//! The same rules, with the same refusals, are inlined in `api.rs`. They
-//! stay inlined there: those inline `is_anchor()` checks are all the
-//! authorization the create / update / archive / suspend / activate
-//! handlers do today (Go also requires `CanWriteDispatchPools`), and
-//! `tests/permission_convention_test.rs` recognises them as such.
+//! The `/api/dispatch-pools` handlers use Go's `CheckScopeAccess` instead
+//! (`caller_reach::check_scope_access`, 403 `SCOPE_FORBIDDEN`), after
+//! `CanWriteDispatchPools`.
 
 use crate::shared::error::PlatformError;
 use crate::{AuthContext, DispatchPool};

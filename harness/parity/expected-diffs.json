@@ -257,5 +257,82 @@
     "pointer": "/**",
     "reason": "Consequence of the leeway on the step before: on Go that replay revoked the family, so refresh2 is refused (400 invalid_grant); on Rust the family was never revoked (the replay was within the leeway), so refresh2 still rotates (200). Refreshing a genuinely revoked family is refused on Rust too (see refresh-revoked).",
     "ruling": "owner decisions 2026-09-25, #21 (Java ruling 5): a refresh token rotated out less than 10 s ago rotates again into a sibling in the same family"
+  },
+  {
+    "scenario": "code-first-connections*",
+    "step": "sync-connections-create",
+    "pointer": "!go-expect",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and the sync's rollup audit row is keyed by the application code ('cfc-app-<run>', 20 characters), so Go's connection and subscription syncs fail with 500 AUDIT_WRITE and roll back for any application code longer than 17 characters. Rust widened the column (migration 038, Java V18) and syncs.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "code-first-connections*",
+    "step": "sync-subscriptions-by-connection-code",
+    "pointer": "!go-expect",
+    "reason": "Consequence of sync-connections-create: Go rolled the connection sync back, so the connectionCode it names does not exist on Go (404 CONNECTION_NOT_FOUND); Rust resolves it within the application's namespace and creates the subscription. Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and the sync's rollup audit row is keyed by the application code ('cfc-app-<run>', 20 characters), so Go's connection and subscription syncs fail with 500 AUDIT_WRITE and roll back for any application code longer than 17 characters. Rust widened the column (migration 038, Java V18) and syncs.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "code-first-connections*",
+    "step": "sync-subscriptions-shared-connection-found-with-flag",
+    "pointer": "!go-expect",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and the sync's rollup audit row is keyed by the application code ('cfc-app-<run>', 20 characters), so Go's connection and subscription syncs fail with 500 AUDIT_WRITE and roll back for any application code longer than 17 characters. Rust widened the column (migration 038, Java V18) and syncs.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "connections*",
+    "step": "list-by-status",
+    "pointer": "/connections/**",
+    "reason": "Consequence of Go's sync defect in code-first-connections (sync-connections-create): the application's synced connection exists only on Rust, so Rust's ACTIVE list holds one more row and the rows after it shift. Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and the sync's rollup audit row is keyed by the application code ('cfc-app-<run>', 20 characters), so Go's connection and subscription syncs fail with 500 AUDIT_WRITE and roll back for any application code longer than 17 characters. Rust widened the column (migration 038, Java V18) and syncs.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "connections*",
+    "step": "list-by-status",
+    "pointer": "/total",
+    "reason": "As /connections/**: one more (synced) connection on Rust.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "subscriptions*",
+    "step": "list-by-status",
+    "pointer": "/subscriptions/**",
+    "reason": "Consequence of Go's sync defect in code-first-connections: the application's synced subscriptions exist only on Rust, so Rust's ACTIVE list holds more rows and the rows after them shift. Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and the sync's rollup audit row is keyed by the application code ('cfc-app-<run>', 20 characters), so Go's connection and subscription syncs fail with 500 AUDIT_WRITE and roll back for any application code longer than 17 characters. Rust widened the column (migration 038, Java V18) and syncs.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "subscriptions*",
+    "step": "list-by-status",
+    "pointer": "/total",
+    "reason": "As /subscriptions/**: the synced subscriptions exist only on Rust.",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-config-with-router-role",
+    "pointer": "/queues/**",
+    "reason": "Rust's router-config document lists every queue the scheduler can publish to: both priorities for every tenant, and every client's tenant. Go lists a tenant only through a pool's or ACTIVE subscription's client_identifier (which no API sets) and HIGH_PRIORITY only where a subscription asks for it, so a client-scoped job, or one claiming HIGH_PRIORITY itself, lands on a queue no router consumes (delivery harness). The shape is Go's; only more queues are listed (docs/parity/go-route-gaps.md). queueUri also names each side's own database (parity_go / parity_rust).",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): Go's router-config omits client-scoped queues; Rust keeps the complete list"
+  },
+  {
+    "scenario": "dispatch-pools*",
+    "step": "list-by-status",
+    "pointer": "/pools/**",
+    "reason": "Full runs only: applications/sdk-sync's pool sync ('parity-sync-<run>', 24 characters) fails on Go and succeeds on Rust, so Rust's ACTIVE list holds the synced pool and the rows after it shift. Go's syncs fail with 500 AUDIT_WRITE for an application code longer than 17 characters (aud_logs.entity_id VARCHAR(17), keyed by the application code); Rust widened the column (migration 038, Java V18).",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "dispatch-pools*",
+    "step": "list-by-status",
+    "pointer": "/total",
+    "reason": "As /pools/**: the synced pool exists only on Rust (full runs).",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-config-with-router-role",
+    "pointer": "/processingPools/**",
+    "reason": "Full runs only: the pool applications/sdk-sync syncs exists only on Rust (Go's sync fails at its audit write), so Rust's document lists one more pool and the pools after it shift. Go's syncs fail with 500 AUDIT_WRITE for an application code longer than 17 characters (aud_logs.entity_id VARCHAR(17), keyed by the application code); Rust widened the column (migration 038, Java V18).",
+    "ruling": "owner decisions 2026-09-25, #31 (provisional): where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
   }
 ]
