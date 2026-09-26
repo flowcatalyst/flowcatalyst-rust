@@ -361,6 +361,7 @@ pub fn build_platform_routes(
         repos.application_repo.clone(),
     ));
     let principals_state = PrincipalsState {
+        mfa_repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
         principal_repo: repos.principal_repo.clone(),
         role_repo: repos.role_repo.clone(),
         client_repo: repos.client_repo.clone(),

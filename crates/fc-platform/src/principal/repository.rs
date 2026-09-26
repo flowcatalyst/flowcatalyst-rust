@@ -36,6 +36,11 @@ struct PrincipalRow {
     all_applications: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    /// Presence only: the ref itself never leaves the row.
+    #[sqlx(default)]
+    dev_client_secret_ref: Option<String>,
+    #[sqlx(default)]
+    dev_client_secret_updated_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<PrincipalRow> for Principal {
@@ -87,6 +92,11 @@ impl TryFrom<PrincipalRow> for Principal {
             created_at: r.created_at,
             updated_at: r.updated_at,
             external_identity,
+            has_developer_credential: r.dev_client_secret_ref.is_some(),
+            developer_credential_updated_at: r
+                .dev_client_secret_ref
+                .as_ref()
+                .and(r.dev_client_secret_updated_at),
         })
     }
 }
@@ -1283,7 +1293,11 @@ impl PrincipalRepository {
     /// rehash, a storage-format change, not a credential change, so no
     /// event (Go `RewriteDevClientSecretRef`). Callers treat errors as
     /// non-fatal.
-    pub async fn rewrite_developer_secret_ref(&self, principal_id: &str, new_ref: &str) -> Result<()> {
+    pub async fn rewrite_developer_secret_ref(
+        &self,
+        principal_id: &str,
+        new_ref: &str,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE iam_principals SET dev_client_secret_ref = $2, \
              dev_client_secret_updated_at = NOW(), updated_at = NOW() WHERE id = $1",
