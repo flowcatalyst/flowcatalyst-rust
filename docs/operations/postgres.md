@@ -60,7 +60,7 @@ The platform uses two pools:
 - **Main pool** (`fc-server` API + scheduler): `max_connections` configurable, default 20.
 - **Stream processor pool**: 4 connections, separate from the main pool to prevent projection loops contending with API traffic.
 
-Per node: ~25 connections. Active/standby pair: ~50 connections. Add 10 per fc-outbox-processor instance, 5 per fc-router instance (which only opens connections to Redis, not Postgres directly). So `max_connections = 200` accommodates roughly 4-8 platform nodes + outbox sidecars. Bump it as you scale; AWS RDS has a `max_connections` derived from instance class that you may need to override via parameter group.
+Per node: ~25 connections. Active/standby pair: ~50 connections. Add 10 per fc-outbox-processor instance, none for a router-only fc-server node (it opens no Postgres connection). So `max_connections = 200` accommodates roughly 4-8 platform nodes + outbox sidecars. Bump it as you scale; AWS RDS has a `max_connections` derived from instance class that you may need to override via parameter group.
 
 ---
 

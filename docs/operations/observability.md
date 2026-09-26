@@ -242,7 +242,7 @@ If you wire it up, the natural span boundaries are:
 
 ## Router-specific: the monitoring API
 
-`fc-router` exposes a dedicated monitoring API beyond Prometheus. It's a JSON dashboard surface:
+The router role exposes a dedicated monitoring API beyond Prometheus, under `fc-server`'s `FC_ROUTER_HTTP_PREFIX` (default `/router`, so `/router/monitoring/health`). It's a JSON dashboard surface:
 
 | Endpoint | Returns |
 |---|---|

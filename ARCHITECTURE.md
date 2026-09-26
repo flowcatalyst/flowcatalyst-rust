@@ -44,16 +44,18 @@ Top-level system view. For per-component depth see [`docs/architecture/`](docs/a
 ┌────────────────────────────────────────────────────────────────────┐
 │                  fc-server (unified production binary)              │
 │                                                                     │
-│   Platform · Router · Scheduler · Stream · Outbox                   │
+│   Platform · Router · Scheduler · Stream · Outbox · MCP ·           │
+│   Function host                                                     │
 │                                                                     │
-│   Each subsystem toggleable via env. Background subsystems          │
-│   gated by Redis leader lock (FC_STANDBY_ENABLED).                  │
+│   Each role toggleable via env (FC_*_ENABLED); a split deployment   │
+│   is fc-server per tier. Background roles gated by Redis leader     │
+│   lock (FC_STANDBY_ENABLED).                                        │
 └────────────────────────────────────────────────────────────────────┘
 
-Standalone alternatives (for separation of scaling concerns):
+The other two binaries:
 
-   fc-router            fc-stream-processor    fc-outbox-processor
-   fc-dev (local dev)   fc-mcp-server
+   fc-outbox-processor (application sidecar)
+   fc-dev (local dev)
 ```
 
 Binary inventory and deployment topologies: [`docs/operations/topologies.md`](docs/operations/topologies.md).
@@ -171,12 +173,12 @@ Infrastructure paths that bypass UoW (ingest, status transitions, OAuth state, s
 ## Crate layout
 
 ```
-fc-server / fc-dev / fc-router / fc-stream-processor / fc-outbox-processor
+fc-server / fc-dev / fc-outbox-processor
         │
         ▼
-fc-platform   fc-router   fc-stream   fc-outbox   fc-mcp   fc-sdk
-        │           │          │         │           │       │
-        └───────┬───┴──────────┴─────────┴───────────┴───────┘
+fc-platform   fc-router   fc-stream   fc-outbox   fc-mcp   fc-fnhost-core   fc-sdk
+     │            │           │           │          │           │            │
+     └──────┬─────┴───────────┴───────────┴──────────┴───────────┴────────────┘
                 ▼
 fc-common · fc-queue · fc-standby
 ```

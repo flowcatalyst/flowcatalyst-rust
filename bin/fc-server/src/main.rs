@@ -1,6 +1,10 @@
 //! FlowCatalyst Unified Production Server
 //!
 //! Single binary combining all subsystems, toggled via environment variables.
+//! FlowCatalyst ships three binaries, as Go does: this one (every production
+//! role), `fc-outbox-processor` (the application-side sidecar) and `fc-dev`
+//! (local development). A split deployment runs this binary per tier with
+//! different flags (`docs/operations/topologies.md`).
 //! Background processors (router, scheduler, stream, outbox) can optionally
 //! run in standby mode with Redis leader election — only the leader processes.
 //!

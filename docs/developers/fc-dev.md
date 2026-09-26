@@ -25,8 +25,7 @@ We considered `fc` and `fcdev`. `fc-dev` wins by elimination:
   `C:\Windows\System32`. Even users who never type it would see their IT
   department flag the collision.
 - **`fcdev` (no hyphen) avoids both collisions** but breaks the workspace's
-  `fc-` prefix convention (`fc-server`, `fc-router`,
-  `fc-stream-processor`, `fc-outbox-processor`, `fc-mcp-server`). Renaming
+  `fc-` prefix convention (`fc-server`, `fc-outbox-processor`). Renaming
   one binary without renaming the family is inconsistent; renaming the
   family is churn without benefit.
 

@@ -5,11 +5,9 @@ FlowCatalyst is a workspace of focused crates. This document maps what each one 
 ```
                      ┌─────────────────────────────┐
                      │    Binaries (bin/*)         │
-                     │  fc-server, fc-dev,         │
-                     │  fc-router, fc-platform-srv,│
-                     │  fc-stream-processor,       │
-                     │  fc-outbox-processor,       │
-                     │  fc-mcp-server              │
+                     │  fc-server (every role),    │
+                     │  fc-dev,                    │
+                     │  fc-outbox-processor        │
                      └──────────────┬──────────────┘
                                     │ uses
    ┌────────────────────────────────┼────────────────────────────────┐

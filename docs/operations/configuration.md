@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Every environment variable, per binary. Two equivalent names are shown where a legacy TypeScript alias exists (for compatibility with existing ECS task definitions).
+Every environment variable, per binary. FlowCatalyst ships three binaries: `fc-server` (every production role, each behind a flag below), `fc-outbox-processor` (the application-side outbox sidecar) and `fc-dev` (local development). Two equivalent names are shown where a legacy TypeScript alias exists (for compatibility with existing ECS task definitions).
 
 For deployment shape (which binary, which subsystem toggles), see [topologies.md](topologies.md).
 
@@ -10,7 +10,7 @@ For deployment shape (which binary, which subsystem toggles), see [topologies.md
 
 | Variable | Alias | Default | Description |
 |---|---|---|---|
-| `FC_API_PORT` | `PORT` | `3000` (fc-server) / `8080` (fc-dev) | HTTP API port |
+| `FC_API_PORT` | `PORT` | `8080` | HTTP API port |
 | `FC_METRICS_PORT` | — | `9090` | Metrics + health port |
 | `RUST_LOG` | — | `info` | Log level filter (`debug`, `info`, `warn`, `error`, or per-module `fc_router=debug,info`) |
 | `FC_LOG_FORMAT` | — | `text` (dev) / `json` (prod) | Log encoding |
@@ -58,17 +58,22 @@ See [postgres.md](postgres.md) for sizing, partitioning, migration discipline.
 
 ## Subsystem toggles (fc-server only)
 
+Each role is a flag, with Go's names and truth table (`1/true/yes/on`, `0/false/no/off`). A role that is off costs nothing: no connection, no listener. Only the platform, stream, scheduler, scheduled-job and outbox roles connect to Postgres.
+
 | Variable | Alias | Default | Description |
 |---|---|---|---|
-| `FC_PLATFORM_ENABLED` | `PLATFORM_ENABLED` | `true` | Run the platform REST API |
-| `FC_ROUTER_ENABLED` | `MESSAGE_ROUTER_ENABLED` | `false` | Run the SQS message router |
+| `FC_PLATFORM_ENABLED` | `PLATFORM_ENABLED` | `true` | Run the platform REST API (and serve the SPA) |
+| `FC_ROUTER_ENABLED` | `MESSAGE_ROUTER_ENABLED` | `false` | Run the SQS message router (surface under `FC_ROUTER_HTTP_PREFIX`, default `/router`) |
 | `FC_SCHEDULER_ENABLED` | `DISPATCH_SCHEDULER_ENABLED` | `false` | Run the dispatch scheduler |
+| `FC_SCHEDULED_JOB_ENABLED` | `SCHEDULED_JOB_SCHEDULER_ENABLED` | `false` | Run the scheduled-job cron engine |
 | `FC_STREAM_PROCESSOR_ENABLED` | `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor + fan-out + partition manager |
 | `FC_OUTBOX_ENABLED` | `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the embedded outbox processor (uncommon — outbox usually runs as application sidecar) |
+| `FC_MCP_ENABLED` | — | `false` | Run the read-only MCP server on its own listener ([MCP](#mcp-server-fc-server-with-fc_mcp_enabledtrue)) |
+| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the WASM function host ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
 
 ---
 
-## High availability (fc-server + standalone background binaries)
+## High availability (fc-server and fc-outbox-processor)
 
 | Variable | Alias | Default | Description |
 |---|---|---|---|
@@ -78,8 +83,6 @@ See [postgres.md](postgres.md) for sizing, partitioning, migration discipline.
 | `FC_STANDBY_LOCK_TTL_SECONDS` | — | `30` | Lock TTL (worst-case failover lag) |
 | `FC_STANDBY_REFRESH_INTERVAL_SECONDS` | — | `10` | Lock renewal cadence |
 | `FC_STANDBY_INSTANCE_ID` | — | hostname | This instance's identifier (for diagnostics) |
-
-`fc-router` (standalone) uses the `FLOWCATALYST_*` variants of these. Listed under [router](#message-router) below.
 
 See [high-availability.md](high-availability.md).
 
@@ -114,7 +117,9 @@ See [identity-and-auth.md](identity-and-auth.md) for IDP setup, rotation procedu
 
 ---
 
-## Router (`fc-router` standalone or `fc-server` with `FC_ROUTER_ENABLED=true`)
+## Router (`fc-server` with `FC_ROUTER_ENABLED=true`)
+
+The complete contract, Go vs Rust, is [../parity/router-env-vs-go.md](../parity/router-env-vs-go.md); the main ones:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -127,16 +132,7 @@ See [identity-and-auth.md](identity-and-auth.md) for IDP setup, rotation procedu
 | `AUTH_MODE` | `NONE` | `NONE`, `API_KEY`, or `OIDC` — auth for the router's monitoring API |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | When `AUTH_MODE=OIDC` |
 
-For the standalone binary, standby uses `FLOWCATALYST_*` prefix:
-
-| Variable | Default | Description |
-|---|---|---|
-| `FLOWCATALYST_STANDBY_ENABLED` | `false` | Enable Redis leader election |
-| `FLOWCATALYST_REDIS_URL` | `redis://127.0.0.1:6379` | Redis URL |
-| `FLOWCATALYST_LOCK_KEY` | `fc:router:leader` | Lock key |
-| `FLOWCATALYST_LOCK_TTL_SECONDS` | `30` | Lock TTL |
-| `FLOWCATALYST_HEARTBEAT_INTERVAL_SECONDS` | `10` | Renewal interval |
-| `FLOWCATALYST_INSTANCE_ID` | hostname | Instance ID |
+Standby is fc-server's own election (`FC_STANDBY_*` above), shared by every role in the process. (The removed standalone router also read `FLOWCATALYST_STANDBY_*`; fc-server does not, as Go does not.)
 
 Notifications (optional, dispatched to Teams):
 
@@ -155,6 +151,9 @@ ALB integration (requires `alb` build feature):
 | `FC_ALB_TARGET_GROUP_ARN` | — | Target group ARN (required if enabled) |
 | `FC_ALB_TARGET_ID` | — | Instance ID or IP (required if enabled) |
 | `FC_ALB_TARGET_PORT` | `8080` | Health check port |
+| `FC_ALB_DEREGISTRATION_DELAY_SECONDS` | `300` | Longest wait for deregistration to drain |
+
+Build features for the router role: `alb`, `email` (e-mail notifications) and `oidc-flow` (the OIDC-flow router UI auth), e.g. `cargo build --release -p fc-server --features alb`.
 
 Router architecture: [../architecture/message-router.md](../architecture/message-router.md).
 
@@ -198,8 +197,8 @@ Stream processor architecture: [../architecture/stream-processor.md](../architec
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`fc-server` reads `FC_OUTBOX_DB_TYPE`) |
-| `FC_OUTBOX_DB_URL` | — (required) | Application database URL |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`mongo`: `fc-outbox-processor` only) |
+| `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | — | Application database URL. Required by `fc-outbox-processor`; `fc-server` reads a `postgres` outbox from the platform database when unset (Go) |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Per-type table override |
 | `FC_OUTBOX_DISPATCH_JOBS_TABLE` | `outbox_messages` | Per-type table override |
@@ -213,9 +212,48 @@ Stream processor architecture: [../architecture/stream-processor.md](../architec
 | `FC_OUTBOX_MAX_CONCURRENT_GROUPS` / `FC_MAX_CONCURRENT_GROUPS` | `10` | Groups sending at once |
 | `FC_OUTBOX_MAX_RETRIES` | `3` | Attempts before a retryable failure is final |
 | `FC_OUTBOX_BLOCK_ON_ERROR` | `true` | A failed item stops its message group |
-| `FC_OUTBOX_ADMIN_PORT` | — | Standalone binary only: group admin API on 127.0.0.1 |
+| `FC_OUTBOX_ADMIN_PORT` | — | Group admin API on 127.0.0.1 (both binaries) |
 
 Outbox architecture: [../architecture/outbox-processor.md](../architecture/outbox-processor.md).
+
+---
+
+## MCP server (`fc-server` with `FC_MCP_ENABLED=true`)
+
+The read-only MCP server (Go's `StartMCP`), a streamable-HTTP service at `/mcp` (and `GET /health`) on its own listener. It calls the platform over HTTP, so it needs no database; it is not leader-gated. Refuses to boot without credentials.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_MCP_BIND` | `127.0.0.1` | Bind host (localhost only unless set); a `host:port` is also accepted |
+| `FC_MCP_PORT` | `8090` | Listener port |
+| `FLOWCATALYST_URL` / `FC_MCP_PLATFORM_URL` | `http://localhost:{FC_API_PORT}` | The platform it calls |
+| `FLOWCATALYST_CLIENT_ID` / `FLOWCATALYST_CLIENT_SECRET` | — | Its `client_credentials` client (required) |
+
+Locally: `fc-dev mcp` (stdio or `--http`) or `fc-dev --mcp`.
+
+---
+
+## Function host (`fc-server` with `FC_FUNCTION_HOST_ENABLED=true`)
+
+The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). It reads its own `FC_FN_*` environment:
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_FN_PLATFORM_URL` | — (required) | The platform whose `/control/functions/*` it polls |
+| `FC_FN_CLIENT_ID` / `FC_FN_CLIENT_SECRET` | — (required) | Its `client_credentials` client (role `platform:function-host`) |
+| `FC_FN_POOL` | `default` | The pool it serves (a DNS label) |
+| `FC_FN_HOST_ID` | `<hostname>-<random>` | The id its heartbeats carry |
+| `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` | Artifact signature policy (`off` only with `FLOWCATALYST_DEV_MODE=true`) |
+| `FC_FN_CACHE_DIR` | `<tmp>/fc-fn-cache` | Artifact and compiled-module cache |
+| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits |
+| `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
+| `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown |
+| `FC_FN_PORT` | `8080` host only / `8090` beside other roles | Private function listener (`/functions/<address>/…`) |
+| `FC_FN_PUBLIC_PORT` | `8081` host only / `8091` beside other roles | Public listener for claimed hostnames (`off` disables) |
+| `FC_METRICS_PORT` (host only) / `FC_FN_METRICS_PORT` (beside other roles) | `9090` / `9091` | The host's `/health`, `/ready`, `/metrics` |
+| `FC_EXIT_AFTER_START` | `false` | Host only: exit 0 right after start-up |
+
+**Host only** (this flag on, every other role off — `FC_PLATFORM_ENABLED=false` too): `fc-server` is exactly the former `fc-fnhost` daemon — no database, none of `fc-server`'s own listeners, exit 2 naming every bad variable. **Beside other roles** the host runs in the process on its own ports (a port another listener of the process holds refuses the boot), starts once the API listener is bound, and drains first at shutdown.
 
 ---
 
@@ -256,7 +294,7 @@ A typical production fc-server invocation:
 
 ```sh
 FC_DATABASE_URL=postgresql://...                                  \
-FC_API_PORT=3000                                                  \
+FC_API_PORT=8080                                                  \
 FC_EXTERNAL_BASE_URL=https://platform.example.com                 \
 FC_JWT_PRIVATE_KEY_PATH=/secrets/jwt/private.pem                  \
 FC_JWT_PUBLIC_KEY_PATH=/secrets/jwt/public.pem                    \
@@ -267,7 +305,9 @@ FC_SCHEDULER_ENABLED=true                                         \
 FC_STREAM_PROCESSOR_ENABLED=true                                  \
 FC_STANDBY_ENABLED=true                                           \
 FC_STANDBY_REDIS_URL=redis://redis.internal:6379                  \
-FLOWCATALYST_CONFIG_URL=http://localhost:3000/api/config/router   \
+FLOWCATALYST_CONFIG_URL=http://localhost:8080/api/dispatch/router-config \
+FC_ROUTER_PLATFORM_URL=http://localhost:8080                      \
+FC_ROUTER_CLIENT_ID=... FC_ROUTER_CLIENT_SECRET=...               \
 RUST_LOG=info,fc_router=info,fc_platform=info                     \
 FC_LOG_FORMAT=json                                                \
   fc-server
