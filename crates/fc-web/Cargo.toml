@@ -14,7 +14,7 @@ publish = false
 # changes, so an upgrade is a planned task.
 [dependencies]
 fc-platform = { path = "../fc-platform" }
-topcoat = { version = "=0.9.0", features = ["tower", "tailwind", "icon-iconify"] }
+topcoat = { version = "=0.9.0", features = ["tower", "tailwind", "icon-iconify", "ui"] }
 # The bundler writes the asset bundle at startup (see `assets.rs`). A direct
 # dependency switches Topcoat's asset macros to `::topcoat_asset` paths, so
 # it must not be optional.
