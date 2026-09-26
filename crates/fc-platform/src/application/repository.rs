@@ -127,6 +127,23 @@ impl ApplicationRepository {
         Ok(rows.into_iter().collect())
     }
 
+    /// `id → name` for the given application ids, in one query (the
+    /// OAuth-client `applications` refs).
+    pub async fn find_names_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, name FROM app_applications WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     pub async fn find_active(&self) -> Result<Vec<Application>> {
         let rows = sqlx::query_as::<_, ApplicationRow>(
             "SELECT * FROM app_applications WHERE active = TRUE",

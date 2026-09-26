@@ -43,6 +43,9 @@ pub struct CreateOAuthClientCommand {
     /// The portal app this portal client fronts (Go `PortalAppID`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal_app_id: Option<String>,
+    /// Authority-bearing interactive tokens (Go `APIAccess`).
+    #[serde(default)]
+    pub api_access: bool,
 }
 
 impl crate::usecase::AuditMasked for CreateOAuthClientCommand {}
@@ -82,7 +85,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         if command.client_name.trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CLIENT_NAME_REQUIRED",
-                "Client name is required",
+                "clientName is required",
             ));
         }
         Ok(())
@@ -150,6 +153,7 @@ impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
         client.portal_client_id =
             crate::portal::trimmed_or_none(command.portal_client_id.as_deref());
         client.portal_app_id = crate::portal::trimmed_or_none(command.portal_app_id.as_deref());
+        client.api_access = command.api_access;
         crate::portal::validate_oauth_client_plane(&client)?;
 
         let event =

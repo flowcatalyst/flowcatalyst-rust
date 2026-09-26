@@ -960,13 +960,16 @@ pub async fn provision_application_service_account(
                 // provision_service_account.go:124-125
                 grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
                 default_scopes: vec!["openid".to_string()],
-                pkce_required: false,
+                // Go's entity default (auth.NewOAuthClient); PKCE only
+                // applies at /oauth/authorize, which this client never uses.
+                pkce_required: true,
                 application_ids: vec![app_id],
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,
+                api_access: false,
             };
             create_oauth_uc
                 .run(oauth_cmd, ctx)
@@ -1122,19 +1125,21 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         client_secret_ref,
         redirect_uris: req.redirect_uris.clone(),
         post_logout_redirect_uris: Vec::new(),
-        grant_types: vec![GrantType::AuthorizationCode],
+        grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
         default_scopes: vec![
             "openid".to_string(),
             "profile".to_string(),
             "email".to_string(),
         ],
-        pkce_required: client_type == OAuthClientType::Public,
+        // Go's entity default (auth.NewOAuthClient), for both types.
+        pkce_required: true,
         application_ids: vec![app.id.clone()],
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
         created_by: Some(principal_id.to_owned()),
         portal_client_id: None,
         portal_app_id: None,
+        api_access: false,
     };
     let ctx = ExecutionContext::create(principal_id);
     create_oauth_client_use_case

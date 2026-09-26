@@ -499,6 +499,7 @@ pub fn build_platform_routes(
         ),
     );
     let oauth_clients_state = OAuthClientsState {
+        application_repo: repos.application_repo.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
         portal_apps: Arc::new(crate::portal::repository::PortalAppRepository::new(
             &repos.pool,

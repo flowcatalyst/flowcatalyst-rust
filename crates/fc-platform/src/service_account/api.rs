@@ -473,13 +473,15 @@ pub async fn create_service_account<U: UnitOfWork>(
                     crate::auth::oauth_entity::GrantType::RefreshToken,
                 ],
                 default_scopes: vec!["openid".to_string()],
-                pkce_required: false,
+                // Go's entity default (auth.NewOAuthClient).
+                pkce_required: true,
                 application_ids: vec![],
                 allowed_origins: vec![],
                 service_account_principal_id: Some(result.event.service_account_id.clone()),
                 created_by: Some(auth.0.principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,
+                api_access: false,
             };
             let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
             state
