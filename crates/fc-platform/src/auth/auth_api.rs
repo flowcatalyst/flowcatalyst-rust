@@ -62,8 +62,9 @@ pub struct LoginResponse {
     /// Assigned roles
     pub roles: Vec<String>,
     /// Effective permissions (Go `buildPermissionList`: the roles'
-    /// permissions, then `*` when they include `platform:*:*:*`)
-    pub permissions: Vec<String>,
+    /// permissions, then `*` when they include `platform:*:*:*`); `null`
+    /// when the roles grant nothing (Go appends to a nil slice)
+    pub permissions: Option<Vec<String>>,
     /// Home client ID; `null` when none
     pub client_id: Option<String>,
     /// Whether the account signs in through a federated identity provider
@@ -247,7 +248,7 @@ async fn login_response(
         name: principal.name.clone(),
         email: principal_email,
         roles,
-        permissions: permissions.unwrap_or_default(),
+        permissions: permissions.ok().filter(|p| !p.is_empty()),
         client_id: principal.client_id.clone(),
         sso_managed: sso_managed.unwrap_or(false),
     };
@@ -547,7 +548,7 @@ pub async fn get_current_user(
 }
 
 /// Go `buildPermissionList` (auth/login/endpoint.go:437-450) over the
-/// flattened role permissions, sorted.
+/// flattened role permissions, in Go's order.
 async fn effective_permissions(
     state: &AuthState,
     roles: &[String],
@@ -724,7 +725,7 @@ mod tests {
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             roles: vec!["admin".to_string()],
-            permissions: vec!["platform:*:*:*".to_string(), "*".to_string()],
+            permissions: Some(vec!["platform:*:*:*".to_string(), "*".to_string()]),
             client_id: None,
             sso_managed: false,
         };

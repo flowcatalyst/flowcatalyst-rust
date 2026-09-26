@@ -917,6 +917,7 @@ pub fn build_platform_routes(
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         auth_service: auth.auth.clone(),
     };
     let well_known_state = WellKnownState {

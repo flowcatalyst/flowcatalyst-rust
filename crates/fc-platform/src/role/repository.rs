@@ -237,19 +237,32 @@ impl RoleRepository {
         self.hydrate_roles(rows).await
     }
 
-    /// The permissions a set of role names grants, de-duplicated and sorted
-    /// (Go `flattenPermissions`, auth/provider/provider.go:141-164: unknown
-    /// role names contribute nothing).
+    /// The permissions a set of role names grants, in Go's order (Go
+    /// `flattenPermissions`, auth/provider/provider.go:141-164): role by
+    /// role in the order given, each role's permissions sorted, a
+    /// permission kept at its first appearance. Unknown role names
+    /// contribute nothing.
     pub async fn flatten_permissions(&self, role_names: &[String]) -> Result<Vec<String>> {
-        let mut permissions: Vec<String> = self
+        let mut by_name: std::collections::HashMap<String, AuthRole> = self
             .find_by_codes(role_names)
             .await?
             .into_iter()
-            .flat_map(|r| r.permissions)
-            .collect::<HashSet<_>>()
-            .into_iter()
+            .map(|r| (r.name.clone(), r))
             .collect();
-        permissions.sort();
+        let mut seen = HashSet::new();
+        let mut permissions = Vec::new();
+        for name in role_names {
+            let Some(role) = by_name.remove(name) else {
+                continue;
+            };
+            let mut granted: Vec<String> = role.permissions.into_iter().collect();
+            granted.sort();
+            for p in granted {
+                if seen.insert(p.clone()) {
+                    permissions.push(p);
+                }
+            }
+        }
         Ok(permissions)
     }
 
