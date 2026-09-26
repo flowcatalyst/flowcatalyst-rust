@@ -62,12 +62,23 @@ pub struct LoginResponse {
     /// Assigned roles
     pub roles: Vec<String>,
     /// Effective permissions (Go `buildPermissionList`: the roles'
-    /// permissions, then `*` when they include `platform:*:*:*`)
+    /// permissions, then `*` when they include `platform:*:*:*`). `null`
+    /// when there are none, as Go's nil slice serialises.
+    #[serde(serialize_with = "null_when_empty")]
     pub permissions: Vec<String>,
     /// Home client ID; `null` when none
     pub client_id: Option<String>,
     /// Whether the account signs in through a federated identity provider
     pub sso_managed: bool,
+}
+
+/// A list Go leaves nil when empty: `null` on the wire, never `[]`.
+fn null_when_empty<S: serde::Serializer>(v: &[String], s: S) -> Result<S::Ok, S::Error> {
+    if v.is_empty() {
+        s.serialize_none()
+    } else {
+        serde::Serialize::serialize(v, s)
+    }
 }
 
 /// Domain check request
