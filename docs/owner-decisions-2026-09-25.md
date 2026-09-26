@@ -59,6 +59,12 @@ The binding record for the work that follows. It supersedes anything in older do
 | 30 | `$schema` in responses | **Confirmed by the owner 2026-09-26 ("we don't need $schema").** Rust does **not** emit huma's `$schema` member (`"<base>/<Model>.json"`) that Go adds to every JSON response body. No consumer reads it: the Laravel SDK's generated models treat it as optional, and the TypeScript and Rust SDKs and the SPA ignore it. The API parity harness drops a body's top-level `$schema` on both sides (normaliser rule 0) under this decision. |
 | 31 | Go's delivery defects (**confirmed by the owner 2026-09-26: "keep your fixes"**) | Where the delivery harness shows Go losing, duplicating or stranding messages and Rust not (e.g. Go loses 2 of 40 on a worker SIGKILL; Go's `router-config` omits client-scoped queues), Rust keeps the correct behaviour. The harness records each as an `expected-diffs` entry citing this decision, like #29's corpus rule. |
 | 32 | 2FA and self-service password writes | Written directly, as Go does, with Go's audit rows and no domain events; recorded as an infrastructure exception in `CLAUDE.md` (owner, 2026-09-26). |
+| 33 | `/version` | Rust reports its real build version (Go reports `dev` locally). Owner, 2026-09-26. |
+| 34 | Delete guards | Deleting a connection still used by subscriptions, or an application that still has access grants, is refused (409) — Go allows both and leaves dangling references. Owner, 2026-09-26. |
+| 35 | Event-type catalogue | Rust seeds Go's catalogue plus every event type Rust emits (131 vs Go's 73); nothing is removed. Owner, 2026-09-26. |
+| 36 | Audit command JSON | Stored command JSON stays camelCase (Go stores PascalCase field names); operation names match Go. Owner, 2026-09-26. |
+| 37 | Developer portal | `/bff/developer` also admits application-scoped developers, for the applications they can access (Go: anchor + `openapi:view` only). Owner, 2026-09-26. |
+| 38 | Go 500s and data loss in admin writes | Where Go answers 500 or loses data and Rust answers correctly (anchor-domain update into an existing domain and duplicate IdP role mapping → 409; an email-domain mapping update clears `primaryClientId` only on explicit `null`), Rust keeps its behaviour, as #31. Owner, 2026-09-26. |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
