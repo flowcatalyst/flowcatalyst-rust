@@ -6,7 +6,7 @@ the four per-area passes (`docs/parity/api-area-{a,b,c,d}.md`) were merged and o
 | | |
 |---|---|
 | Go | `flowcatalyst-go` @ `73a6918`, built with `go build -mod=readonly` (Go tree unchanged) |
-| Rust | `feat/decisions-33-38` @ `428f3198` (`fc-server` debug build, clean tree) |
+| Rust | `feat/decisions-33-38` @ `428f3198` (`fc-server` debug build, clean tree); rerun on `7f4ad9f7` (the developer-portal handlers restructured for the route guardrail, same behaviour) with the same totals and the same 40 steps |
 | Scenarios | 45 files / 1363 steps, unchanged since run 1 |
 | Seed | Go `fcdev init`, first attempt |
 | Allow-list | 123 entries (78 before this branch, 45 added citing #33, #34, #35, #38, Direction and the `/auth/me` scope follow-up) |
