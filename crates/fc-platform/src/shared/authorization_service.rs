@@ -1031,6 +1031,20 @@ pub mod checks {
         }
     }
 
+    /// The `/bff/developer` reads: anchor scope, then
+    /// `platform:developer:application-openapi:view` (Go
+    /// `CanReadDeveloperPortal`, shared/auth/auth.go:796).
+    pub fn can_read_developer_portal(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::developer::APPLICATION_OPENAPI_VIEW)
+    }
+
+    /// `POST /bff/developer/sync-platform-openapi`: anchor scope, then
+    /// `platform:developer:application-openapi:sync` (Go
+    /// `CanSyncPlatformOpenAPI`, shared/auth/auth.go:797).
+    pub fn can_sync_platform_openapi(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::developer::APPLICATION_OPENAPI_SYNC)
+    }
+
     /// Developer portal: read an application's OpenAPI document.
     /// Resource scoping (which application the principal can see) is handled
     /// in the handler against `iam_principal_application_access`.

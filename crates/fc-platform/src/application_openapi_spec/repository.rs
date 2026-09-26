@@ -56,6 +56,14 @@ const SELECT_COLS: &str = "id, application_id, version, status, spec, spec_hash,
                             change_notes, change_notes_text, synced_at, synced_by, \
                             created_at, updated_at";
 
+/// The identifying columns of an application's CURRENT spec.
+#[derive(Debug, Clone)]
+pub struct CurrentSpecRef {
+    pub id: String,
+    pub version: String,
+    pub synced_at: DateTime<Utc>,
+}
+
 pub struct OpenApiSpecRepository {
     pool: PgPool,
 }
@@ -81,6 +89,38 @@ impl OpenApiSpecRepository {
         .fetch_optional(&self.pool)
         .await?;
         row.map(OpenApiSpec::try_from).transpose()
+    }
+
+    /// The CURRENT spec's id, version and sync time for each of
+    /// `application_ids` that has one, keyed by application id: one query,
+    /// without the documents themselves.
+    pub async fn find_current_refs_by_applications(
+        &self,
+        application_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, CurrentSpecRef>> {
+        if application_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows = sqlx::query_as::<_, (String, String, String, DateTime<Utc>)>(
+            "SELECT application_id, id, version, synced_at FROM app_application_openapi_specs \
+             WHERE application_id = ANY($1) AND status = 'CURRENT'",
+        )
+        .bind(application_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(application_id, id, version, synced_at)| {
+                (
+                    application_id,
+                    CurrentSpecRef {
+                        id,
+                        version,
+                        synced_at,
+                    },
+                )
+            })
+            .collect())
     }
 
     pub async fn find_all_by_application(&self, application_id: &str) -> Result<Vec<OpenApiSpec>> {
