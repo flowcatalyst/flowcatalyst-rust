@@ -56,15 +56,15 @@ and no permission gets 403 `NO_PLATFORM_ROLE` everywhere except `/auth/*`, `/por
 | `GET /api/principals/{id}/available-applications` | `CanReadPrincipals`, client reach | login, client reach | **changed**: `can_read_principals`, client reach |
 | `GET /api/principals/{id}/client-access` | `RequireAnchor` | login, client reach | **changed**: anchor (`ANCHOR_REQUIRED`) |
 | `GET /api/principals/check-email-domain` | `CanReadPrincipals` | anchor | **changed**: `can_read_principals` (a client administrator's create form uses it) |
-| `GET /api/audit-logs` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/recent` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/entity-types` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/operations` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/application-ids` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/client-ids` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/{id}` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/entity/{entityType}/{entityId}` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/principal/{principalId}` | `admin:audit-log:view` | anchor, or the principal itself | **changed**: `can_read_audit_logs`, and anchor unless reading one's own trail |
+| `GET /api/audit-logs` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/recent` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/entity-types` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/operations` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/application-ids` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/client-ids` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/{id}` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/entity/{entityType}/{entityId}` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/principal/{principalId}` | `admin:audit-log:view` | anchor, or the principal itself | **changed**: `can_read_audit_logs` alone, as Go (api-area-a) |
 | `GET /bff/dashboard/stats` | `RequireAnchor`, then `CanViewDashboardStats` (`admin:client:view` or `admin:application:view`) | anchor or `platform:*:*:*` | **changed**: `can_view_dashboard_stats` |
 
 Deliberate deviation in this table: the audit-log reads keep anchor reach on top of Go's permission, because
