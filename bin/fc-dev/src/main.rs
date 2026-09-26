@@ -925,6 +925,15 @@ async fn main() -> Result<()> {
         routes.auth.clone(),
         routes.oidc_login.password_setup_hint.clone(),
     );
+    // The users section runs the principal API's own handler bodies, so it
+    // takes the states those handlers were built with.
+    #[cfg(feature = "web")]
+    let web_users = fc_web::UserAdminStates {
+        principals: routes.principals.clone(),
+        principal_go: routes.go_routes.principals.clone(),
+        two_factor: routes.two_factor.clone(),
+        developer_credentials: routes.developer_credentials.clone(),
+    };
     let (platform_app, platform_openapi) = routes.build();
 
     // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
@@ -1022,6 +1031,7 @@ async fn main() -> Result<()> {
         unit_of_work.clone(),
         web_auth.0,
         web_auth.1,
+        web_users,
     ));
     #[cfg(feature = "web")]
     info!("Topcoat UI trial mounted at /ui");

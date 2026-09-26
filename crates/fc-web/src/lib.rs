@@ -13,6 +13,11 @@
 mod app;
 mod assets;
 pub mod auth;
+/// Topcoat UI's components, installed with `topcoat ui add` (state in
+/// `components.toml`) and themed by `styles.css`. Edit them in place; see
+/// `docs/topcoat-components.md` for what was changed and why.
+#[allow(dead_code)] // vendored: each component keeps its full API
+mod components;
 mod ui;
 
 use std::sync::Arc;
@@ -60,6 +65,20 @@ pub struct WebDeps {
     pub(crate) application_client_config_repo: Arc<fc_platform::ApplicationClientConfigRepository>,
     pub(crate) event_repo: Arc<fc_platform::EventRepository>,
     pub(crate) dispatch_job_repo: Arc<fc_platform::DispatchJobRepository>,
+    pub(crate) users: UserAdminStates,
+}
+
+/// The principal API's states, as `build_platform_routes` built them
+/// (`PlatformRoutes::principals`, `go_routes.principals`, `two_factor`,
+/// `developer_credentials`). The users section calls the same handler
+/// bodies (`fc_platform::principal::admin`, …) with them, so its writes go
+/// through the same checks and use cases as `/api/principals`.
+#[derive(Clone)]
+pub struct UserAdminStates {
+    pub principals: fc_platform::principal::PrincipalsState,
+    pub principal_go: fc_platform::principal::go_api::PrincipalGoState,
+    pub two_factor: Arc<fc_platform::mfa::TwoFactorLogin>,
+    pub developer_credentials: fc_platform::developer_credential::api::DeveloperCredentialsState,
 }
 
 impl WebDeps {
@@ -74,6 +93,7 @@ impl WebDeps {
         unit_of_work: Arc<PgUnitOfWork>,
         auth_state: AuthState,
         password_setup_hint: Option<PasswordSetupHint>,
+        users: UserAdminStates,
     ) -> Self {
         Self {
             app_state: AppState {
@@ -100,6 +120,7 @@ impl WebDeps {
             application_client_config_repo: repos.application_client_config_repo.clone(),
             event_repo: repos.event_repo.clone(),
             dispatch_job_repo: repos.dispatch_job_repo.clone(),
+            users,
         }
     }
 }

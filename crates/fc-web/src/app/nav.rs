@@ -11,6 +11,7 @@ use topcoat::icon::{IconData, iconify::iconify_icon};
 
 /// SPA routes fc-web serves at `/ui<route>`.
 pub const PORTED: &[&str] = &[
+    "/users",
     "/event-types",
     "/subscriptions",
     "/connections",
