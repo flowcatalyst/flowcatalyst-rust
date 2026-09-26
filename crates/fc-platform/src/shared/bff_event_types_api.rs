@@ -21,7 +21,6 @@ use crate::event_type::operations::{
     SyncEventTypesUseCase, UpdateEventTypeCommand, UpdateEventTypeUseCase,
 };
 use crate::event_type::repository::EventTypeRepository;
-use crate::shared::api_common::CreatedResponse;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -51,9 +50,11 @@ impl From<SpecVersion> for BffSpecVersionResponse {
             status: v.status.as_str().to_string(),
             schema_type: v.schema_type.as_str().to_string(),
             mime_type: v.mime_type,
+            // The stored `jsonb` text, as Go serves it.
             schema: v
                 .schema_content
-                .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+                .as_ref()
+                .map(crate::shared::jsonb_text::jsonb_text),
             created_at: v.created_at.to_rfc3339(),
             updated_at: v.updated_at.to_rfc3339(),
         }
@@ -72,6 +73,7 @@ pub struct BffEventTypeResponse {
     pub aggregate: String,
     pub event: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// "CURRENT", "ARCHIVED"
     pub status: String,
@@ -374,7 +376,7 @@ pub async fn get_event_type(
     operation_id = "postBffEventTypes",
     request_body = BffCreateEventTypeRequest,
     responses(
-        (status = 201, description = "Event type created", body = CreatedResponse),
+        (status = 201, description = "Event type created", body = BffEventTypeResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -384,7 +386,7 @@ pub async fn create_event_type(
     State(state): State<BffEventTypesState>,
     auth: Authenticated,
     Json(req): Json<BffCreateEventTypeRequest>,
-) -> Result<(axum::http::StatusCode, Json<CreatedResponse>), PlatformError> {
+) -> Result<(axum::http::StatusCode, Json<BffEventTypeResponse>), PlatformError> {
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     // Validate client access if specified
@@ -419,10 +421,14 @@ pub async fn create_event_type(
         schema_use_case.run(schema_cmd, ctx).await.into_result()?;
     }
 
-    Ok((
-        axum::http::StatusCode::CREATED,
-        Json(CreatedResponse::new(id)),
-    ))
+    // Go answers the created event type, reloaded so its spec versions
+    // are as stored.
+    let created = state
+        .event_type_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::internal("post-create reload failed"))?;
+    Ok((axum::http::StatusCode::CREATED, Json(created.into())))
 }
 
 /// Update event type metadata
