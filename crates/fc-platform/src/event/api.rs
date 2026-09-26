@@ -196,8 +196,33 @@ impl From<EventRead> for EventReadResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct EventsQuery {
-    /// Result size. Default 50, capped at 1000.
-    pub size: Option<u32>,
+    /// Result size (the SPA's; wins over `limit`). Default 100, max 1000.
+    pub size: Option<i64>,
+
+    /// Result size (the SDK's).
+    pub limit: Option<i64>,
+
+    /// Rows to skip.
+    pub offset: Option<i64>,
+
+    /// Exact event type
+    #[serde(rename = "type")]
+    pub event_type: Option<String>,
+
+    /// Exact subject
+    pub subject: Option<String>,
+
+    /// Exact client id
+    pub client_id: Option<String>,
+
+    /// Accepted and ignored, as Go (no backing column on the projection).
+    pub principal_id: Option<String>,
+
+    /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
+    pub since: Option<String>,
+
+    /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
+    pub until: Option<String>,
 
     /// Filter by client IDs (comma-separated)
     pub client_ids: Option<String>,
@@ -217,7 +242,7 @@ pub struct EventsQuery {
     /// Filter by correlation ID
     pub correlation_id: Option<String>,
 
-    /// Free-text search across type, source, subject
+    /// Exact source
     pub source: Option<String>,
 }
 
@@ -295,6 +320,14 @@ pub async fn create_event(
         .check_event_types(&auth.0, [req.event_type.as_str()])
         .await?;
 
+    // Go (event/api/api.go `create`): an explicit JSON null is no data.
+    if req.data.is_null() {
+        return Err(PlatformError::bad_request_code(
+            "VALIDATION",
+            "data is required",
+        ));
+    }
+
     // Check for duplicate deduplication ID
     if let Some(ref dedup_id) = req.deduplication_id {
         if let Some(existing) = state.event_repo.find_by_deduplication_id(dedup_id).await? {
@@ -325,9 +358,19 @@ pub async fn create_event(
     if let Some(cause_id) = req.causation_id {
         event = event.with_causation_id(cause_id);
     }
-    if let Some(dedup_id) = req.deduplication_id {
-        event = event.with_deduplication_id(dedup_id);
-    }
+    // Go's `event.New` gives every event a deduplication id:
+    // `<type>-<fresh tsid>` unless the caller supplied one.
+    let dedup_id = req
+        .deduplication_id
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| {
+            format!(
+                "{}-{}",
+                event.event_type,
+                crate::shared::tsid::generate_untyped()
+            )
+        });
+    event = event.with_deduplication_id(dedup_id);
     if let Some(cid) = client_id {
         event = event.with_client_id(cid);
     }
@@ -360,7 +403,7 @@ pub async fn create_event(
         ("id" = String, Path, description = "Event ID")
     ),
     responses(
-        (status = 200, description = "Event found", body = EventResponse),
+        (status = 200, description = "Event found", body = EventDetailResponse),
         (status = 404, description = "Event not found")
     ),
     security(("bearer_auth" = []))
@@ -369,19 +412,137 @@ pub async fn get_event(
     State(state): State<EventsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<EventResponse>, PlatformError> {
+) -> Result<Json<EventDetailResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_events(&auth.0)?;
 
+    // Go reads the read projection (`msg_events_read`), as the list does: an
+    // event the projector has not reached yet is a 404, and the detail
+    // agrees with the list it was opened from.
     let event = state
         .event_repo
-        .find_by_id(&id)
+        .find_read_detail_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Event", &id))?;
 
-    // Check client access
-    crate::shared::caller_reach::ensure_row_visible(&auth.0, event.client_id.as_deref(), "event")?;
+    // A client's event needs that client; a platform event is visible to any
+    // holder of `event:view` (Go `getByID`).
+    if let Some(cid) = event.client_id.as_deref() {
+        if !auth.0.can_access_client(cid) {
+            return Err(PlatformError::forbidden("No access to this event"));
+        }
+    }
 
     Ok(Json(event.into()))
+}
+
+/// `GET /api/events/{id}`: Go's `EventResponse` (event/api/dto.go), from the
+/// read projection. Absent members stay absent.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EventDetailResponse {
+    pub id: String,
+    pub spec_version: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub source: String,
+    pub subject: String,
+    pub time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub data: Option<serde_json::Value>,
+    pub deduplication_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub causation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subdomain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projected_at: Option<String>,
+    pub created_at: String,
+}
+
+impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
+    fn from(e: crate::event::repository::EventReadDetail) -> Self {
+        // `data` is stored as text; Go hands it back as raw JSON.
+        let data = e
+            .data
+            .filter(|d| !d.is_empty())
+            .map(|d| serde_json::from_str(&d).unwrap_or(serde_json::Value::String(d)));
+        Self {
+            id: e.id,
+            spec_version: e.spec_version.unwrap_or_default(),
+            event_type: e.event_type,
+            source: e.source,
+            subject: e.subject.unwrap_or_default(),
+            time: e.time.to_rfc3339(),
+            data,
+            deduplication_id: e.deduplication_id.unwrap_or_default(),
+            client_id: e.client_id,
+            message_group: e.message_group,
+            correlation_id: e.correlation_id,
+            causation_id: e.causation_id,
+            application: e.application,
+            subdomain: e.subdomain,
+            aggregate: e.aggregate,
+            projected_at: e.projected_at.map(|t| t.to_rfc3339()),
+            created_at: e.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// A list row: Go's slim `EventRead` (top-level `type`, absent members
+/// absent, `projectedAt` always).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EventListItem {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    pub time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subdomain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    pub projected_at: String,
+}
+
+impl From<EventRead> for EventListItem {
+    fn from(e: EventRead) -> Self {
+        Self {
+            id: e.id,
+            event_type: e.event_type,
+            source: e.source,
+            subject: e.subject.filter(|s| !s.is_empty()),
+            time: e.time.to_rfc3339(),
+            application: e.application,
+            subdomain: e.subdomain,
+            aggregate: e.aggregate,
+            message_group: e.message_group,
+            correlation_id: e.correlation_id,
+            client_id: e.client_id,
+            projected_at: e.projected_at.to_rfc3339(),
+        }
+    }
 }
 
 /// List events. Returns the most recent rows matching the filters; no
@@ -393,7 +554,7 @@ pub async fn get_event(
     operation_id = "getApiEvents",
     params(EventsQuery),
     responses(
-        (status = 200, description = "List of events", body = Vec<super::entity::EventRead>)
+        (status = 200, description = "List of events", body = Vec<EventListItem>)
     ),
     security(("bearer_auth" = []))
 )]
@@ -401,40 +562,61 @@ pub async fn list_events(
     State(state): State<EventsState>,
     auth: Authenticated,
     Query(query): Query<EventsQuery>,
-) -> Result<Json<Vec<super::entity::EventRead>>, PlatformError> {
+) -> Result<Json<Vec<EventListItem>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_events(&auth.0)?;
+    list_events_unchecked(&state, &auth, query).await
+}
 
-    let event_types = split_csv(query.types.as_deref());
+/// Go's `list` / `listRaw` body (event/api/api.go) once the permission is
+/// checked: the read projection filtered, scoped in SQL for a non-anchor
+/// caller (platform events plus its clients'), newest first.
+pub(crate) async fn list_events_unchecked(
+    state: &EventsState,
+    auth: &Authenticated,
+    query: EventsQuery,
+) -> Result<Json<Vec<EventListItem>>, PlatformError> {
+    let types = split_csv(query.types.as_deref());
     let applications = split_csv(query.applications.as_deref());
     let subdomains = split_csv(query.subdomains.as_deref());
     let aggregates = split_csv(query.aggregates.as_deref());
-
-    let Some(client_ids) = crate::shared::caller_reach::read_client_filter(
-        &auth.0,
-        split_csv(query.client_ids.as_deref()),
-    )?
-    else {
-        return Ok(Json(vec![]));
+    let client_ids = split_csv(query.client_ids.as_deref());
+    let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
+        None
+    } else {
+        Some(crate::shared::caller_reach::client_ids(&auth.0))
     };
-
-    let size = query.size.unwrap_or(50).clamp(1, 1000) as i64;
-
-    let rows = state
-        .event_repo
-        .find_read_with_cursor(
-            &client_ids,
-            &applications,
-            &subdomains,
-            &aggregates,
-            &event_types,
-            query.correlation_id.as_deref(),
-            query.source.as_deref(),
-            None,
-            size,
-        )
-        .await?;
-
-    Ok(Json(rows))
+    let ts = |v: Option<&str>| {
+        v.filter(|v| !v.is_empty())
+            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+    // `size` (SPA) wins over `limit` (SDK); out of range is Go's 100.
+    let limit = match query.size.filter(|s| *s > 0).or(query.limit) {
+        Some(l) if (1..=1000).contains(&l) => l,
+        _ => 100,
+    };
+    fn non_empty(v: &Option<String>) -> Option<&str> {
+        v.as_deref().filter(|v| !v.is_empty())
+    }
+    let filter = crate::event::repository::EventReadFilter {
+        event_type: non_empty(&query.event_type),
+        types: &types,
+        source: non_empty(&query.source),
+        subject: non_empty(&query.subject),
+        client_id: non_empty(&query.client_id),
+        client_ids: &client_ids,
+        accessible: accessible.as_deref(),
+        applications: &applications,
+        subdomains: &subdomains,
+        aggregates: &aggregates,
+        correlation_id: non_empty(&query.correlation_id),
+        since: ts(query.since.as_deref()),
+        until: ts(query.until.as_deref()),
+        limit,
+        offset: query.offset.unwrap_or(0).max(0),
+    };
+    let rows = state.event_repo.find_read_filtered(&filter).await?;
+    Ok(Json(rows.into_iter().map(EventListItem::from).collect()))
 }
 
 /// Batch create events request
@@ -647,40 +829,42 @@ pub struct PaginatedEventsResponse {
     pub size: u32,
 }
 
-/// Query for raw events list — `?size=` only.
-#[derive(Debug, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct RawEventsQuery {
-    /// Result size. Default 50, capped at 1000.
-    pub size: Option<u32>,
-}
-
-/// List raw events (from msg_events, not the read projection). Returns the
-/// most recent rows; no pagination — msg_events ingests at high rates and
-/// page navigation through the firehose is meaningless.
+/// `GET /raw`: Go's SDK alias of `/list-raw` (the event list, gated on
+/// `event:view-raw`).
 #[utoipa::path(
     get,
     path = "/raw",
     tag = "events",
     operation_id = "getApiEventsRaw",
-    params(RawEventsQuery),
+    params(EventsQuery),
     responses(
-        (status = 200, description = "Raw events", body = Vec<EventSummaryResponse>)
+        (status = 200, description = "Events", body = Vec<EventListItem>)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_events_raw(
     State(state): State<EventsState>,
     auth: Authenticated,
-    Query(params): Query<RawEventsQuery>,
-) -> Result<Json<Vec<EventSummaryResponse>>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_events(&auth.0)?;
+    Query(query): Query<EventsQuery>,
+) -> Result<Json<Vec<EventListItem>>, PlatformError> {
+    crate::shared::authorization_service::checks::can_read_events_raw(&auth.0)?;
+    list_events_unchecked(&state, &auth, query).await
+}
 
-    let size = params.size.unwrap_or(50).clamp(1, 1000) as i64;
-    let events = state.event_repo.find_recent_with_cursor(None, size).await?;
-    let items = events.into_iter().map(EventSummaryResponse::from).collect();
-    Ok(Json(items))
+/// One `{value, label}` pair of the filter dropdowns (label = value).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EventFilterOption {
+    pub value: String,
+    pub label: String,
+}
+
+/// Go's `EventFilterOptionsResponse`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EventFilterOptionsResponse {
+    pub applications: Vec<EventFilterOption>,
+    pub subdomains: Vec<EventFilterOption>,
+    pub event_types: Vec<EventFilterOption>,
 }
 
 /// Get filter options for the events read model.
@@ -689,16 +873,34 @@ pub async fn list_events_raw(
     path = "/filter-options",
     tag = "events",
     operation_id = "getApiEventsFilterOptions",
-    responses((status = 200, body = super::entity::EventFilterOptions)),
+    responses((status = 200, body = EventFilterOptionsResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn event_filter_options(
     State(state): State<EventsState>,
     auth: Authenticated,
-) -> Result<Json<super::entity::EventFilterOptions>, PlatformError> {
+) -> Result<Json<EventFilterOptionsResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_events(&auth.0)?;
-    let options = state.event_repo.read_filter_options().await?;
-    Ok(Json(options))
+    let repo = &state.event_repo;
+    let (applications, subdomains, types) = tokio::try_join!(
+        repo.distinct_read_values("application"),
+        repo.distinct_read_values("subdomain"),
+        repo.distinct_read_values("type"),
+    )?;
+    let options = |values: Vec<String>| {
+        values
+            .into_iter()
+            .map(|v| EventFilterOption {
+                label: v.clone(),
+                value: v,
+            })
+            .collect()
+    };
+    Ok(Json(EventFilterOptionsResponse {
+        applications: options(applications),
+        subdomains: options(subdomains),
+        event_types: options(types),
+    }))
 }
 
 /// Create events router for the BFF tier (`/bff/events`). Cookie-auth, used

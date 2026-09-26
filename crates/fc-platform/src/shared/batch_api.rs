@@ -110,7 +110,7 @@ pub struct BatchEventItem {
     pub id: Option<String>,
     pub spec_version: Option<String>,
     /// Event type — accepts both `type` (camelCase API) and `event_type` (SDK outbox payload).
-    #[serde(alias = "event_type")]
+    #[serde(default, alias = "event_type")]
     pub r#type: String,
     pub source: Option<String>,
     pub subject: Option<String>,
@@ -164,6 +164,23 @@ pub struct BatchEventsRequest {
 pub struct BatchResultItem {
     pub id: String,
     pub status: String,
+    /// Why the item was refused (`BAD_REQUEST`); absent on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Go's `validateBatchItem` (event/api/api.go): the singular create's
+/// required members for one batch item. `None` when acceptable.
+fn batch_item_error(item: &BatchEventItem) -> Option<&'static str> {
+    if item.r#type.trim().is_empty() {
+        Some("type is required")
+    } else if item.source.as_deref().unwrap_or("").trim().is_empty() {
+        Some("source is required")
+    } else if item.data.as_ref().is_none_or(|d| d.is_null()) {
+        Some("data is required")
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -230,6 +247,16 @@ async fn batch_events(
     // The whole batch is checked before anything is written: one item the
     // caller may not write refuses the request.
     for (item, supplied) in req.items.into_iter().zip(supplied) {
+        // Partial success, as Go: an invalid item reports BAD_REQUEST in its
+        // own slot and the valid items are still stored.
+        if let Some(error) = batch_item_error(&item) {
+            results.push(BatchResultItem {
+                id: item.id.clone().unwrap_or_default(),
+                status: "BAD_REQUEST".to_string(),
+                error: Some(error.to_string()),
+            });
+            continue;
+        }
         let client_id = match caller_reach::non_blank(item.client_id) {
             Some(id) => Some(id),
             None => match caller_reach::non_blank(item.client_code) {
@@ -261,6 +288,7 @@ async fn batch_events(
                 results.push(BatchResultItem {
                     id,
                     status: "SUCCESS".to_string(),
+                    error: None,
                 });
                 continue;
             }
@@ -286,6 +314,7 @@ async fn batch_events(
         results.push(BatchResultItem {
             id: event.id.clone(),
             status: "SUCCESS".to_string(),
+            error: None,
         });
         inserted_events.push(event);
     }

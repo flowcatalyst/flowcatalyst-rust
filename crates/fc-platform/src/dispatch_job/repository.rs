@@ -871,6 +871,43 @@ impl DispatchJobRepository {
         row.map(DispatchJobRead::try_from).transpose()
     }
 
+    /// An event's jobs from the read projection, newest first (Go
+    /// `FindByEventID`).
+    pub async fn find_read_by_event_id(&self, event_id: &str) -> Result<Vec<DispatchJobRead>> {
+        let rows = sqlx::query_as::<_, DispatchJobReadRow>(
+            "SELECT * FROM msg_dispatch_jobs_read WHERE event_id = $1 ORDER BY created_at DESC",
+        )
+        .bind(event_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(DispatchJobRead::try_from).collect()
+    }
+
+    /// Distinct non-null values of one whitelisted read-projection column,
+    /// sorted, at most 200 (Go `DistinctValues`).
+    pub async fn distinct_read_values(&self, column: &str) -> Result<Vec<String>> {
+        const ALLOWED: &[&str] = &[
+            "status",
+            "code",
+            "client_id",
+            "dispatch_pool_id",
+            "subscription_id",
+            "kind",
+        ];
+        if !ALLOWED.contains(&column) {
+            return Err(PlatformError::internal(format!(
+                "dispatch_job repo: column {column:?} not allowed"
+            )));
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(&format!(
+            "SELECT DISTINCT {column}::text FROM msg_dispatch_jobs_read \
+             WHERE {column} IS NOT NULL ORDER BY 1 LIMIT 200"
+        ))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
     /// Cursor-paginated read of `msg_dispatch_jobs_read`. Drops `SELECT COUNT(*)` and the
     /// configurable sort — orders by `(created_at, id) DESC` so the keyset
     /// comparison is well-defined. Returns `fetch_limit` rows so the API
