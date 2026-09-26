@@ -369,5 +369,138 @@
     "pointer": "/permissions/**",
     "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
     "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
+  },
+  {
+    "scenario": "audit-logs: cursor pagination*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "audit-logs: cursor pagination*",
+    "step": "login-as-b-again",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "authz: permissions come from roles*",
+    "step": "login-as-anchor-viewer",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "me-public-config: unauthenticated*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "me-public-config: unauthenticated*",
+    "step": "confinement-me",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "platform cors: the public allowlist*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution*",
+    "step": "grant-on-code-sourced-role-is-allowed",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution*",
+    "step": "revoke-on-code-sourced-role-is-allowed",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in roles carry permissions Go's do not: platform:messaging-admin also holds the function-runner permissions (platform:function:*), and platform:admin, iam-admin, iam-readonly and viewer hold the service-account permissions (platform:iam:service-account:*). Every other permission is the same and in Go's order; this list differs only by those extras (checked for this step in parity run api-area-a).",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution*",
+    "step": "list",
+    "pointer": "/roles/**",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution*",
+    "step": "list",
+    "pointer": "/total",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "confinement-roles-read-allowed",
+    "pointer": "/items/**",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "confinement-roles-read-allowed",
+    "pointer": "/total",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "profile-only gate: a role-less USER principal*",
+    "step": "admin-passes-gated-route",
+    "pointer": "/items/**",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "profile-only gate: a role-less USER principal*",
+    "step": "admin-passes-gated-route",
+    "pointer": "/total",
+    "reason": "Rust's role catalogue has two roles Go lacks, platform:function-publisher and platform:function-host (the function runner, which Go does not have), and the permission extras of the ruled built-in roles (see the login entries). Otherwise the listed roles and permissions match Go's.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "dashboard-stats",
+    "pointer": "/rolesDefined",
+    "reason": "Rust defines two built-in roles Go lacks (platform:function-publisher, platform:function-host), so the count of roles is two higher.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "bff-sync-platform-roles",
+    "pointer": "/total",
+    "reason": "Rust's code-defined role catalogue has two roles Go lacks (platform:function-publisher, platform:function-host), so the re-sync counts two more.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
+  },
+  {
+    "scenario": "bff: dashboard admin gate*",
+    "step": "bff-sync-platform-roles",
+    "pointer": "/updated",
+    "reason": "Rust's code-defined role catalogue has two roles Go lacks (platform:function-publisher, platform:function-host), so the re-sync counts two more.",
+    "ruling": "owner decisions 2026-09-25, Direction (functions follow Java: Java PlatformRoles gives messaging-admin the function permissions) and #21 (Java ruling 13: seed admin, iam-admin, iam-readonly and viewer with the service-account permissions)"
   }
 ]

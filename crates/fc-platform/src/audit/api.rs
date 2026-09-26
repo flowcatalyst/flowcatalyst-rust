@@ -19,19 +19,54 @@ use crate::AuditLog;
 use crate::AuditLogRepository;
 use crate::PrincipalRepository;
 
-/// Audit log response DTO
+/// One audit log, Go's `AuditLogResponse` (audit/api/dto.go): the list,
+/// the by-entity and by-principal lists and the single read all use it.
+/// Optional members are absent when unset (Go's `omitempty`);
+/// `operationJson` is the command document as a compact JSON string, which
+/// the SPA `JSON.parse`s, redacted on read ([`redact_stored_document`]).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditLogResponse {
     pub id: String,
-    pub operation: String,
     pub entity_type: String,
-    pub entity_id: Option<String>,
+    pub entity_id: String,
+    pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub principal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub principal_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub performed_at: String,
+}
+
+impl From<AuditLog> for AuditLogResponse {
+    fn from(log: AuditLog) -> Self {
+        let operation_json = log
+            .operation_json
+            .as_ref()
+            .filter(|v| !v.is_null())
+            .map(|v| {
+                serde_json::to_string(&redact_stored_document(&log.operation, v))
+                    .unwrap_or_default()
+            });
+        Self {
+            id: log.id,
+            entity_type: log.entity_type,
+            entity_id: log.entity_id,
+            operation: log.operation,
+            operation_json,
+            principal_id: log.principal_id,
+            principal_name: log.principal_name,
+            application_id: log.application_id,
+            client_id: log.client_id,
+            performed_at: log.performed_at.to_rfc3339(),
+        }
+    }
 }
 
 /// Audit log detail response (includes operation JSON)
@@ -48,27 +83,6 @@ pub struct AuditLogDetailResponse {
     pub application_id: Option<String>,
     pub client_id: Option<String>,
     pub performed_at: String,
-}
-
-impl From<AuditLog> for AuditLogResponse {
-    fn from(log: AuditLog) -> Self {
-        let entity_id_opt = if log.entity_id.is_empty() {
-            None
-        } else {
-            Some(log.entity_id)
-        };
-        Self {
-            id: log.id,
-            operation: log.operation,
-            entity_type: log.entity_type,
-            entity_id: entity_id_opt,
-            principal_id: log.principal_id,
-            principal_name: log.principal_name,
-            application_id: log.application_id,
-            client_id: log.client_id,
-            performed_at: log.performed_at.to_rfc3339(),
-        }
-    }
 }
 
 /// Redacted on read (Java b4a15fd8, S11): a row stored before source-side
@@ -139,17 +153,8 @@ pub struct ClientIdsResponse {
     pub client_ids: Vec<String>,
 }
 
-/// Entity audit logs response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EntityAuditLogsResponse {
-    pub audit_logs: Vec<AuditLogResponse>,
-    pub total: i64,
-    pub entity_type: String,
-    pub entity_id: String,
-}
-
-/// Query parameters for audit logs. Cursor-paginated.
+/// Query parameters for the audit log list (Go `listInput`,
+/// audit/api/api.go): cursor-paginated, with the SPA's filters.
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -158,7 +163,7 @@ pub struct AuditLogsQuery {
     /// the first page.
     pub after: Option<String>,
 
-    /// Page size (default 50, capped at 200).
+    /// Page size (default 50; a value outside 1..=200 means 50).
     #[serde(default = "default_page_size")]
     pub page_size: i32,
 
@@ -168,11 +173,33 @@ pub struct AuditLogsQuery {
     /// Filter by entity ID
     pub entity_id: Option<String>,
 
-    /// Filter by operation (maps to action internally)
+    /// Filter by operation (the command name)
     pub operation: Option<String>,
 
     /// Filter by principal ID
     pub principal_id: Option<String>,
+
+    /// CSV of application ids
+    pub application_ids: Option<String>,
+
+    /// CSV of client ids
+    pub client_ids: Option<String>,
+}
+
+/// A comma-separated query value, trimmed, blanks dropped (Go `csv`).
+fn csv(value: Option<&str>) -> Vec<String> {
+    value
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// An empty query value is no filter (Go `apicommon.OptStr`).
+fn opt(value: &Option<String>) -> Option<&str> {
+    value.as_deref().filter(|s| !s.is_empty())
 }
 
 fn default_page_size() -> i32 {
@@ -245,7 +272,6 @@ pub async fn get_entity_types(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<EntityTypesResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_read_audit_logs(&auth.0)?;
 
     let entity_types = state.audit_log_repo.find_distinct_entity_types().await?;
@@ -268,7 +294,6 @@ pub async fn get_operations(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<OperationsResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_read_audit_logs(&auth.0)?;
 
     let operations = state.audit_log_repo.find_distinct_operations().await?;
@@ -286,7 +311,7 @@ pub async fn get_operations(
         ("id" = String, Path, description = "Audit log ID")
     ),
     responses(
-        (status = 200, description = "Audit log found", body = AuditLogDetailResponse),
+        (status = 200, description = "Audit log found", body = AuditLogResponse),
         (status = 404, description = "Audit log not found")
     ),
     security(("bearer_auth" = []))
@@ -295,8 +320,7 @@ pub async fn get_audit_log(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<AuditLogDetailResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+) -> Result<Json<AuditLogResponse>, PlatformError> {
     crate::checks::can_read_audit_logs(&auth.0)?;
 
     let mut log = state
@@ -327,24 +351,39 @@ pub async fn list_audit_logs(
     auth: Authenticated,
     Query(query): Query<AuditLogsQuery>,
 ) -> Result<Json<AuditLogListResponse>, PlatformError> {
+    use crate::audit::repository::AuditCursorFilter;
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
-    crate::checks::require_anchor(&auth.0)?;
+    // Go gates every audit read on the permission alone: anchor scope is
+    // reach, and the audit log is not client-scoped (audit/api/api.go).
     crate::checks::can_read_audit_logs(&auth.0)?;
 
-    let size = query.page_size.clamp(1, 200) as usize;
-    let cursor = match query.after.as_deref() {
-        Some(c) => Some(decode_cursor(c).map_err(|_| PlatformError::validation("Invalid cursor"))?),
+    let size = if (1..=200).contains(&query.page_size) {
+        query.page_size as usize
+    } else {
+        50
+    };
+    let cursor = match opt(&query.after) {
+        Some(c) => Some(
+            decode_cursor(c)
+                .map_err(|_| PlatformError::bad_request_code("CURSOR", "invalid cursor"))?,
+        ),
         None => None,
     };
+    let application_ids = csv(query.application_ids.as_deref());
+    let client_ids = csv(query.client_ids.as_deref());
 
     let mut logs = state
         .audit_log_repo
-        .search_with_cursor(
-            query.entity_type.as_deref(),
-            query.entity_id.as_deref(),
-            query.operation.as_deref(),
-            query.principal_id.as_deref(),
+        .search_with_cursor_filtered(
+            &AuditCursorFilter {
+                entity_type: opt(&query.entity_type),
+                entity_id: opt(&query.entity_id),
+                principal_id: opt(&query.principal_id),
+                operation: opt(&query.operation),
+                application_ids: &application_ids,
+                client_ids: &client_ids,
+            },
             cursor.as_ref(),
             (size as i64) + 1,
         )
@@ -371,6 +410,17 @@ pub async fn list_audit_logs(
     }))
 }
 
+/// A non-paginated audit list (by entity, by principal): Go's
+/// `{auditLogs, hasMore: false}`, newest first, at most 500 rows.
+async fn unpaged(state: &AuditLogsState, mut logs: Vec<AuditLog>) -> AuditLogListResponse {
+    enrich_principal_names(&mut logs, &state.principal_repo).await;
+    AuditLogListResponse {
+        audit_logs: logs.into_iter().map(|l| l.into()).collect(),
+        has_more: false,
+        next_cursor: None,
+    }
+}
+
 /// Get audit logs for a specific entity
 #[utoipa::path(
     get,
@@ -382,7 +432,7 @@ pub async fn list_audit_logs(
         ("entityId" = String, Path, description = "Entity ID")
     ),
     responses(
-        (status = 200, description = "Audit logs for entity", body = EntityAuditLogsResponse)
+        (status = 200, description = "Audit logs for entity", body = AuditLogListResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -390,26 +440,15 @@ pub async fn get_entity_audit_logs(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
     Path((entity_type, entity_id)): Path<(String, String)>,
-) -> Result<Json<EntityAuditLogsResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+) -> Result<Json<AuditLogListResponse>, PlatformError> {
     crate::checks::can_read_audit_logs(&auth.0)?;
 
-    let mut logs = state
+    let logs = state
         .audit_log_repo
-        .find_by_entity(&entity_type, &entity_id, 1000)
+        .find_by_entity(&entity_type, &entity_id, 500)
         .await?;
-    let total = logs.len() as i64;
 
-    enrich_principal_names(&mut logs, &state.principal_repo).await;
-
-    let audit_logs: Vec<AuditLogResponse> = logs.into_iter().map(|l| l.into()).collect();
-
-    Ok(Json(EntityAuditLogsResponse {
-        audit_logs,
-        total,
-        entity_type,
-        entity_id,
-    }))
+    Ok(Json(unpaged(&state, logs).await))
 }
 
 /// Get audit logs for a principal
@@ -422,7 +461,7 @@ pub async fn get_entity_audit_logs(
         ("principalId" = String, Path, description = "Principal ID")
     ),
     responses(
-        (status = 200, description = "Audit logs for principal", body = Vec<AuditLogResponse>)
+        (status = 200, description = "Audit logs for principal", body = AuditLogListResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -430,53 +469,36 @@ pub async fn get_principal_audit_logs(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
     Path(principal_id): Path<String>,
-) -> Result<Json<Vec<AuditLogResponse>>, PlatformError> {
-    // Go asks the audit-log read permission here too; reach stays anchor
-    // unless the principal reads its own trail.
+) -> Result<Json<AuditLogListResponse>, PlatformError> {
     crate::checks::can_read_audit_logs(&auth.0)?;
-    if !auth.0.is_anchor() && auth.0.principal_id != principal_id {
-        return Err(PlatformError::forbidden(
-            "Cannot view other principal's audit logs",
-        ));
-    }
 
-    let mut logs = state
+    let logs = state
         .audit_log_repo
-        .find_by_principal(&principal_id, 1000)
+        .find_by_principal(&principal_id, 500)
         .await?;
 
-    enrich_principal_names(&mut logs, &state.principal_repo).await;
-
-    let response: Vec<AuditLogResponse> = logs.into_iter().map(|l| l.into()).collect();
-
-    Ok(Json(response))
+    Ok(Json(unpaged(&state, logs).await))
 }
 
-/// Get recent audit logs
+/// Recent audit logs: Go serves the list handler here too (an alias with
+/// the same filters and cursor).
 #[utoipa::path(
     get,
     path = "/recent",
     tag = "audit-logs",
     operation_id = "getApiAuditLogsRecent",
+    params(AuditLogsQuery),
     responses(
-        (status = 200, description = "Recent audit logs", body = Vec<AuditLogResponse>)
+        (status = 200, description = "Recent audit logs", body = AuditLogListResponse)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn get_recent_audit_logs(
-    State(state): State<AuditLogsState>,
+    state: State<AuditLogsState>,
     auth: Authenticated,
-) -> Result<Json<Vec<AuditLogResponse>>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
-    crate::checks::can_read_audit_logs(&auth.0)?;
-
-    let mut logs = state.audit_log_repo.find_recent(100).await?;
-
-    enrich_principal_names(&mut logs, &state.principal_repo).await;
-
-    let response: Vec<AuditLogResponse> = logs.into_iter().map(|l| l.into()).collect();
-
-    Ok(Json(response))
+    query: Query<AuditLogsQuery>,
+) -> Result<Json<AuditLogListResponse>, PlatformError> {
+    list_audit_logs(state, auth, query).await
 }
 
 /// Get distinct application IDs
@@ -494,7 +516,6 @@ pub async fn get_application_ids(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<ApplicationIdsResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_read_audit_logs(&auth.0)?;
 
     let application_ids = state.audit_log_repo.find_distinct_application_ids().await?;
@@ -517,7 +538,6 @@ pub async fn get_client_ids(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<ClientIdsResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_read_audit_logs(&auth.0)?;
 
     let client_ids = state.audit_log_repo.find_distinct_client_ids().await?;

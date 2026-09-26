@@ -40,10 +40,16 @@ pub struct MyApplicationResponse {
     pub id: String,
     pub code: String,
     pub name: String,
+    // Go `myApplicationResponse`: each optional member absent when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub website: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_mime_type: Option<String>,
 }
 
@@ -63,6 +69,8 @@ pub struct MeState {
     /// Used to resolve the caller's application-access list, which the
     /// JWT-derived `AuthContext` does not carry.
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Orders the caller's permissions as Go does (role by role).
+    pub role_repo: Arc<crate::role::repository::RoleRepository>,
     /// Reads a bearer's own `clients` / `applications` claims for
     /// `/api/me`, which reports the credential's reach, not the row's.
     pub auth_service: Arc<crate::AuthService>,
@@ -82,7 +90,7 @@ pub struct WhoamiResponse {
     pub active: bool,
     /// Role codes assigned to this principal (resolved at request time).
     pub roles: Vec<String>,
-    /// The caller's effective permissions, sorted.
+    /// The caller's effective permissions, in Go's order.
     pub permissions: Vec<String>,
     /// Client IDs this principal can act inside: a bearer's `clients` claim
     /// as minted (`*`, or `id:identifier` pairs); for a session, the
@@ -314,8 +322,26 @@ async fn whoami(
             }
             (None, None) => (Vec::new(), (Vec::new(), false)),
         };
-    let mut permissions: Vec<String> = ctx.permissions.iter().cloned().collect();
-    permissions.sort();
+    // Go's order (its `flattenPermissions`: role by role, each role's
+    // permissions sorted); anything the roles do not explain follows,
+    // sorted.
+    let flattened = state
+        .role_repo
+        .flatten_permissions(&ctx.roles)
+        .await
+        .unwrap_or_default();
+    let mut permissions: Vec<String> = flattened
+        .into_iter()
+        .filter(|p| ctx.permissions.contains(p))
+        .collect();
+    let mut rest: Vec<String> = ctx
+        .permissions
+        .iter()
+        .filter(|p| !permissions.contains(p))
+        .cloned()
+        .collect();
+    rest.sort();
+    permissions.extend(rest);
 
     Ok(Json(WhoamiResponse {
         principal_id: ctx.principal_id.clone(),

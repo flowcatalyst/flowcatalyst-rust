@@ -92,11 +92,12 @@ impl<U: UnitOfWork> DeleteRoleUseCase<U> {
                 format!("Role with ID '{}' not found", command.role_id),
             )?;
 
-        // Business rule: can only delete database-defined roles
-        if role.source != RoleSource::Database {
+        // Business rule: a code-defined role is immutable (Go delete.go:
+        // 409 `CODE_ROLE_IMMUTABLE`; database and SDK roles may go).
+        if role.source == RoleSource::Code {
             return Err(UseCaseError::business_rule(
-                "CANNOT_DELETE_ROLE",
-                "Cannot delete a code-defined or SDK-synced role",
+                "CODE_ROLE_IMMUTABLE",
+                "Roles with source=CODE cannot be deleted",
             ));
         }
 

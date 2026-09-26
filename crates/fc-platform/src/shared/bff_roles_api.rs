@@ -13,7 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::repository::ApplicationRepository;
-use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::entity::AuthRole;
 use crate::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase, UpdateRoleCommand,
     UpdateRoleUseCase,
@@ -26,16 +26,18 @@ use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
 
 // ── Response DTOs ──────────────────────────────────────────────────────────
 
-/// BFF role response — UI-friendly view of a role
+/// BFF role response, Go's `bffRoleResponse` (shared/bff/roles.go):
+/// `description` absent when unset, permissions sorted.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BffRoleResponse {
     pub id: String,
     /// Full name e.g. "myapp:admin"
     pub name: String,
-    /// Short name e.g. "admin"
+    /// The name without its `{applicationCode}:` prefix, e.g. "admin"
     pub short_name: String,
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub permissions: Vec<String>,
     pub application_code: String,
@@ -50,7 +52,15 @@ pub struct BffRoleResponse {
 
 impl From<AuthRole> for BffRoleResponse {
     fn from(r: AuthRole) -> Self {
-        let short_name = r.name.split(':').next_back().unwrap_or(&r.name).to_string();
+        // Go `Role.ShortName`: strip exactly the `{applicationCode}:`
+        // prefix, so a multi-colon name keeps its inner colons.
+        let short_name = r
+            .name
+            .strip_prefix(&format!("{}:", r.application_code))
+            .unwrap_or(&r.name)
+            .to_string();
+        let mut permissions: Vec<String> = r.permissions.into_iter().collect();
+        permissions.sort();
         Self {
             id: r.id,
             name: r.name,
@@ -58,7 +68,7 @@ impl From<AuthRole> for BffRoleResponse {
             display_name: r.display_name,
             description: r.description,
             application_code: r.application_code,
-            permissions: r.permissions.into_iter().collect(),
+            permissions,
             source: r.source.as_str().to_string(),
             client_managed: r.client_managed,
             created_at: r.created_at.to_rfc3339(),
@@ -166,6 +176,9 @@ pub struct BffRolesState {
     pub application_repo: Arc<ApplicationRepository>,
     pub unit_of_work: Arc<PgUnitOfWork>,
     pub role_sync_service: Arc<crate::shared::role_sync_service::RoleSyncService>,
+    /// The persistent permission catalogue (`iam_permissions`), merged into
+    /// the catalogue listing as Go does.
+    pub permission_repo: Arc<crate::role::permission_repository::PermissionCatalogRepository>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -189,16 +202,19 @@ pub async fn list_roles(
     _auth: Authenticated,
     Query(query): Query<BffRolesQuery>,
 ) -> Result<Json<BffRoleListResponse>, PlatformError> {
-    let roles = match (&query.application, &query.source) {
-        (Some(app), _) => state.role_repo.find_by_application(app).await?,
-        (_, Some(source)) => {
-            let s: RoleSource = source.parse()?;
-            state.role_repo.find_by_source(s).await?
-        }
-        _ => state.role_repo.find_all().await?,
-    };
-
-    let roles: Vec<BffRoleResponse> = roles.into_iter().map(|r| r.into()).collect();
+    // Go filters every role in memory: `application` exactly,
+    // `source` case-insensitively, both when both are given.
+    let application = query.application.as_deref().filter(|s| !s.is_empty());
+    let source = query.source.as_deref().filter(|s| !s.is_empty());
+    let roles: Vec<BffRoleResponse> = state
+        .role_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .filter(|r| application.is_none_or(|a| r.application_code == a))
+        .filter(|r| source.is_none_or(|s| r.source.as_str().eq_ignore_ascii_case(s)))
+        .map(Into::into)
+        .collect();
     let total = roles.len();
     Ok(Json(BffRoleListResponse {
         items: roles,
@@ -221,7 +237,9 @@ pub async fn get_filter_applications(
     State(state): State<BffRolesState>,
     _auth: Authenticated,
 ) -> Result<Json<BffApplicationOptionsResponse>, PlatformError> {
-    let apps = state.application_repo.find_active().await?;
+    // Go `FindActive`: active applications ordered by code.
+    let mut apps = state.application_repo.find_active().await?;
+    apps.sort_by(|a, b| a.code.cmp(&b.code));
     let options = apps
         .into_iter()
         .map(|a| BffApplicationOption {
@@ -234,21 +252,124 @@ pub async fn get_filter_applications(
     Ok(Json(BffApplicationOptionsResponse { options }))
 }
 
-/// List all permissions
+/// Query parameters for the permission catalogue.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct BffPermissionsQuery {
+    /// `platform` for the built-ins, another code for that application's
+    /// role-derived permissions; omitted for everything.
+    pub application: Option<String>,
+}
+
+/// A four-segment permission as a catalogue entry (Go `parsePermission`);
+/// `None` for any other arity.
+fn parse_permission(p: &str) -> Option<BffPermissionResponse> {
+    let parts: Vec<&str> = p.split(':').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    Some(BffPermissionResponse {
+        permission: p.to_string(),
+        application: parts[0].to_string(),
+        context: parts[1].to_string(),
+        aggregate: parts[2].to_string(),
+        action: parts[3].to_string(),
+        description: String::new(),
+    })
+}
+
+/// The permission catalogue for an application code (Go
+/// `permissionCatalog`, shared/bff/roles.go): `""` is the built-ins plus
+/// every non-platform role's permissions, `platform` the built-ins, any
+/// other code that application's role permissions; then the persistent
+/// catalogue rows for the same filter, a code kept at its first appearance.
+async fn permission_catalog(
+    state: &BffRolesState,
+    app: &str,
+) -> Result<Vec<BffPermissionResponse>, PlatformError> {
+    let role_derived = |roles: &[AuthRole], app: &str| {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for role in roles {
+            if role.application_code == "platform" {
+                continue;
+            }
+            if !app.is_empty() && role.application_code != app {
+                continue;
+            }
+            let mut perms: Vec<&String> = role.permissions.iter().collect();
+            perms.sort();
+            for p in perms {
+                if !seen.insert(p.clone()) {
+                    continue;
+                }
+                if let Some(entry) = parse_permission(p) {
+                    if app.is_empty() || entry.application == app {
+                        out.push(entry);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.permission.cmp(&b.permission));
+        out
+    };
+    let base = match app {
+        "platform" => get_builtin_permissions(),
+        _ => {
+            let roles = state.role_repo.find_all().await?;
+            let derived = role_derived(&roles, app);
+            if app.is_empty() {
+                let mut all = get_builtin_permissions();
+                all.extend(derived);
+                all
+            } else {
+                derived
+            }
+        }
+    };
+    let catalogue = state
+        .permission_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .filter_map(|row| {
+            let mut entry = parse_permission(&row.code)?;
+            if !app.is_empty() && entry.application != app {
+                return None;
+            }
+            if let Some(d) = row.description {
+                entry.description = d;
+            }
+            Some(entry)
+        });
+    let mut seen = std::collections::HashSet::new();
+    Ok(base
+        .into_iter()
+        .chain(catalogue)
+        .filter(|p| seen.insert(p.permission.clone()))
+        .collect())
+}
+
+/// List the permission catalogue (Go `listPermissions`)
 #[utoipa::path(
     get,
     path = "/permissions",
     tag = "bff-roles",
     operation_id = "getBffRolesPermissions",
+    params(BffPermissionsQuery),
     responses(
         (status = 200, description = "List of permissions", body = BffPermissionListResponse)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_permissions(
+    State(state): State<BffRolesState>,
     _auth: Authenticated,
+    Query(query): Query<BffPermissionsQuery>,
 ) -> Result<Json<BffPermissionListResponse>, PlatformError> {
-    let permissions = get_builtin_permissions();
+    let permissions =
+        permission_catalog(&state, query.application.as_deref().unwrap_or("")).await?;
     let total = permissions.len();
     Ok(Json(BffPermissionListResponse {
         items: permissions,
@@ -256,7 +377,7 @@ pub async fn list_permissions(
     }))
 }
 
-/// Get single permission by string
+/// Get one catalogue entry, from every application (Go `getPermission`)
 #[utoipa::path(
     get,
     path = "/permissions/{permission}",
@@ -272,11 +393,12 @@ pub async fn list_permissions(
     security(("bearer_auth" = []))
 )]
 pub async fn get_permission(
+    State(state): State<BffRolesState>,
     _auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<BffPermissionResponse>, PlatformError> {
-    let permissions = get_builtin_permissions();
-    let found = permissions
+    let found = permission_catalog(&state, "")
+        .await?
         .into_iter()
         .find(|p| p.permission == permission)
         .ok_or_else(|| PlatformError::not_found("Permission", &permission))?;
@@ -333,7 +455,7 @@ pub async fn create_role(
     auth: Authenticated,
     Json(req): Json<BffCreateRoleRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CreatedResponse>), PlatformError> {
-    crate::shared::authorization_service::checks::can_administer_roles(
+    crate::shared::authorization_service::checks::can_administer_bff_roles(
         &auth.0,
         crate::permissions::iam::ROLE_CREATE,
     )?;
@@ -388,7 +510,7 @@ pub async fn update_role(
     Path(role_name): Path<String>,
     Json(req): Json<BffUpdateRoleRequest>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_administer_roles(
+    crate::shared::authorization_service::checks::can_administer_bff_roles(
         &auth.0,
         crate::permissions::iam::ROLE_UPDATE,
     )?;
@@ -450,7 +572,7 @@ pub async fn delete_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_administer_roles(
+    crate::shared::authorization_service::checks::can_administer_bff_roles(
         &auth.0,
         crate::permissions::iam::ROLE_DELETE,
     )?;
@@ -482,8 +604,10 @@ pub async fn delete_role(
 
 // ── Permissions registry ──────────────────────────────────────────────────
 
+/// Go's `builtinPermissions`: the static platform catalogue, sorted by
+/// code.
 fn get_builtin_permissions() -> Vec<BffPermissionResponse> {
-    vec![
+    let mut all = vec![
         // IAM Permissions
         perm("platform", "iam", "user", "view", "View users"),
         perm("platform", "iam", "user", "create", "Create users"),
@@ -697,7 +821,9 @@ fn get_builtin_permissions() -> Vec<BffPermissionResponse> {
             "delete",
             "Delete dispatch pools",
         ),
-    ]
+    ];
+    all.sort_by(|a, b| a.permission.cmp(&b.permission));
+    all
 }
 
 fn perm(app: &str, ctx: &str, agg: &str, action: &str, desc: &str) -> BffPermissionResponse {

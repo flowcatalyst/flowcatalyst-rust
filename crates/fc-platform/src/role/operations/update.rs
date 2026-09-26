@@ -127,11 +127,12 @@ impl<U: UnitOfWork> UpdateRoleUseCase<U> {
                 format!("Role with ID '{}' not found", command.role_id),
             )?;
 
-        // Business rule: can only update database-defined roles
-        if role.source != RoleSource::Database {
+        // Business rule: a code-defined role is immutable (Go update.go:
+        // 409 `CODE_ROLE_IMMUTABLE`; database and SDK roles may change).
+        if role.source == RoleSource::Code {
             return Err(UseCaseError::business_rule(
-                "CANNOT_MODIFY_ROLE",
-                "Cannot modify a code-defined or SDK-synced role",
+                "CODE_ROLE_IMMUTABLE",
+                "Roles with source=CODE cannot be modified",
             ));
         }
 

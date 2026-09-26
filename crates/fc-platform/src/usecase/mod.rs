@@ -7,6 +7,7 @@
 //! - `ExecutionContext` - tracing and principal context for use case execution
 //! - `UnitOfWork` - atomic commit of entity + event + audit log
 
+pub mod audit_operation;
 pub mod domain_event;
 pub mod error;
 pub mod execution_context;

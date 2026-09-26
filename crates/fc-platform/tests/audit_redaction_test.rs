@@ -91,7 +91,8 @@ async fn service_account_credentials_never_reach_the_audit_log() {
     let rows = all_audit_json(&app).await;
     assert!(
         rows.iter()
-            .any(|(op, _)| op == "CreateServiceAccountCommand"),
+            // Recorded under Go's name (`usecase::audit_operation`).
+            .any(|(op, _)| op == "CreateCommand"),
         "the create was audited: {rows:?}"
     );
     for secret in secrets {
@@ -147,7 +148,7 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
     let rows = all_audit_json(&app).await;
     let set_rows: Vec<&(String, String)> = rows
         .iter()
-        .filter(|(op, _)| op == "SetPlatformConfigPropertyCommand")
+        .filter(|(op, _)| op == "SetPropertyCommand")
         .collect();
     assert_eq!(set_rows.len(), 3, "{rows:?}");
     assert_absent(&rows, SECRET);

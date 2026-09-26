@@ -70,14 +70,18 @@ pub struct GrantPermissionRequest {
     pub permission: String,
 }
 
-/// Role response DTO
+/// A role as Go's `/api/roles` serves it (`RoleResponse`,
+/// role/api/dto.go): `applicationId` and `description` absent when unset,
+/// no `shortName` (that is the BFF shape), permissions sorted.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleResponse {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
     pub name: String,
-    pub short_name: String,
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub application_code: String,
     pub permissions: Vec<String>,
@@ -89,16 +93,16 @@ pub struct RoleResponse {
 
 impl From<AuthRole> for RoleResponse {
     fn from(r: AuthRole) -> Self {
-        // Extract short name (part after colon, e.g., "platform:admin" -> "admin")
-        let short_name = r.name.split(':').next_back().unwrap_or(&r.name).to_string();
+        let mut permissions: Vec<String> = r.permissions.into_iter().collect();
+        permissions.sort();
         Self {
             id: r.id,
+            application_id: r.application_id,
             name: r.name,
-            short_name,
             display_name: r.display_name,
             description: r.description,
             application_code: r.application_code,
-            permissions: r.permissions.into_iter().collect(),
+            permissions,
             source: r.source.as_str().to_string(),
             client_managed: r.client_managed,
             created_at: r.created_at.to_rfc3339(),
@@ -144,34 +148,35 @@ pub struct RolesState {
         Arc<crate::role::operations::UpdateRoleUseCase<crate::usecase::PgUnitOfWork>>,
     pub delete_use_case:
         Arc<crate::role::operations::DeleteRoleUseCase<crate::usecase::PgUnitOfWork>>,
+    /// The permission catalogue (`iam_permissions`), which Go's
+    /// `/api/roles/permissions` lists.
+    pub permission_repo: Arc<crate::role::permission_repository::PermissionCatalogRepository>,
 }
 
-/// Application option for filter dropdown
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplicationOption {
-    pub id: String,
-    pub code: String,
-    pub name: String,
-}
-
-/// Application options response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ApplicationOptionsResponse {
-    pub options: Vec<ApplicationOption>,
-}
-
-/// Permission response
+/// A permission catalogue row, Go's `PermissionResponse`
+/// (role/api/dto.go, `permissionFromRow`): `name` is the code (the
+/// catalogue has no display name), `category` the
+/// `application:context:aggregate` triple.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionResponse {
     pub permission: String,
-    pub application: String,
-    pub context: String,
-    pub aggregate: String,
-    pub action: String,
-    pub description: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+impl From<crate::role::permission_catalog::CatalogPermission> for PermissionResponse {
+    fn from(p: crate::role::permission_catalog::CatalogPermission) -> Self {
+        Self {
+            category: Some(format!("{}:{}:{}", p.subdomain, p.context, p.aggregate)),
+            name: p.code.clone(),
+            permission: p.code,
+            description: p.description,
+        }
+    }
 }
 
 /// Permission list response
@@ -180,6 +185,26 @@ pub struct PermissionResponse {
 pub struct PermissionListResponse {
     pub permissions: Vec<PermissionResponse>,
     pub total: usize,
+}
+
+/// Go `ApplicationFilterListResponse`: the distinct application codes
+/// roles use.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationFilterListResponse {
+    pub application_codes: Vec<String>,
+}
+
+/// A role by id, falling back to its name (Go `resolveRole`,
+/// role/api/api.go): the SPA addresses roles by id, the SDKs by name, on
+/// the same routes.
+async fn resolve_role(repo: &RoleRepository, id_or_name: &str) -> Result<AuthRole, PlatformError> {
+    if let Some(role) = repo.find_by_id(id_or_name).await? {
+        return Ok(role);
+    }
+    repo.find_by_name(id_or_name)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Role", id_or_name))
 }
 
 /// Create a new role
@@ -204,10 +229,7 @@ pub async fn create_role(
     use crate::role::operations::CreateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::can_administer_roles(
-        &auth.0,
-        crate::permissions::iam::ROLE_CREATE,
-    )?;
+    crate::shared::authorization_service::checks::can_write_roles(&auth.0)?;
     // Owner ruling 14: only permissions the caller holds.
     crate::role::ceiling::require_permissions(
         Some(&auth.0),
@@ -237,17 +259,14 @@ pub async fn create_role(
     ))
 }
 
-/// Get role by ID or name (code)
-///
-/// The frontend calls this with the role name (e.g., "platform:super-admin"),
-/// so we try by code first if it contains ":", otherwise by ID.
+/// Get a role by id, or by name (Go `getByID` with `resolveRole`).
 #[utoipa::path(
     get,
     path = "/{roleName}",
     tag = "roles",
     operation_id = "getApiRolesByName",
     params(
-        ("roleName" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role id or name")
     ),
     responses(
         (status = 200, description = "Role found", body = RoleResponse),
@@ -262,15 +281,7 @@ pub async fn get_role(
 ) -> Result<Json<RoleResponse>, PlatformError> {
     crate::checks::can_read_roles(&auth.0)?;
 
-    // Try by name first if it looks like a role name (contains ":")
-    let role = if role_name.contains(':') {
-        state.role_repo.find_by_name(&role_name).await?
-    } else {
-        // Fall back to ID lookup
-        state.role_repo.find_by_id(&role_name).await?
-    };
-
-    let role = role.ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+    let role = resolve_role(&state.role_repo, &role_name).await?;
     Ok(Json(role.into()))
 }
 
@@ -348,7 +359,7 @@ pub async fn list_roles(
     tag = "roles",
     operation_id = "putApiRolesByName",
     params(
-        ("roleName" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role id or name")
     ),
     request_body = UpdateRoleRequest,
     responses(
@@ -366,17 +377,9 @@ pub async fn update_role(
     use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::can_administer_roles(
-        &auth.0,
-        crate::permissions::iam::ROLE_UPDATE,
-    )?;
+    crate::shared::authorization_service::checks::can_write_roles(&auth.0)?;
 
-    let role = if role_name.contains(':') {
-        state.role_repo.find_by_name(&role_name).await?
-    } else {
-        state.role_repo.find_by_id(&role_name).await?
-    }
-    .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+    let role = resolve_role(&state.role_repo, &role_name).await?;
     // Owner ruling 14: only permissions the caller holds may be added or
     // removed.
     if let Some(ref permissions) = req.permissions {
@@ -410,7 +413,7 @@ pub async fn update_role(
     tag = "roles",
     operation_id = "deleteApiRolesByName",
     params(
-        ("roleName" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role id or name")
     ),
     responses(
         (status = 204, description = "Role deleted"),
@@ -431,12 +434,7 @@ pub async fn delete_role(
         crate::permissions::iam::ROLE_DELETE,
     )?;
 
-    let role = if role_name.contains(':') {
-        state.role_repo.find_by_name(&role_name).await?
-    } else {
-        state.role_repo.find_by_id(&role_name).await?
-    }
-    .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+    let role = resolve_role(&state.role_repo, &role_name).await?;
     // Owner ruling 14: deleting a role withdraws every permission it holds.
     crate::role::ceiling::require_permissions(
         Some(&auth.0),
@@ -450,37 +448,29 @@ pub async fn delete_role(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Get applications for role filter dropdown
+/// The distinct application codes roles use (Go `applicationFilters`).
 #[utoipa::path(
     get,
     path = "/filters/applications",
     tag = "roles",
     operation_id = "getApiRolesFiltersApplications",
     responses(
-        (status = 200, description = "Application options", body = ApplicationOptionsResponse)
+        (status = 200, description = "Application codes", body = ApplicationFilterListResponse)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn get_filter_applications(
     State(state): State<RolesState>,
     auth: Authenticated,
-) -> Result<Json<ApplicationOptionsResponse>, PlatformError> {
+) -> Result<Json<ApplicationFilterListResponse>, PlatformError> {
     crate::checks::can_read_roles(&auth.0)?;
 
-    let apps = state.application_repo.find_active().await?;
-    let options = apps
-        .into_iter()
-        .map(|a| ApplicationOption {
-            id: a.id,
-            code: a.code,
-            name: a.name,
-        })
-        .collect();
-
-    Ok(Json(ApplicationOptionsResponse { options }))
+    let application_codes = state.role_repo.find_application_codes().await?;
+    Ok(Json(ApplicationFilterListResponse { application_codes }))
 }
 
-/// List all permissions
+/// The permission catalogue (`iam_permissions`), as Go's
+/// `listPermissions`.
 #[utoipa::path(
     get,
     path = "/permissions",
@@ -492,17 +482,23 @@ pub async fn get_filter_applications(
     security(("bearer_auth" = []))
 )]
 pub async fn list_permissions(
+    State(state): State<RolesState>,
     auth: Authenticated,
 ) -> Result<Json<PermissionListResponse>, PlatformError> {
     crate::checks::can_read_roles(&auth.0)?;
 
-    // Return built-in platform permissions
-    let permissions = get_builtin_permissions();
+    let permissions: Vec<PermissionResponse> = state
+        .permission_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     let total = permissions.len();
     Ok(Json(PermissionListResponse { permissions, total }))
 }
 
-/// Get permission by string
+/// One permission catalogue row (Go `getPermission`).
 #[utoipa::path(
     get,
     path = "/permissions/{permission}",
@@ -518,18 +514,19 @@ pub async fn list_permissions(
     security(("bearer_auth" = []))
 )]
 pub async fn get_permission(
+    State(state): State<RolesState>,
     auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<PermissionResponse>, PlatformError> {
     crate::checks::can_read_roles(&auth.0)?;
 
-    let permissions = get_builtin_permissions();
-    let found = permissions
-        .into_iter()
-        .find(|p| p.permission == permission)
+    let found = state
+        .permission_repo
+        .find_by_code(&permission)
+        .await?
         .ok_or_else(|| PlatformError::not_found("Permission", &permission))?;
 
-    Ok(Json(found))
+    Ok(Json(found.into()))
 }
 
 /// Get roles by source (CODE, DATABASE, SDK)
@@ -554,7 +551,18 @@ pub async fn get_roles_by_source(
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
     crate::checks::can_read_roles(&auth.0)?;
 
-    let source: RoleSource = source.parse()?;
+    // Go `role.ParseSource`: the exact upper-case names only.
+    let source = match source.as_str() {
+        "CODE" => RoleSource::Code,
+        "DATABASE" => RoleSource::Database,
+        "SDK" => RoleSource::Sdk,
+        _ => {
+            return Err(PlatformError::bad_request_code(
+                "INVALID_SOURCE",
+                "source must be CODE, DATABASE, or SDK",
+            ))
+        }
+    };
     let roles = state.role_repo.find_by_source(source).await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))
@@ -587,236 +595,6 @@ pub async fn get_roles_by_application_id(
         .await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))
-}
-
-/// Get built-in platform permissions
-fn get_builtin_permissions() -> Vec<PermissionResponse> {
-    vec![
-        // IAM Permissions
-        perm("platform", "iam", "user", "view", "View users"),
-        perm("platform", "iam", "user", "create", "Create users"),
-        perm("platform", "iam", "user", "update", "Update users"),
-        perm("platform", "iam", "user", "delete", "Delete users"),
-        perm("platform", "iam", "role", "view", "View roles"),
-        perm("platform", "iam", "role", "create", "Create roles"),
-        perm("platform", "iam", "role", "update", "Update roles"),
-        perm("platform", "iam", "role", "delete", "Delete roles"),
-        perm("platform", "iam", "permission", "view", "View permissions"),
-        perm(
-            "platform",
-            "iam",
-            "service-account",
-            "view",
-            "View service accounts",
-        ),
-        perm(
-            "platform",
-            "iam",
-            "service-account",
-            "create",
-            "Create service accounts",
-        ),
-        perm(
-            "platform",
-            "iam",
-            "service-account",
-            "update",
-            "Update service accounts",
-        ),
-        perm(
-            "platform",
-            "iam",
-            "service-account",
-            "delete",
-            "Delete service accounts",
-        ),
-        perm(
-            "platform",
-            "iam",
-            "idp",
-            "manage",
-            "Manage identity providers",
-        ),
-        // Admin Permissions
-        perm("platform", "admin", "client", "view", "View clients"),
-        perm("platform", "admin", "client", "create", "Create clients"),
-        perm("platform", "admin", "client", "update", "Update clients"),
-        perm("platform", "admin", "client", "delete", "Delete clients"),
-        perm(
-            "platform",
-            "admin",
-            "application",
-            "view",
-            "View applications",
-        ),
-        perm(
-            "platform",
-            "admin",
-            "application",
-            "create",
-            "Create applications",
-        ),
-        perm(
-            "platform",
-            "admin",
-            "application",
-            "update",
-            "Update applications",
-        ),
-        perm(
-            "platform",
-            "admin",
-            "application",
-            "delete",
-            "Delete applications",
-        ),
-        perm(
-            "platform",
-            "admin",
-            "config",
-            "view",
-            "View platform config",
-        ),
-        perm(
-            "platform",
-            "admin",
-            "config",
-            "update",
-            "Update platform config",
-        ),
-        // Messaging Permissions
-        perm("platform", "messaging", "event", "view", "View events"),
-        perm(
-            "platform",
-            "messaging",
-            "event",
-            "view-raw",
-            "View raw event data",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "event-type",
-            "view",
-            "View event types",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "event-type",
-            "create",
-            "Create event types",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "event-type",
-            "update",
-            "Update event types",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "event-type",
-            "delete",
-            "Delete event types",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "subscription",
-            "view",
-            "View subscriptions",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "subscription",
-            "create",
-            "Create subscriptions",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "subscription",
-            "update",
-            "Update subscriptions",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "subscription",
-            "delete",
-            "Delete subscriptions",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-job",
-            "view",
-            "View dispatch jobs",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-job",
-            "view-raw",
-            "View raw dispatch job data",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-job",
-            "create",
-            "Create dispatch jobs",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-job",
-            "retry",
-            "Retry dispatch jobs",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-pool",
-            "view",
-            "View dispatch pools",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-pool",
-            "create",
-            "Create dispatch pools",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-pool",
-            "update",
-            "Update dispatch pools",
-        ),
-        perm(
-            "platform",
-            "messaging",
-            "dispatch-pool",
-            "delete",
-            "Delete dispatch pools",
-        ),
-    ]
-}
-
-fn perm(app: &str, ctx: &str, agg: &str, action: &str, desc: &str) -> PermissionResponse {
-    PermissionResponse {
-        permission: format!("{}:{}:{}:{}", app, ctx, agg, action),
-        application: app.to_string(),
-        context: ctx.to_string(),
-        aggregate: agg.to_string(),
-        action: action.to_string(),
-        description: desc.to_string(),
-    }
 }
 
 /// Create roles router

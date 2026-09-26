@@ -7,6 +7,7 @@ pub mod bootstrap_admin;
 pub mod database;
 pub mod default_processes;
 pub mod enum_str;
+pub mod jsonb_text;
 pub mod error;
 pub mod log_throttle;
 pub mod middleware;

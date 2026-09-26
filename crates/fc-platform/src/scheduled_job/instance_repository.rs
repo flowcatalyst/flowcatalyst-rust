@@ -265,6 +265,33 @@ impl ScheduledJobInstanceRepository {
 
     /// True if the job has any non-terminal instance — used by the UI as the
     /// "overlap detected" badge for `concurrent: false` jobs.
+    /// Which of `jobs` (id, tracks-completion) have an active instance, in
+    /// one query: QUEUED or IN_FLIGHT, or DELIVERED and not yet completed
+    /// for a job that tracks completion (Go `HasActiveInstance`).
+    pub async fn active_job_ids(
+        &self,
+        jobs: &[(String, bool)],
+    ) -> Result<std::collections::HashSet<String>> {
+        if jobs.is_empty() {
+            return Ok(Default::default());
+        }
+        let ids: Vec<&str> = jobs.iter().map(|(id, _)| id.as_str()).collect();
+        let tracks: Vec<bool> = jobs.iter().map(|(_, t)| *t).collect();
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT j.id FROM UNNEST($1::text[], $2::bool[]) AS j(id, tracks) \
+             WHERE EXISTS ( \
+                 SELECT 1 FROM msg_scheduled_job_instances i \
+                 WHERE i.scheduled_job_id = j.id \
+                   AND (i.status IN ('QUEUED', 'IN_FLIGHT') \
+                        OR (i.status = 'DELIVERED' AND j.tracks AND i.completed_at IS NULL)))",
+        )
+        .bind(&ids)
+        .bind(&tracks)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn has_active_instance(&self, scheduled_job_id: &str) -> Result<bool> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM msg_scheduled_job_instances \

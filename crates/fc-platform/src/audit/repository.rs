@@ -97,6 +97,18 @@ fn secret_key_pattern() -> String {
         .join("|")
 }
 
+/// The filters of the cursor-paginated audit list (Go
+/// `audit.CursorFilterParams`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AuditCursorFilter<'a> {
+    pub entity_type: Option<&'a str>,
+    pub entity_id: Option<&'a str>,
+    pub principal_id: Option<&'a str>,
+    pub operation: Option<&'a str>,
+    pub application_ids: &'a [String],
+    pub client_ids: &'a [String],
+}
+
 pub struct AuditLogRepository {
     pool: PgPool,
 }
@@ -252,21 +264,55 @@ impl AuditLogRepository {
         cursor: Option<&crate::shared::api_common::DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<AuditLog>> {
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM aud_logs");
-        apply_audit_filters(&mut qb, entity_type, entity_id, operation, principal_id);
+        self.search_with_cursor_filtered(
+            &AuditCursorFilter {
+                entity_type,
+                entity_id,
+                operation,
+                principal_id,
+                ..Default::default()
+            },
+            cursor,
+            fetch_limit,
+        )
+        .await
+    }
+
+    /// [`Self::search_with_cursor`] with Go's full filter set
+    /// (audit/audit.go `FindWithCursor`): equality on entity type, entity
+    /// id, principal and operation, and IN-lists on application and client
+    /// ids (an empty list filters nothing).
+    pub async fn search_with_cursor_filtered(
+        &self,
+        filter: &AuditCursorFilter<'_>,
+        cursor: Option<&crate::shared::api_common::DecodedCursor>,
+        fetch_limit: i64,
+    ) -> Result<Vec<AuditLog>> {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM aud_logs WHERE TRUE");
+        if let Some(v) = filter.entity_type {
+            qb.push(" AND entity_type = ").push_bind(v.to_string());
+        }
+        if let Some(v) = filter.entity_id {
+            qb.push(" AND entity_id = ").push_bind(v.to_string());
+        }
+        if let Some(v) = filter.principal_id {
+            qb.push(" AND principal_id = ").push_bind(v.to_string());
+        }
+        if let Some(v) = filter.operation {
+            qb.push(" AND operation = ").push_bind(v.to_string());
+        }
+        if !filter.application_ids.is_empty() {
+            qb.push(" AND application_id = ANY(")
+                .push_bind(filter.application_ids.to_vec())
+                .push(")");
+        }
+        if !filter.client_ids.is_empty() {
+            qb.push(" AND client_id = ANY(")
+                .push_bind(filter.client_ids.to_vec())
+                .push(")");
+        }
         if let Some(c) = cursor {
-            // apply_audit_filters injects WHERE/AND for any filter; if there
-            // were none we need WHERE here, otherwise AND.
-            let already_has_where = entity_type.is_some()
-                || entity_id.is_some()
-                || operation.is_some()
-                || principal_id.is_some();
-            qb.push(if already_has_where {
-                " AND "
-            } else {
-                " WHERE "
-            });
-            qb.push("(performed_at, id) < (")
+            qb.push(" AND (performed_at, id) < (")
                 .push_bind(c.created_at)
                 .push(", ")
                 .push_bind(c.id.clone())
@@ -280,7 +326,7 @@ impl AuditLogRepository {
 
     pub async fn find_distinct_entity_types(&self) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT entity_type FROM aud_logs ORDER BY entity_type",
+            "SELECT DISTINCT entity_type FROM aud_logs ORDER BY entity_type LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -290,7 +336,7 @@ impl AuditLogRepository {
     pub async fn find_distinct_application_ids(&self) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT application_id FROM aud_logs \
-             WHERE application_id IS NOT NULL ORDER BY application_id",
+             WHERE application_id IS NOT NULL ORDER BY application_id LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -300,7 +346,7 @@ impl AuditLogRepository {
     pub async fn find_distinct_client_ids(&self) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT client_id FROM aud_logs \
-             WHERE client_id IS NOT NULL ORDER BY client_id",
+             WHERE client_id IS NOT NULL ORDER BY client_id LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -374,7 +420,7 @@ impl AuditLogRepository {
 
     pub async fn find_distinct_operations(&self) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT operation FROM aud_logs ORDER BY operation",
+            "SELECT DISTINCT operation FROM aud_logs ORDER BY operation LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await?;

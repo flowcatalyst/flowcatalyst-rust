@@ -338,6 +338,34 @@ impl ScheduledJobRepository {
         .await?;
         Ok(())
     }
+
+    /// The BFF list page's filters (Go `ListFilters` with `buildJobQuery`,
+    /// scheduledjob/repository.go), ordered by code and paged.
+    pub async fn find_by_list_filters(
+        &self,
+        f: &JobListFilters,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ScheduledJob>> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new(format!("SELECT {SELECT_COLS} FROM msg_scheduled_jobs"));
+        push_bff_list_filters(&mut qb, f);
+        qb.push(" ORDER BY code LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset);
+        let rows: Vec<ScheduledJobRow> = qb.build_query_as().fetch_all(&self.pool).await?;
+        rows.into_iter().map(ScheduledJob::try_from).collect()
+    }
+
+    /// The count for [`Self::find_by_list_filters`], unpaged.
+    pub async fn count_by_list_filters(&self, f: &JobListFilters) -> Result<i64> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT COUNT(*) FROM msg_scheduled_jobs");
+        push_bff_list_filters(&mut qb, f);
+        let count: i64 = qb.build_query_scalar().fetch_one(&self.pool).await?;
+        Ok(count)
+    }
 }
 
 // ── Persist<ScheduledJob> ────────────────────────────────────────────────────
@@ -458,5 +486,61 @@ fn push_list_filters(
         qb.push("(client_id IS NULL OR client_id = ANY(")
             .push_bind(ids.to_vec())
             .push("))");
+    }
+}
+
+/// Go `ListFilters` for the BFF list page: multi-select client ids (a
+/// literal `platform` also matching platform-scoped jobs), application ids
+/// and statuses, and a code-or-name search. Empty means no filter.
+#[derive(Debug, Default, Clone)]
+pub struct JobListFilters {
+    pub client_ids: Vec<String>,
+    pub application_ids: Vec<String>,
+    pub statuses: Vec<String>,
+    pub search: Option<String>,
+}
+
+fn push_bff_list_filters(qb: &mut QueryBuilder<Postgres>, f: &JobListFilters) {
+    qb.push(" WHERE TRUE");
+    if !f.client_ids.is_empty() {
+        let include_platform = f.client_ids.iter().any(|c| c == "platform");
+        let real: Vec<String> = f
+            .client_ids
+            .iter()
+            .filter(|c| *c != "platform" && !c.is_empty())
+            .cloned()
+            .collect();
+        match (include_platform, real.is_empty()) {
+            (true, false) => {
+                qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+                    .push_bind(real)
+                    .push("))");
+            }
+            (true, true) => {
+                qb.push(" AND client_id IS NULL");
+            }
+            (false, false) => {
+                qb.push(" AND client_id = ANY(").push_bind(real).push(")");
+            }
+            (false, true) => {}
+        }
+    }
+    if !f.application_ids.is_empty() {
+        qb.push(" AND application_id = ANY(")
+            .push_bind(f.application_ids.clone())
+            .push(")");
+    }
+    if !f.statuses.is_empty() {
+        qb.push(" AND status = ANY(")
+            .push_bind(f.statuses.clone())
+            .push(")");
+    }
+    if let Some(term) = f.search.as_deref().filter(|t| !t.is_empty()) {
+        let like = format!("%{term}%");
+        qb.push(" AND (code ILIKE ")
+            .push_bind(like.clone())
+            .push(" OR name ILIKE ")
+            .push_bind(like)
+            .push(")");
     }
 }
