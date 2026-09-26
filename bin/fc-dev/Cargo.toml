@@ -84,6 +84,11 @@ base64 = { version = "0.22" }
 sha2 = { workspace = true }
 hex = { workspace = true }
 
+# kill(2) for the shared PID file / `fc-dev stop`, and fcntl(2) for the
+# cluster's `epg-lock` (the POSIX record lock Java's zonky holds).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

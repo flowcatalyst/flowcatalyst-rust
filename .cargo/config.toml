@@ -41,3 +41,13 @@ opt-level = 2
 # Revisit only if Windows release builds become genuinely blocking.
 lto = "thin"
 codegen-units = 1
+
+[env]
+# fc-dev's embedded Postgres is the cluster Go's and Java's fcdev share
+# (`<userDataDir>/flowcatalyst/embedded-pg/data`), which is PostgreSQL 18.
+# `postgresql_embedded`'s build script bundles the newest release matching
+# this requirement; unpinned it would take the next major the day theseus
+# publishes it, and a PG 19 server refuses a PG 18 data directory. Moving
+# the cluster to a new major is `fcdev db upgrade` (Go/Java), not a rebuild.
+# An environment variable of the same name still wins (`force` is off).
+POSTGRESQL_VERSION = "^18"

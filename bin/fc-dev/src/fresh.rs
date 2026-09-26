@@ -37,12 +37,27 @@ pub struct FreshArgs {
     )]
     pub database_url: String,
 
-    /// Use the embedded PostgreSQL instance (the one fc-dev starts at
-    /// :15432 in `~/.cache/flowcatalyst-dev/pgdata/`). Default true so
+    /// Use the embedded PostgreSQL cluster shared with Go's and Java's
+    /// fcdev (`--embedded-db-path`, port 15432): the running server when
+    /// one is up, else one started for this command. Default true so
     /// `fc-dev fresh` matches `fc-dev` (start) without extra flags.
     #[cfg(feature = "embedded-db")]
-    #[arg(long, env = "FC_EMBEDDED_DB", default_value = "true")]
+    #[arg(
+        long,
+        env = "FC_EMBEDDED_DB",
+        default_value = "true",
+        // Go's `--embedded-db=false` form (and bare `--embedded-db`).
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
     pub embedded_db: bool,
+
+    /// Embedded cluster location, port and PostGIS source.
+    #[cfg(feature = "embedded-db")]
+    #[command(flatten)]
+    pub embedded: crate::embedded_pg::EmbeddedDbArgs,
 
     /// Skip the interactive confirmation. ONLY pass this when scripted —
     /// fresh is destructive and irreversible.
@@ -68,7 +83,13 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     // reset hits the right database.
     #[cfg(feature = "embedded-db")]
     let (db_url, mut _embedded) = if args.embedded_db {
-        let emb = crate::embedded_pg::start(false).await?;
+        let emb = crate::embedded_pg::start(
+            &args.embedded,
+            crate::embedded_pg::Reset::default(),
+            crate::embedded_pg::Mode::AttachOrStart,
+            &crate::dev_paths::default_pid_file(),
+        )
+        .await?;
         let url = emb.url.clone();
         (url, Some(emb))
     } else {
@@ -90,6 +111,13 @@ pub async fn run(args: FreshArgs) -> Result<()> {
         "About to DROP and recreate the `public` schema in {}.",
         db_url
     );
+    #[cfg(feature = "embedded-db")]
+    if args.embedded_db {
+        println!(
+            "This is the embedded cluster Go's and Java's fcdev share ({}): their data goes too.",
+            args.embedded.path().join("data").display()
+        );
+    }
     if tables_before.is_empty() {
         println!("(no tables present — the schema will be initialised from scratch)");
     } else {

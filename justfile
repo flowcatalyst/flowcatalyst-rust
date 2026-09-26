@@ -113,12 +113,19 @@ run:
 # One step each: install the SPA's locked dependencies (the SPA is Go's; its
 # lockfile differs from the old Vue app's), build fc-dev (its build script
 # builds the SPA), and run it with the embedded Postgres unless
-# FC_DATABASE_URL + FC_EMBEDDED_DB=false say otherwise. Extra arguments go to
+# FC_EMBEDDED_DB=false says to use FC_DATABASE_URL. Extra arguments go to
 # fc-dev, e.g. `just fcdev --port 8081`.
+#
+# The embedded Postgres is the PostgreSQL 18 cluster Go's and Java's fcdev
+# use (~/Library/Application Support/flowcatalyst/embedded-pg on macOS, port
+# 15432): switching binaries keeps the data. Only one may run at a time;
+# fc-dev refuses to start beside another and names it. `just fcdev-stop`
+# stops whichever is running (they share one PID file).
 #
 #   just fcdev              Go SPA at http://localhost:{{ FC_API_PORT }}/
 #   just fcdev-web          plus the Topcoat UI trial at /ui (--features web)
 #   just fcdev-init …       first run: create the admin (fc-dev init)
+#   just fcdev-stop         stop the running fcdev (Rust, Go or Java)
 
 # Build fc-dev (SPA dependencies installed from the lockfile first)
 fcdev-build:
@@ -141,6 +148,10 @@ fcdev-web *ARGS: fcdev-build-web (_fcdev-port-free ARGS)
 # First run: create the admin and a first application (prompts if no flags)
 fcdev-init *ARGS:
     target/debug/fc-dev init {{ ARGS }}
+
+# Stop the running fcdev — Rust, Go or Java — via the shared PID file
+fcdev-stop:
+    target/debug/fc-dev stop
 
 # Refuse to start when the API port is taken, naming the process holding it
 [private]

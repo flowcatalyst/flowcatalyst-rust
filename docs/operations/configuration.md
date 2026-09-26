@@ -235,8 +235,12 @@ Most fc-server vars work in fc-dev. Additional dev-specific:
 
 | Variable / flag | Default | Description |
 |---|---|---|
-| `--embedded-db` / `FC_EMBEDDED_DB` | `true` | Use bundled embedded Postgres (requires `embedded-db` feature) |
-| `--reset-db` / `FC_RESET_DB` | `false` | Wipe the embedded PG data directory at startup |
+| `--embedded-db` / `FC_EMBEDDED_DB` | `true` | Use the embedded PostgreSQL 18 cluster shared with Go/Java `fcdev` (requires `embedded-db` feature) |
+| `--embedded-db-path` / `FC_EMBEDDED_DB_PATH` | `<userDataDir>/flowcatalyst/embedded-pg` | Cluster directory (cluster in `<path>/data`) |
+| `--embedded-db-port` / `FC_EMBEDDED_DB_PORT` | `15432` | Embedded PG port |
+| `--embedded-db-extensions-from` / `FC_EMBEDDED_DB_EXTENSIONS_FROM` | — | PG 18 tree to copy PostGIS from |
+| `--embedded-db-reset` / `FC_EMBEDDED_DB_RESET` (`--reset-db` / `FC_RESET_DB`) | `false` | Delete the embedded PG directory at startup; the shared default also needs `--confirm-shared-db-reset` |
+| `--pid-file` / `FC_DEV_PID_FILE` | `<userDataDir>/flowcatalyst/fcdev.pid` | PID file shared with Go/Java `fcdev` (`fc-dev stop`) |
 | `--scheduler-enabled` | `true` | Run the scheduler in-process |
 | `--outbox-enabled` | `false` | Run the outbox processor in-process |
 | `--pool-concurrency` / `FC_POOL_CONCURRENCY` | `10` | Default pool concurrency |
