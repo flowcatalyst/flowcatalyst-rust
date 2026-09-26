@@ -44,7 +44,8 @@ pub struct ClientInfo {
 pub struct AccessibleClientsResponse {
     /// List of accessible clients
     pub clients: Vec<ClientInfo>,
-    /// Current client ID (if set)
+    /// Current client ID; absent when unset (Go `omitempty`)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_client_id: Option<String>,
     /// Whether user has global access (anchor scope)
     pub global_access: bool,

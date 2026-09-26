@@ -1324,7 +1324,7 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
     Json(serde_json::json!({
         "status": "UP",
         "leader": leader,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": fc_common::BUILD_VERSION,
         "components": {
             "platform": if state.platform_enabled { "UP" } else { "DISABLED" },
             "router": if state.router_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
@@ -1339,7 +1339,7 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
 async fn health_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "UP",
-        "version": env!("CARGO_PKG_VERSION")
+        "version": fc_common::BUILD_VERSION
     }))
 }
 

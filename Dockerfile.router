@@ -48,6 +48,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY bin ./bin
+# The version the binary reports (owner decision #33), e.g.
+# --build-arg FC_BUILD_VERSION=$(git describe --tags --always); unset or empty
+# means the workspace package version.
+ARG FC_BUILD_VERSION=
+ENV FC_BUILD_VERSION=${FC_BUILD_VERSION}
 RUN cargo build --release --bin fc-router-bin
 
 # Stage 3: Runtime — distroless (no shell, no package manager, ~2MB base)

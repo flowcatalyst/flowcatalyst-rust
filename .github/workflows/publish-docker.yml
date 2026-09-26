@@ -52,9 +52,12 @@ jobs:
             TAG_FLAGS="$TAG_FLAGS -t $tag"
           done
 
+          # The version fc-server reports (owner decision #33).
+          FC_BUILD_VERSION="${{ github.event.release.tag_name || github.sha }}"
           docker build \
             --platform linux/amd64 \
             -f Dockerfile \
+            --build-arg FC_BUILD_VERSION="$FC_BUILD_VERSION" \
             $TAG_FLAGS \
             .
 

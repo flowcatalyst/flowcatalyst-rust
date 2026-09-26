@@ -4,9 +4,18 @@
 //! event types, plus a write endpoint that re-syncs the platform's own
 //! OpenAPI document (the dynamic utoipa-generated spec captured at boot).
 //!
-//! As Go's (shared/bff/developer.go): anchor callers holding
-//! `platform:developer:application-openapi:view` see every active
-//! application; the platform sync needs anchor and `…:sync`.
+//! Who sees what (owner decision #37, `docs/owner-decisions-2026-09-25.md`):
+//! - an anchor caller holding `platform:developer:application-openapi:view`
+//!   sees every active application, as Go's `CanReadDeveloperPortal`
+//!   (shared/bff/developer.go);
+//! - a non-anchor caller holding the view or manage permission (an
+//!   application-scoped developer) sees the applications it can access (Go's
+//!   `CanAccessApplication`: every application with `all_applications`, else
+//!   its grants) plus the seeded `platform` application; any other
+//!   application is 404, as an out-of-scope application is everywhere;
+//! - anyone else is refused as Go refuses them.
+//!
+//! Response shapes are Go's. The platform sync needs anchor and `…:sync`.
 
 use std::sync::Arc;
 
@@ -22,7 +31,7 @@ use crate::application::repository::ApplicationRepository;
 use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
 use crate::event_type::repository::EventTypeRepository;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::{ApplicationScope, AuthContext};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UseCase};
@@ -154,11 +163,41 @@ pub struct SyncPlatformOpenApiResponse {
 
 // -- Helpers ------------------------------------------------------------------
 
-/// Go `CanReadDeveloperPortal` (shared/auth/auth.go): anchor scope, then
-/// `platform:developer:application-openapi:view`. Every application is
-/// visible to such a caller; there is no per-application narrowing.
-fn can_read(auth: &AuthContext) -> Result<(), PlatformError> {
-    crate::shared::authorization_service::checks::can_read_developer_portal(auth)
+/// The applications the caller may browse (module docs, decision #37).
+///
+/// A non-anchor caller holding the view or manage permission is an
+/// application-scoped developer, confined to its application access plus the
+/// `platform` application. Everyone else answers to Go's
+/// `CanReadDeveloperPortal` (anchor scope, then `…:view`) and, when admitted,
+/// sees every application; a caller Go refuses is refused with Go's answer.
+async fn portal_reach(
+    state: &BffDeveloperState,
+    auth: &AuthContext,
+) -> Result<ApplicationScope, PlatformError> {
+    use crate::shared::authorization_service::checks;
+    if !auth.is_anchor() && checks::can_read_application_openapi(auth).is_ok() {
+        let binding = state
+            .principal_repo
+            .find_application_binding(&auth.principal_id)
+            .await?;
+        let mut scope = ApplicationScope::from_binding(binding);
+        if let ApplicationScope::Only(ids) = &mut scope {
+            ids.insert(state.platform_application_id.clone());
+        }
+        return Ok(scope);
+    }
+    checks::can_read_developer_portal(auth)?;
+    Ok(ApplicationScope::All)
+}
+
+/// 404 for an application outside the caller's [`portal_reach`] (the owner
+/// ruling: an out-of-scope application answers as a missing one).
+fn in_reach(reach: &ApplicationScope, app_id: &str) -> Result<(), PlatformError> {
+    if reach.allows(app_id) {
+        Ok(())
+    } else {
+        Err(PlatformError::not_found("Application", app_id))
+    }
 }
 
 fn summary(
@@ -194,15 +233,17 @@ fn spec_response(
 
 // -- Handlers -----------------------------------------------------------------
 
-/// Every active application, ordered by code, each with a snapshot of its
-/// CURRENT OpenAPI version if any (Go `listApplications`).
+/// Every active application the caller can browse, ordered by code, each
+/// with a snapshot of its CURRENT OpenAPI version if any (Go
+/// `listApplications`).
 pub async fn list_applications(
     State(state): State<BffDeveloperState>,
     auth: Authenticated,
 ) -> Result<Json<DeveloperApplicationsResponse>, PlatformError> {
-    can_read(&auth.0)?;
+    let reach = portal_reach(&state, &auth.0).await?;
 
     let mut apps = state.application_repo.find_active().await?;
+    apps.retain(|a| reach.allows(&a.id));
     apps.sort_by(|a, b| a.code.cmp(&b.code));
     let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
     let mut current = state
@@ -224,7 +265,7 @@ pub async fn get_application(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperApplicationSummary>, PlatformError> {
-    can_read(&auth.0)?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
         .application_repo
@@ -244,7 +285,7 @@ pub async fn get_current_openapi(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    can_read(&auth.0)?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
         .openapi_spec_repo
@@ -259,7 +300,7 @@ pub async fn list_versions(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiVersionsResponse>, PlatformError> {
-    can_read(&auth.0)?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let rows = state
         .openapi_spec_repo
@@ -288,7 +329,7 @@ pub async fn get_version(
     auth: Authenticated,
     Path((app_id, spec_id)): Path<(String, String)>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    can_read(&auth.0)?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
         .openapi_spec_repo
@@ -304,7 +345,7 @@ pub async fn list_event_types(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperEventTypesResponse>, PlatformError> {
-    can_read(&auth.0)?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
         .application_repo

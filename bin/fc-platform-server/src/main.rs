@@ -344,7 +344,7 @@ async fn metrics_handler() -> &'static str {
 async fn health_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "UP",
-        "version": env!("CARGO_PKG_VERSION")
+        "version": fc_common::BUILD_VERSION
     }))
 }
 
