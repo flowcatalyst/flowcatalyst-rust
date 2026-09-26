@@ -36,6 +36,7 @@
 //! | `FC_SCHEDULED_JOB_ENABLED` / `SCHEDULED_JOB_SCHEDULER_ENABLED` | `false` | Run the scheduled-job cron engine |
 //! | `FC_STREAM_PROCESSOR_ENABLED` / `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
 //! | `FC_OUTBOX_ENABLED` / `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the outbox processor |
+//! | `FC_MCP_ENABLED` | `false` | Run the read-only MCP server on its own listener (see `mcp.rs`) |
 //!
 //! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
 //! | Variable | Default | Description |
@@ -84,6 +85,8 @@ use fc_platform::usecase::PgUnitOfWork;
 use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
 };
+
+mod mcp;
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
 ///
@@ -237,6 +240,7 @@ async fn main() -> Result<()> {
     );
     let outbox_enabled =
         env_first_bool_go(&["FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED"], false);
+    let mcp_enabled = env_first_bool_go(&["FC_MCP_ENABLED"], false);
 
     // Standby / HA
     let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
@@ -253,6 +257,7 @@ async fn main() -> Result<()> {
         scheduled_job = scheduled_job_enabled,
         stream = stream_enabled,
         outbox = outbox_enabled,
+        mcp = mcp_enabled,
         standby = standby_enabled,
         api_port,
         metrics_port,
@@ -267,6 +272,12 @@ async fn main() -> Result<()> {
     } else {
         None
     };
+    // The MCP role's credentials likewise, before anything connects.
+    let mcp_role = if mcp_enabled {
+        Some(mcp::McpRole::from_env(api_port)?)
+    } else {
+        None
+    };
 
     // A malformed FLOWCATALYST_APP_KEY is fatal at boot, as in Go (an unset
     // one is the documented "encryption disabled" state).
@@ -277,7 +288,8 @@ async fn main() -> Result<()> {
     // Only the subsystems that read or write Postgres need it (Go:
     // `needsDB`). A router-only instance (MESSAGE_ROUTER_ENABLED=true,
     // PLATFORM_ENABLED=false) reads its configuration from the platform API
-    // and connects to no database at all.
+    // and connects to no database at all; nor does the MCP server, which
+    // calls the platform over HTTP.
     let needs_db = platform_enabled
         || stream_enabled
         || scheduler_enabled
@@ -288,6 +300,7 @@ async fn main() -> Result<()> {
     } else {
         info!(
             router = router_enabled,
+            mcp = mcp_enabled,
             "no database-backed subsystem enabled; skipping postgres connect/migrate/seed"
         );
         None
@@ -470,6 +483,7 @@ async fn main() -> Result<()> {
         scheduled_job_enabled,
         stream_enabled,
         outbox_enabled,
+        mcp_enabled,
         is_leader: Arc::new(is_leader_for_health),
     };
 
@@ -503,6 +517,14 @@ async fn main() -> Result<()> {
         })
     };
 
+    // ── MCP ──────────────────────────────────────────────────────────────────
+    // Its own listener, stopped with the other two (Go: `StartMCP`, not
+    // leader-gated — it only reads the platform's API).
+    let mut http_tasks = vec![api_task, metrics_task];
+    if let Some(role) = mcp_role {
+        http_tasks.push(role.start(http_stop.clone()).await?);
+    }
+
     // ── Startup Summary ──────────────────────────────────────────────────────
     let state = |on: bool| if on { "ENABLED" } else { "DISABLED" };
     info!("=== FlowCatalyst Unified Server Started ===");
@@ -512,6 +534,7 @@ async fn main() -> Result<()> {
     info!("  Scheduled jobs: {}", state(scheduled_job_enabled));
     info!("  Stream:       {}", state(stream_enabled));
     info!("  Outbox:       {}", state(outbox_enabled));
+    info!("  MCP:          {}", state(mcp_enabled));
     info!(
         "  Database:     {}",
         if needs_db { "CONNECTED" } else { "NONE" }
@@ -542,7 +565,7 @@ async fn main() -> Result<()> {
     // flight. A `/api/dispatch/process` call in flight has already sent its
     // webhook; aborting it lost the outcome and left the job PROCESSING
     // (delivery run 3, `platform-down`).
-    drain_http(&http_stop, vec![api_task, metrics_task], HTTP_DRAIN_TIMEOUT).await;
+    drain_http(&http_stop, http_tasks, HTTP_DRAIN_TIMEOUT).await;
 
     // Shutdown stream processor if running
     if let Some(handle) = stream_handle {
@@ -1343,6 +1366,7 @@ struct HealthState {
     scheduled_job_enabled: bool,
     stream_enabled: bool,
     outbox_enabled: bool,
+    mcp_enabled: bool,
     is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -1359,6 +1383,7 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
             "scheduled_job": if state.scheduled_job_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "stream_processor": if state.stream_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "outbox": if state.outbox_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
+            "mcp": if state.mcp_enabled { "UP" } else { "DISABLED" },
         }
     }))
 }
@@ -1384,7 +1409,7 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
         "scheduled_job": state.scheduled_job_enabled,
         "stream": state.stream_enabled,
         "outbox": state.outbox_enabled,
-        "mcp": false,
+        "mcp": state.mcp_enabled,
     }))
 }
 

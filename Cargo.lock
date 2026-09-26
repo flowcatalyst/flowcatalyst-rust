@@ -2972,17 +2972,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fc-mcp-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "fc-mcp",
- "tokio",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "fc-outbox"
 version = "0.1.0"
 dependencies = [
@@ -3258,6 +3247,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "axum",
  "fc-common",
+ "fc-mcp",
  "fc-outbox",
  "fc-platform",
  "fc-router",

@@ -391,13 +391,25 @@ types and subscriptions for code-aware completions.
 
 ```sh
 fc-dev mcp                       # stdio (for editor integrations)
-fc-dev mcp --http                # HTTP server on :3100
+fc-dev mcp --http                # HTTP server on 127.0.0.1:3100
+fc-dev mcp --http 0.0.0.0:3100   # Go's form: the bind address after --http
 fc-dev mcp --http --bind 0.0.0.0:3100
+fc-dev mcp --platform-url http://localhost:8080 --client-id … --client-secret …
 ```
 
 Reads `FLOWCATALYST_URL`, `FLOWCATALYST_CLIENT_ID`, and
-`FLOWCATALYST_CLIENT_SECRET` from the environment. `fc-dev init` writes
-these into your project's `.env`.
+`FLOWCATALYST_CLIENT_SECRET` from the environment, else the credentials file
+a running `fc-dev` provisions (`<cache dir>/flowcatalyst-dev/mcp-credentials.json`);
+`--platform-url`, `--client-id` and `--client-secret` override them.
+`fc-dev init` writes these into your project's `.env`.
+
+To run it inside the dev server instead, start with `fc-dev --mcp` (Go's
+`fcdev start --mcp`, env `FC_MCP_ENABLED`): the HTTP transport on
+`FC_MCP_BIND` (default `127.0.0.1`) port `FC_MCP_PORT` (default **3100**;
+Go's fcdev uses 8090, which is fc-dev's function-host port).
+
+In production the same server is `fc-server`'s MCP role (`FC_MCP_ENABLED=true`,
+default port 8090 as Go); there is no separate MCP binary.
 
 For the deep-dive on what MCP can do here, see
 [../architecture/shared-crates.md](../architecture/shared-crates.md#fc-mcp).

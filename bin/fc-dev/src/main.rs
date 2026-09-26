@@ -80,10 +80,12 @@ enum Command {
     Fresh(fresh::FreshArgs),
 
     /// Run the FlowCatalyst MCP server (read-only access to event types
-    /// and subscriptions for AI agents).
+    /// and subscriptions for AI agents): stdio by default, `--http` to
+    /// listen (Go's `fcdev mcp`).
     ///
     /// Reads `FLOWCATALYST_URL`, `FLOWCATALYST_CLIENT_ID`, and
-    /// `FLOWCATALYST_CLIENT_SECRET` from the environment.
+    /// `FLOWCATALYST_CLIENT_SECRET` from the environment, else the
+    /// credentials file a running fc-dev writes; the flags override them.
     Mcp(McpArgs),
 
     /// Standalone outbox poller. Polls an external app's
@@ -117,14 +119,33 @@ struct UpgradeArgs {
 
 #[derive(clap::Args, Debug)]
 struct McpArgs {
-    /// Run as a streamable HTTP server instead of stdio.
-    #[arg(long)]
-    http: bool,
+    /// Run as a streamable HTTP server instead of stdio, at `--bind`, or at
+    /// the address given (Go's `--http 127.0.0.1:8090`).
+    #[arg(long, value_name = "BIND", num_args = 0..=1, default_missing_value = "")]
+    http: Option<String>,
 
-    /// Bind address for `--http` mode.
+    /// Bind address for `--http` mode: `host:port`, or a host with port
+    /// 3100.
     #[arg(long, env = "FC_MCP_BIND", default_value = "127.0.0.1:3100")]
-    bind: std::net::SocketAddr,
+    bind: String,
+
+    /// Platform base URL (overrides `FLOWCATALYST_URL`).
+    #[arg(long)]
+    platform_url: Option<String>,
+
+    /// OAuth client id (overrides `FLOWCATALYST_CLIENT_ID`).
+    #[arg(long)]
+    client_id: Option<String>,
+
+    /// OAuth client secret (overrides `FLOWCATALYST_CLIENT_SECRET`).
+    #[arg(long)]
+    client_secret: Option<String>,
 }
+
+/// The port an MCP bind without one listens on (`fc-dev mcp --http` and
+/// `fc-dev start --mcp`). Go's fcdev uses 8090, which is fc-dev's function
+/// host port.
+const DEV_MCP_PORT: u16 = 3100;
 
 /// Flags for the (default) run-server path. Flattened into `Cli` so existing
 /// invocations like `fc-dev --api-port 3000` keep working unchanged.
@@ -166,6 +187,21 @@ struct RunArgs {
     /// Enable outbox processor
     #[arg(long, env = "FC_OUTBOX_ENABLED", default_value = "false")]
     outbox_enabled: bool,
+
+    /// Run the MCP HTTP server beside the platform (Go's `fcdev start
+    /// --mcp`), at `FC_MCP_BIND` (default `127.0.0.1`) : `FC_MCP_PORT`
+    /// (default 3100), authenticated with the credentials fc-dev
+    /// provisions for `fc-dev mcp`.
+    #[arg(
+        long = "mcp",
+        env = "FC_MCP_ENABLED",
+        default_value = "false",
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    mcp_enabled: bool,
 
     /// Outbox poll interval in milliseconds
     #[arg(long, env = "FC_OUTBOX_POLL_INTERVAL_MS", default_value = "1000")]
@@ -299,11 +335,25 @@ async fn main() -> Result<()> {
                 .with_writer(std::io::stderr)
                 .with_ansi(false)
                 .init();
+            // Flags override the environment (Go's order).
+            for (key, value) in [
+                ("FLOWCATALYST_URL", &opts.platform_url),
+                ("FLOWCATALYST_CLIENT_ID", &opts.client_id),
+                ("FLOWCATALYST_CLIENT_SECRET", &opts.client_secret),
+            ] {
+                if let Some(v) = value.as_deref().filter(|v| !v.is_empty()) {
+                    std::env::set_var(key, v);
+                }
+            }
             let config = fc_mcp::Config::from_env()?;
-            return if opts.http {
-                fc_mcp::run_http(config, opts.bind).await
-            } else {
-                fc_mcp::run_stdio(config).await
+            return match opts.http.as_deref() {
+                None => fc_mcp::run_stdio(config).await,
+                Some("") => {
+                    fc_mcp::run_http(config, fc_mcp::resolve_bind(&opts.bind, DEV_MCP_PORT)?).await
+                }
+                Some(bind) => {
+                    fc_mcp::run_http(config, fc_mcp::resolve_bind(bind, DEV_MCP_PORT)?).await
+                }
             };
         }
         Some(Command::Init(args)) => {
@@ -1169,6 +1219,20 @@ async fn main() -> Result<()> {
         }
     }
 
+    // 13. The in-process MCP server (`--mcp`), after the credential
+    //     bootstrap above wrote the file it reads.
+    let mcp_handle = if args.mcp_enabled {
+        match start_mcp(args.api_port, shutdown_tx.subscribe()).await {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                warn!(error = %e, "MCP server not started; fc-dev runs without it");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let fn_ports = fn_host
         .is_running()
         .then_some((args.functions.fn_port, args.functions.fn_public_port));
@@ -1202,6 +1266,9 @@ async fn main() -> Result<()> {
         if let Some(h) = outbox_handle {
             let _ = h.await;
         }
+        if let Some(h) = mcp_handle {
+            let _ = h.await;
+        }
     })
     .await;
 
@@ -1214,6 +1281,28 @@ async fn main() -> Result<()> {
 
     info!("FlowCatalyst Dev Monolith shutdown complete");
     Ok(())
+}
+
+/// `fc-dev start --mcp`: the MCP server on `FC_MCP_BIND`:`FC_MCP_PORT`
+/// against this fc-dev's API, until shutdown.
+async fn start_mcp(
+    api_port: u16,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let addr = fc_mcp::resolve_bind(
+        &std::env::var("FC_MCP_BIND").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        fc_common::config::env_or_parse("FC_MCP_PORT", DEV_MCP_PORT),
+    )?;
+    let config = fc_mcp::Config::from_env_or_base(&format!("http://localhost:{api_port}"))?;
+    let listener = TcpListener::bind(addr).await?;
+    Ok(tokio::spawn(async move {
+        let stop = async move {
+            let _ = shutdown_rx.recv().await;
+        };
+        if let Err(e) = fc_mcp::serve_http(config, listener, stop).await {
+            warn!(error = %e, "MCP server stopped with an error");
+        }
+    }))
 }
 
 /// A boolean environment flag (`true`/`1`/`yes`).
