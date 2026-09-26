@@ -28,6 +28,46 @@ pub struct EventTypeBindingRequest {
     /// Optional filter expression
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+
+    /// Event type id (optional; stored as sent)
+    #[serde(default)]
+    pub event_type_id: Option<String>,
+
+    /// Spec version bound to (optional; stored as sent)
+    #[serde(default)]
+    pub spec_version: Option<String>,
+}
+
+impl EventTypeBindingRequest {
+    fn into_input(self) -> crate::subscription::operations::EventTypeBindingInput {
+        crate::subscription::operations::EventTypeBindingInput {
+            event_type_code: self.event_type_code,
+            filter: self.filter,
+            event_type_id: self.event_type_id,
+            spec_version: self.spec_version,
+        }
+    }
+}
+
+/// Config entry request (Go `ConfigEntryDTO`)
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigEntryRequest {
+    pub key: String,
+    pub value: String,
+}
+
+fn config_entries(
+    entries: Option<Vec<ConfigEntryRequest>>,
+) -> Option<Vec<crate::subscription::entity::ConfigEntry>> {
+    entries.map(|v| {
+        v.into_iter()
+            .map(|c| crate::subscription::entity::ConfigEntry {
+                key: c.key,
+                value: c.value,
+            })
+            .collect()
+    })
 }
 
 /// Create subscription request
@@ -79,9 +119,25 @@ pub struct CreateSubscriptionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
 
-    /// Send raw event data only
+    /// Send raw event data only (absent: true, as Go's default)
     #[serde(default)]
-    pub data_only: bool,
+    pub data_only: Option<bool>,
+
+    /// Dispatch priority: DEFAULT or HIGH_PRIORITY (any case)
+    #[serde(default)]
+    pub queue: Option<String>,
+
+    /// Delivery delay in seconds
+    #[serde(default)]
+    pub delay_seconds: Option<i32>,
+
+    /// Maximum message age in seconds
+    #[serde(default)]
+    pub max_age_seconds: Option<i32>,
+
+    /// Custom configuration entries
+    #[serde(default)]
+    pub custom_config: Option<Vec<ConfigEntryRequest>>,
 }
 
 /// Update subscription request
@@ -105,20 +161,63 @@ pub struct UpdateSubscriptionRequest {
 
     /// Maximum retry attempts
     pub max_retries: Option<u32>,
+
+    /// Event types (replace the existing bindings when given)
+    #[serde(default)]
+    pub event_types: Option<Vec<EventTypeBindingRequest>>,
+
+    /// Custom configuration (replaces the existing entries when given)
+    #[serde(default)]
+    pub custom_config: Option<Vec<ConfigEntryRequest>>,
+
+    /// Dispatch mode (absent: unchanged; unknown: NEXT_ON_ERROR, X-01)
+    #[serde(default)]
+    pub mode: Option<String>,
+
+    /// Delivery delay in seconds
+    #[serde(default)]
+    pub delay_seconds: Option<i32>,
+
+    /// Maximum message age in seconds
+    #[serde(default)]
+    pub max_age_seconds: Option<i32>,
+
+    /// Dispatch pool id
+    #[serde(default)]
+    pub dispatch_pool_id: Option<String>,
+
+    /// Service account id
+    #[serde(default)]
+    pub service_account_id: Option<String>,
+
+    /// Send raw event data only
+    #[serde(default)]
+    pub data_only: Option<bool>,
+
+    /// Dispatch priority; an explicit blank clears it
+    #[serde(default)]
+    pub queue: Option<String>,
 }
 
 /// Event type binding response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeBindingResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_type_id: Option<String>,
     pub event_type_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
 }
 
 impl From<&EventTypeBinding> for EventTypeBindingResponse {
     fn from(b: &EventTypeBinding) -> Self {
         Self {
+            event_type_id: b.event_type_id.clone(),
             event_type_code: b.event_type_code.clone(),
+            spec_version: b.spec_version.clone(),
             filter: b.filter.clone(),
         }
     }
@@ -141,35 +240,47 @@ impl From<&crate::subscription::entity::ConfigEntry> for ConfigEntryResponse {
     }
 }
 
-/// Subscription response DTO
+/// Subscription response DTO (Go `SubscriptionResponse`: optional members
+/// are omitted when unset, never `null`).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionResponse {
     pub id: String,
     pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_code: Option<String>,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
+    pub client_scoped: bool,
     pub event_types: Vec<EventTypeBindingResponse>,
-    pub endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
+    pub endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub queue: Option<String>,
     pub custom_config: Vec<ConfigEntryResponse>,
-    pub source: Option<String>,
+    pub source: String,
     pub status: String,
-    pub max_age_seconds: u32,
+    pub max_age_seconds: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_code: Option<String>,
-    pub delay_seconds: u32,
+    pub delay_seconds: i32,
     pub sequence: i32,
     pub mode: String,
-    pub timeout_seconds: u32,
-    pub max_retries: u32,
+    pub timeout_seconds: i32,
+    pub max_retries: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_id: Option<String>,
     pub data_only: bool,
-    pub application_code: Option<String>,
-    pub client_scoped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -179,29 +290,30 @@ impl From<Subscription> for SubscriptionResponse {
         Self {
             id: s.id,
             code: s.code,
+            application_code: s.application_code,
             name: s.name,
             description: s.description,
             client_id: s.client_id,
-            client_identifier: None, // Denormalized, populated by projection
+            client_identifier: s.client_identifier,
+            client_scoped: s.client_scoped,
             event_types: s.event_types.iter().map(|e| e.into()).collect(),
-            endpoint: s.endpoint,
             connection_id: s.connection_id,
+            endpoint: s.endpoint,
             queue: s.queue,
             custom_config: s.custom_config.iter().map(|c| c.into()).collect(),
-            source: None, // Not tracked in Rust domain yet
+            source: s.source.as_str().to_string(),
             status: s.status.as_str().to_string(),
-            max_age_seconds: s.max_age_seconds as u32,
+            max_age_seconds: s.max_age_seconds,
             dispatch_pool_id: s.dispatch_pool_id,
-            dispatch_pool_code: None, // Denormalized, populated by projection
-            delay_seconds: s.delay_seconds as u32,
+            dispatch_pool_code: s.dispatch_pool_code,
+            delay_seconds: s.delay_seconds,
             sequence: s.sequence,
             mode: s.mode.as_str().to_string(),
-            timeout_seconds: s.timeout_seconds as u32,
-            max_retries: s.max_retries as u32,
+            timeout_seconds: s.timeout_seconds,
+            max_retries: s.max_retries,
             service_account_id: s.service_account_id,
             data_only: s.data_only,
-            application_code: s.application_code,
-            client_scoped: s.client_scoped,
+            created_by: s.created_by,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }
@@ -271,12 +383,10 @@ pub async fn create_subscription(
     auth: Authenticated,
     Json(req): Json<CreateSubscriptionRequest>,
 ) -> Result<(StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
-    use crate::subscription::operations::{CreateSubscriptionCommand, EventTypeBindingInput};
+    use crate::subscription::operations::CreateSubscriptionCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
-
-    crate::subscription::access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
 
     // Ruling X-01: absent or unrecognised means NEXT_ON_ERROR (with a warning
     // for the unrecognised case), never a rejection.
@@ -284,6 +394,9 @@ pub async fn create_subscription(
         req.mode.as_deref(),
     ));
 
+    // The use case checks, in Go's order: the input (400), then the
+    // caller's reach into the requested client (403 SCOPE_FORBIDDEN; a
+    // platform-wide subscription needs anchor scope), then the signers.
     let cmd = CreateSubscriptionCommand {
         code: req.code,
         name: req.name,
@@ -294,17 +407,19 @@ pub async fn create_subscription(
         event_types: req
             .event_types
             .into_iter()
-            .map(|b| EventTypeBindingInput {
-                event_type_code: b.event_type_code,
-                filter: b.filter,
-            })
+            .map(EventTypeBindingRequest::into_input)
             .collect(),
         dispatch_pool_id: req.dispatch_pool_id,
         service_account_id: req.service_account_id,
         mode,
         max_retries: req.max_retries,
         timeout_seconds: req.timeout_seconds,
-        data_only: req.data_only,
+        // Go's default: absent means data only.
+        data_only: req.data_only.unwrap_or(true),
+        queue: req.queue,
+        delay_seconds: req.delay_seconds,
+        max_age_seconds: req.max_age_seconds,
+        custom_config: config_entries(req.custom_config),
         caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -373,26 +488,23 @@ pub async fn list_subscriptions(
     let status: Option<crate::subscription::entity::SubscriptionStatus> =
         crate::shared::enum_str::parse_opt(query.status.as_deref())?;
 
-    let subscriptions = if let Some(ref client_id) = query.client_id {
-        if !auth.0.can_access_client(client_id) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                client_id
-            )));
-        }
-        state
-            .subscription_repo
-            .find_by_client(Some(client_id))
-            .await?
-    } else {
-        state.subscription_repo.find_active().await?
-    };
-
-    // Filter by status and client access
+    // Go: the filters as given (no status filter means every status), then
+    // `FilterClientScoped` — platform subscriptions to every holder of the
+    // read permission, a client's only to callers reaching that client.
+    let subscriptions = state
+        .subscription_repo
+        .find_with_filters(
+            status.map(|s| s.as_str()),
+            query.client_id.as_deref().filter(|c| !c.is_empty()),
+        )
+        .await?;
     let filtered: Vec<SubscriptionResponse> = subscriptions
         .into_iter()
-        .filter(|s| status.is_none_or(|st| s.status == st))
-        .filter(|s| crate::subscription::access::is_listed(&auth.0, s))
+        .filter(|s| {
+            s.client_id
+                .as_deref()
+                .is_none_or(|cid| crate::shared::caller_reach::reaches_client(&auth.0, cid))
+        })
         .map(|s| s.into())
         .collect();
 
@@ -430,26 +542,33 @@ pub async fn update_subscription(
 
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
-    let subscription = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    crate::subscription::access::ensure_modifiable(&auth.0, &subscription, "modify")?;
-
+    // The use case validates, loads (404) and checks the caller's scope on
+    // the loaded row (403 SCOPE_FORBIDDEN), in Go's order.
     let cmd = UpdateSubscriptionCommand {
         subscription_id: id,
         name: req.name,
         description: req.description,
         endpoint: req.endpoint,
         connection_id: req.connection_id,
-        event_types: None,
-        dispatch_pool_id: None,
-        service_account_id: None,
-        mode: None,
+        event_types: req.event_types.map(|v| {
+            v.into_iter()
+                .map(EventTypeBindingRequest::into_input)
+                .collect()
+        }),
+        dispatch_pool_id: req.dispatch_pool_id,
+        service_account_id: req.service_account_id,
+        // X-01: an unknown mode is NEXT_ON_ERROR, never a rejection.
+        mode: req
+            .mode
+            .as_deref()
+            .map(|m| crate::dispatch_job::entity::parse_dispatch_mode(Some(m))),
         max_retries: req.max_retries,
         timeout_seconds: req.timeout_seconds,
-        data_only: None,
+        data_only: req.data_only,
+        queue: req.queue,
+        delay_seconds: req.delay_seconds,
+        max_age_seconds: req.max_age_seconds,
+        custom_config: config_entries(req.custom_config),
         caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -468,7 +587,7 @@ pub async fn update_subscription(
         ("id" = String, Path, description = "Subscription ID")
     ),
     responses(
-        (status = 200, description = "Subscription paused", body = SubscriptionResponse),
+        (status = 204, description = "Subscription paused"),
         (status = 404, description = "Subscription not found")
     ),
     security(("bearer_auth" = []))
@@ -477,7 +596,7 @@ pub async fn pause_subscription(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SubscriptionResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::subscription::operations::PauseSubscriptionCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
@@ -488,7 +607,9 @@ pub async fn pause_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
+    // Go `CheckScopeAccess`: a client's subscription needs that client, a
+    // platform one anchor scope.
+    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
 
     let cmd = PauseSubscriptionCommand {
         subscription_id: id.clone(),
@@ -496,12 +617,8 @@ pub async fn pause_subscription(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.pause_use_case.run(cmd, ctx).await.into_result()?;
 
-    let refreshed = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    Ok(Json(refreshed.into()))
+    // Unconditional and idempotent, as Go: 204 however often it is sent.
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Resume subscription
@@ -514,7 +631,7 @@ pub async fn pause_subscription(
         ("id" = String, Path, description = "Subscription ID")
     ),
     responses(
-        (status = 200, description = "Subscription resumed", body = SubscriptionResponse),
+        (status = 204, description = "Subscription resumed"),
         (status = 404, description = "Subscription not found")
     ),
     security(("bearer_auth" = []))
@@ -523,7 +640,7 @@ pub async fn resume_subscription(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SubscriptionResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::subscription::operations::ResumeSubscriptionCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
@@ -534,7 +651,9 @@ pub async fn resume_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
+    // Go `CheckScopeAccess`: a client's subscription needs that client, a
+    // platform one anchor scope.
+    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
 
     let cmd = ResumeSubscriptionCommand {
         subscription_id: id.clone(),
@@ -542,12 +661,8 @@ pub async fn resume_subscription(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.resume_use_case.run(cmd, ctx).await.into_result()?;
 
-    let refreshed = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    Ok(Json(refreshed.into()))
+    // Unconditional and idempotent, as Go: 204 however often it is sent.
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete subscription (archive)
@@ -580,7 +695,7 @@ pub async fn delete_subscription(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    crate::subscription::access::ensure_modifiable(&auth.0, &subscription, "delete")?;
+    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
 
     let cmd = DeleteSubscriptionCommand {
         subscription_id: id,

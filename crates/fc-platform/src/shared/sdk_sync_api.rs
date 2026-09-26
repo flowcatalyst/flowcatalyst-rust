@@ -122,6 +122,11 @@ pub struct SyncEventTypeInputRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncSubscriptionsRequest {
+    /// The client this batch belongs to: its id or identifier (Go
+    /// `resolveClientRef`). Omitted: the application's client-less
+    /// subscriptions.
+    #[serde(default)]
+    pub client_id: Option<String>,
     pub subscriptions: Vec<SyncSubscriptionInputRequest>,
 }
 
@@ -136,6 +141,12 @@ pub struct SyncSubscriptionInputRequest {
     pub target: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_id: Option<String>,
+    /// The connection by code: this application's own, or with
+    /// `sharedConnection` an application-less one.
+    #[serde(default)]
+    pub connection_code: Option<String>,
+    #[serde(default)]
+    pub shared_connection: bool,
     pub event_types: Vec<SyncSubscriptionEventTypeRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_code: Option<String>,
@@ -277,6 +288,8 @@ pub struct SdkSyncState {
     /// for `passwordHashIgnored`.
     pub principal_repo: Arc<crate::PrincipalRepository>,
     pub application_repo: Arc<crate::ApplicationRepository>,
+    /// Resolves a sync's `clientId` (an id or an identifier).
+    pub client_repo: Arc<crate::ClientRepository>,
     /// The principal sync runs its rows, events and audit entries in one
     /// transaction.
     pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
@@ -499,13 +512,40 @@ async fn sync_subscriptions(
     Json(req): Json<SyncSubscriptionsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_subscriptions(&auth.0)?;
-    state
+    let app = state
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
 
+    // Go `resolveClientRef`: the id first, then the identifier lower-cased;
+    // unknown is 404, and the caller must reach it (Go's use case: 403
+    // `No access to client: …`).
+    let client_id = match req.client_id.as_deref().map(str::trim) {
+        Some(r) if !r.is_empty() => {
+            let client = match state.client_repo.find_by_id(r).await? {
+                Some(c) => Some(c),
+                None => {
+                    state
+                        .client_repo
+                        .find_by_identifier(&r.to_lowercase())
+                        .await?
+                }
+            };
+            let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
+            if !auth.0.can_access_client(&client.id) {
+                return Err(PlatformError::forbidden(format!(
+                    "No access to client: {}",
+                    client.id
+                )));
+            }
+            Some(client.id)
+        }
+        _ => None,
+    };
+
     let command = SyncSubscriptionsCommand {
-        application_code: app_code,
+        application_code: app.code,
+        client_id,
         subscriptions: req
             .subscriptions
             .into_iter()
@@ -515,12 +555,16 @@ async fn sync_subscriptions(
                 description: s.description,
                 target: s.target,
                 connection_id: s.connection_id,
+                connection_code: s.connection_code,
+                shared_connection: s.shared_connection,
                 event_types: s
                     .event_types
                     .into_iter()
                     .map(|et| EventTypeBindingInput {
                         event_type_code: et.event_type_code,
                         filter: et.filter,
+                        event_type_id: None,
+                        spec_version: None,
                     })
                     .collect(),
                 dispatch_pool_code: s.dispatch_pool_code,

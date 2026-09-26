@@ -37,6 +37,7 @@ struct SubscriptionRow {
     max_retries: i32,
     service_account_id: Option<String>,
     data_only: bool,
+    created_by: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -73,7 +74,7 @@ impl TryFrom<SubscriptionRow> for Subscription {
             max_retries: r.max_retries,
             service_account_id: r.service_account_id,
             data_only: r.data_only,
-            created_by: None,
+            created_by: r.created_by,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -220,8 +221,9 @@ impl SubscriptionRepository {
                 (id, code, application_code, name, description, client_id, client_identifier,
                  client_scoped, connection_id, target, queue, source, status, max_age_seconds,
                  dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode,
-                 timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)"
+                 timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at,
+                 created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)"
         )
         .bind(&sub.id)
         .bind(&sub.code)
@@ -248,6 +250,7 @@ impl SubscriptionRepository {
         .bind(sub.data_only)
         .bind(now)
         .bind(now)
+        .bind(&sub.created_by)
         .execute(&self.pool)
         .await?;
         self.save_event_types(&sub.id, &sub.event_types).await?;
@@ -500,6 +503,72 @@ impl SubscriptionRepository {
         }
     }
 
+    /// The subscription keyed by (code, application, client), where `None`
+    /// is a real value of the key, never a wildcard (Go `FindByCode`: the
+    /// `(application_code, client_id, code)` uniqueness of migration 050).
+    pub async fn find_by_code_in_scope(
+        &self,
+        code: &str,
+        application_code: Option<&str>,
+        client_id: Option<&str>,
+    ) -> Result<Option<Subscription>> {
+        let row = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT * FROM msg_subscriptions WHERE code = $1 \
+             AND application_code IS NOT DISTINCT FROM $2 \
+             AND client_id IS NOT DISTINCT FROM $3",
+        )
+        .bind(code)
+        .bind(application_code)
+        .bind(client_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Go `FindWithFilters`: every subscription matching the given
+    /// filters (none = all, any status), by code.
+    pub async fn find_with_filters(
+        &self,
+        status: Option<&str>,
+        client_id: Option<&str>,
+    ) -> Result<Vec<Subscription>> {
+        let rows = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT * FROM msg_subscriptions \
+             WHERE ($1::text IS NULL OR status = $1) \
+               AND ($2::text IS NULL OR client_id = $2) \
+             ORDER BY code",
+        )
+        .bind(status)
+        .bind(client_id)
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate_all(rows).await
+    }
+
+    /// Go `FindByApplicationAndClient`: the subscriptions of one
+    /// application under one client, where no client matches only the
+    /// client-less rows — the row set one (application, client) sync may
+    /// touch.
+    pub async fn find_by_application_and_client(
+        &self,
+        application_code: &str,
+        client_id: Option<&str>,
+    ) -> Result<Vec<Subscription>> {
+        let rows = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT * FROM msg_subscriptions \
+             WHERE application_code = $1 AND client_id IS NOT DISTINCT FROM $2 \
+             ORDER BY code",
+        )
+        .bind(application_code)
+        .bind(client_id)
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate_all(rows).await
+    }
+
     /// Check if any subscriptions reference a given connection ID
     pub async fn exists_by_connection_id(&self, connection_id: &str) -> Result<bool> {
         let row: (i64,) =
@@ -584,8 +653,8 @@ impl crate::usecase::Persist<Subscription> for SubscriptionRepository {
 
         // 1. Upsert main row
         sqlx::query(
-            "INSERT INTO msg_subscriptions (id, code, application_code, name, description, client_id, client_identifier, client_scoped, connection_id, target, queue, source, status, max_age_seconds, dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            "INSERT INTO msg_subscriptions (id, code, application_code, name, description, client_id, client_identifier, client_scoped, connection_id, target, queue, source, status, max_age_seconds, dispatch_pool_id, dispatch_pool_code, delay_seconds, sequence, mode, timeout_seconds, max_retries, service_account_id, data_only, created_at, updated_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
              ON CONFLICT (id) DO UPDATE SET
                 code = EXCLUDED.code,
                 application_code = EXCLUDED.application_code,
@@ -609,7 +678,8 @@ impl crate::usecase::Persist<Subscription> for SubscriptionRepository {
                 max_retries = EXCLUDED.max_retries,
                 service_account_id = EXCLUDED.service_account_id,
                 data_only = EXCLUDED.data_only,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at,
+                created_by = COALESCE(msg_subscriptions.created_by, EXCLUDED.created_by)"
         )
         .bind(&s.id)
         .bind(&s.code)
@@ -636,6 +706,7 @@ impl crate::usecase::Persist<Subscription> for SubscriptionRepository {
         .bind(s.data_only)
         .bind(now)
         .bind(now)
+        .bind(&s.created_by)
         .execute(&mut **tx.inner).await?;
 
         sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")

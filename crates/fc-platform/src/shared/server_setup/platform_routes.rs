@@ -1054,6 +1054,7 @@ pub fn build_platform_routes(
         trigger_objects: repos.function_trigger_object_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         application_repo: repos.application_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         unit_of_work: unit_of_work.clone(),
     };
 
