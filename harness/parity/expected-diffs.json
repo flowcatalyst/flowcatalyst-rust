@@ -257,5 +257,40 @@
     "pointer": "/**",
     "reason": "Consequence of the leeway on the step before: on Go that replay revoked the family, so refresh2 is refused (400 invalid_grant); on Rust the family was never revoked (the replay was within the leeway), so refresh2 still rotates (200). Refreshing a genuinely revoked family is refused on Rust too (see refresh-revoked).",
     "ruling": "owner decisions 2026-09-25, #21 (Java ruling 5): a refresh token rotated out less than 10 s ago rotates again into a sibling in the same family"
+  },
+  {
+    "scenario": "dispatch-jobs:*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
+  },
+  {
+    "scenario": "event-types:*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
+  },
+  {
+    "scenario": "processes:*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
+  },
+  {
+    "scenario": "scheduled-jobs:*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
+  },
+  {
+    "scenario": "S0 smoke*",
+    "step": "login-as-b",
+    "pointer": "/permissions/**",
+    "reason": "The principal holds platform:messaging-admin. Rust's messaging-admin also grants the function context's permissions (platform:function:function:view/manage, version:publish/invoke, alias:promote, policy:manage, secret:manage, domain:manage), as Java's PlatformRoles defines the role; Go has no function runner. The eight extra entries sort first, so every index of /permissions shifts; the forty Go permissions are all present, in the same order.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java (flowcatalyst-javalin PlatformRoles.java, messaging-admin)"
   }
 ]
