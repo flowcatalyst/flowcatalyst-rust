@@ -16,6 +16,10 @@ pub struct CreateAuthConfigCommand {
     pub config_type: AuthConfigType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional_client_ids: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_client_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_provider: Option<AuthProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,12 +56,29 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
     type Event = AuthConfigCreated;
 
     async fn validate(&self, command: &CreateAuthConfigCommand) -> Result<(), UseCaseError> {
+        // Go CreateAuthConfig (auth/operations/auth_config.go): the domain
+        // must hold a dot, and an OIDC provider needs its issuer and client id.
         let email_domain = command.email_domain.trim().to_lowercase();
-        if email_domain.is_empty() {
+        if email_domain.is_empty() || !email_domain.contains('.') {
             return Err(UseCaseError::validation(
-                "EMAIL_DOMAIN_REQUIRED",
-                "Email domain is required",
+                "INVALID_EMAIL_DOMAIN",
+                "emailDomain must be a valid DNS name",
             ));
+        }
+        if command.auth_provider == Some(AuthProvider::Oidc) {
+            let blank = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+            if blank(&command.oidc_issuer_url) {
+                return Err(UseCaseError::validation(
+                    "OIDC_ISSUER_REQUIRED",
+                    "OIDC provider requires oidcIssuerUrl",
+                ));
+            }
+            if blank(&command.oidc_client_id) {
+                return Err(UseCaseError::validation(
+                    "OIDC_CLIENT_ID_REQUIRED",
+                    "OIDC provider requires oidcClientId",
+                ));
+            }
         }
         Ok(())
     }
@@ -88,11 +109,8 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         };
         if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
-                "EMAIL_DOMAIN_EXISTS",
-                format!(
-                    "An auth config for domain '{}' already exists",
-                    email_domain
-                ),
+                "DOMAIN_ALREADY_CONFIGURED",
+                format!("Auth config for '{}' already exists", email_domain),
             ));
         }
 
@@ -100,6 +118,12 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         let mut config = ClientAuthConfig::new_internal(&email_domain, config_type);
 
         config.primary_client_id = command.primary_client_id.clone();
+        if let Some(ids) = &command.additional_client_ids {
+            config.additional_client_ids = ids.clone();
+        }
+        if let Some(ids) = &command.granted_client_ids {
+            config.granted_client_ids = ids.clone();
+        }
 
         if let Some(provider) = command.auth_provider {
             config.auth_provider = provider;

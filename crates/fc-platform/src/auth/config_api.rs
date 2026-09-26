@@ -15,7 +15,6 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::config_entity::{AnchorDomain, AuthProvider, ClientAuthConfig, IdpRoleMapping};
 use crate::shared::api_common::CreatedResponse;
-use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::{AnchorDomainRepository, ClientAuthConfigRepository, IdpRoleMappingRepository};
@@ -32,33 +31,31 @@ pub struct CreateAnchorDomainRequest {
     pub domain: String,
 }
 
-/// Anchor domain response DTO
+/// Anchor domain response DTO: Go's `AnchorDomainResponse`
+/// (auth/api/dto.go).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchorDomainResponse {
     pub id: String,
     pub domain: String,
-    /// Number of users with this email domain
-    pub user_count: i64,
     pub created_at: String,
+    pub updated_at: String,
 }
 
-/// Anchor domain list response (wrapped)
+/// Anchor domain list response: Go's `{items}`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchorDomainListResponse {
-    pub domains: Vec<AnchorDomainResponse>,
-    pub total: usize,
+    pub items: Vec<AnchorDomainResponse>,
 }
 
-impl AnchorDomainResponse {
-    /// Create response with user count
-    pub fn from_domain(d: AnchorDomain, user_count: i64) -> Self {
+impl From<AnchorDomain> for AnchorDomainResponse {
+    fn from(d: AnchorDomain) -> Self {
         Self {
             id: d.id,
             domain: d.domain,
-            user_count,
             created_at: d.created_at.to_rfc3339(),
+            updated_at: d.updated_at.to_rfc3339(),
         }
     }
 }
@@ -74,22 +71,40 @@ pub struct CreateClientAuthConfigRequest {
     /// Email domain this config applies to
     pub email_domain: String,
 
-    /// Config type: ANCHOR, PARTNER, or CLIENT
-    #[serde(default)]
-    pub config_type: Option<String>,
+    /// Config type: ANCHOR, PARTNER, or CLIENT (required, as Go's huma
+    /// schema has it)
+    pub config_type: String,
 
     /// Primary client ID (for CLIENT type)
     pub primary_client_id: Option<String>,
 
-    /// Auth provider: INTERNAL or OIDC
+    /// Additional client IDs
     #[serde(default)]
-    pub auth_provider: Option<String>,
+    pub additional_client_ids: Option<Vec<String>>,
+
+    /// Granted client IDs (PARTNER)
+    #[serde(default)]
+    pub granted_client_ids: Option<Vec<String>>,
+
+    /// Auth provider: INTERNAL or OIDC (required)
+    pub auth_provider: String,
 
     /// OIDC issuer URL
     pub oidc_issuer_url: Option<String>,
 
     /// OIDC client ID
     pub oidc_client_id: Option<String>,
+
+    /// Multi-tenant OIDC
+    #[serde(default)]
+    pub oidc_multi_tenant: bool,
+
+    /// Multi-tenant issuer pattern
+    pub oidc_issuer_pattern: Option<String>,
+
+    /// OIDC client secret: a secret-manager reference, or a plaintext that
+    /// is encrypted before storage
+    pub oidc_client_secret_ref: Option<String>,
 }
 
 /// Update client auth config request
@@ -110,6 +125,18 @@ pub struct UpdateClientAuthConfigRequest {
 
     /// Additional client IDs
     pub additional_client_ids: Option<Vec<String>>,
+
+    /// Granted client IDs (PARTNER)
+    pub granted_client_ids: Option<Vec<String>>,
+
+    /// Multi-tenant OIDC
+    pub oidc_multi_tenant: Option<bool>,
+
+    /// Multi-tenant issuer pattern
+    pub oidc_issuer_pattern: Option<String>,
+
+    /// OIDC client secret (reference or plaintext to encrypt)
+    pub oidc_client_secret_ref: Option<String>,
 }
 
 /// Create internal auth config request
@@ -174,61 +201,89 @@ pub struct UpdateGrantedClientsRequest {
     pub granted_client_ids: Vec<String>,
 }
 
-/// Client auth config response DTO
+/// Client auth config response DTO: Go's `AuthConfigResponse`
+/// (auth/api/dto.go), optional members absent when unset. The stored
+/// secret is its reference or `encrypted:` form, never a plaintext.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAuthConfigResponse {
     pub id: String,
     pub email_domain: String,
     pub config_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     pub additional_client_ids: Vec<String>,
     /// Granted client IDs (for PARTNER type configs)
     pub granted_client_ids: Vec<String>,
-    /// Deprecated - use primaryClientId
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
     pub auth_provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_client_id: Option<String>,
-    /// Whether a client secret is configured
-    pub has_client_secret: bool,
     /// Whether OIDC is multi-tenant
     pub oidc_multi_tenant: bool,
     /// Issuer pattern for multi-tenant validation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oidc_client_secret_ref: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-/// Client auth config list response (wrapped)
+/// Client auth config list response: Go's `{items}`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthConfigListResponse {
-    pub configs: Vec<ClientAuthConfigResponse>,
-    pub total: usize,
+    pub items: Vec<ClientAuthConfigResponse>,
 }
 
 impl From<ClientAuthConfig> for ClientAuthConfigResponse {
     fn from(c: ClientAuthConfig) -> Self {
         Self {
-            id: c.id.clone(),
+            id: c.id,
             email_domain: c.email_domain,
             config_type: c.config_type.as_str().to_string(),
-            primary_client_id: c.primary_client_id.clone(),
-            additional_client_ids: c.additional_client_ids.clone(),
+            primary_client_id: c.primary_client_id,
+            additional_client_ids: c.additional_client_ids,
             granted_client_ids: c.granted_client_ids,
-            client_id: c.primary_client_id, // deprecated
             auth_provider: c.auth_provider.as_str().to_string(),
             oidc_issuer_url: c.oidc_issuer_url,
             oidc_client_id: c.oidc_client_id,
-            has_client_secret: c.oidc_client_secret_ref.is_some(),
             oidc_multi_tenant: c.oidc_multi_tenant,
             oidc_issuer_pattern: c.oidc_issuer_pattern,
+            oidc_client_secret_ref: c.oidc_client_secret_ref,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
         }
+    }
+}
+
+/// Go's `ParseAuthConfigType`: the exact upper-case names.
+fn parse_config_type(
+    value: &str,
+) -> Result<crate::auth::config_entity::AuthConfigType, PlatformError> {
+    use crate::auth::config_entity::AuthConfigType;
+    match value {
+        "ANCHOR" => Ok(AuthConfigType::Anchor),
+        "PARTNER" => Ok(AuthConfigType::Partner),
+        "CLIENT" => Ok(AuthConfigType::Client),
+        _ => Err(PlatformError::bad_request_code(
+            "INVALID_CONFIG_TYPE",
+            "configType must be ANCHOR, PARTNER, or CLIENT",
+        )),
+    }
+}
+
+/// Go's `ParseAuthProvider`: `INTERNAL` or `OIDC`.
+fn parse_auth_provider(value: &str) -> Result<AuthProvider, PlatformError> {
+    match value {
+        "INTERNAL" => Ok(AuthProvider::Internal),
+        "OIDC" => Ok(AuthProvider::Oidc),
+        _ => Err(PlatformError::bad_request_code(
+            "INVALID_AUTH_PROVIDER",
+            "authProvider must be INTERNAL or OIDC",
+        )),
     }
 }
 
@@ -250,7 +305,7 @@ pub struct CreateIdpRoleMappingRequest {
     pub platform_role_name: String,
 }
 
-/// IDP role mapping response DTO
+/// IDP role mapping response DTO: Go's `IdpRoleMappingResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IdpRoleMappingResponse {
@@ -259,14 +314,14 @@ pub struct IdpRoleMappingResponse {
     pub idp_role_name: String,
     pub platform_role_name: String,
     pub created_at: String,
+    pub updated_at: String,
 }
 
-/// IDP role mapping list response (wrapped)
+/// IDP role mapping list response: Go's `{items}`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IdpRoleMappingListResponse {
-    pub mappings: Vec<IdpRoleMappingResponse>,
-    pub total: usize,
+    pub items: Vec<IdpRoleMappingResponse>,
 }
 
 impl From<IdpRoleMapping> for IdpRoleMappingResponse {
@@ -277,6 +332,7 @@ impl From<IdpRoleMapping> for IdpRoleMappingResponse {
             idp_role_name: m.idp_role_name,
             platform_role_name: m.platform_role_name,
             created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
         }
     }
 }
@@ -296,6 +352,9 @@ pub struct AuthConfigState {
     /// Used for counting users by email domain
     pub principal_repo: Arc<crate::PrincipalRepository>,
     pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
+    /// Encrypts an auth config's OIDC client secret before it reaches the
+    /// command (Go `encryptOIDCSecretRef`). `None` without an app key.
+    pub encryption_service: Option<Arc<crate::shared::encryption_service::EncryptionService>>,
 
     // Anchor domain use cases
     pub create_anchor_domain_use_case:
@@ -342,32 +401,25 @@ pub async fn create_anchor_domain(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Json(req): Json<CreateAnchorDomainRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::auth::operations::CreateAnchorDomainCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_create_anchor_domains(&auth.0)?;
 
-    let domain = req.domain.to_lowercase();
     let cmd = CreateAnchorDomainCommand {
-        domain: domain.clone(),
+        domain: req.domain.trim().to_lowercase(),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
+    let event = state
         .create_anchor_domain_use_case
         .run(cmd, ctx)
         .await
         .into_result()?;
-
-    // Fetch by domain to return the created id (command doesn't echo it).
-    let created = state
-        .anchor_domain_repo
-        .find_by_domain(&domain)
-        .await?
-        .ok_or_else(|| {
-            PlatformError::internal("Anchor domain commit succeeded but row not found")
-        })?;
-    Ok(Json(CreatedResponse::new(created.id)))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.anchor_domain_id)),
+    ))
 }
 
 /// List anchor domains
@@ -387,21 +439,14 @@ pub async fn list_anchor_domains(
 ) -> Result<Json<AnchorDomainListResponse>, PlatformError> {
     crate::checks::can_read_anchor_domains(&auth.0)?;
 
-    let anchor_domains = state.anchor_domain_repo.find_all().await?;
-
-    // Convert to response DTOs with user counts
-    let mut domains = Vec::with_capacity(anchor_domains.len());
-    for d in anchor_domains {
-        let user_count = state
-            .principal_repo
-            .count_by_email_domain(&d.domain)
-            .await
-            .unwrap_or(0);
-        domains.push(AnchorDomainResponse::from_domain(d, user_count));
-    }
-
-    let total = domains.len();
-    Ok(Json(AnchorDomainListResponse { domains, total }))
+    let items = state
+        .anchor_domain_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .map(AnchorDomainResponse::from)
+        .collect();
+    Ok(Json(AnchorDomainListResponse { items }))
 }
 
 /// Get anchor domain by ID
@@ -432,14 +477,7 @@ pub async fn get_anchor_domain(
         .await?
         .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
 
-    // Count users from this domain
-    let user_count = state
-        .principal_repo
-        .count_by_email_domain(&domain.domain)
-        .await
-        .unwrap_or(0);
-
-    Ok(Json(AnchorDomainResponse::from_domain(domain, user_count)))
+    Ok(Json(domain.into()))
 }
 
 /// Check anchor domain response
@@ -588,39 +626,53 @@ pub async fn create_client_auth_config(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Json(req): Json<CreateClientAuthConfigRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::auth::operations::CreateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_create_auth_configs(&auth.0)?;
 
-    let email_domain = req.email_domain.to_lowercase();
+    // Go validates the domain before the enums; an invalid domain is the
+    // use case's INVALID_EMAIL_DOMAIN whatever the other fields say.
+    let domain_ok = {
+        let d = req.email_domain.trim();
+        !d.is_empty() && d.contains('.')
+    };
+    let (config_type, auth_provider) = if domain_ok {
+        (
+            parse_config_type(&req.config_type)?,
+            parse_auth_provider(&req.auth_provider)?,
+        )
+    } else {
+        (Default::default(), AuthProvider::Internal)
+    };
+    let oidc_client_secret_ref = crate::identity_provider::api::seal_client_secret(
+        req.oidc_client_secret_ref,
+        state.encryption_service.as_deref(),
+    )?;
     let cmd = CreateAuthConfigCommand {
-        email_domain: email_domain.clone(),
-        config_type: parse_opt(req.config_type.as_deref())?.unwrap_or_default(),
-        primary_client_id: req.primary_client_id.clone(),
-        auth_provider: parse_opt(req.auth_provider.as_deref())?,
-        oidc_issuer_url: req.oidc_issuer_url.clone(),
-        oidc_client_id: req.oidc_client_id.clone(),
-        oidc_multi_tenant: false,
-        oidc_issuer_pattern: None,
-        oidc_client_secret_ref: None,
+        email_domain: req.email_domain.trim().to_lowercase(),
+        config_type,
+        primary_client_id: req.primary_client_id,
+        additional_client_ids: req.additional_client_ids,
+        granted_client_ids: req.granted_client_ids,
+        auth_provider: Some(auth_provider),
+        oidc_issuer_url: req.oidc_issuer_url,
+        oidc_client_id: req.oidc_client_id,
+        oidc_multi_tenant: req.oidc_multi_tenant,
+        oidc_issuer_pattern: req.oidc_issuer_pattern,
+        oidc_client_secret_ref,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
+    let event = state
         .create_auth_config_use_case
         .run(cmd, ctx)
         .await
         .into_result()?;
-
-    let created = state
-        .client_auth_config_repo
-        .find_by_email_domain(&email_domain)
-        .await?
-        .ok_or_else(|| PlatformError::internal("Auth config commit succeeded but row not found"))?;
-    let id = created.id.clone();
-
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.auth_config_id)),
+    ))
 }
 
 /// Get client auth config by ID
@@ -671,11 +723,14 @@ pub async fn list_client_auth_configs(
 ) -> Result<Json<AuthConfigListResponse>, PlatformError> {
     crate::checks::can_read_auth_configs(&auth.0)?;
 
-    let configs = state.client_auth_config_repo.find_all().await?;
-    let configs: Vec<ClientAuthConfigResponse> = configs.into_iter().map(|c| c.into()).collect();
-    let total = configs.len();
-
-    Ok(Json(AuthConfigListResponse { configs, total }))
+    let items = state
+        .client_auth_config_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .map(ClientAuthConfigResponse::from)
+        .collect();
+    Ok(Json(AuthConfigListResponse { items }))
 }
 
 /// Update client auth config
@@ -705,16 +760,26 @@ pub async fn update_client_auth_config(
 
     crate::checks::can_update_auth_configs(&auth.0)?;
 
+    let auth_provider = req
+        .auth_provider
+        .as_deref()
+        .map(parse_auth_provider)
+        .transpose()?;
+    let oidc_client_secret_ref = crate::identity_provider::api::seal_client_secret(
+        req.oidc_client_secret_ref,
+        state.encryption_service.as_deref(),
+    )?;
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
-        primary_client_id: req.primary_client_id.clone(),
-        auth_provider: parse_opt(req.auth_provider.as_deref())?,
-        oidc_issuer_url: req.oidc_issuer_url.clone(),
-        oidc_client_id: req.oidc_client_id.clone(),
-        oidc_multi_tenant: None,
-        oidc_issuer_pattern: None,
-        oidc_client_secret_ref: None,
-        additional_client_ids: req.additional_client_ids.clone(),
+        primary_client_id: req.primary_client_id,
+        auth_provider,
+        oidc_issuer_url: req.oidc_issuer_url,
+        oidc_client_id: req.oidc_client_id,
+        oidc_multi_tenant: req.oidc_multi_tenant,
+        oidc_issuer_pattern: req.oidc_issuer_pattern,
+        oidc_client_secret_ref,
+        additional_client_ids: req.additional_client_ids,
+        granted_client_ids: req.granted_client_ids,
         config_type: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -806,7 +871,8 @@ pub async fn update_config_type(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: None,
-        config_type: Some(req.config_type.parse()?),
+        granted_client_ids: None,
+        config_type: Some(parse_config_type(&req.config_type)?),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -875,8 +941,10 @@ pub async fn create_internal_auth_config(
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
-        config_type: req.config_type.parse()?,
+        config_type: parse_config_type(&req.config_type)?,
         primary_client_id: req.primary_client_id.clone(),
+        additional_client_ids: None,
+        granted_client_ids: None,
         auth_provider: Some(AuthProvider::Internal),
         oidc_issuer_url: None,
         oidc_client_id: None,
@@ -926,8 +994,10 @@ pub async fn create_oidc_auth_config(
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
-        config_type: req.config_type.parse()?,
+        config_type: parse_config_type(&req.config_type)?,
         primary_client_id: req.primary_client_id.clone(),
+        additional_client_ids: None,
+        granted_client_ids: None,
         auth_provider: Some(AuthProvider::Oidc),
         oidc_issuer_url: Some(req.oidc_issuer_url.clone()),
         oidc_client_id: Some(req.oidc_client_id.clone()),
@@ -987,6 +1057,7 @@ pub async fn update_oidc_config(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: None,
+        granted_client_ids: None,
         config_type: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1035,6 +1106,7 @@ pub async fn update_client_binding(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: None,
+        granted_client_ids: None,
         config_type: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1083,6 +1155,7 @@ pub async fn update_additional_clients(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: Some(req.additional_client_ids),
+        granted_client_ids: None,
         config_type: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1130,7 +1203,8 @@ pub async fn update_granted_clients(
         oidc_multi_tenant: None,
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
-        additional_client_ids: Some(req.granted_client_ids),
+        additional_client_ids: None,
+        granted_client_ids: Some(req.granted_client_ids),
         config_type: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1164,7 +1238,7 @@ pub async fn create_idp_role_mapping(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Json(req): Json<CreateIdpRoleMappingRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::auth::operations::CreateIdpRoleMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
@@ -1179,25 +1253,20 @@ pub async fn create_idp_role_mapping(
     .await?;
 
     let cmd = CreateIdpRoleMappingCommand {
-        idp_type: req.idp_type.clone(),
-        idp_role_name: req.idp_role_name.clone(),
+        idp_type: req.idp_type,
+        idp_role_name: req.idp_role_name,
         platform_role_name: req.platform_role_name,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
+    let event = state
         .create_idp_role_mapping_use_case
         .run(cmd, ctx)
         .await
         .into_result()?;
-
-    let created = state
-        .idp_role_mapping_repo
-        .find_by_idp_role(&req.idp_type, &req.idp_role_name)
-        .await?
-        .ok_or_else(|| {
-            PlatformError::internal("IdP role mapping commit succeeded but row not found")
-        })?;
-    Ok(Json(CreatedResponse::new(created.id)))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.mapping_id)),
+    ))
 }
 
 /// Query parameters for IDP role mappings
@@ -1236,10 +1305,11 @@ pub async fn list_idp_role_mappings(
         state.idp_role_mapping_repo.find_all().await?
     };
 
-    let mappings: Vec<IdpRoleMappingResponse> = mappings.into_iter().map(|m| m.into()).collect();
-    let total = mappings.len();
-
-    Ok(Json(IdpRoleMappingListResponse { mappings, total }))
+    let items = mappings
+        .into_iter()
+        .map(IdpRoleMappingResponse::from)
+        .collect();
+    Ok(Json(IdpRoleMappingListResponse { items }))
 }
 
 /// Delete IDP role mapping

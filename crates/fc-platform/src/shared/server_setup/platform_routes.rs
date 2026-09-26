@@ -558,6 +558,7 @@ pub fn build_platform_routes(
         role_repo: repos.role_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         unit_of_work: unit_of_work.clone(),
+        encryption_service: EncryptionService::from_env().map(Arc::new),
         create_anchor_domain_use_case,
         update_anchor_domain_use_case,
         delete_anchor_domain_use_case,

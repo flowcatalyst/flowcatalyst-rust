@@ -131,7 +131,7 @@ async fn create_anchor_domain_emits_event_and_audit_log() {
             json!({ "domain": "uow-test-3.example.com" }),
         )
         .await;
-    let body = assert_status(resp, StatusCode::OK).await;
+    let body = assert_status(resp, StatusCode::CREATED).await;
     let anchor_id = body
         .get("id")
         .and_then(|v| v.as_str())
@@ -162,7 +162,7 @@ async fn delete_anchor_domain_emits_event_and_audit_log() {
             json!({ "domain": "uow-test-4.example.com" }),
         )
         .await;
-    let body = assert_status(created, StatusCode::OK).await;
+    let body = assert_status(created, StatusCode::CREATED).await;
     let id = body.get("id").and_then(|v| v.as_str()).unwrap().to_string();
 
     let del = app
@@ -325,7 +325,7 @@ async fn create_idp_role_mapping_emits_event_and_audit_log() {
             }),
         )
         .await;
-    let body = assert_status(resp, StatusCode::OK).await;
+    let body = assert_status(resp, StatusCode::CREATED).await;
     let id = body.get("id").and_then(|v| v.as_str()).unwrap().to_string();
 
     assert_eq!(app.event_count_for(&id).await, 1);

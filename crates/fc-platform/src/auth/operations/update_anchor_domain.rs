@@ -46,10 +46,12 @@ impl<U: UnitOfWork> UseCase for UpdateAnchorDomainUseCase<U> {
                 "Anchor domain ID is required",
             ));
         }
-        if command.domain.trim().is_empty() {
+        // Go UpdateAnchorDomain: blank or malformed is one INVALID_DOMAIN.
+        let domain = command.domain.trim().to_lowercase();
+        if !super::create_anchor_domain::is_dns_name(&domain) {
             return Err(UseCaseError::validation(
-                "DOMAIN_REQUIRED",
-                "Domain is required",
+                "INVALID_DOMAIN",
+                "domain must be a valid DNS name",
             ));
         }
         Ok(())
