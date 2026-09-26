@@ -1399,27 +1399,53 @@ async fn auto_sync_developer_portal(
     let ctx = ExecutionContext::create(principal_id);
 
     // ── Event types + schemas for the `platform` application ──────────
-    let definitions = fc_platform::seed::platform_event_types::definitions();
-    let event_types_total = definitions.len();
+    // Only definitions that are new or differ from what is stored go to the
+    // sync: the sync (like Go's) records an "updated" event and audit row for
+    // every listed type that exists, changed or not, and this runs on every
+    // start — on a shared developer cluster that was 131 events per start.
+    let all_definitions = fc_platform::seed::platform_event_types::definitions();
+    let event_types_total = all_definitions.len();
+    let stored = match event_type_repo.find_by_application("platform").await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(error = %e, "Developer-portal auto-sync: reading platform event types failed");
+            Vec::new()
+        }
+    };
+    let definitions = changed_event_type_definitions(all_definitions, &stored);
+    if definitions.is_empty() {
+        info!(
+            total = event_types_total,
+            "Developer-portal auto-sync: platform event types up to date"
+        );
+    }
     let cmd = SyncEventTypesCommand {
         application_code: "platform".to_string(),
         event_types: definitions,
         remove_unlisted: false,
     };
     let sync_event_types = SyncEventTypesUseCase::new(event_type_repo, unit_of_work.clone());
-    match sync_event_types.run(cmd, ctx.clone()).await.into_result() {
-        Ok(event) => {
-            info!(
-                total = event_types_total,
-                created = event.created,
-                updated = event.updated,
-                deleted = event.deleted,
-                "Developer-portal auto-sync: platform event types"
-            );
-        }
-        Err(err) => {
-            warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
-        }
+    let sync_result = if cmd.event_types.is_empty() {
+        None
+    } else {
+        Some(sync_event_types.run(cmd, ctx.clone()).await.into_result())
+    };
+    match sync_result {
+        None => {}
+        Some(result) => match result {
+            Ok(event) => {
+                info!(
+                    total = event_types_total,
+                    created = event.created,
+                    updated = event.updated,
+                    deleted = event.deleted,
+                    "Developer-portal auto-sync: platform event types"
+                );
+            }
+            Err(err) => {
+                warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
+            }
+        },
     }
 
     // ── Platform's own OpenAPI document into the developer portal ─────
@@ -1449,6 +1475,31 @@ async fn auto_sync_developer_portal(
     }
 
     Ok(())
+}
+
+/// The platform event-type definitions worth syncing: those not stored yet,
+/// or whose name, description or 1.0 schema differs from the stored row.
+fn changed_event_type_definitions(
+    definitions: Vec<fc_platform::event_type::operations::SyncEventTypeInput>,
+    stored: &[fc_platform::EventType],
+) -> Vec<fc_platform::event_type::operations::SyncEventTypeInput> {
+    definitions
+        .into_iter()
+        .filter(|def| match stored.iter().find(|et| et.code == def.code) {
+            None => true,
+            Some(et) => {
+                et.name != def.name
+                    || et.description != def.description
+                    || def.schema.as_ref().is_some_and(|schema| {
+                        et.spec_versions
+                            .iter()
+                            .find(|sv| sv.version == "1.0")
+                            .and_then(|sv| sv.schema_content.as_ref())
+                            != Some(schema)
+                    })
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1497,5 +1548,64 @@ mod spa_cache_tests {
                 "{path}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_sync_tests {
+    use super::changed_event_type_definitions;
+    use fc_platform::event_type::operations::SyncEventTypeInput;
+    use fc_platform::{EventType, SpecVersion};
+    use serde_json::json;
+
+    fn def(code: &str, name: &str, schema: Option<serde_json::Value>) -> SyncEventTypeInput {
+        SyncEventTypeInput {
+            code: code.into(),
+            name: name.into(),
+            description: None,
+            schema,
+        }
+    }
+
+    fn stored(code: &str, name: &str, schema: Option<serde_json::Value>) -> EventType {
+        let mut et = EventType::new(code, name).expect("valid code");
+        if schema.is_some() {
+            et.spec_versions = vec![SpecVersion::new(&et.id, "1.0", schema)];
+        }
+        et
+    }
+
+    /// Only new or changed definitions are synced, so an unchanged start
+    /// records no events (it recorded one per platform type before).
+    #[test]
+    fn only_new_or_changed_definitions_are_synced() {
+        let schema = json!({ "type": "object" });
+        let rows = vec![
+            stored("platform:a:b:same", "Same", Some(schema.clone())),
+            stored("platform:a:b:renamed", "Old name", None),
+            stored(
+                "platform:a:b:schema",
+                "Schema",
+                Some(json!({ "type": "string" })),
+            ),
+        ];
+        let defs = vec![
+            def("platform:a:b:same", "Same", Some(schema.clone())),
+            def("platform:a:b:renamed", "New name", None),
+            def("platform:a:b:schema", "Schema", Some(schema.clone())),
+            def("platform:a:b:new", "New", None),
+        ];
+        let codes: Vec<String> = changed_event_type_definitions(defs, &rows)
+            .into_iter()
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                "platform:a:b:renamed",
+                "platform:a:b:schema",
+                "platform:a:b:new"
+            ]
+        );
     }
 }
