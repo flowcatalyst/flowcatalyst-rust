@@ -162,7 +162,7 @@ async fn application_access_is_read_and_written_as_a_set() {
         .unwrap();
     let (status, body) = read_json(app.get(&path, &token).await).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let mut expected = vec![(a.id.clone(), "app-a"), (c.id.clone(), "app-c")];
+    let mut expected = [(a.id.clone(), "app-a"), (c.id.clone(), "app-c")];
     expected.sort();
     assert_eq!(
         codes(&body),
