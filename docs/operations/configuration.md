@@ -177,7 +177,7 @@ Scheduler architecture: [../architecture/scheduler.md](../architecture/scheduler
 
 ---
 
-## Stream processor (`fc-server` with `FC_STREAM_PROCESSOR_ENABLED=true`, or `fc-stream-processor` standalone)
+## Stream processor (`fc-server` with `FC_STREAM_PROCESSOR_ENABLED=true`)
 
 | Variable | Default | Description |
 |---|---|---|

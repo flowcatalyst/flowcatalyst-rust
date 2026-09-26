@@ -380,7 +380,7 @@ async fn main() -> Result<()> {
     }
 
     // Stream processor (CQRS projections)
-    let _stream_handle = if stream_enabled {
+    let stream_handle = if stream_enabled {
         let db = db.as_ref().expect("stream processor needs the database");
         info!("Starting stream processor subsystem...");
         Some(
@@ -532,7 +532,7 @@ async fn main() -> Result<()> {
     drain_http(&http_stop, vec![api_task, metrics_task], HTTP_DRAIN_TIMEOUT).await;
 
     // Shutdown stream processor if running
-    if let Some(handle) = _stream_handle {
+    if let Some(handle) = stream_handle {
         handle.stop().await;
     }
 
@@ -1101,7 +1101,11 @@ fn load_scheduler_config(api_port: u16) -> fc_platform::scheduler::SchedulerConf
     }
 }
 
-/// Spawn the CQRS stream processor, gated on leadership.
+/// Spawn the CQRS stream processor, gated on leadership: event and
+/// dispatch-job projections, event fan-out and the partition manager
+/// (`fc_stream::start_stream_processor`, each with its `FC_STREAM_*`
+/// toggle). This is the whole of what the former `fc-stream-processor`
+/// binary ran.
 ///
 /// Builds a small dedicated pool (4 conns) so the projection loops don't
 /// contend with the platform API. When credentials come from a secret
@@ -1148,7 +1152,7 @@ async fn spawn_stream_processor(
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let pool_clone = pool.clone();
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let mut current_handle: Option<fc_stream::StreamProcessorHandle>;
         let mut stop_rx = stop_rx;
 
@@ -1208,19 +1212,33 @@ async fn spawn_stream_processor(
     });
 
     Ok(StreamProcessorShutdown {
-        _stop_tx: Some(stop_tx),
+        stop_tx: Some(stop_tx),
+        task,
+        pool,
     })
 }
 
 /// Handle for stopping the stream processor from the main shutdown path.
 struct StreamProcessorShutdown {
-    _stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+    pool: sqlx::PgPool,
 }
 
 impl StreamProcessorShutdown {
+    /// Stops the projection loops and waits for them to finish their
+    /// current batch (bounded), then closes the stream pool.
     async fn stop(mut self) {
-        // Dropping the sender signals the spawned task
-        self._stop_tx.take();
+        // Dropping the sender signals the spawned task.
+        self.stop_tx.take();
+        if tokio::time::timeout(Duration::from_secs(30), &mut self.task)
+            .await
+            .is_err()
+        {
+            warn!("stream processor did not stop within 30s; aborting it");
+            self.task.abort();
+        }
+        self.pool.close().await;
     }
 }
 

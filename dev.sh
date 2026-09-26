@@ -5,7 +5,7 @@
 # Commands:
 #   start     - Start all infrastructure + fc-dev (default)
 #   platform  - Start platform server only
-#   stream    - Start stream processor only
+#   stream    - Start fc-server in its stream processor role only
 #   db        - Start PostgreSQL only
 #   db:stop   - Stop PostgreSQL
 #   db:shell  - Open psql shell
@@ -108,13 +108,16 @@ start_platform() {
     cargo watch -w crates -w bin -x 'run -p fc-server'
 }
 
-# Start stream processor (with watch for auto-rebuild)
+# Start fc-server in its stream processor role only (with watch for
+# auto-rebuild), beside `./dev.sh platform`.
 start_stream() {
     check_cargo_watch
-    export FC_METRICS_PORT="9091"  # Different port to avoid conflict
-    echo -e "${MAGENTA}Starting Stream Processor...${NC}"
+    echo -e "${MAGENTA}Starting Stream Processor (fc-server, stream role)...${NC}"
     wait_for_health "http://localhost:$FC_API_PORT/health" "Platform Server"
-    cargo watch -x 'run -p fc-stream-processor'
+    # Its own ports, so it can run beside the platform.
+    FC_API_PORT="8081" FC_METRICS_PORT="9091" \
+        FC_PLATFORM_ENABLED=false FC_STREAM_PROCESSOR_ENABLED=true \
+        cargo watch -x 'run -p fc-server'
 }
 
 # Start all services
@@ -136,7 +139,7 @@ start_all() {
 # Build release binaries
 build_release() {
     echo -e "${BLUE}Building release binaries...${NC}"
-    cargo build --release -p fc-dev -p fc-server -p fc-stream-processor
+    cargo build --release -p fc-dev -p fc-server -p fc-outbox-processor
     echo -e "${GREEN}Build complete!${NC}"
     echo "Binaries in target/release/"
 }
@@ -178,7 +181,7 @@ case "${1:-start}" in
         echo "Commands:"
         echo "  start, dev    Start infrastructure + fc-dev with auto-reload (default)"
         echo "  platform      Start platform server with auto-reload"
-        echo "  stream        Start stream processor with auto-reload"
+        echo "  stream        Start fc-server in its stream processor role with auto-reload"
         echo "  db, up        Start infrastructure (PostgreSQL, LocalStack, Redis)"
         echo "  db:stop, down Stop infrastructure"
         echo "  db:shell      Open psql shell"

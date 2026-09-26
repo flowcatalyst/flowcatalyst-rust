@@ -3338,21 +3338,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fc-stream-processor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "fc-common",
- "fc-stream",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "fc-web"
 version = "0.1.0"
 dependencies = [
