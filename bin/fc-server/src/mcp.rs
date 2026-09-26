@@ -46,6 +46,11 @@ impl McpRole {
         Ok(Self { config, addr })
     }
 
+    /// The listener's port.
+    pub fn port(&self) -> u16 {
+        self.addr.port()
+    }
+
     /// Binds the listener and serves until `stop` is cancelled.
     pub async fn start(self, stop: CancellationToken) -> Result<tokio::task::JoinHandle<()>> {
         let listener = TcpListener::bind(self.addr)

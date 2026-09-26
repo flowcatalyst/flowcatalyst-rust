@@ -17,7 +17,6 @@ members = [
     "bin/fc-dev",
     "bin/fc-outbox-processor",
     "bin/fc-server",
-    "bin/fc-fnhost",
     "harness/parity",
     "harness/delivery",
 ]

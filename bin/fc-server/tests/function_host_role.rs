@@ -1,7 +1,16 @@
-//! The real `fc-fnhost` binary (Java `FnHostMainTest`, P8): exit 2 with one
-//! line naming every bad variable; `FC_EXIT_AFTER_START` exits 0 after a
-//! real start; SIGTERM drains (a `DRAINING` heartbeat) and exits 0.
+//! `fc-server` in its function-host role (`FC_FUNCTION_HOST_ENABLED`).
+//!
+//! Host only (every other role off), it is the former `fc-fnhost` daemon
+//! (Java `FnHostMainTest`, P8): exit 2 with one line naming every bad
+//! variable; `FC_EXIT_AFTER_START` exits 0 after a real start; SIGTERM
+//! drains (a `DRAINING` heartbeat) and exits 0.
+//!
+//! Beside another role (here MCP, so no database is needed), the host runs
+//! in the process on its own ports and drains first at shutdown.
+//!
+//! The fake platform is fc-fnhost-core's test support.
 
+#[path = "../../../crates/fc-fnhost-core/tests/support/fake_platform.rs"]
 mod support;
 
 use std::io::{BufRead, BufReader};
@@ -10,11 +19,15 @@ use std::time::Duration;
 
 use serde_json::json;
 
+/// `fc-server` with only the function host enabled (the platform is on by
+/// default, so it is turned off).
 fn host() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_fc-fnhost"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_fc-server"));
     command
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default());
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("FC_PLATFORM_ENABLED", "false")
+        .env("FC_FUNCTION_HOST_ENABLED", "true");
     command
 }
 
@@ -198,4 +211,68 @@ async fn sigterm_drains_and_exits_0() {
     })
     .await;
     tokio::time::sleep(Duration::from_millis(10)).await;
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Beside another role (MCP: no database needed), the host runs in the
+/// process on ports of its own, `/ready` reports the role, and at SIGTERM
+/// the host drains (a `DRAINING` heartbeat) before the process exits 0.
+#[cfg(unix)]
+#[tokio::test]
+async fn beside_another_role_the_host_runs_on_its_own_ports_and_drains_first() {
+    let (platform, url) = support::start().await;
+    let cache = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (api, metrics, mcp) = (free_port(), free_port(), free_port());
+    let mut command = host();
+    base_env(&mut command, &url, cache.path());
+    command
+        .env("HOME", home.path())
+        .env("FC_MCP_ENABLED", "true")
+        .env("FC_MCP_PORT", mcp.to_string())
+        .env("FLOWCATALYST_URL", "http://127.0.0.1:9")
+        .env("FLOWCATALYST_CLIENT_ID", "mcp-client")
+        .env("FLOWCATALYST_CLIENT_SECRET", "mcp-secret")
+        .env("FC_API_PORT", api.to_string())
+        // fc-server's metrics listener; the host's is FC_FN_METRICS_PORT.
+        .env("FC_METRICS_PORT", metrics.to_string())
+        .env("FC_FN_METRICS_PORT", "0")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+
+    support::wait_for("the host's first heartbeat", || {
+        platform.last_heartbeat().is_some()
+    })
+    .await;
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let ready: serde_json::Value = http
+        .get(format!("http://127.0.0.1:{metrics}/ready"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ready["function_host"], true, "{ready}");
+    assert_eq!(ready["mcp"], true, "{ready}");
+    assert_eq!(platform.last_heartbeat().unwrap()["hostId"], "proc-host");
+
+    Command::new("kill")
+        .arg("-TERM")
+        .arg(child.id().to_string())
+        .status()
+        .unwrap();
+    let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(status.code(), Some(0));
+    assert_eq!(platform.last_heartbeat().unwrap()["state"], "DRAINING");
 }

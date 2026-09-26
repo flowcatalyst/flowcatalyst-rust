@@ -5,6 +5,8 @@
 
 mod support;
 
+use support::fake_platform;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,7 +75,7 @@ impl RecordingLoader {
 
 #[tokio::test]
 async fn desired_state_to_heartbeat_to_unload_over_http() {
-    let (platform, url) = support::start().await;
+    let (platform, url) = fake_platform::start().await;
     let cache = tempfile::tempdir().unwrap();
 
     // a warm function served from the platform, a lazy one from a file, and a JVM jar
@@ -82,18 +84,18 @@ async fn desired_state_to_heartbeat_to_unload_over_http() {
     let lazy_path = cache.path().join("lazy.wasm");
     std::fs::write(&lazy_path, &lazy_bytes).unwrap();
     platform.artifacts.lock().insert(
-        support::version_id("app.orders.ship", 3),
+        fake_platform::version_id("app.orders.ship", 3),
         warm_bytes.clone(),
     );
     let warm_ref = format!(
         "platform://fnc_1/{}",
-        &support::sha256_digest(&warm_bytes)[7..]
+        &fake_platform::sha256_digest(&warm_bytes)[7..]
     );
     platform.set_document(json!({
         "functions": [
-            support::entry("app.orders.ship", 3, "wasm", "warm", &warm_ref, &warm_bytes),
-            support::entry("app.orders.lazy", 1, "wasm", "lazy", &format!("file://{}", lazy_path.display()), &lazy_bytes),
-            support::entry("app.legacy.jar", 7, "jvm", "warm", "platform://fnc_2/00", b"jar"),
+            fake_platform::entry("app.orders.ship", 3, "wasm", "warm", &warm_ref, &warm_bytes),
+            fake_platform::entry("app.orders.lazy", 1, "wasm", "lazy", &format!("file://{}", lazy_path.display()), &lazy_bytes),
+            fake_platform::entry("app.legacy.jar", 7, "jvm", "warm", "platform://fnc_2/00", b"jar"),
         ],
         "unload": [],
         "publicRoutes": []
@@ -124,7 +126,7 @@ async fn desired_state_to_heartbeat_to_unload_over_http() {
         [("app.orders.ship@3".to_owned(), warm_bytes.clone())],
         "the loader got the verified bytes of the warm function only"
     );
-    support::wait_for("the first heartbeat", || !platform.last_states().is_empty()).await;
+    fake_platform::wait_for("the first heartbeat", || !platform.last_states().is_empty()).await;
     let beat = platform.last_heartbeat().unwrap();
     assert_eq!(beat["hostId"], "it-host-1");
     assert_eq!(beat["pool"], "blue");
@@ -200,7 +202,7 @@ async fn desired_state_to_heartbeat_to_unload_over_http() {
 
     // an unchanged document is a 304 and reloads nothing
     host.trigger_reconcile();
-    support::wait_for("a not-modified cycle", || {
+    fake_platform::wait_for("a not-modified cycle", || {
         platform.not_modified.load(Ordering::SeqCst) >= 1
     })
     .await;
@@ -208,12 +210,12 @@ async fn desired_state_to_heartbeat_to_unload_over_http() {
 
     // the warm function leaves desired state: it is closed and drops out of the heartbeat
     platform.set_document(json!({
-        "functions": [support::entry("app.orders.lazy", 1, "wasm", "lazy", &format!("file://{}", lazy_path.display()), &lazy_bytes)],
+        "functions": [fake_platform::entry("app.orders.lazy", 1, "wasm", "lazy", &format!("file://{}", lazy_path.display()), &lazy_bytes)],
     }));
     let beats = platform.heartbeats.lock().len();
     host.trigger_reconcile();
-    support::wait_for("the unload", || loader.closed("app.orders.ship@3")).await;
-    support::wait_for("the next heartbeat", || {
+    fake_platform::wait_for("the unload", || loader.closed("app.orders.ship@3")).await;
+    fake_platform::wait_for("the next heartbeat", || {
         platform.heartbeats.lock().len() > beats
     })
     .await;
@@ -266,15 +268,19 @@ async fn ready_reports_starting_then_platform_unreachable() {
 
 #[tokio::test]
 async fn the_listeners_serve_through_the_host_and_close_with_it() {
-    let (platform, url) = support::start().await;
+    let (platform, url) = fake_platform::start().await;
     let cache = tempfile::tempdir().unwrap();
     let bytes = b"\0asm served".to_vec();
-    platform
-        .artifacts
-        .lock()
-        .insert(support::version_id("app.orders.ship", 1), bytes.clone());
-    let artifact_ref = format!("platform://fnc_1/{}", &support::sha256_digest(&bytes)[7..]);
-    let mut entry = support::entry("app.orders.ship", 1, "wasm", "warm", &artifact_ref, &bytes);
+    platform.artifacts.lock().insert(
+        fake_platform::version_id("app.orders.ship", 1),
+        bytes.clone(),
+    );
+    let artifact_ref = format!(
+        "platform://fnc_1/{}",
+        &fake_platform::sha256_digest(&bytes)[7..]
+    );
+    let mut entry =
+        fake_platform::entry("app.orders.ship", 1, "wasm", "warm", &artifact_ref, &bytes);
     entry["manifest"]["endpoints"] = json!([{"path": "/x", "auth": "none"}]);
     platform.set_document(json!({
         "functions": [entry],

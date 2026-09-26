@@ -12,8 +12,9 @@
 //!   (`fcdev-fn-cli`, roles `platform:function-publisher` and
 //!   `platform:messaging-admin`), each a SERVICE principal with anchor
 //!   scope, with a fresh secret every start;
-//! - starts an in-process `fc-fnhost` ([`start_host`]: fc-fnhost-core's
-//!   `FnHost` with the WASM runtime and both listeners) for pool `default`,
+//! - starts an in-process function host ([`start_host`]: fc-fnhost-core's
+//!   `FnHost` with the WASM runtime and both listeners, the assembly
+//!   `fc-server`'s function-host role runs) for pool `default`,
 //!   authenticating as `fcdev-fn-host` against the local platform;
 //! - writes the CLI's credentials to `<data dir>/fn-cli.json` (owner-only),
 //!   so `fc-dev fn …` needs no flags, and removes it at shutdown;
@@ -37,10 +38,7 @@ use rand::Rng;
 use tracing::info;
 
 use fc_fnhost_core::env::{EnvReader, HostEnv};
-use fc_fnhost_core::host::{FnHost, Listener};
-use fc_fnhost_core::listener::FnListener;
-use fc_fnhost_core::loader::Loaders;
-use fc_fnhost_core::wasm::{WasmLoader, WasmRuntime, WasmSettings};
+use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
 use fc_platform::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
 use fc_platform::repository::Repositories;
 use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
@@ -391,10 +389,9 @@ pub async fn start_host(
         cache_dir,
     )))
     .map_err(|e| anyhow!("{e}"))?;
-    let wasm = WasmRuntime::new(WasmSettings::from_env(&env))
-        .map_err(|e| anyhow!("cannot start the WASM runtime: {e}"))?;
-    let loaders = Arc::new(WasmLoader::new(wasm)).register(Loaders::none());
-    let listener: Arc<dyn Listener> = Arc::new(FnListener::from_env(&env));
+    // The deployed host's assembly (fc-server's function-host role).
+    let loaders = wasm_loaders(&env).map_err(|e| anyhow!("cannot start the WASM runtime: {e}"))?;
+    let listener = function_listener(&env);
     let mut host = FnHost::new(env, loaders, Some(listener))
         .map_err(|e| anyhow!("cannot create the function cache directory: {e}"))?;
     if let Err(e) = host.start().await {

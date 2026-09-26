@@ -37,6 +37,7 @@
 //! | `FC_STREAM_PROCESSOR_ENABLED` / `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
 //! | `FC_OUTBOX_ENABLED` / `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the outbox processor |
 //! | `FC_MCP_ENABLED` | `false` | Run the read-only MCP server on its own listener (see `mcp.rs`) |
+//! | `FC_FUNCTION_HOST_ENABLED` | `false` | Run the WASM function host; alone, fc-server is exactly the former `fc-fnhost` daemon (see `function_host.rs`) |
 //!
 //! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
 //! | Variable | Default | Description |
@@ -86,6 +87,7 @@ use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
 };
 
+mod function_host;
 mod mcp;
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
@@ -187,9 +189,6 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
-    fc_common::logging::init_production_logging("fc-server");
-
     // Both rustls crypto backends are compiled into this binary (the AWS SDK
     // brings aws-lc-rs, others ring), so a client that asks rustls for "the
     // default" provider — the `rediss://` Redis connection behind standby and
@@ -199,10 +198,9 @@ async fn main() -> Result<()> {
     // Maintenance subcommands run instead of the server.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("backfill-secrets") {
+        fc_common::logging::init_production_logging("fc-server");
         return backfill_secrets(&args[1..]).await;
     }
-
-    info!("Starting FlowCatalyst Unified Server");
 
     // ── Configuration ────────────────────────────────────────────────────────
     // Go's names first (internal/server/envcfg.go LoadEnv), then the aliases
@@ -241,6 +239,25 @@ async fn main() -> Result<()> {
     let outbox_enabled =
         env_first_bool_go(&["FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED"], false);
     let mcp_enabled = env_first_bool_go(&["FC_MCP_ENABLED"], false);
+    let function_host_enabled = env_first_bool_go(&["FC_FUNCTION_HOST_ENABLED"], false);
+
+    // A node that only hosts functions is the former `fc-fnhost` daemon,
+    // exactly: its own environment, ports, logging and exit codes, and none
+    // of fc-server's listeners (see `function_host.rs`).
+    let other_roles = platform_enabled
+        || router_enabled
+        || scheduler_enabled
+        || scheduled_job_enabled
+        || stream_enabled
+        || outbox_enabled
+        || mcp_enabled;
+    if function_host_enabled && !other_roles {
+        std::process::exit(function_host::run_host_only().await);
+    }
+
+    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
+    fc_common::logging::init_production_logging("fc-server");
+    info!("Starting FlowCatalyst Unified Server");
 
     // Standby / HA
     let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
@@ -258,6 +275,7 @@ async fn main() -> Result<()> {
         stream = stream_enabled,
         outbox = outbox_enabled,
         mcp = mcp_enabled,
+        function_host = function_host_enabled,
         standby = standby_enabled,
         api_port,
         metrics_port,
@@ -275,6 +293,16 @@ async fn main() -> Result<()> {
     // The MCP role's credentials likewise, before anything connects.
     let mcp_role = if mcp_enabled {
         Some(mcp::McpRole::from_env(api_port)?)
+    } else {
+        None
+    };
+    // And the function host's environment, on ports of its own.
+    let shared_fn_host = if function_host_enabled {
+        let mut taken = vec![("FC_API_PORT", api_port), ("FC_METRICS_PORT", metrics_port)];
+        if let Some(role) = &mcp_role {
+            taken.push(("FC_MCP_PORT", role.port()));
+        }
+        Some(function_host::SharedHost::from_env(&taken)?)
     } else {
         None
     };
@@ -484,6 +512,7 @@ async fn main() -> Result<()> {
         stream_enabled,
         outbox_enabled,
         mcp_enabled,
+        function_host_enabled,
         is_leader: Arc::new(is_leader_for_health),
     };
 
@@ -525,6 +554,14 @@ async fn main() -> Result<()> {
         http_tasks.push(role.start(http_stop.clone()).await?);
     }
 
+    // ── Function host ────────────────────────────────────────────────────────
+    // Once the API listener is bound: its first reconcile may call this
+    // very process.
+    let mut fn_host = match shared_fn_host {
+        Some(host) => Some(host.start().await?),
+        None => None,
+    };
+
     // ── Startup Summary ──────────────────────────────────────────────────────
     let state = |on: bool| if on { "ENABLED" } else { "DISABLED" };
     info!("=== FlowCatalyst Unified Server Started ===");
@@ -535,6 +572,7 @@ async fn main() -> Result<()> {
     info!("  Stream:       {}", state(stream_enabled));
     info!("  Outbox:       {}", state(outbox_enabled));
     info!("  MCP:          {}", state(mcp_enabled));
+    info!("  Function host: {}", state(function_host_enabled));
     info!(
         "  Database:     {}",
         if needs_db { "CONNECTED" } else { "NONE" }
@@ -550,6 +588,12 @@ async fn main() -> Result<()> {
     // ── Shutdown ─────────────────────────────────────────────────────────────
     fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received...");
+
+    // The function host stops first, so its DRAINING heartbeat still
+    // reaches a platform in this process.
+    if let Some(host) = fn_host.as_mut() {
+        host.close().await;
+    }
 
     // Signal all background processors to stop via the active channel
     let _ = active_tx.send(false);
@@ -1367,6 +1411,7 @@ struct HealthState {
     stream_enabled: bool,
     outbox_enabled: bool,
     mcp_enabled: bool,
+    function_host_enabled: bool,
     is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -1384,6 +1429,7 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
             "stream_processor": if state.stream_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "outbox": if state.outbox_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "mcp": if state.mcp_enabled { "UP" } else { "DISABLED" },
+            "function_host": if state.function_host_enabled { "UP" } else { "DISABLED" },
         }
     }))
 }
@@ -1410,6 +1456,7 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
         "stream": state.stream_enabled,
         "outbox": state.outbox_enabled,
         "mcp": state.mcp_enabled,
+        "function_host": state.function_host_enabled,
     }))
 }
 

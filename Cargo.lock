@@ -2824,24 +2824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fc-fnhost"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "fc-fnhost-core",
- "fc-function-abi",
- "hex",
- "parking_lot 0.12.5",
- "reqwest",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "fc-fnhost-core"
 version = "0.1.0"
 dependencies = [
@@ -3247,12 +3229,14 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "axum",
  "fc-common",
+ "fc-fnhost-core",
  "fc-mcp",
  "fc-outbox",
  "fc-platform",
  "fc-router",
  "fc-standby",
  "fc-stream",
+ "hex",
  "parking_lot 0.12.5",
  "regex",
  "reqwest",
@@ -3260,7 +3244,9 @@ dependencies = [
  "rustls 0.23.37",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
+ "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",

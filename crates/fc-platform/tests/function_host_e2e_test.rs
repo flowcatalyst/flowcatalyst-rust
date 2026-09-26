@@ -1,9 +1,11 @@
 //! The whole Rust stack, end to end: the production platform router served
 //! on a real socket (Docker Postgres through the harness) and an in-process
-//! `fc-fnhost` (fc-fnhost-core's `FnHost`, the real WASM runtime and
-//! listener) talking to it over HTTP, exactly as the `fc-fnhost` binary
-//! would, authenticated with OAuth `client_credentials` as a service account
-//! holding the `function-host` role.
+//! function host (fc-fnhost-core's `FnHost` with `host::wasm_loaders` and
+//! `host::function_listener`: the assembly `fc-server`'s function-host role
+//! runs, `FC_FUNCTION_HOST_ENABLED`) talking to it over HTTP, authenticated
+//! with OAuth `client_credentials` as a service account holding the
+//! `function-host` role. The role's process shape (environment, exit codes,
+//! drain) is `bin/fc-server/tests/function_host_role.rs`.
 //!
 //! 1. A function is created and its artifact (the PDK test guest, a WASI 0.2
 //!    component with entrypoint `wasi_http_incoming_handler`) uploaded.
@@ -32,7 +34,6 @@
 mod support;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -43,10 +44,7 @@ use sha2::Digest as _;
 use tower::ServiceExt;
 
 use fc_fnhost_core::env::{EnvReader, HostEnv};
-use fc_fnhost_core::host::{FnHost, Listener};
-use fc_fnhost_core::listener::FnListener;
-use fc_fnhost_core::loader::Loaders;
-use fc_fnhost_core::wasm::{WasmLoader, WasmRuntime, WasmSettings};
+use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::{permissions, roles, AuthRole};
 use fc_platform::service_account::entity::RoleAssignment;
@@ -174,9 +172,8 @@ async fn start_host(
         ("FC_FN_MAX_EXECUTING", "2"),
     ]))
     .expect("host environment");
-    let wasm = WasmRuntime::new(WasmSettings::from_env(&env)).expect("wasm runtime");
-    let loaders = Arc::new(WasmLoader::new(wasm)).register(Loaders::none());
-    let listener: Arc<dyn Listener> = Arc::new(FnListener::from_env(&env));
+    let loaders = wasm_loaders(&env).expect("wasm runtime");
+    let listener = function_listener(&env);
     let mut host = FnHost::new(env, loaders, Some(listener)).expect("host");
     host.start().await.expect("host starts");
     host

@@ -17,6 +17,9 @@ fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
 fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "admin"] }
 fc-mcp = { path = "../../crates/fc-mcp" }
+# The function-host role. `ecr`: ECR registry auth for oci:// artifacts
+# (owner decision #14), as the former fc-fnhost binary had it.
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr"] }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -49,6 +52,10 @@ parking_lot = { workspace = true }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
 rsa = { version = "0.9", features = ["pem"] }
+# The function-host role tests (fc-fnhost-core's fake platform).
+sha2 = { workspace = true }
+hex = { workspace = true }
+tempfile = { workspace = true }
 
 [features]
 default = []

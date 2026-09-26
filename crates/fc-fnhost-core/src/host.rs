@@ -348,6 +348,44 @@ pub async fn run(
     0
 }
 
+/// The runtimes the deployed host loads: `component` and `wasm` run WASI
+/// 0.2 components ([`crate::wasm`]; a `wasm` artifact is sniffed and must be
+/// a component); a `jvm` entry is reported `RUNTIME_UNSUPPORTED` (it stays
+/// on JVM hosts). Shared by `fc-server`'s function-host role, `fc-dev`'s
+/// in-process host and the end-to-end tests, so all run the same assembly.
+pub fn wasm_loaders(env: &HostEnv) -> Result<Loaders, String> {
+    let wasm = crate::wasm::WasmRuntime::new(crate::wasm::WasmSettings::from_env(env))?;
+    Ok(Arc::new(crate::wasm::WasmLoader::new(wasm)).register(Loaders::none()))
+}
+
+/// The private (`FC_FN_PORT`) and public (`FC_FN_PUBLIC_PORT`) function
+/// listeners. They bind regardless of what loaded, as Java's do; a call to
+/// a function no runtime could load is 503 `FUNCTION_UNAVAILABLE`.
+pub fn function_listener(env: &HostEnv) -> Arc<dyn Listener> {
+    Arc::new(crate::listener::FnListener::from_env(env))
+}
+
+/// [`run`] with the deployed assembly ([`wasm_loaders`],
+/// [`function_listener`]): the whole of the former `fc-fnhost` daemon
+/// (Java's `FnHostMain`), which `fc-server` runs when the function host is
+/// its only role. Exit codes: 2 on an environment error (one line naming
+/// every bad variable), 1 if the host cannot start, 0 after
+/// `FC_EXIT_AFTER_START` or a clean shutdown.
+pub async fn run_wasm_host(
+    env_reader: EnvReader,
+    err: &mut (dyn Write + Send),
+    shutdown: impl Future<Output = ()>,
+) -> i32 {
+    run(
+        env_reader,
+        err,
+        wasm_loaders,
+        |env| Some(function_listener(env)),
+        shutdown,
+    )
+    .await
+}
+
 /// SIGTERM or Ctrl-C. The handlers are installed when this is called (not
 /// when the future is first polled), so a signal during start-up is not
 /// lost. Call it inside the runtime.
