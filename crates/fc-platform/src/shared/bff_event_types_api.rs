@@ -399,7 +399,7 @@ pub async fn create_event_type(
     let ctx = ExecutionContext::from_auth(&auth.0);
 
     let cmd = CreateEventTypeCommand {
-        code: req.code,
+        code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
         client_id: req.client_id,

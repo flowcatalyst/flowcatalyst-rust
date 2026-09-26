@@ -11,5 +11,5 @@ pub mod repository;
 
 // Re-export main types
 pub use api::event_types_router;
-pub use entity::{EventType, EventTypeStatus};
+pub use entity::{EventType, EventTypeCode, EventTypeCodeError, EventTypeStatus};
 pub use repository::EventTypeRepository;

@@ -707,11 +707,17 @@ async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
             // Anchor-level, as the SPA's create (it sends no client).
             Err(e)
         } else {
-            CreateEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
+            let name = form.name.trim().to_owned();
+            match CreateEventTypeCommand::parse_code(&segments.join(":"), &name) {
+                Err(e) => Err(PlatformError::from(e)),
+                Ok(code) => CreateEventTypeUseCase::new(
+                    deps.event_type_repo.clone(),
+                    deps.unit_of_work.clone(),
+                )
                 .run(
                     CreateEventTypeCommand {
-                        code: segments.join(":"),
-                        name: form.name.trim().to_owned(),
+                        code,
+                        name,
                         description: Some(form.description.trim().to_owned())
                             .filter(|d| !d.is_empty()),
                         client_id: None,
@@ -722,7 +728,8 @@ async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                 .await
                 .into_result()
                 .map(|event| event.event_type_id)
-                .map_err(PlatformError::from)
+                .map_err(PlatformError::from),
+            }
         };
         match outcome {
             Ok(id) => {

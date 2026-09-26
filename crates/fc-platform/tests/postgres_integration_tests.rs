@@ -267,8 +267,11 @@ async fn test_event_type_crud() {
     let (pool, _container) = setup_test_db().await;
     let repo = EventTypeRepository::new(&pool);
 
-    let event_type = EventType::new("orders:fulfillment:shipment:shipped", "Shipment Shipped")
-        .expect("Failed to create event type");
+    let code = fc_platform::event_type::entity::EventTypeCode::parse(
+        "orders:fulfillment:shipment:shipped",
+    )
+    .expect("valid code");
+    let event_type = EventType::new(code, "Shipment Shipped");
     repo.insert(&event_type)
         .await
         .expect("Failed to insert event type");
@@ -574,10 +577,7 @@ async fn test_unit_of_work_commit() {
     };
 
     let result = uow.commit(&client, &client_repo, event, &command).await;
-    assert!(
-        result.is_ok(),
-        "UnitOfWork commit should succeed"
-    );
+    assert!(result.is_ok(), "UnitOfWork commit should succeed");
 
     // Verify event was persisted (use find_by_type since find_all doesn't exist)
     let event_repo = EventRepository::new(&pool);

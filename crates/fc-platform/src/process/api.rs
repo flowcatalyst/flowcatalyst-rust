@@ -149,7 +149,7 @@ pub async fn create_process(
     crate::shared::authorization_service::checks::can_create_processes(&auth.0)?;
 
     let cmd = CreateProcessCommand {
-        code: req.code,
+        code: CreateProcessCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
         body: req.body,

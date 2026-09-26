@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::{ProcessCreated, ProcessDeleted, ProcessUpdated, ProcessesSynced};
-use crate::process::entity::{Process, ProcessSource};
+use crate::process::entity::{Process, ProcessCode, ProcessCodeError, ProcessSource};
 use crate::process::repository::ProcessRepository;
 use crate::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -39,6 +39,20 @@ pub struct SyncProcessesCommand {
 }
 
 impl crate::usecase::AuditMasked for SyncProcessesCommand {}
+
+/// A listed code that is not a process code (checked when the sync reaches
+/// it, as it creates the process). The sync keeps its own code and its
+/// messages: a blank code reads as a wrong segment count, and an empty
+/// segment is not named.
+fn invalid_sync_code(e: ProcessCodeError) -> UseCaseError {
+    let message = match e {
+        ProcessCodeError::Required | ProcessCodeError::WrongSegmentCount => {
+            ProcessCodeError::WrongSegmentCount.to_string()
+        }
+        ProcessCodeError::EmptySegment(_) => "Process code segments cannot be empty".to_string(),
+    };
+    UseCaseError::validation("INVALID_PROCESS_CODE", message)
+}
 
 pub struct SyncProcessesUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
@@ -124,9 +138,8 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     }
                 }
                 None => {
-                    let mut p = Process::new(&input.code, &input.name).map_err(|e| {
-                        UseCaseError::validation("INVALID_PROCESS_CODE", e.to_string())
-                    })?;
+                    let code = ProcessCode::parse(&input.code).map_err(invalid_sync_code)?;
+                    let mut p = Process::new(code, &input.name);
                     p.source = ProcessSource::Api;
                     p.description = input.description.clone();
                     p.body = input.body.clone();

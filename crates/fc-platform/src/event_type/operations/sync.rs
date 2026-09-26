@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::{EventTypeCreated, EventTypeDeleted, EventTypeUpdated, EventTypesSynced};
-use crate::event_type::entity::{EventType, EventTypeSource, SpecVersion};
+use crate::event_type::entity::{
+    EventType, EventTypeCode, EventTypeCodeError, EventTypeSource, SpecVersion,
+};
 use crate::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -51,6 +53,22 @@ pub struct SyncEventTypesResult {
     pub created: u32,
     pub updated: u32,
     pub deleted: u32,
+}
+
+/// A listed code that is not an event type code (checked when the sync
+/// reaches it, as it creates the type). The sync keeps its own code and
+/// its messages: a blank code reads as a wrong segment count, and an empty
+/// segment is not named.
+fn invalid_sync_code(e: EventTypeCodeError) -> UseCaseError {
+    let message = match e {
+        EventTypeCodeError::Required | EventTypeCodeError::WrongSegmentCount => {
+            EventTypeCodeError::WrongSegmentCount.to_string()
+        }
+        EventTypeCodeError::EmptySegment(_) => {
+            "Event type code segments cannot be empty".to_string()
+        }
+    };
+    UseCaseError::validation("INVALID_EVENT_TYPE_CODE", message)
 }
 
 pub struct SyncEventTypesUseCase<U: UnitOfWork> {
@@ -142,9 +160,8 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                 }
                 None => {
                     // Create new event type
-                    let mut et = EventType::new(&input.code, &input.name).map_err(|e| {
-                        UseCaseError::validation("INVALID_EVENT_TYPE_CODE", e.to_string())
-                    })?;
+                    let code = EventTypeCode::parse(&input.code).map_err(invalid_sync_code)?;
+                    let mut et = EventType::new(code, &input.name);
                     et.source = EventTypeSource::Api;
                     et.description = input.description.clone();
                     if let Err(e) = self.event_type_repo.insert(&et).await {

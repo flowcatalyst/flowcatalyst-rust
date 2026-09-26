@@ -196,15 +196,15 @@ pub async fn create_event_type(
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     let cmd = CreateEventTypeCommand {
-        code: req.code,
+        code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
         name: req.name,
         description: req.description,
         client_id: req.client_id,
         schema: req.schema,
     };
-    // Go's `CreateEventType`: the command is validated, then the scope is
-    // checked (`CheckScopeAccess`: a client-scoped type needs that client,
-    // a platform one anchor).
+    // Go's `CreateEventType`: the command is validated (the code parsed
+    // above, the rest here), then the scope is checked (`CheckScopeAccess`:
+    // a client-scoped type needs that client, a platform one anchor).
     state
         .create_use_case
         .validate(&cmd)

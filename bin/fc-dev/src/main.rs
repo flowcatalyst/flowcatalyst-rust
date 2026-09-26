@@ -1579,7 +1579,8 @@ mod auto_sync_tests {
     }
 
     fn stored(code: &str, name: &str, schema: Option<serde_json::Value>) -> EventType {
-        let mut et = EventType::new(code, name).expect("valid code");
+        let code = fc_platform::event_type::entity::EventTypeCode::parse(code).expect("valid code");
+        let mut et = EventType::new(code, name);
         if schema.is_some() {
             et.spec_versions = vec![SpecVersion::new(&et.id, "1.0", schema)];
         }

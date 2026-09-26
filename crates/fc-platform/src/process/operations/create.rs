@@ -5,15 +5,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessCreated;
-use crate::process::entity::Process;
+use crate::process::entity::{Process, ProcessCode, ProcessCodeError};
 use crate::process::repository::ProcessRepository;
 use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateProcessCommand {
-    /// Process code: {application}:{subdomain}:{process-name}
-    pub code: String,
+    /// Process code: {application}:{subdomain}:{process-name}. Parsed where
+    /// the command is built ([`CreateProcessCommand::parse_code`]).
+    pub code: ProcessCode,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -28,6 +29,34 @@ pub struct CreateProcessCommand {
 }
 
 impl crate::usecase::AuditMasked for CreateProcessCommand {}
+
+impl CreateProcessCommand {
+    /// Parse a requested code for this command, with the validation errors
+    /// in their order: `CODE_REQUIRED` for a blank code, then
+    /// `NAME_REQUIRED` for a blank name, then `INVALID_CODE_FORMAT`. The
+    /// name is looked at only so that a blank name still wins over a
+    /// malformed code, as it did when all three were checked in `validate`.
+    ///
+    /// Handlers call this after their permission check, where they build
+    /// the command, so an unauthorised caller gets 403 before any 400.
+    pub fn parse_code(code: &str, name: &str) -> Result<ProcessCode, UseCaseError> {
+        let parsed = ProcessCode::parse(code);
+        if parsed == Err(ProcessCodeError::Required) {
+            return Err(UseCaseError::validation(
+                "CODE_REQUIRED",
+                "Process code is required",
+            ));
+        }
+        if name.trim().is_empty() {
+            return Err(name_required());
+        }
+        parsed.map_err(|e| UseCaseError::validation("INVALID_CODE_FORMAT", e.to_string()))
+    }
+}
+
+fn name_required() -> UseCaseError {
+    UseCaseError::validation("NAME_REQUIRED", "Process name is required")
+}
 
 pub struct CreateProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
@@ -48,39 +77,10 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
     type Command = CreateProcessCommand;
     type Event = ProcessCreated;
 
+    /// The code is a [`ProcessCode`], parsed when the command was built.
     async fn validate(&self, command: &CreateProcessCommand) -> Result<(), UseCaseError> {
-        if command.code.trim().is_empty() {
-            return Err(UseCaseError::validation(
-                "CODE_REQUIRED",
-                "Process code is required",
-            ));
-        }
         if command.name.trim().is_empty() {
-            return Err(UseCaseError::validation(
-                "NAME_REQUIRED",
-                "Process name is required",
-            ));
-        }
-        let parts: Vec<&str> = command.code.split(':').collect();
-        if parts.len() != 3 {
-            return Err(UseCaseError::validation(
-                "INVALID_CODE_FORMAT",
-                "Process code must follow format: application:subdomain:process-name",
-            ));
-        }
-        for (i, part) in parts.iter().enumerate() {
-            if part.trim().is_empty() {
-                let part_name = match i {
-                    0 => "application",
-                    1 => "subdomain",
-                    2 => "process-name",
-                    _ => "unknown",
-                };
-                return Err(UseCaseError::validation(
-                    "INVALID_CODE_FORMAT",
-                    format!("Process code part '{}' cannot be empty", part_name),
-                ));
-            }
+            return Err(name_required());
         }
         Ok(())
     }
@@ -98,7 +98,10 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         command: CreateProcessCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<ProcessCreated>, UseCaseError> {
-        let existing = self.process_repo.find_by_code(&command.code).await?;
+        let existing = self
+            .process_repo
+            .find_by_code(command.code.as_str())
+            .await?;
         if existing.is_some() {
             return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
@@ -106,31 +109,71 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
             ));
         }
 
-        let process = match Process::new(&command.code, &command.name) {
-            Ok(mut p) => {
-                p.description = command.description.clone();
-                p.body = command.body.clone();
-                if let Some(d) = &command.diagram_type {
-                    if !d.trim().is_empty() {
-                        p.diagram_type = d.clone();
-                    }
-                }
-                p.tags = command.tags.clone();
-                p.created_by = Some(ctx.principal_id.clone());
-                p
+        let mut process = Process::new(command.code.clone(), &command.name);
+        process.description = command.description.clone();
+        process.body = command.body.clone();
+        if let Some(d) = &command.diagram_type {
+            if !d.trim().is_empty() {
+                process.diagram_type = d.clone();
             }
-            Err(e) => {
-                return Err(UseCaseError::validation(
-                    "INVALID_CODE_FORMAT",
-                    e.to_string(),
-                ));
-            }
-        };
+        }
+        process.tags = command.tags.clone();
+        process.created_by = Some(ctx.principal_id.clone());
 
         let event = ProcessCreated::new(&ctx, &process.id, &process.code, &process.name);
 
         self.unit_of_work
             .commit(&process, &*self.process_repo, event, &command)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_err(code: &str, name: &str) -> (String, String) {
+        let e = CreateProcessCommand::parse_code(code, name).unwrap_err();
+        (e.code().to_string(), e.message().to_string())
+    }
+
+    /// The codes and messages `validate` answered before the code was
+    /// parsed, in the same order (code required, name required, format).
+    #[test]
+    fn parse_code_answers_the_validation_errors_in_order() {
+        let err = |code: &str, msg: &str| (code.to_string(), msg.to_string());
+        assert_eq!(
+            parse_err("", " "),
+            err("CODE_REQUIRED", "Process code is required")
+        );
+        assert_eq!(
+            parse_err("a:b", ""),
+            err("NAME_REQUIRED", "Process name is required")
+        );
+        assert_eq!(
+            parse_err("a:b", "X"),
+            err(
+                "INVALID_CODE_FORMAT",
+                "Process code must follow format: application:subdomain:process-name"
+            )
+        );
+        assert_eq!(
+            parse_err("a:b: ", "X"),
+            err(
+                "INVALID_CODE_FORMAT",
+                "Process code part 'process-name' cannot be empty"
+            )
+        );
+        let cmd = CreateProcessCommand {
+            code: CreateProcessCommand::parse_code("a:b:c", "X").unwrap(),
+            name: "X".into(),
+            description: None,
+            body: String::new(),
+            diagram_type: None,
+            tags: Vec::new(),
+        };
+        assert!(serde_json::to_string(&cmd)
+            .unwrap()
+            .contains(r#""code":"a:b:c""#));
     }
 }
