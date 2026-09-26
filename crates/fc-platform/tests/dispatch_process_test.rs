@@ -528,7 +528,9 @@ async fn concurrent_copies_deliver_once() {
     assert_eq!(lost["ack"], json!(false), "{lost}");
     assert_eq!(lost["message"], json!("delivery in progress"));
     let delay = lost["delaySeconds"].as_u64().expect("delaySeconds");
-    assert!((1..=60).contains(&delay), "{delay}");
+    // The live attempt's lease (the job's timeout plus 30 s), rounded up to
+    // whole seconds: 61 when the clock ticks over between claim and answer.
+    assert!((1..=61).contains(&delay), "{delay}");
     assert_eq!(f.row(&j.id).await.status, "COMPLETED");
 
     // Its retry, once the job is finished, is acked without delivering.
