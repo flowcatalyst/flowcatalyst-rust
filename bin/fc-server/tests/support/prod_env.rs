@@ -15,7 +15,7 @@
 //! and the SQS endpoint. No database variable is set — a router that tried
 //! to connect to Postgres would fail to boot.
 //!
-//! Shared by `fc-server`'s and the standalone `fc-router`'s tests.
+//! Used by `fc-server`'s router-role tests (the router's only binary).
 
 #![allow(dead_code)]
 

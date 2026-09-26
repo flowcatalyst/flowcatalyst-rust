@@ -1,9 +1,8 @@
 //! Router bootstrap: Go's router environment ([`RouterEnv`]) and one wiring
-//! of it ([`RouterRuntime`]) for every binary that runs a router — the
-//! standalone `fc-router` and `fc-server` in its router role
-//! (`MESSAGE_ROUTER_ENABLED=true`), as Go's `newRouterServer` is shared by
-//! its callers. With the `backends` feature it also carries the broker
-//! consumer factory and SQS publisher both binaries use.
+//! of it ([`RouterRuntime`]) for `fc-server` in its router role
+//! (`MESSAGE_ROUTER_ENABLED=true`), as Go's `newRouterServer`. With the
+//! `backends` feature it also carries the broker consumer factory and SQS
+//! publisher.
 
 mod env;
 mod runtime;

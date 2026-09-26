@@ -215,7 +215,8 @@ docker-compose -f docker-compose.dev.yml up -d  # starts LocalStack
 FLOWCATALYST_DEV_MODE=true \
 LOCALSTACK_ENDPOINT=http://localhost:4566 \
 LOCALSTACK_SQS_HOST=http://sqs.eu-west-1.localhost.localstack.cloud:4566 \
-  fc-router
+FC_PLATFORM_ENABLED=false FC_ROUTER_ENABLED=true \
+  fc-server
 ```
 
 The default queue (`fc-default.fifo`) and pool (`DEFAULT`) are baked into the dev-mode config; you don't need to provision anything.

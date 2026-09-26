@@ -1,6 +1,5 @@
-//! One router, wired from a [`RouterEnv`] — shared by the standalone
-//! `fc-router` binary and `fc-server`'s router role, so both honour the same
-//! environment the same way (Go: one `newRouterServer` for every caller).
+//! One router, wired from a [`RouterEnv`] — `fc-server`'s router role (Go:
+//! one `newRouterServer` for every caller).
 
 use std::sync::Arc;
 use std::time::Duration;

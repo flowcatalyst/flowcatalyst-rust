@@ -84,7 +84,7 @@ pub struct LifecycleConfig {
     /// swept on the same reaper tick as `in_pipeline_max_age` /
     /// `circuit_breaker_max_idle`. `Duration::ZERO` disables the sweep — see
     /// `QueueManager::evict_idle_synth_pools` and the
-    /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` wiring in `bin/fc-router/src/main.rs`.
+    /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` wiring in `bootstrap::env`.
     /// Mirrors Go's `ServerConfig.SynthPoolIdleAge` default (1 hour).
     pub synth_pool_idle_ttl: Duration,
     /// How often the stall detector runs (Go: `StallConfig.CheckInterval`,

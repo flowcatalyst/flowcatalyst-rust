@@ -2,7 +2,7 @@
 //! from Java's `function-api` module (`../flowcatalyst-javalin` at `0118cdca`)
 //! so a guest built against it behaves exactly as one built against Java.
 //!
-//! Shared by the Rust function host (`fc-fnhost`) and the Rust guest PDK. Pure
+//! Shared by the Rust function host (`fc-fnhost-core`) and the Rust guest PDK. Pure
 //! types plus logic, no async runtime, and it builds for
 //! `wasm32-unknown-unknown`.
 //!

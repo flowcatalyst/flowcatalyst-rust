@@ -7,7 +7,7 @@ The stream processor is the read-model + fan-out worker. It owns four polling lo
 3. **Dispatch-job projection** — denormalises `msg_dispatch_jobs` into `msg_dispatch_jobs_read`.
 4. **Partition manager** — creates next-month partitions and drops expired ones for the seven partitioned tables.
 
-Source: `crates/fc-stream/`. Standalone binary `bin/fc-stream-processor/`, also embeddable in `fc-server` via `FC_STREAM_PROCESSOR_ENABLED=true`.
+Source: `crates/fc-stream/`. It runs inside `fc-server` with `FC_STREAM_PROCESSOR_ENABLED=true` (on its own, set `FC_PLATFORM_ENABLED=false` too), and inside `fc-dev`. There is no separate stream-processor binary.
 
 The older `docs/stream-processor.md` described a MongoDB change-stream architecture. That's gone. The current implementation is poll-based against Postgres with `FOR UPDATE SKIP LOCKED` claims, no change streams.
 
@@ -290,8 +290,7 @@ Stopping the handle drops the shared `tokio::sync::broadcast::Receiver`, which c
 
 ## Code references
 
-- Entry point (standalone): `bin/fc-stream-processor/src/main.rs`.
-- Entry point (embedded): `bin/fc-server/src/main.rs::spawn_stream_processor`.
+- Entry point: `bin/fc-server/src/main.rs::spawn_stream_processor` (its own 4-connection pool, with the secret refresh registered on it).
 - Orchestrator: `crates/fc-stream/src/lib.rs::start_stream_processor`.
 - Fan-out: `crates/fc-stream/src/event_fan_out.rs`.
 - Projections: `crates/fc-stream/src/event_projection.rs`, `dispatch_job_projection.rs`.

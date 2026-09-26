@@ -7,6 +7,9 @@
 # --platform linux/arm64 for them. One image serves every task, the router
 # included (MESSAGE_ROUTER_ENABLED=true, PLATFORM_ENABLED=false selects the
 # router role, with no database) — see docs/parity/router-env-vs-go.md.
+# fc-server is the only deployed binary: every role (platform, router,
+# schedulers, stream, outbox, MCP, function host) is a flag on this image —
+# see docs/operations/topologies.md.
 
 # ── Stage 1: Build frontend ─────────────────────────────────────────
 FROM node:24-alpine AS frontend

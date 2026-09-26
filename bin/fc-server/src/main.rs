@@ -1,6 +1,10 @@
 //! FlowCatalyst Unified Production Server
 //!
 //! Single binary combining all subsystems, toggled via environment variables.
+//! FlowCatalyst ships three binaries, as Go does: this one (every production
+//! role), `fc-outbox-processor` (the application-side sidecar) and `fc-dev`
+//! (local development). A split deployment runs this binary per tier with
+//! different flags (`docs/operations/topologies.md`).
 //! Background processors (router, scheduler, stream, outbox) can optionally
 //! run in standby mode with Redis leader election — only the leader processes.
 //!
@@ -36,6 +40,8 @@
 //! | `FC_SCHEDULED_JOB_ENABLED` / `SCHEDULED_JOB_SCHEDULER_ENABLED` | `false` | Run the scheduled-job cron engine |
 //! | `FC_STREAM_PROCESSOR_ENABLED` / `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
 //! | `FC_OUTBOX_ENABLED` / `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the outbox processor |
+//! | `FC_MCP_ENABLED` | `false` | Run the read-only MCP server on its own listener (see `mcp.rs`) |
+//! | `FC_FUNCTION_HOST_ENABLED` | `false` | Run the WASM function host; alone, fc-server is exactly the former `fc-fnhost` daemon (see `function_host.rs`) |
 //!
 //! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
 //! | Variable | Default | Description |
@@ -61,6 +67,7 @@
 //! | `FC_ALB_TARGET_GROUP_ARN` | - | ALB target group ARN |
 //! | `FC_ALB_TARGET_ID` | - | Target ID (instance ID or IP) |
 //! | `FC_ALB_TARGET_PORT` | `8080` | Port for ALB health checks |
+//! | `FC_ALB_DEREGISTRATION_DELAY_SECONDS` | `300` | Longest wait for deregistration to drain |
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -83,6 +90,9 @@ use fc_platform::usecase::PgUnitOfWork;
 use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
 };
+
+mod function_host;
+mod mcp;
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
 ///
@@ -183,9 +193,6 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
-    fc_common::logging::init_production_logging("fc-server");
-
     // Both rustls crypto backends are compiled into this binary (the AWS SDK
     // brings aws-lc-rs, others ring), so a client that asks rustls for "the
     // default" provider — the `rediss://` Redis connection behind standby and
@@ -195,10 +202,9 @@ async fn main() -> Result<()> {
     // Maintenance subcommands run instead of the server.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("backfill-secrets") {
+        fc_common::logging::init_production_logging("fc-server");
         return backfill_secrets(&args[1..]).await;
     }
-
-    info!("Starting FlowCatalyst Unified Server");
 
     // ── Configuration ────────────────────────────────────────────────────────
     // Go's names first (internal/server/envcfg.go LoadEnv), then the aliases
@@ -236,6 +242,26 @@ async fn main() -> Result<()> {
     );
     let outbox_enabled =
         env_first_bool_go(&["FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED"], false);
+    let mcp_enabled = env_first_bool_go(&["FC_MCP_ENABLED"], false);
+    let function_host_enabled = env_first_bool_go(&["FC_FUNCTION_HOST_ENABLED"], false);
+
+    // A node that only hosts functions is the former `fc-fnhost` daemon,
+    // exactly: its own environment, ports, logging and exit codes, and none
+    // of fc-server's listeners (see `function_host.rs`).
+    let other_roles = platform_enabled
+        || router_enabled
+        || scheduler_enabled
+        || scheduled_job_enabled
+        || stream_enabled
+        || outbox_enabled
+        || mcp_enabled;
+    if function_host_enabled && !other_roles {
+        std::process::exit(function_host::run_host_only().await);
+    }
+
+    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
+    fc_common::logging::init_production_logging("fc-server");
+    info!("Starting FlowCatalyst Unified Server");
 
     // Standby / HA
     let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
@@ -252,6 +278,8 @@ async fn main() -> Result<()> {
         scheduled_job = scheduled_job_enabled,
         stream = stream_enabled,
         outbox = outbox_enabled,
+        mcp = mcp_enabled,
+        function_host = function_host_enabled,
         standby = standby_enabled,
         api_port,
         metrics_port,
@@ -266,6 +294,22 @@ async fn main() -> Result<()> {
     } else {
         None
     };
+    // The MCP role's credentials likewise, before anything connects.
+    let mcp_role = if mcp_enabled {
+        Some(mcp::McpRole::from_env(api_port)?)
+    } else {
+        None
+    };
+    // And the function host's environment, on ports of its own.
+    let shared_fn_host = if function_host_enabled {
+        let mut taken = vec![("FC_API_PORT", api_port), ("FC_METRICS_PORT", metrics_port)];
+        if let Some(role) = &mcp_role {
+            taken.push(("FC_MCP_PORT", role.port()));
+        }
+        Some(function_host::SharedHost::from_env(&taken)?)
+    } else {
+        None
+    };
 
     // A malformed FLOWCATALYST_APP_KEY is fatal at boot, as in Go (an unset
     // one is the documented "encryption disabled" state).
@@ -276,7 +320,8 @@ async fn main() -> Result<()> {
     // Only the subsystems that read or write Postgres need it (Go:
     // `needsDB`). A router-only instance (MESSAGE_ROUTER_ENABLED=true,
     // PLATFORM_ENABLED=false) reads its configuration from the platform API
-    // and connects to no database at all.
+    // and connects to no database at all; nor does the MCP server, which
+    // calls the platform over HTTP.
     let needs_db = platform_enabled
         || stream_enabled
         || scheduler_enabled
@@ -287,6 +332,7 @@ async fn main() -> Result<()> {
     } else {
         info!(
             router = router_enabled,
+            mcp = mcp_enabled,
             "no database-backed subsystem enabled; skipping postgres connect/migrate/seed"
         );
         None
@@ -329,7 +375,10 @@ async fn main() -> Result<()> {
         None
     };
 
-    let is_leader = move || leader_election.as_ref().is_none_or(|e| e.is_leader());
+    let is_leader = {
+        let election = leader_election.clone();
+        move || election.as_ref().is_none_or(|e| e.is_leader())
+    };
 
     // ── Platform ─────────────────────────────────────────────────────────────
     let (app, repos) = match db.as_ref() {
@@ -380,7 +429,7 @@ async fn main() -> Result<()> {
     }
 
     // Stream processor (CQRS projections)
-    let _stream_handle = if stream_enabled {
+    let stream_handle = if stream_enabled {
         let db = db.as_ref().expect("stream processor needs the database");
         info!("Starting stream processor subsystem...");
         Some(
@@ -398,8 +447,11 @@ async fn main() -> Result<()> {
 
     // Outbox processor
     if outbox_enabled {
+        let db = db
+            .as_ref()
+            .expect("the outbox processor needs the database");
         info!("Starting outbox processor subsystem...");
-        spawn_outbox_processor(active_rx.clone()).await?;
+        spawn_outbox_processor(active_rx.clone(), &db.pool).await?;
     }
 
     // ── ALB Traffic Watcher ──────────────────────────────────────────────────
@@ -413,6 +465,15 @@ async fn main() -> Result<()> {
                 target_id: std::env::var("FC_ALB_TARGET_ID")
                     .expect("FC_ALB_TARGET_ID required when FC_ALB_ENABLED=true"),
                 target_port: env_or_parse("FC_ALB_TARGET_PORT", 8080),
+                // Go: FC_ALB_DEREGISTRATION_DELAY_SECONDS, non-positive → 300 s.
+                deregistration_delay_seconds: env_or_parse::<i64>(
+                    "FC_ALB_DEREGISTRATION_DELAY_SECONDS",
+                    0,
+                )
+                .try_into()
+                .ok()
+                .filter(|s: &u64| *s > 0)
+                .unwrap_or(300),
             };
             let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
             let strategy = Arc::new(fc_router::AwsAlbTrafficStrategy::new(
@@ -454,6 +515,8 @@ async fn main() -> Result<()> {
         scheduled_job_enabled,
         stream_enabled,
         outbox_enabled,
+        mcp_enabled,
+        function_host_enabled,
         is_leader: Arc::new(is_leader_for_health),
     };
 
@@ -487,6 +550,22 @@ async fn main() -> Result<()> {
         })
     };
 
+    // ── MCP ──────────────────────────────────────────────────────────────────
+    // Its own listener, stopped with the other two (Go: `StartMCP`, not
+    // leader-gated — it only reads the platform's API).
+    let mut http_tasks = vec![api_task, metrics_task];
+    if let Some(role) = mcp_role {
+        http_tasks.push(role.start(http_stop.clone()).await?);
+    }
+
+    // ── Function host ────────────────────────────────────────────────────────
+    // Once the API listener is bound: its first reconcile may call this
+    // very process.
+    let mut fn_host = match shared_fn_host {
+        Some(host) => Some(host.start().await?),
+        None => None,
+    };
+
     // ── Startup Summary ──────────────────────────────────────────────────────
     let state = |on: bool| if on { "ENABLED" } else { "DISABLED" };
     info!("=== FlowCatalyst Unified Server Started ===");
@@ -496,6 +575,8 @@ async fn main() -> Result<()> {
     info!("  Scheduled jobs: {}", state(scheduled_job_enabled));
     info!("  Stream:       {}", state(stream_enabled));
     info!("  Outbox:       {}", state(outbox_enabled));
+    info!("  MCP:          {}", state(mcp_enabled));
+    info!("  Function host: {}", state(function_host_enabled));
     info!(
         "  Database:     {}",
         if needs_db { "CONNECTED" } else { "NONE" }
@@ -512,6 +593,12 @@ async fn main() -> Result<()> {
     fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received...");
 
+    // The function host stops first, so its DRAINING heartbeat still
+    // reaches a platform in this process.
+    if let Some(host) = fn_host.as_mut() {
+        host.close().await;
+    }
+
     // Signal all background processors to stop via the active channel
     let _ = active_tx.send(false);
 
@@ -526,10 +613,10 @@ async fn main() -> Result<()> {
     // flight. A `/api/dispatch/process` call in flight has already sent its
     // webhook; aborting it lost the outcome and left the job PROCESSING
     // (delivery run 3, `platform-down`).
-    drain_http(&http_stop, vec![api_task, metrics_task], HTTP_DRAIN_TIMEOUT).await;
+    drain_http(&http_stop, http_tasks, HTTP_DRAIN_TIMEOUT).await;
 
     // Shutdown stream processor if running
-    if let Some(handle) = _stream_handle {
+    if let Some(handle) = stream_handle {
         handle.stop().await;
     }
 
@@ -926,7 +1013,7 @@ fn build_platform_app(
 // ── Background Processor Spawners ────────────────────────────────────────────
 
 /// Start the message router (Go `newRouterServer` + `Server.Run`): the
-/// same runtime as the standalone `fc-router` binary, polling only while
+/// `fc_router::bootstrap::RouterRuntime`, polling only while
 /// this instance leads. Returns the runtime and its HTTP surface.
 async fn start_router(
     env: &fc_router::bootstrap::RouterEnv,
@@ -1098,7 +1185,11 @@ fn load_scheduler_config(api_port: u16) -> fc_platform::scheduler::SchedulerConf
     }
 }
 
-/// Spawn the CQRS stream processor, gated on leadership.
+/// Spawn the CQRS stream processor, gated on leadership: event and
+/// dispatch-job projections, event fan-out and the partition manager
+/// (`fc_stream::start_stream_processor`, each with its `FC_STREAM_*`
+/// toggle). This is the whole of what the former `fc-stream-processor`
+/// binary ran.
 ///
 /// Builds a small dedicated pool (4 conns) so the projection loops don't
 /// contend with the platform API. When credentials come from a secret
@@ -1145,7 +1236,7 @@ async fn spawn_stream_processor(
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let pool_clone = pool.clone();
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let mut current_handle: Option<fc_stream::StreamProcessorHandle>;
         let mut stop_rx = stop_rx;
 
@@ -1205,62 +1296,64 @@ async fn spawn_stream_processor(
     });
 
     Ok(StreamProcessorShutdown {
-        _stop_tx: Some(stop_tx),
+        stop_tx: Some(stop_tx),
+        task,
+        pool,
     })
 }
 
 /// Handle for stopping the stream processor from the main shutdown path.
 struct StreamProcessorShutdown {
-    _stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    task: tokio::task::JoinHandle<()>,
+    pool: sqlx::PgPool,
 }
 
 impl StreamProcessorShutdown {
+    /// Stops the projection loops and waits for them to finish their
+    /// current batch (bounded), then closes the stream pool.
     async fn stop(mut self) {
-        // Dropping the sender signals the spawned task
-        self._stop_tx.take();
+        // Dropping the sender signals the spawned task.
+        self.stop_tx.take();
+        if tokio::time::timeout(Duration::from_secs(30), &mut self.task)
+            .await
+            .is_err()
+        {
+            warn!("stream processor did not stop within 30s; aborting it");
+            self.task.abort();
+        }
+        self.pool.close().await;
     }
 }
 
-/// Spawn the outbox processor, gated on leadership.
-async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<()> {
-    use fc_outbox::repository::{OutboxRepository, OutboxTableConfig};
+/// Spawn the outbox processor, gated on leadership: the same start-up as
+/// `fc-outbox-processor` (`fc_outbox::setup`). With `FC_OUTBOX_DB_URL`
+/// unset, a `postgres` outbox is read from the platform's own database, as
+/// Go's fc-server does. `FC_OUTBOX_ADMIN_PORT` serves Go's group admin API
+/// on localhost. The `mongo` backend is `fc-outbox-processor`'s only.
+async fn spawn_outbox_processor(
+    mut active_rx: watch::Receiver<bool>,
+    platform_pool: &sqlx::PgPool,
+) -> Result<()> {
+    use fc_outbox::setup;
     use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
-    let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
-
-    let table_config = OutboxTableConfig {
-        events_table: env_or("FC_OUTBOX_EVENTS_TABLE", "outbox_messages"),
-        dispatch_jobs_table: env_or("FC_OUTBOX_DISPATCH_JOBS_TABLE", "outbox_messages"),
-        audit_logs_table: env_or("FC_OUTBOX_AUDIT_LOGS_TABLE", "outbox_messages"),
-    };
-
-    let outbox_repo: Arc<dyn OutboxRepository> = match backend {
-        OutboxBackend::Sqlite => {
-            let url = std::env::var("FC_OUTBOX_DB_URL")
-                .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for sqlite outbox"))?;
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(5)
-                .connect(&url)
-                .await?;
-            let repo = fc_outbox::sqlite::SqliteOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            Arc::new(repo)
-        }
-        OutboxBackend::Postgres => {
-            let url = std::env::var("FC_OUTBOX_DB_URL")
-                .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for postgres outbox"))?;
-            let pool = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(10)
-                .connect(&url)
-                .await?;
-            let repo =
-                fc_outbox::postgres::PostgresOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            Arc::new(repo)
-        }
-        OutboxBackend::Mongo => {
+    let backend = setup::backend_from_env()?;
+    let table_config = setup::table_config_from_env();
+    let outbox_repo = match (backend, setup::database_url_from_env(backend)) {
+        (OutboxBackend::Mongo, _) => {
             return Err(anyhow::anyhow!(
                 "The mongo outbox backend is not supported by fc-server; run fc-outbox-processor instead"
+            ))
+        }
+        (_, Some(url)) => setup::connect(backend, &url, table_config).await?,
+        (OutboxBackend::Postgres, None) => {
+            info!("FC_OUTBOX_DB_URL unset: reading the outbox from the platform database");
+            setup::postgres_on_pool(platform_pool.clone(), table_config).await?
+        }
+        (_, None) => {
+            return Err(anyhow::anyhow!(
+                "FC_OUTBOX_DB_URL required for the {backend} outbox"
             ))
         }
     };
@@ -1269,6 +1362,11 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
     let config = EnhancedProcessorConfig::from_env();
 
     let processor = Arc::new(EnhancedOutboxProcessor::new(config, outbox_repo)?);
+
+    let admin_port = setup::admin_port_from_env();
+    if admin_port > 0 {
+        setup::serve_admin(admin_port, processor.clone(), std::future::pending()).await?;
+    }
 
     tokio::spawn(async move {
         loop {
@@ -1316,6 +1414,8 @@ struct HealthState {
     scheduled_job_enabled: bool,
     stream_enabled: bool,
     outbox_enabled: bool,
+    mcp_enabled: bool,
+    function_host_enabled: bool,
     is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -1332,6 +1432,8 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
             "scheduled_job": if state.scheduled_job_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "stream_processor": if state.stream_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "outbox": if state.outbox_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
+            "mcp": if state.mcp_enabled { "UP" } else { "DISABLED" },
+            "function_host": if state.function_host_enabled { "UP" } else { "DISABLED" },
         }
     }))
 }
@@ -1357,7 +1459,8 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
         "scheduled_job": state.scheduled_job_enabled,
         "stream": state.stream_enabled,
         "outbox": state.outbox_enabled,
-        "mcp": false,
+        "mcp": state.mcp_enabled,
+        "function_host": state.function_host_enabled,
     }))
 }
 
@@ -1366,14 +1469,30 @@ mod drain_tests {
     use super::*;
     use std::time::Duration;
 
-    async fn slow(delay: Duration) -> Router {
-        Router::new().route(
+    /// A route that takes `delay`, and a signal that a request reached it
+    /// (so a test drains only once the request is really in flight, however
+    /// long the client takes to build and connect).
+    async fn slow(delay: Duration) -> (Router, Arc<tokio::sync::Notify>) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let signal = entered.clone();
+        let app = Router::new().route(
             "/slow",
-            axum::routing::post(move || async move {
-                tokio::time::sleep(delay).await;
-                "done"
+            axum::routing::post(move || {
+                let signal = signal.clone();
+                async move {
+                    signal.notify_one();
+                    tokio::time::sleep(delay).await;
+                    "done"
+                }
             }),
-        )
+        );
+        (app, entered)
+    }
+
+    async fn in_flight(entered: &tokio::sync::Notify) {
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("the request reached the handler");
     }
 
     /// A client that never goes through a system proxy (a machine proxy can
@@ -1406,9 +1525,10 @@ mod drain_tests {
     /// finished and answered, not cut, as Go's `apiSrv.Shutdown` does.
     #[tokio::test]
     async fn shutdown_finishes_the_request_in_flight() {
-        let (url, stop, task) = serve(slow(Duration::from_millis(300)).await).await;
+        let (app, entered) = slow(Duration::from_millis(300)).await;
+        let (url, stop, task) = serve(app).await;
         let call = tokio::spawn(async move { local_client().post(url).send().await });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        in_flight(&entered).await;
 
         assert!(drain_http(&stop, vec![task], Duration::from_secs(5)).await);
         let resp = call.await.unwrap().expect("answered, not reset");
@@ -1418,9 +1538,10 @@ mod drain_tests {
     /// The drain is bounded: past the timeout what is left is aborted.
     #[tokio::test]
     async fn the_drain_gives_up_at_its_timeout() {
-        let (url, stop, task) = serve(slow(Duration::from_secs(30)).await).await;
+        let (app, entered) = slow(Duration::from_secs(30)).await;
+        let (url, stop, task) = serve(app).await;
         tokio::spawn(async move { local_client().post(url).send().await });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        in_flight(&entered).await;
 
         let started = std::time::Instant::now();
         assert!(!drain_http(&stop, vec![task], Duration::from_millis(200)).await);

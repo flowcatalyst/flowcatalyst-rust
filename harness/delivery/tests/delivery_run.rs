@@ -2,7 +2,7 @@
 //! the Rust binaries are prerequisites; see README.md):
 //!
 //! ```text
-//! cargo build -p fc-server -p fc-router-bin -p fc-outbox-processor
+//! cargo build -p fc-server -p fc-outbox-processor
 //! cargo test -p fc-delivery-harness --test delivery_run -- --ignored --nocapture
 //! ```
 //!

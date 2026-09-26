@@ -19,16 +19,18 @@ selects the router. Rust's `fc-server` now does the same:
 - **No database.** Postgres is connected, migrated and seeded only when a database-backed subsystem
   runs (platform, stream, scheduler or outbox: Go's `needsDB`). The router task sets no database
   variable.
-- **Shared router.** It runs the same router runtime (`fc_router::bootstrap::RouterRuntime`) as the
-  standalone binary.
+- **Shared router.** It runs the router runtime (`fc_router::bootstrap::RouterRuntime`), the only
+  wiring of the router there is.
 - **HTTP.** The router's surface is under `FC_ROUTER_HTTP_PREFIX` (default `/router`). `/health` at
   the root is Go's `{"status":"UP","version":…}`, always 200: that is the path the ALB target group
   probes on 8080.
 - **Metrics listener.** It listens on `FC_METRICS_PORT` (9090), with `/health`, `/ready` and
   `/metrics`, as Go.
 
-The standalone `fc-router` binary (`Dockerfile.router`) accepts the same environment through the same
-runtime. Its surface is at the root. It remains for self-hosting; production doesn't need it.
+There is no separate router binary or image any more (the standalone `fc-router` and
+`Dockerfile.router` were removed): FlowCatalyst ships three binaries, `fc-server`, `fc-dev` and
+`fc-outbox-processor`, and a router tier is `fc-server` in this role. Where the table below says
+"Standalone", it records what that former binary did.
 
 **Mapping to the task definition.** Build the main `Dockerfile` for **`linux/arm64`** (the task's
 `runtimePlatform` is ARM64). Push it to the router's ECR repository, `inhance/fc-router`, under the
@@ -219,7 +221,6 @@ As Go's `common.QueueConfig.UnmarshalJSON`:
   - the secret is never logged.
 
   A second test drops the secret: the process refuses to start before contacting any source.
-- `bin/fc-router/tests/prod_env.rs` runs the same contract against the standalone binary.
 - Unit tests:
   - `config_sync` (credential origin, re-mint after a 401, permanent refusals, parsing);
   - `platform_token`;

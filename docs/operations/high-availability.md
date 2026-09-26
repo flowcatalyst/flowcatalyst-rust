@@ -62,7 +62,7 @@ release on shutdown:
 Use distinct keys for distinct cluster roles. Some examples:
 
 - `fc:server:leader` — one fc-server cluster's leader.
-- `fc:router:leader` — standalone routers' leader (when routers are deployed separately).
+- `fc:router:leader` — a router tier's leader (router-only `fc-server` nodes, when routers are deployed separately).
 - `fc:processors:leader` — split deployment where scheduler + stream + outbox share a leader.
 - `app-myapp-outbox-leader` — application-side outbox processor's leader (one per application database).
 
@@ -242,7 +242,7 @@ The bottleneck is Postgres — there's no built-in support for cross-region writ
 
 - Leader election: `crates/fc-standby/src/lib.rs`.
 - Active/standby wiring in fc-server: `bin/fc-server/src/main.rs::main` — search for `leader_election`, `active_tx`, `active_rx`.
-- Per-subsystem leader gates: `bin/fc-server/src/main.rs::spawn_router`, `::spawn_scheduler`, `::spawn_stream_processor`, `::spawn_outbox_processor`.
+- Per-subsystem leader gates: `bin/fc-server/src/main.rs::start_router`, `::spawn_scheduler`, `::spawn_stream_processor`, `::spawn_outbox_processor`.
 - Combined health endpoint: `bin/fc-server/src/main.rs::combined_health_handler`.
 - Router standby integration: `crates/fc-router/src/standby.rs`.
 - ALB traffic watcher: `crates/fc-router/src/traffic.rs`.

@@ -1,7 +1,7 @@
-//! Broker backends for the router binaries (feature `backends`): the
-//! consumer factory that dispatches on a queue URI's scheme, and the SQS
-//! publisher behind the router API's publish endpoint. One copy, used by
-//! the standalone `fc-router` binary and `fc-server`'s router role.
+//! Broker backends for the router (feature `backends`): the consumer
+//! factory that dispatches on a queue URI's scheme, and the SQS publisher
+//! behind the router API's publish endpoint, used by `fc-server`'s router
+//! role.
 
 use std::sync::Arc;
 use std::time::Duration;

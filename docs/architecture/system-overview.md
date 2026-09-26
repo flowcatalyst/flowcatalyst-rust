@@ -55,42 +55,36 @@ FlowCatalyst is a multi-tenant event-driven integration platform. Consumer appli
 │  │             │ │  group     │ │           │ │  out, parts) │    │
 │  │             │ │  dispatch) │ │           │ │              │    │
 │  └─────────────┘ └────────────┘ └───────────┘ └──────────────┘    │
-│  ┌─────────────────────────────────────────┐                       │
-│  │  Outbox processor (optional, embedded)  │                       │
-│  └─────────────────────────────────────────┘                       │
-│                                                                     │
-│  Each subsystem toggled via env:                                    │
+│  ┌─────────────────────────────────────────┐ ┌──────────────────┐ │
+│  │  Outbox processor (optional, embedded)  │ │ MCP · Function   │ │
+│  └─────────────────────────────────────────┘ │ host (optional)  │ │
+│                                              └──────────────────┘ │
+│  Each role toggled via env:                                         │
 │      FC_PLATFORM_ENABLED, FC_ROUTER_ENABLED,                        │
-│      FC_SCHEDULER_ENABLED, FC_STREAM_PROCESSOR_ENABLED,             │
-│      FC_OUTBOX_ENABLED                                              │
+│      FC_SCHEDULER_ENABLED, FC_SCHEDULED_JOB_ENABLED,                │
+│      FC_STREAM_PROCESSOR_ENABLED, FC_OUTBOX_ENABLED,                │
+│      FC_MCP_ENABLED, FC_FUNCTION_HOST_ENABLED                       │
 │                                                                     │
-│  Background subsystems are gated by FC_STANDBY_ENABLED (Redis lock).│
+│  Background roles are gated by FC_STANDBY_ENABLED (Redis lock).     │
 └────────────────────────────────────────────────────────────────────┘
 
-Standalone alternatives (for separation of scaling concerns):
+The other two binaries:
 
-┌──────────────┐  ┌───────────────┐  ┌──────────────────┐
-│ fc-router    │  │ fc-platform-  │  │ fc-stream-       │
-│ (no PG dep)  │  │ server        │  │ processor        │
-└──────────────┘  └───────────────┘  └──────────────────┘
 ┌──────────────┐  ┌───────────────┐
 │ fc-outbox-   │  │ fc-dev        │
 │ processor    │  │ (dev monolith,│
-│ (sidecar     │  │  embedded SQL)│
+│ (sidecar     │  │  embedded PG) │
 │  for apps)   │  │               │
 └──────────────┘  └───────────────┘
 ```
 
-Binary inventory:
+Binary inventory (exactly three, as Go):
 
-| Binary | Subsystems | DB |
+| Binary | Roles | DB |
 |---|---|---|
-| `fc-server` | Platform + Scheduler + Router + Stream + Outbox (toggleable) | PostgreSQL |
-| `fc-router` | Standalone SQS consumer + HTTP delivery | none (config via HTTP) |
-| `fc-stream-processor` | Projections + fan-out + partition mgr | PostgreSQL (small pool) |
+| `fc-server` | Platform, Router, Scheduler, Scheduled jobs, Stream, Outbox, MCP, Function host — each a flag; a split deployment is `fc-server` per tier | PostgreSQL, only when a role needs it (not router, MCP or function host) |
 | `fc-outbox-processor` | Application outbox dispatcher | Application's own DB |
-| `fc-dev` | All subsystems + embedded PG + SQLite queue | embedded |
-| `fc-mcp-server` | MCP server for LLMs (read-only) | none (uses platform API) |
+| `fc-dev` | Every role + embedded PG + an embedded Postgres queue; `start`/`stop`/`init`/`fresh`/`mcp`/`outbox`/`upgrade` | embedded |
 
 Deployment topologies in [operations/topologies.md](../operations/topologies.md).
 

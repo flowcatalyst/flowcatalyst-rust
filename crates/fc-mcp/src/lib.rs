@@ -1,8 +1,9 @@
 //! FlowCatalyst MCP server.
 //!
 //! Read-only access to FlowCatalyst event types and subscriptions for AI
-//! agents. The library exposes `run_stdio` and `run_http` entrypoints; the
-//! `fc-mcp-server` binary and `fc-dev mcp` both call into here.
+//! agents. The library exposes `run_stdio` and `run_http` entrypoints for
+//! `fc-dev mcp`, and `serve_http` for the in-process MCP of `fc-server`
+//! (`FC_MCP_ENABLED`) and `fc-dev start --mcp`.
 //!
 //! Codegen is intentionally not offered as a tool — LLM clients are perfectly
 //! capable of producing typed code from a JSON Schema (use `get_schema`).
@@ -25,7 +26,7 @@ use rmcp::{
     ServiceExt,
 };
 
-pub use config::Config;
+pub use config::{resolve_bind, Config};
 pub use server::FcMcpServer;
 
 fn build_server(config: &Config) -> FcMcpServer {
@@ -76,9 +77,26 @@ pub async fn run_stdio(config: Config) -> Result<()> {
     Ok(())
 }
 
-/// Run the MCP server as a streamable HTTP service on `addr` at `/mcp`.
+/// Run the MCP server as a streamable HTTP service on `addr` at `/mcp`,
+/// after checking the platform is reachable, until Ctrl-C.
 pub async fn run_http(config: Config, addr: std::net::SocketAddr) -> Result<()> {
     assert_platform_reachable(&config.base_url).await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    serve_http(config, listener, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+}
+
+/// Serve the streamable HTTP transport at `/mcp` (and Go's `GET /health`,
+/// 200) on `listener` until `shutdown` resolves. No reachability check: an
+/// in-process MCP may start before its platform listener answers, and each
+/// tool call reaches the platform on its own.
+pub async fn serve_http(
+    config: Config,
+    listener: tokio::net::TcpListener,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<()> {
     let cancel = tokio_util::sync::CancellationToken::new();
     let factory_config = config.clone();
     let service = StreamableHttpService::new(
@@ -87,13 +105,18 @@ pub async fn run_http(config: Config, addr: std::net::SocketAddr) -> Result<()> 
         StreamableHttpServerConfig::default().with_cancellation_token(cancel.child_token()),
     );
 
-    let router = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("fc-mcp: http transport listening at http://{addr}/mcp");
+    let router = axum::Router::new()
+        .nest_service("/mcp", service)
+        .route("/health", axum::routing::get(|| async { "" }));
+    let addr = listener.local_addr()?;
+    tracing::info!(
+        base = %config.base_url,
+        "fc-mcp: http transport listening at http://{addr}/mcp"
+    );
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            shutdown.await;
             cancel.cancel();
         })
         .await?;

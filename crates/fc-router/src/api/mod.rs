@@ -411,8 +411,8 @@ pub fn create_router(
 /// Go's `internal/server.MountRouterHTTP`, which mounts the router HTTP
 /// surface under `FC_ROUTER_HTTP_PREFIX` (default `/router`) inside the
 /// unified `fc-server` binary; a Go-dialect ECS task definition health-checks
-/// and operates against `<prefix>/...` URLs, while this crate's own
-/// `bin/fc-router` deployments and tests keep hitting root paths unchanged.
+/// and operates against `<prefix>/...` URLs, while callers that pass no
+/// prefix (tests, fc-dev) keep hitting root paths unchanged.
 /// Auth is unaffected by nesting: the public/protected split above already
 /// happened before nesting runs, so the nested public routes (health,
 /// metrics, swagger, …) stay auth-free under the prefix too — nesting only

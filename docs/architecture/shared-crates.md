@@ -5,11 +5,9 @@ FlowCatalyst is a workspace of focused crates. This document maps what each one 
 ```
                      ┌─────────────────────────────┐
                      │    Binaries (bin/*)         │
-                     │  fc-server, fc-dev,         │
-                     │  fc-router, fc-platform-srv,│
-                     │  fc-stream-processor,       │
-                     │  fc-outbox-processor,       │
-                     │  fc-mcp-server              │
+                     │  fc-server (every role),    │
+                     │  fc-dev,                    │
+                     │  fc-outbox-processor        │
                      └──────────────┬──────────────┘
                                     │ uses
    ┌────────────────────────────────┼────────────────────────────────┐
@@ -183,7 +181,7 @@ Public surface in `lib.rs`: every module is re-exported at top level so binaries
 - `AlbTrafficConfig`, `spawn_traffic_watcher` (feature `alb`) — ALB target-group automation.
 - HTTP API routes (`api::create_router`).
 
-Standalone binary (`bin/fc-router/`) and embedded usage (`bin/fc-server/src/main.rs::spawn_router`) both come from this crate.
+`fc-server`'s router role (`bin/fc-server/src/main.rs::start_router`, over `fc_router::bootstrap`) and `fc-dev` both run the router from this crate.
 
 ---
 
@@ -250,15 +248,16 @@ Language equivalents live in `clients/typescript-sdk/` and `clients/laravel-sdk/
 `crates/fc-mcp/src/lib.rs`. Model Context Protocol server. Read-only surface for AI agents that need to query event types, subscriptions, schemas — useful when an AI assistant is helping a developer figure out which event to publish or which subscription to create.
 
 ```rust
-pub async fn run_stdio(config: &Config) -> Result<()>;
-pub async fn run_http(config: &Config, bind: SocketAddr) -> Result<()>;
+pub async fn run_stdio(config: Config) -> Result<()>;
+pub async fn run_http(config: Config, bind: SocketAddr) -> Result<()>;
+pub async fn serve_http(config: Config, listener: TcpListener, shutdown: impl Future) -> Result<()>;
 ```
 
 Config is OAuth client credentials (`base_url`, `client_id`, `client_secret`, `token_url`). The server authenticates as a service account, queries the platform via its HTTP API, and exposes the results as MCP tools to whatever LLM client is connected.
 
 Read-only by design. The MCP role is "explain the platform to an agent", not "let the agent reconfigure the platform".
 
-Two transports: stdio (default — for editor extensions) and HTTP (for standalone running). The `fc-mcp-server` binary just wraps `run_stdio` / `run_http`; you can also embed via `fc-dev mcp` for development.
+Two transports: stdio (default — for editor extensions) and streamable HTTP. `fc-dev mcp` wraps `run_stdio` / `run_http`; `serve_http` is the in-process listener of `fc-server`'s MCP role (`FC_MCP_ENABLED`) and `fc-dev start --mcp`.
 
 ---
 

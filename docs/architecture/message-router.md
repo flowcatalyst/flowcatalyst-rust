@@ -1,6 +1,6 @@
 # Message Router
 
-The message router is the delivery engine. It consumes dispatch-job pointers from a queue (SQS in production, SQLite/Postgres in dev), maintains FIFO ordering within message groups, applies per-pool rate limits and per-endpoint circuit breakers, and POSTs each message to its target webhook. Source: `crates/fc-router/`, binary `bin/fc-router/`.
+The message router is the delivery engine. It consumes dispatch-job pointers from a queue (SQS in production, SQLite/Postgres in dev), maintains FIFO ordering within message groups, applies per-pool rate limits and per-endpoint circuit breakers, and POSTs each message to its target webhook. Source: `crates/fc-router/`; it runs in `fc-server`'s router role (`FC_ROUTER_ENABLED`) and inside `fc-dev`.
 
 This document supersedes the older `docs/message-router.md` and the design notes in `crates/fc-router/ARCHITECTURE.md`.
 
@@ -383,23 +383,27 @@ FLOWCATALYST_CONFIG_URL=http://platform:3000/api/config/router \
 
 This is the simplest topology and what most deployments use. The platform API, router, scheduler, and stream processor share one process; standby leadership coordinates which subsystems run on which node.
 
-### Standalone `fc-router` binary
+### Router-only `fc-server`
 
 ```sh
-FLOWCATALYST_CONFIG_URL=https://platform.example.com/api/config/router \
-API_PORT=8080 \
-FLOWCATALYST_STANDBY_ENABLED=true \
-FLOWCATALYST_REDIS_URL=redis://redis:6379 \
-  ./fc-router
+FC_PLATFORM_ENABLED=false \
+FC_ROUTER_ENABLED=true \
+FLOWCATALYST_CONFIG_URL=https://platform.example.com/api/dispatch/router-config \
+FC_ROUTER_CLIENT_ID=... FC_ROUTER_CLIENT_SECRET=... \
+FC_ROUTER_PLATFORM_URL=https://platform.example.com \
+FC_STANDBY_ENABLED=true \
+FC_STANDBY_REDIS_URL=redis://redis:6379 \
+FC_STANDBY_LOCK_KEY=fc:router:leader \
+  ./fc-server
 ```
 
-Use this when the router needs separate scaling, separate IAM credentials (SQS-only), or separate network isolation from the platform. The standalone router has no Postgres dependency — all state is in memory and SQS.
+Use this when the router needs separate scaling, separate IAM credentials (SQS-only), or separate network isolation from the platform. It is Go's router task: with only the router enabled, `fc-server` connects to no database (all router state is in memory and SQS), serves the router surface under `FC_ROUTER_HTTP_PREFIX` (default `/router`) and Go's `/health` at the root. There is no separate router binary; the full contract is `docs/parity/router-env-vs-go.md`.
 
 ---
 
 ## Code references
 
-- Entry point: `bin/fc-router/src/main.rs`, embedded variant in `bin/fc-server/src/main.rs::spawn_router`.
+- Entry point: `bin/fc-server/src/main.rs::start_router`, over `crates/fc-router/src/bootstrap/` (`RouterEnv`, `RouterRuntime`).
 - Orchestrator: `crates/fc-router/src/manager.rs::QueueManager`.
 - Pool: `crates/fc-router/src/pool.rs::ProcessPool`.
 - Mediator: `crates/fc-router/src/mediator.rs::HttpMediator`.

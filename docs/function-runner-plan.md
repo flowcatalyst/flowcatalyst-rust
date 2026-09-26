@@ -404,7 +404,13 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - Run `parity/scenarios/functions/functions.json` (41 steps) against Rust through the `SubprocessSide` runner on the Java branch `parity/rust-side`.
 - Add the surfaces Java's `parity/surface.json` doesn't cover yet: manifest check, artifact upload and download, and the schema route.
 
-### Track H: host (`bin/fc-fnhost` plus crates)
+### Track H: host (`crates/fc-fnhost-core`, run by `fc-server`)
+
+> **Packaging (2026-09-26):** the host ships in `fc-server`, not as a binary of its own: with
+> `FC_FUNCTION_HOST_ENABLED=true` and every other role off, `fc-server` is exactly the former
+> `bin/fc-fnhost` daemon (same `FC_FN_*` environment, ports, logging and exit codes); beside other
+> roles it runs in the process on `FC_FN_PORT` 8090 / `FC_FN_PUBLIC_PORT` 8091 / `FC_FN_METRICS_PORT`
+> 9091. See `bin/fc-server/src/function_host.rs` and `docs/operations/topologies.md`.
 
 **H1: `crates/fc-function-abi`** (about 700)
 - serde mirrors of `function-api`: `Request`, `Caller` (with `Principal`'s permission helpers, and a matcher pinned against fc-platform's by an agreement test, as Java does), `Reply` validation, `OutboundEvent`, the emit result, `Webhook::event` / `Webhook::schedule`, and `FunctionAddress`.
@@ -435,7 +441,7 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
   (`crates/fc-fnhost-core/src/artifact/ecr.rs`). Every other property of the store is unchanged: the digest is
   still verified after download, the 256 MiB cap still applies, and neither the token nor the password is ever
   logged. Gated behind the `ecr` cargo feature on `fc-fnhost-core` (adds `aws-sdk-ecr` + `aws-config`), on by
-  default in the `fc-fnhost` binary; a build with the feature off falls back to the plain anonymous/Bearer/Basic
+  on in `fc-server` (as it was in the former `fc-fnhost` binary); a build with the feature off falls back to the plain anonymous/Bearer/Basic
   flow, which answers `Unauthorized` for an ECR host unless `RegistryCredentials::fixed` names one explicitly.
   **IAM permissions needed** on the host's role: `ecr:GetAuthorizationToken` (account-wide, cannot be scoped to
   a repository), plus `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` scoped to the repositories it pulls
@@ -544,7 +550,7 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
 - B1–B5 from Java's `docs/spec/function-host-benchmark.md`, measured on the Rust host and the Java host with the same WASM guests on the same machine. Record them in `docs/function-runner-density.md`.
 
 **H8: fc-dev integration**
-- fc-dev runs the platform and an in-process `fc-fnhost` together (the equivalent of Java's `fcdev`).
+- fc-dev runs the platform and an in-process function host together (the equivalent of Java's `fcdev`).
 - Local publish, deploy and invoke of a Rust hello guest, with signatures off only in dev mode.
 
 > **H8 outcome (2026-09-25).** Done on `feat/fn-h8-fcdev`.

@@ -15,7 +15,7 @@ fc-router = { path = "../../crates/fc-router" }
 # one DB, one pool, queue tables live alongside control-plane tables.
 fc-queue = { path = "../../crates/fc-queue", features = ["postgres"] }
 # Outbox supports all database backends - reads from developer's app database
-fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mongo"] }
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mysql", "mongo"] }
 fc-stream = { path = "../../crates/fc-stream" }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-platform = { path = "../../crates/fc-platform" }

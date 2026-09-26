@@ -150,7 +150,7 @@ impl QueueManager {
     /// (`ensure_fallback_pool`) idle for at least `ttl` — no message routed
     /// to it, tracked by `synth_pools`/`touch_synth_pool`. `ttl ==
     /// Duration::ZERO` disables the sweep entirely (see the call site in
-    /// `bin/fc-router/src/main.rs` for how `FC_ROUTER_SYNTH_POOL_IDLE_SECS`
+    /// `bootstrap::env` for how `FC_ROUTER_SYNTH_POOL_IDLE_SECS`
     /// maps onto this — `Duration` has no negative representation, so the
     /// "negative disables" half of Go's `EvictIdleSynthPools`/`ttl <= 0`
     /// check collapses to "zero disables" here).

@@ -177,13 +177,14 @@ its own table.
 
 ## Configuration
 
-Read by `EnhancedProcessorConfig::from_env` (the standalone binary and
-`fc-server`). Go's names come first; the earlier names still work.
+Read by `fc_outbox::setup` and `EnhancedProcessorConfig::from_env`, the same
+start-up for the standalone binary and `fc-server`'s outbox role. Go's names
+come first; the earlier names still work.
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (standalone binary; `fc-server` reads `FC_OUTBOX_DB_TYPE`) |
-| `FC_OUTBOX_DB_URL` | — (required) | Application database URL |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`mongo`: the standalone binary only) |
+| `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | — | Application database URL. Required by the standalone binary; `fc-server` reads a `postgres` outbox from the platform database when unset, as Go |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` / `…_DISPATCH_JOBS_TABLE` / `…_AUDIT_LOGS_TABLE` | `outbox_messages` | Per-type table |
 | `FC_OUTBOX_PLATFORM_URL` / `FC_OUTBOX_API_URL` / `FC_API_BASE_URL` / `FLOWCATALYST_URL` | `http://localhost:8080` | Platform API base URL |
@@ -195,7 +196,7 @@ Read by `EnhancedProcessorConfig::from_env` (the standalone binary and
 | `FC_OUTBOX_MAX_CONCURRENT_GROUPS` / `FC_MAX_CONCURRENT_GROUPS` | `10` | Groups sending at once |
 | `FC_OUTBOX_MAX_RETRIES` | `3` | Attempts before a retryable failure is final |
 | `FC_OUTBOX_BLOCK_ON_ERROR` | `true` | A failed item stops (and a final failure blocks) its group |
-| `FC_OUTBOX_ADMIN_PORT` | — | Standalone binary: serve Go's group admin API on 127.0.0.1 |
+| `FC_OUTBOX_ADMIN_PORT` | — | Serve Go's group admin API on 127.0.0.1 (both) |
 | `FC_METRICS_PORT` | `9090` | Standalone binary: `/metrics`, `/health`, `/ready` |
 
 Group admin API (`FC_OUTBOX_ADMIN_PORT`, same routes and bodies as Go):
@@ -236,6 +237,7 @@ If your application happens to share a database with FlowCatalyst, you can write
 
 - Entry point (standalone): `bin/fc-outbox-processor/src/main.rs`.
 - Entry point (embedded): `bin/fc-server/src/main.rs::spawn_outbox_processor`.
+- Shared start-up (backend, tables, admin API): `crates/fc-outbox/src/setup.rs`.
 - Orchestrator: `crates/fc-outbox/src/enhanced_processor.rs::EnhancedOutboxProcessor`.
 - Repository trait: `crates/fc-outbox/src/repository.rs`.
 - Backends: `crates/fc-outbox/src/{postgres,sqlite,mysql,mongo}.rs`.

@@ -41,7 +41,8 @@ subtle = { workspace = true }
 
 base64 = "0.22"
 # ECR registry auth (owner decision #14), behind the `ecr` feature: pulls in
-# the AWS SDK only when it is enabled (on by default in bin/fc-fnhost).
+# the AWS SDK only when it is enabled (on in fc-server, whose function-host
+# role is the deployed host).
 aws-sdk-ecr = { workspace = true, optional = true }
 aws-config = { workspace = true, optional = true }
 # The listeners (H5): HTTP/1.1 + h2c with graceful shutdown.

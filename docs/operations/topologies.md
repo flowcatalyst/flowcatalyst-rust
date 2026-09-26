@@ -6,16 +6,35 @@ This document supersedes the older `docs/builds.md`.
 
 ---
 
-## Binary inventory
+## Three binaries
 
-| Binary | Purpose | Recommended for |
+FlowCatalyst ships exactly three binaries, as Go does (`cmd/fc-server`, `cmd/fcdev`, plus the outbox sidecar):
+
+| Binary | Purpose | Where it runs |
 |---|---|---|
-| `fc-server` | Unified production binary, all subsystems toggleable (the platform API alone is its default role) | Most deployments, and every tier of a split topology |
-| `fc-router` | Standalone SQS consumer + webhook delivery | Split topologies, separate IAM |
-| `fc-stream-processor` | Projections, fan-out, partition manager | Split topologies |
-| `fc-outbox-processor` | Application outbox dispatcher (sidecar for apps) | Always — runs alongside each app |
-| `fc-dev` | Development monolith with embedded PG + SQLite queue | Local dev only |
-| `fc-mcp-server` | Read-only MCP server for LLM clients | Optional |
+| `fc-server` | The one deployed binary: every production role, each behind an `FC_*_ENABLED` flag (the platform API alone is its default role). One image (`Dockerfile`) serves every tier. | Every tier of every topology below |
+| `fc-outbox-processor` | Application outbox dispatcher: reads an application's `outbox_messages` and forwards to the platform (sqlite, postgres, mongo) | Beside each application (Topology 5) |
+| `fc-dev` | Development monolith with embedded Postgres; subcommands `start` (default), `stop`, `init`, `fresh`, `mcp`, `outbox`, `upgrade`, `fn` | Local dev only |
+
+There is no separate router, stream-processor, MCP or function-host binary any more: each is an `fc-server` role. A split topology is **`fc-server` per tier, with different flags**.
+
+### fc-server roles
+
+| Flag (alias) | Default | Role | Needs Postgres | Leader-gated |
+|---|---|---|---|---|
+| `FC_PLATFORM_ENABLED` (`PLATFORM_ENABLED`) | `true` | Platform API + SPA, housekeeping | yes | no |
+| `FC_ROUTER_ENABLED` (`MESSAGE_ROUTER_ENABLED`) | `false` | Message router (SQS → `/api/dispatch/process`), surface under `/router` | no | yes |
+| `FC_SCHEDULER_ENABLED` (`DISPATCH_SCHEDULER_ENABLED`) | `false` | Dispatch scheduler | yes | yes |
+| `FC_SCHEDULED_JOB_ENABLED` (`SCHEDULED_JOB_SCHEDULER_ENABLED`) | `false` | Scheduled-job cron engine | yes | yes |
+| `FC_STREAM_PROCESSOR_ENABLED` (`STREAM_PROCESSOR_ENABLED`) | `false` | Projections, fan-out, partition manager (own 4-connection pool) | yes | yes |
+| `FC_OUTBOX_ENABLED` (`OUTBOX_PROCESSOR_ENABLED`) | `false` | Embedded outbox processor | yes | yes |
+| `FC_MCP_ENABLED` | `false` | Read-only MCP server on `FC_MCP_PORT` (8090) | no | no |
+| `FC_FUNCTION_HOST_ENABLED` | `false` | WASM function host | no | no |
+| `FC_STANDBY_ENABLED` (`STANDBY_ENABLED`) | `false` | Redis leader election for the leader-gated roles | — | — |
+
+Postgres is connected, migrated and seeded only when a role that needs it is on (Go's `needsDB`). A router-only, MCP-only or function-host-only node opens no database connection. The full variable reference is [configuration.md](configuration.md).
+
+**A function-host-only node** (`FC_PLATFORM_ENABLED=false FC_FUNCTION_HOST_ENABLED=true`, nothing else) is exactly the former `fc-fnhost` daemon: its `FC_FN_*` environment, function listeners on 8080/8081, `/health` `/ready` `/metrics` on 9090, and none of fc-server's own listeners — the density shape for scaling function pools independently. Beside other roles the host takes ports of its own (8090/8091/9091).
 
 ---
 
@@ -42,13 +61,16 @@ FC_PLATFORM_ENABLED=true \
 FC_ROUTER_ENABLED=true \
 FC_SCHEDULER_ENABLED=true \
 FC_STREAM_PROCESSOR_ENABLED=true \
+FC_SCHEDULED_JOB_ENABLED=true \
 FC_OUTBOX_ENABLED=false \
 FC_DATABASE_URL=postgresql://... \
-FLOWCATALYST_CONFIG_URL=http://localhost:3000/api/config/router \
+FLOWCATALYST_CONFIG_URL=http://localhost:8080/api/dispatch/router-config \
+FC_ROUTER_PLATFORM_URL=http://localhost:8080 \
+FC_ROUTER_CLIENT_ID=... FC_ROUTER_CLIENT_SECRET=... \
   fc-server
 ```
 
-Note `FLOWCATALYST_CONFIG_URL` points at the same process (the platform API serves the router config endpoint). Self-referential is fine — the router only fetches config on a 5-minute interval, not on the critical path.
+Note `FLOWCATALYST_CONFIG_URL` points at the same process (the platform API serves the router config endpoint to the router's `client_credentials` client). Self-referential is fine — the router only fetches config on a 5-minute interval, not on the critical path.
 
 When to use:
 - Single-region deployment, single tenant, modest throughput.
@@ -101,7 +123,9 @@ FC_STANDBY_ENABLED=true \
 FC_STANDBY_REDIS_URL=redis://redis.internal:6379 \
 FC_STANDBY_LOCK_KEY=fc:server:leader \
 FC_DATABASE_URL=postgresql://... \
-FLOWCATALYST_CONFIG_URL=http://localhost:3000/api/config/router \
+FLOWCATALYST_CONFIG_URL=http://localhost:8080/api/dispatch/router-config \
+FC_ROUTER_PLATFORM_URL=http://localhost:8080 \
+FC_ROUTER_CLIENT_ID=... FC_ROUTER_CLIENT_SECRET=... \
   fc-server
 ```
 
@@ -124,66 +148,88 @@ When not:
 
 ## Topology 3 — Split services
 
-Run each subsystem in its own binary, scale independently.
+Run each role on its own tier, scale each independently. Every tier is the same `fc-server` image with different flags.
 
 ```
    ┌───────────────────────────┐
    │  fc-server, platform (n)  │  ← scales horizontally behind LB
    └──────────────┬────────────┘
                   │
-   ┌──────────────┼─────────────┬─────────────┬─────────────┐
-   │              │             │             │             │
-   ▼              ▼             ▼             ▼             ▼
-fc-router      fc-stream-    fc-outbox-   PostgreSQL    Redis
-(active/       processor     processor
- standby pair) (1 leader)   (per app)
-   │              │             │
-   ▼              ▼             │
-  SQS            (reads PG)     ▼
-                              Platform /api/events/batch
+   ┌──────────────┼──────────────┬──────────────┬───────────────┬─────────────┐
+   │              │              │              │               │             │
+   ▼              ▼              ▼              ▼               ▼             ▼
+fc-server      fc-server      fc-server      fc-server      fc-outbox-    PostgreSQL
+router         worker         function host  MCP            processor     + Redis
+(active/       (scheduler,    (per pool,     (optional)     (per app)
+ standby)       stream,        N nodes)
+   │            1 leader)        │
+   ▼              │              ▼
+  SQS          (reads PG)     /control/functions/* on the platform
 ```
 
-Per-binary configuration:
+Per-tier configuration:
 
 ```sh
 # Platform API tier — N instances, no background work (fc-server's
-# default role: platform on, every background subsystem off)
+# default role: platform on, every background role off)
 fc-server  \
-  FC_API_PORT=3000  \
   FC_DATABASE_URL=postgresql://...
 
-# Router tier — active/standby pair
-fc-router  \
-  API_PORT=8080  \
-  FLOWCATALYST_CONFIG_URL=http://platform:3000/api/config/router  \
-  FLOWCATALYST_STANDBY_ENABLED=true  \
-  FLOWCATALYST_REDIS_URL=redis://...  \
-  FLOWCATALYST_LOCK_KEY=fc:router:leader
+# Router tier — active/standby pair, no database
+fc-server  \
+  FC_PLATFORM_ENABLED=false  \
+  FC_ROUTER_ENABLED=true  \
+  FLOWCATALYST_CONFIG_URL=http://platform:8080/api/dispatch/router-config  \
+  FC_ROUTER_PLATFORM_URL=http://platform:8080  \
+  FC_ROUTER_CLIENT_ID=... FC_ROUTER_CLIENT_SECRET=...  \
+  FC_STANDBY_ENABLED=true  \
+  FC_STANDBY_REDIS_URL=redis://...  \
+  FC_STANDBY_LOCK_KEY=fc:router:leader
 
-# Stream / scheduler tier — single active instance
+# Worker tier (stream + schedulers) — single active instance
 fc-server  \
   FC_PLATFORM_ENABLED=false  \
   FC_SCHEDULER_ENABLED=true  \
+  FC_SCHEDULED_JOB_ENABLED=true  \
   FC_STREAM_PROCESSOR_ENABLED=true  \
   FC_STANDBY_ENABLED=true  \
   FC_STANDBY_REDIS_URL=redis://...  \
   FC_STANDBY_LOCK_KEY=fc:processors:leader
 
-# Optional: dedicated stream processor (if scheduler and stream want
-# different leader keys or scaling)
-fc-stream-processor  \
+# Optional: the stream processor on its own tier (if it wants its own
+# leader key or scaling) — the same flags, one role
+fc-server  \
+  FC_PLATFORM_ENABLED=false  \
+  FC_STREAM_PROCESSOR_ENABLED=true  \
   FC_DATABASE_URL=postgresql://...
+
+# Function host tier — one pool per node group, no database; exactly the
+# former fc-fnhost daemon
+fc-server  \
+  FC_PLATFORM_ENABLED=false  \
+  FC_FUNCTION_HOST_ENABLED=true  \
+  FC_FN_PLATFORM_URL=http://platform:8080  \
+  FC_FN_CLIENT_ID=... FC_FN_CLIENT_SECRET=...  \
+  FC_FN_POOL=default
+
+# Optional MCP tier — read-only, calls the platform over HTTP
+fc-server  \
+  FC_PLATFORM_ENABLED=false  \
+  FC_MCP_ENABLED=true  \
+  FC_MCP_BIND=0.0.0.0  \
+  FLOWCATALYST_URL=http://platform:8080  \
+  FLOWCATALYST_CLIENT_ID=... FLOWCATALYST_CLIENT_SECRET=...
 ```
 
 When to use:
 - The API tier sees much more traffic than dispatch (separate scaling).
 - IAM separation: the router needs SQS permissions; the platform shouldn't.
-- Different node sizes per role (small API nodes, one big dispatch node).
-- You want the router to deploy on a different cadence than the platform.
+- Different node sizes per role (small API nodes, one big dispatch node, dense function hosts).
+- You want the router to deploy on a different cadence than the platform (same image, a different tag per tier).
 
 When not:
 - Operational overhead exceeds the benefit (typically below ~1k events/sec).
-- The team isn't comfortable managing five rolling deploys.
+- The team isn't comfortable managing several rolling deploys.
 
 ---
 
@@ -315,13 +361,17 @@ Not a production topology, but worth mentioning here. `fc-dev` is the all-in-one
 ```
 fc-dev
    ├── Platform API
-   ├── Router (with SQLite queue, not SQS)
-   ├── Scheduler
+   ├── Router (with an embedded Postgres queue, not SQS)
+   ├── Scheduler + scheduled jobs
    ├── Stream processor
-   ├── Outbox processor (optional)
+   ├── Function host (on by default; --no-functions)
+   ├── Outbox processor (optional, --outbox-enabled)
+   ├── MCP server (optional, --mcp)
    ├── Embedded Postgres (optional, `embedded-db` feature)
    └── Embedded frontend (rust-embed of frontend/dist/)
 ```
+
+Its subcommands mirror Go's `fcdev`: `start` (the default), `stop`, `init`, `fresh`, `mcp`, `outbox` (and `outbox create-table`), `upgrade`, plus `fn` for functions.
 
 Runs in one process. No external dependencies if `--embedded-db` is on (PG binary is bundled into the executable). Used for:
 
@@ -341,8 +391,8 @@ Two ports per binary: the API port (varies) and the metrics port (default 9090).
 |---|---|---|
 | `GET /health` | metrics | Combined health JSON including subsystem status + leader status |
 | `GET /metrics` | metrics | Prometheus scrape target |
-| `GET /q/live` | API | Kubernetes liveness probe (router/standalone binaries) |
-| `GET /q/ready` | API | Kubernetes readiness probe |
+| `GET /health` | API | Go's `{"status":"UP","version":…}`, always 200 (the load balancer's probe) |
+| `GET /ready` | metrics | Which roles this node runs |
 
 The combined health on `fc-server`:
 
@@ -355,8 +405,11 @@ The combined health on `fc-server`:
     "platform":         "UP",
     "router":           "UP" | "STANDBY" | "DISABLED",
     "scheduler":        "UP" | "STANDBY" | "DISABLED",
+    "scheduled_job":    "UP" | "STANDBY" | "DISABLED",
     "stream_processor": "UP" | "STANDBY" | "DISABLED",
-    "outbox":           "UP" | "STANDBY" | "DISABLED"
+    "outbox":           "UP" | "STANDBY" | "DISABLED",
+    "mcp":              "UP" | "DISABLED",
+    "function_host":    "UP" | "DISABLED"
   }
 }
 ```
@@ -368,7 +421,7 @@ The combined health on `fc-server`:
 ## Code references
 
 - Unified binary: `bin/fc-server/src/main.rs`.
-- Subsystem spawners: `bin/fc-server/src/main.rs::spawn_router`, `::spawn_scheduler`, `::spawn_stream_processor`, `::spawn_outbox_processor`.
-- Per-binary configuration: `Dockerfile`, `Dockerfile.router`, `justfile`.
+- Role wiring: `bin/fc-server/src/main.rs::start_router`, `::spawn_scheduler`, `::spawn_scheduled_job_scheduler`, `::spawn_stream_processor`, `::spawn_outbox_processor`; `bin/fc-server/src/mcp.rs`; `bin/fc-server/src/function_host.rs`.
+- Image and build: `Dockerfile` (fc-server, every tier), `justfile`.
 - Container assembly examples: `docker-compose.yml`, `docker-compose.dev.yml`.
 - Health endpoints: `bin/fc-server/src/main.rs::combined_health_handler`.

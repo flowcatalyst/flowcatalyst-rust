@@ -476,7 +476,7 @@ async fn config_defining_a_synthesised_code_takes_ownership_without_pool_replace
 
 /// A non-positive TTL disables the sweep rather than evicting everything
 /// immediately. `Duration` has no negative representation — see
-/// `bin/fc-router/src/main.rs` for how a negative
+/// `crates/fc-router/src/bootstrap/env.rs` for how a negative
 /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` maps onto `Duration::ZERO` here.
 #[tokio::test]
 async fn ttl_disabled_sweep_is_a_no_op() {

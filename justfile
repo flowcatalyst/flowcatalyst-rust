@@ -248,15 +248,8 @@ check:
 build-dev:
     cargo build --bin fc-dev
 
-build-router:
-    cargo build --bin fc-router-bin
-
-
 build-outbox:
     cargo build --bin fc-outbox-processor
-
-build-stream:
-    cargo build --bin fc-stream-processor
 
 build-server:
     cargo build --bin fc-server
