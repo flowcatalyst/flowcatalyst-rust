@@ -1359,23 +1359,10 @@ pub mod checks {
 
     /// Go's `CheckScopeAccess` (shared/auth/auth.go:433-444): a
     /// client-scoped resource needs that client, a platform one (no client)
-    /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`.
+    /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`. One rule,
+    /// kept in [`crate::shared::caller_reach::check_scope_access`].
     pub fn check_scope_access(context: &AuthContext, client_id: Option<&str>) -> Result<()> {
-        let reach = match client_id {
-            Some(c) => context.can_access_client(c),
-            None => context.is_anchor() || context.has_permission(permissions::ADMIN_ALL),
-        };
-        if reach {
-            return Ok(());
-        }
-        Err(PlatformError::forbidden_code(
-            "SCOPE_FORBIDDEN",
-            if client_id.is_some() {
-                "no access to this resource's client"
-            } else {
-                "anchor scope required for this resource"
-            },
-        ))
+        crate::shared::caller_reach::require_scope_access(context, client_id)
     }
 
     /// Sync endpoints: admin path. Application-scoped sync uses the
