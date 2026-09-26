@@ -859,5 +859,173 @@
     "pointer": "/scope",
     "reason": "/auth/me carries the caller's scope so the SPA can gate anchor-only pages; Go's omits it.",
     "ruling": "owner decisions 2026-09-25, Follow-ups found during wave 1: '/auth/me should include the caller's scope/tier, so the SPA can gate anchor-only pages'"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-event-types-create",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-event-types-update",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-event-types-remove-unlisted",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-dispatch-pools-create",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-dispatch-pools-update",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-subscriptions-create",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-subscriptions-update",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-principals-create",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-principals-update",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-processes-create",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "applications: the nine app-scoped SDK sync routes",
+    "step": "sync-processes-update",
+    "pointer": "/**",
+    "reason": "Go defect: aud_logs.entity_id is VARCHAR(17) (Go 006) and each app-scoped sync writes its rollup audit row keyed by the application code ('parity-sync-<run>', 24 characters), so Go answers 500 AUDIT_WRITE ('rollup audit write failed') and rolls the sync back. Rust widened the column (migration 038) and syncs. The whole Go response is the 500.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "docs: the embedded platform index, application pages via the SDK sync, and the DOCS_VIEW gate",
+    "step": "list-before-any-app-docs",
+    "pointer": "/applications/0/applicationCode",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "docs: the embedded platform index, application pages via the SDK sync, and the DOCS_VIEW gate",
+    "step": "list-after-sync-includes-application-group",
+    "pointer": "/applications/1/applicationCode",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "docs: the embedded platform index, application pages via the SDK sync, and the DOCS_VIEW gate",
+    "step": "confinement-read-succeeds-with-docs-view",
+    "pointer": "/applications/1/applicationCode",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution, source immutability, permission grants, filters, and the permission catalogue",
+    "step": "filters-applications",
+    "pointer": "/applicationCodes/1",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal. The masked value sorts after 'platform', so the two members swap.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "roles: CRUD, id/name resolution, source immutability, permission grants, filters, and the permission catalogue",
+    "step": "filters-applications",
+    "pointer": "/applicationCodes/2",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal. The masked value sorts after 'platform', so the two members swap.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: client-access grants, client association, developer credential, application access, SDK endpoints",
+    "step": "sync-users",
+    "pointer": "/syncedEmails/0",
+    "reason": "Consequence of Go's app-scoped sync defect (applications/sdk-sync): on Rust the sync's rollup audit rows exist and are keyed by the application code, so the audit-logs step records the code under entityId first and the normaliser masks it as «auto:entityId»; Go rolled those rows back and shows the code plain. The values are equal. Here the same string ('parity-sync-<run>') is the synced email's local part.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-all",
+    "pointer": "/principals/**",
+    "reason": "Both #40 defects: Rust lists the USER the app-scoped principal sync created (parity-syncuser-<run>, Go rolled the sync back with 500 AUDIT_WRITE), and Go lists the SERVICE principal of the service account authz cleanup-service-account deleted (Go leaves it behind; Rust deletes it). Every other row is equal; the two rows shift the ones after them.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-by-active",
+    "pointer": "/principals/**",
+    "reason": "Both #40 defects: Rust lists the USER the app-scoped principal sync created (parity-syncuser-<run>, Go rolled the sync back with 500 AUDIT_WRITE), and Go lists the SERVICE principal of the service account authz cleanup-service-account deleted (Go leaves it behind; Rust deletes it). Every other row is equal; the two rows shift the ones after them.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-by-active",
+    "pointer": "/total",
+    "reason": "As /principals/**: one row more on one side (Go's leftover SERVICE principal, or Rust's synced user, depending on the filter).",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-by-type",
+    "pointer": "/principals/**",
+    "reason": "Both #40 defects: Rust lists the USER the app-scoped principal sync created (parity-syncuser-<run>, Go rolled the sync back with 500 AUDIT_WRITE), and Go lists the SERVICE principal of the service account authz cleanup-service-account deleted (Go leaves it behind; Rust deletes it). Every other row is equal; the two rows shift the ones after them.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-by-type",
+    "pointer": "/total",
+    "reason": "As /principals/**: one row more on one side (Go's leftover SERVICE principal, or Rust's synced user, depending on the filter).",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+    "step": "list-sorted-desc",
+    "pointer": "/principals/**",
+    "reason": "Both #40 defects: Rust lists the USER the app-scoped principal sync created (parity-syncuser-<run>, Go rolled the sync back with 500 AUDIT_WRITE), and Go lists the SERVICE principal of the service account authz cleanup-service-account deleted (Go leaves it behind; Rust deletes it). Every other row is equal; the two rows shift the ones after them.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "oauth-clients: create (PUBLIC/CONFIDENTIAL), get, list, update, activate/deactivate, rotate-secret, delete, anchor confinement",
+    "step": "list",
+    "pointer": "/clients/**",
+    "reason": "Go defect: Go's service-account delete (authz cleanup-service-account) removes the iam_service_accounts row only and leaves its SERVICE principal (active, still holding platform:application-service) and its OAuth client, whose credentials keep working. Rust deletes all three. Go's list therefore holds the deleted account's client ('Parity Authz <run> Service Account Client'); every other client is equal, and the extra row shifts the ones after it.",
+    "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
   }
 ]
