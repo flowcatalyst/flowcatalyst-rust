@@ -27,7 +27,7 @@ pub struct LoginAttemptsQuery {
     /// Opaque cursor returned by a previous page's `nextCursor`. Omit for
     /// the first page.
     pub after: Option<String>,
-    pub page_size: Option<u64>,
+    pub page_size: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -90,7 +90,7 @@ pub struct LoginAttemptsState {
         ("date_from" = Option<String>, Query, description = "Filter from date"),
         ("date_to" = Option<String>, Query, description = "Filter to date"),
         ("page" = Option<u64>, Query, description = "Page number"),
-        ("page_size" = Option<u64>, Query, description = "Page size"),
+        ("page_size" = Option<i64>, Query, description = "Page size"),
         ("sortField" = Option<String>, Query, description = "Sort field (attempted_at, identifier, outcome, attempt_type)"),
         ("sortOrder" = Option<String>, Query, description = "Sort order (asc or desc, default: desc)"),
     ),
@@ -108,11 +108,14 @@ async fn list_login_attempts(
 
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
-    let size = query.page_size.unwrap_or(50).clamp(1, 200) as usize;
-    let cursor = match query.after.as_deref() {
-        Some(c) => Some(decode_cursor(c).map_err(|_| PlatformError::validation("Invalid cursor"))?),
-        None => None,
+    // Go: a size outside 1..=200 (or none) reads 50.
+    let size = match query.page_size {
+        Some(n @ 1..=200) => n as usize,
+        _ => 50,
     };
+    // Go (loginattempt/api): a cursor that does not decode is ignored, so
+    // the read starts from the newest attempt.
+    let cursor = query.after.as_deref().and_then(|c| decode_cursor(c).ok());
 
     let mut items = state
         .login_attempt_repo
