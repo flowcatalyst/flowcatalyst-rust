@@ -328,6 +328,7 @@ pub async fn update(
         active: req.active,
         scope: parse_opt(req.scope.as_deref())?,
         client_id: req.client_id,
+        email: req.email,
     };
     let exec = ExecutionContext::create(&ctx.principal_id);
     state.update_use_case.run(cmd, exec).await.into_result()?;
@@ -533,25 +534,16 @@ pub async fn client_grants(
     ctx: &AuthContext,
     id: &str,
 ) -> Result<ClientAccessListResponse, PlatformError> {
-    // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251).
+    // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251),
+    // then the grant rows themselves, each with its own id and date, oldest
+    // first. An unknown principal has no grants.
     crate::checks::require_anchor_scope(ctx)?;
-    let principal = state
-        .principal_repo
-        .find_by_id(id)
+    let grants = state
+        .client_access_grant_repo
+        .find_by_principal(id)
         .await?
-        .or_not_found("Principal", id)?;
-
-    // Convert assigned_clients to grants (synthesized since we don't store grant metadata)
-    let grants: Vec<ClientAccessGrantResponse> = principal
-        .assigned_clients
-        .iter()
-        .enumerate()
-        .map(|(i, client_id)| ClientAccessGrantResponse {
-            id: format!("{}-{}", id, i), // Synthetic ID
-            client_id: client_id.clone(),
-            granted_at: principal.created_at.to_rfc3339(), // Use principal creation as fallback
-            expires_at: None,
-        })
+        .into_iter()
+        .map(ClientAccessGrantResponse::from)
         .collect();
 
     Ok(ClientAccessListResponse { grants })
@@ -568,7 +560,6 @@ pub async fn grant_client_access(
 
     crate::checks::can_grant_client_access(ctx)?;
 
-    let granted_at = chrono::Utc::now();
     let cmd = GrantClientAccessCommand {
         user_id: id.to_string(),
         client_id: client_id.clone(),
@@ -580,21 +571,13 @@ pub async fn grant_client_access(
         .await
         .into_result()?;
 
-    let refreshed = state
-        .principal_repo
-        .find_by_id(id)
+    // The grant row just written (Go `grantClientAccess`).
+    let grant = state
+        .client_access_grant_repo
+        .find_by_principal_and_client(id, &client_id)
         .await?
-        .or_not_found("Principal", id)?;
-    Ok(ClientAccessGrantResponse {
-        id: format!(
-            "{}-{}",
-            id,
-            refreshed.assigned_clients.len().saturating_sub(1)
-        ),
-        client_id,
-        granted_at: granted_at.to_rfc3339(),
-        expires_at: None,
-    })
+        .ok_or_else(|| PlatformError::internal("grant not found after create"))?;
+    Ok(grant.into())
 }
 
 /// `DELETE /api/principals/{id}/client-access/{clientId}`.
@@ -916,19 +899,13 @@ pub async fn application_access(
         }
     }
 
-    let app_repo = &state.application_repo;
-
-    // Resolve application details for each accessible application ID
-    let mut applications = Vec::new();
-    for app_id in &principal.accessible_application_ids {
-        if let Some(app) = app_repo.find_by_id(app_id).await? {
-            applications.push(ApplicationAccessResponse {
-                application_id: app.id,
-                application_code: app.code,
-                application_name: app.name,
-            });
-        }
-    }
+    // Go `resolveApplications`: the grants in order, an id that no longer
+    // resolves skipped. One query for the whole set.
+    let apps = state
+        .application_repo
+        .find_by_ids(&principal.accessible_application_ids)
+        .await?;
+    let applications = access_rows(&principal.accessible_application_ids, &apps);
 
     let total = applications.len();
     Ok(ApplicationAccessListResponse {
@@ -936,6 +913,23 @@ pub async fn application_access(
         total,
         all_applications: principal.all_applications,
     })
+}
+
+/// The `{id, code, name}` row of each id in `ids`, in order, from `apps`
+/// (one batch read); an id with no application is skipped (Go
+/// `resolveApplications`).
+fn access_rows(
+    ids: &[String],
+    apps: &std::collections::HashMap<String, crate::application::entity::Application>,
+) -> Vec<ApplicationAccessResponse> {
+    ids.iter()
+        .filter_map(|id| apps.get(id))
+        .map(|app| ApplicationAccessResponse {
+            application_id: app.id.clone(),
+            application_code: app.code.clone(),
+            application_name: app.name.clone(),
+        })
+        .collect()
 }
 
 /// `PUT /api/principals/{id}/application-access`: the declarative grant
@@ -987,19 +981,21 @@ pub async fn set_application_access(
         }
     }
 
-    let app_repo = &state.application_repo;
-
-    // Validate applications exist and are active (kept in handler for 400 mapping).
+    // Validate applications exist and are active (kept in handler for 400
+    // mapping), all of them in one query; the rows also answer below.
+    let apps = state
+        .application_repo
+        .find_by_ids(&req.application_ids)
+        .await?;
     for app_id in &req.application_ids {
-        match app_repo.find_by_id(app_id).await? {
-            Some(app) => {
-                if !app.active {
-                    return Err(PlatformError::validation(format!(
-                        "Application is not active: {}",
-                        app_id
-                    )));
-                }
+        match apps.get(app_id) {
+            Some(app) if !app.active => {
+                return Err(PlatformError::validation(format!(
+                    "Application is not active: {}",
+                    app_id
+                )));
             }
+            Some(_) => {}
             None => {
                 return Err(PlatformError::validation(format!(
                     "Application not found: {}",
@@ -1031,16 +1027,7 @@ pub async fn set_application_access(
         .into_result()?;
     state.app_access.forget(id);
 
-    let mut applications = Vec::new();
-    for app_id in &req.application_ids {
-        if let Some(app) = app_repo.find_by_id(app_id).await? {
-            applications.push(ApplicationAccessResponse {
-                application_id: app.id,
-                application_code: app.code,
-                application_name: app.name,
-            });
-        }
-    }
+    let applications = access_rows(&req.application_ids, &apps);
 
     Ok(SetApplicationAccessResponse {
         applications,

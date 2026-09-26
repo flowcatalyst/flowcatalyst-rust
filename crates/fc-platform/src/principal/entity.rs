@@ -432,7 +432,8 @@ impl ClientAccessGrant {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::shared::tsid::generate(crate::EntityType::Principal),
+            // `gnt_`, as Go's `tsid.ClientAccessGrant`.
+            id: crate::shared::tsid::generate(crate::EntityType::ClientAccessGrant),
             principal_id: principal_id.into(),
             client_id: client_id.into(),
             granted_by: granted_by.into(),

@@ -127,6 +127,26 @@ impl ApplicationRepository {
         Ok(rows.into_iter().collect())
     }
 
+    /// The applications with the given ids, in one query, keyed by id. An
+    /// id with no row is absent.
+    pub async fn find_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Application>> {
+        if ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows = sqlx::query_as::<_, ApplicationRow>(
+            "SELECT * FROM app_applications WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|r| Application::try_from(r).map(|a| (a.id.clone(), a)))
+            .collect()
+    }
+
     /// `id → name` for the given application ids, in one query (the
     /// OAuth-client `applications` refs).
     pub async fn find_names_by_ids(

@@ -14,7 +14,10 @@ use crate::usecase::{
 /// Command for updating an existing user / principal.
 ///
 /// Covers every mutable field the API layer exposes. Fields that weren't
-/// sent stay `None`; only `Some(_)` values are applied.
+/// sent stay `None`; only `Some(_)` values are applied. As Go's `UpdateUser`
+/// (principal/operations/update.go), an update that changes nothing still
+/// saves and records `UserUpdated`: the SPA sends the name on every save,
+/// then changes the tier or client through `/client-association`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateUserCommand {
@@ -42,6 +45,11 @@ pub struct UpdateUserCommand {
     /// other scopes (the principal's `client_id` is nulled out).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// Asserted against the stored email, never applied: a different value
+    /// is refused with `EMAIL_IMMUTABLE` (Go `UpdateCommand.Email`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 impl crate::usecase::AuditMasked for UpdateUserCommand {}
@@ -74,16 +82,12 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
             ));
         }
 
-        let has_any = command.name.is_some()
-            || command.first_name.is_some()
-            || command.last_name.is_some()
-            || command.active.is_some()
-            || command.scope.is_some()
-            || command.client_id.is_some();
-        if !has_any {
+        // Go `UpdateUser.Validate`: a name, when sent, is not blank. An
+        // empty body is not refused; it saves and records the event.
+        if command.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
             return Err(UseCaseError::validation(
-                "NO_UPDATES",
-                "At least one field must be provided for update",
+                "NAME_REQUIRED",
+                "name cannot be empty",
             ));
         }
 
@@ -130,15 +134,27 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
                 format!("User with ID '{}' not found", command.principal_id),
             )?;
 
-        // Apply updates — track whether anything actually changed.
-        let mut changed = false;
-
-        if let Some(ref name) = command.name {
-            let trimmed = name.trim().to_string();
-            if trimmed != principal.name {
-                principal.name = trimmed;
-                changed = true;
+        // Email is the principal's identity: accepted so a caller can PUT a
+        // whole object, but only as an assertion (Go `UpdateUser`).
+        if let Some(ref email) = command.email {
+            let got = email.trim().to_lowercase();
+            let current = principal
+                .user_identity
+                .as_ref()
+                .map(|i| i.email.trim().to_lowercase())
+                .unwrap_or_default();
+            if !got.is_empty() && got != current {
+                return Err(UseCaseError::validation(
+                    "EMAIL_IMMUTABLE",
+                    "email cannot be changed here; it is the principal's identity",
+                ));
             }
+        }
+
+        // Apply what was sent. Nothing changing is not an error: Go saves
+        // and records `UserUpdated` all the same.
+        if let Some(ref name) = command.name {
+            principal.name = name.trim().to_string();
         }
 
         if let Some(active) = command.active {
@@ -148,7 +164,6 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
                 } else {
                     principal.deactivate();
                 }
-                changed = true;
             }
         }
 
@@ -156,10 +171,7 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
         let new_scope = command.scope;
 
         if let Some(scope) = new_scope {
-            if scope != principal.scope {
-                principal.scope = scope;
-                changed = true;
-            }
+            principal.scope = scope;
         }
 
         if command.client_id.is_some() || new_scope.is_some() {
@@ -181,16 +193,10 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
                             "client_id cannot be empty when scope is CLIENT",
                         ));
                     }
-                    if principal.client_id.as_deref() != Some(cid.as_str()) {
-                        principal.client_id = Some(cid);
-                        changed = true;
-                    }
+                    principal.client_id = Some(cid);
                 }
                 _ => {
-                    if principal.client_id.is_some() {
-                        principal.client_id = None;
-                        changed = true;
-                    }
+                    principal.client_id = None;
                 }
             }
         }
@@ -199,25 +205,12 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
         if principal.is_user() {
             if let Some(ref mut identity) = principal.user_identity {
                 if let Some(first) = command.first_name.clone() {
-                    if identity.first_name.as_deref() != Some(first.as_str()) {
-                        identity.first_name = Some(first);
-                        changed = true;
-                    }
+                    identity.first_name = Some(first);
                 }
                 if let Some(last) = command.last_name.clone() {
-                    if identity.last_name.as_deref() != Some(last.as_str()) {
-                        identity.last_name = Some(last);
-                        changed = true;
-                    }
+                    identity.last_name = Some(last);
                 }
             }
-        }
-
-        if !changed {
-            return Err(UseCaseError::validation(
-                "NO_CHANGES",
-                "No changes detected",
-            ));
         }
 
         principal.updated_at = chrono::Utc::now();
@@ -241,6 +234,7 @@ mod tests {
             active: None,
             scope: None,
             client_id: None,
+            email: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

@@ -1221,28 +1221,24 @@ async fn save_user(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         if form.name.trim().is_empty() {
             return Err(PlatformError::validation("Name is required"));
         }
-        // The API refuses an update that changes nothing ("No changes
-        // detected"), so the name only goes when it changed; a tier or client
-        // change alone goes straight to the association.
-        let current = admin::detail(principals(cx), auth, &id).await?;
-        let updated = if form.name != current.name {
-            admin::update(
-                principals(cx),
-                auth,
-                &id,
-                UpdatePrincipalRequest {
-                    name: Some(form.name.clone()),
-                    first_name: None,
-                    last_name: None,
-                    active: None,
-                    scope: None,
-                    client_id: None,
-                },
-            )
-            .await?
-        } else {
-            current
-        };
+        // The name goes on every save, as the SPA sends it; an unchanged
+        // name is a no-op update (Go). A tier or client change then goes to
+        // the association.
+        let updated = admin::update(
+            principals(cx),
+            auth,
+            &id,
+            UpdatePrincipalRequest {
+                name: Some(form.name.clone()),
+                first_name: None,
+                last_name: None,
+                active: None,
+                scope: None,
+                client_id: None,
+                email: None,
+            },
+        )
+        .await?;
         let Some(scope) = form.scope.filter(|s| !s.is_empty()) else {
             return Ok(());
         };

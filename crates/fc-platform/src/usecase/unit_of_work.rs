@@ -342,8 +342,13 @@ impl PgUnitOfWork {
         txn: &mut Transaction<'_, Postgres>,
         event: &E,
         command: &C,
+        recorded_as: Option<&RecordedCommand>,
     ) -> Result<(), UseCaseError> {
-        let row = AuditRow::from_event(event, command);
+        let mut row = AuditRow::from_event(event, command);
+        if let Some(recorded) = recorded_as {
+            row.operation = recorded.operation.clone();
+            row.operation_json = recorded.operation_json.clone();
+        }
 
         let result = sqlx::query(
             r#"INSERT INTO aud_logs
@@ -384,10 +389,20 @@ impl PgUnitOfWork {
         event: &E,
         command: &C,
     ) -> Result<(), UseCaseError> {
+        Self::persist_events_and_audits_as(txn, rows, event, command, None).await
+    }
+
+    async fn persist_events_and_audits_as<E: DomainEvent, C: Serialize + AuditMasked>(
+        txn: &mut Transaction<'_, Postgres>,
+        rows: &[RecordedEvent],
+        event: &E,
+        command: &C,
+        recorded_as: Option<&RecordedCommand>,
+    ) -> Result<(), UseCaseError> {
         for row in rows {
-            Self::persist_event_and_audit(&mut *txn, row, command).await?;
+            Self::persist_event_and_audit_as(&mut *txn, row, command, recorded_as).await?;
         }
-        Self::persist_event_and_audit(&mut *txn, event, command).await
+        Self::persist_event_and_audit_as(&mut *txn, event, command, recorded_as).await
     }
 
     async fn persist_event_and_audit<E: DomainEvent, C: Serialize + AuditMasked>(
@@ -395,9 +410,40 @@ impl PgUnitOfWork {
         event: &E,
         command: &C,
     ) -> Result<(), UseCaseError> {
+        Self::persist_event_and_audit_as(txn, event, command, None).await
+    }
+
+    /// The event, and its audit row recorded under `recorded_as` when given
+    /// (an orchestration's own command), else under `command`.
+    async fn persist_event_and_audit_as<E: DomainEvent, C: Serialize + AuditMasked>(
+        txn: &mut Transaction<'_, Postgres>,
+        event: &E,
+        command: &C,
+        recorded_as: Option<&RecordedCommand>,
+    ) -> Result<(), UseCaseError> {
         Self::persist_event(&mut *txn, event).await?;
-        Self::persist_audit_log(&mut *txn, event, command).await?;
+        Self::persist_audit_log(&mut *txn, event, command, recorded_as).await?;
         Ok(())
+    }
+}
+
+/// The command an orchestration records every audit row under, in place of
+/// each use case's own: Go's multi-aggregate operations hand their one
+/// command to every scoped commit (`usecasepgx.CommitScoped`), so each row
+/// names the operation the caller asked for. Built by
+/// [`PgUnitOfWork::run_as`]; redacted as any command is.
+#[derive(Debug, Clone)]
+pub(crate) struct RecordedCommand {
+    operation: String,
+    operation_json: Option<serde_json::Value>,
+}
+
+impl RecordedCommand {
+    fn of<C: Serialize + AuditMasked>(command: &C) -> Self {
+        Self {
+            operation: super::audit_operation::audit_operation_name::<C>().to_string(),
+            operation_json: redacted_command_json(command).ok(),
+        }
     }
 }
 
@@ -848,12 +894,16 @@ pub struct TxScopedUnitOfWork {
     // tokio Mutex because the guard is held across `.await`. `Option` so
     // `run` can `.take()` the tx back out after the closure completes.
     tx: Mutex<Option<Transaction<'static, Postgres>>>,
+    /// Set by [`PgUnitOfWork::run_as`]: every audit row this session writes
+    /// records this command instead of its use case's.
+    recorded_as: Option<RecordedCommand>,
 }
 
 impl TxScopedUnitOfWork {
-    fn new(tx: Transaction<'static, Postgres>) -> Self {
+    fn new(tx: Transaction<'static, Postgres>, recorded_as: Option<RecordedCommand>) -> Self {
         Self {
             tx: Mutex::new(Some(tx)),
+            recorded_as,
         }
     }
 
@@ -896,7 +946,14 @@ impl UnitOfWork for TxScopedUnitOfWork {
             return UseCaseResult::failure(write_failure("persist", aggregate, e));
         }
 
-        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit_as(
+            txn,
+            &event,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
+        {
             return UseCaseResult::failure(e);
         }
 
@@ -935,7 +992,14 @@ impl UnitOfWork for TxScopedUnitOfWork {
             return UseCaseResult::failure(write_failure("delete", aggregate, e));
         }
 
-        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit_as(
+            txn,
+            &event,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
+        {
             return UseCaseResult::failure(e);
         }
 
@@ -962,7 +1026,14 @@ impl UnitOfWork for TxScopedUnitOfWork {
             }
         };
 
-        if let Err(e) = PgUnitOfWork::persist_events_and_audits(txn, &rows, &rollup, command).await
+        if let Err(e) = PgUnitOfWork::persist_events_and_audits_as(
+            txn,
+            &rows,
+            &rollup,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
         {
             return UseCaseResult::failure(e);
         }
@@ -1005,7 +1076,15 @@ impl UnitOfWork for TxScopedUnitOfWork {
             }
         }
 
-        if let Err(e) = PgUnitOfWork::persist_events_and_audits(txn, &rows, &event, command).await {
+        if let Err(e) = PgUnitOfWork::persist_events_and_audits_as(
+            txn,
+            &rows,
+            &event,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
+        {
             return UseCaseResult::failure(e);
         }
 
@@ -1043,7 +1122,14 @@ impl UnitOfWork for TxScopedUnitOfWork {
             }
         };
 
-        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit_as(
+            txn,
+            &event,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
+        {
             return UseCaseResult::failure(e);
         }
 
@@ -1084,7 +1170,14 @@ impl UnitOfWork for TxScopedUnitOfWork {
             }
         }
 
-        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit_as(
+            txn,
+            &event,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await
+        {
             return UseCaseResult::failure(e);
         }
 
@@ -1119,6 +1212,35 @@ impl PgUnitOfWork {
         Fut: Future<Output = UseCaseResult<T>> + Send,
         T: Send + 'static,
     {
+        self.run_scoped(None, f).await
+    }
+
+    /// [`run`](Self::run), with every audit row the session writes recorded
+    /// under `command` (its operation name and redacted JSON) instead of
+    /// the command of the use case that wrote it. Each use case still
+    /// writes its own event. This is Go's orchestration shape: one
+    /// `ProvisionServiceAccountCommand` recorded on the service-account,
+    /// application and OAuth-client rows alike.
+    pub async fn run_as<C, F, Fut, T>(&self, command: &C, f: F) -> UseCaseResult<T>
+    where
+        C: Serialize + AuditMasked,
+        F: FnOnce(Arc<TxScopedUnitOfWork>) -> Fut + Send,
+        Fut: Future<Output = UseCaseResult<T>> + Send,
+        T: Send + 'static,
+    {
+        self.run_scoped(Some(RecordedCommand::of(command)), f).await
+    }
+
+    async fn run_scoped<F, Fut, T>(
+        &self,
+        recorded_as: Option<RecordedCommand>,
+        f: F,
+    ) -> UseCaseResult<T>
+    where
+        F: FnOnce(Arc<TxScopedUnitOfWork>) -> Fut + Send,
+        Fut: Future<Output = UseCaseResult<T>> + Send,
+        T: Send + 'static,
+    {
         let tx = match self.pool.begin().await {
             Ok(t) => t,
             Err(e) => {
@@ -1130,7 +1252,7 @@ impl PgUnitOfWork {
             }
         };
 
-        let scoped = Arc::new(TxScopedUnitOfWork::new(tx));
+        let scoped = Arc::new(TxScopedUnitOfWork::new(tx, recorded_as));
         let result = f(Arc::clone(&scoped)).await;
 
         // Reclaim the tx. If the scoped UoW has outstanding references

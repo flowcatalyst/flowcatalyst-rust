@@ -372,6 +372,7 @@ pub fn build_platform_routes(
         identity_provider_repo: repos.idp_repo.clone(),
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
+        client_access_grant_repo: repos.client_access_grant_repo.clone(),
         password_reset_emailer: password_reset_emailer.clone(),
         new_user_notifier: Some(crate::mfa::notify::Notifier {
             email: email_service.clone(),

@@ -108,9 +108,13 @@ impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
         // assigns to both); a new service account has none until it is
         // granted here.
 
-        // Validate all requested applications exist
+        // Validate all requested applications exist, in one query.
+        let apps = self
+            .application_repo
+            .find_by_ids(&command.application_ids)
+            .await?;
         for app_id in &command.application_ids {
-            match self.application_repo.find_by_id(app_id).await? {
+            match apps.get(app_id) {
                 Some(app) => {
                     if !app.active {
                         return Err(UseCaseError::business_rule(

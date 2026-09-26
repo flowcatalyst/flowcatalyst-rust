@@ -9,10 +9,11 @@
 //! read alike. A Rust command Go has no counterpart for (the function
 //! runner's, for one) keeps its own name.
 //!
-//! Where Go records one Rust command under different names by route (the
-//! provision-service-account route records `ProvisionServiceAccountCommand`;
-//! connection pause and activate record `statusCommand`), the plain route's
-//! name is used.
+//! Where Go records one Rust command under different names by route
+//! (connection pause and activate record `statusCommand`), the plain route's
+//! name is used. An orchestration Go records under its own command (the
+//! provision-service-account route's `ProvisionServiceAccountCommand`) runs
+//! under `PgUnitOfWork::run_as` with that command instead.
 
 /// The operation name Go records for the Rust command type `C`.
 pub fn audit_operation_name<C: ?Sized>() -> &'static str {
