@@ -838,7 +838,7 @@ pub async fn oidc_callback(
         // Build clients list matching TS behaviour
         let clients: Vec<String> = match user_scope {
             UserScope::Anchor => vec!["*".to_string()],
-            _ => principal.assigned_clients.clone(),
+            UserScope::Partner | UserScope::Client => principal.assigned_clients.clone(),
         };
 
         let fc_claims = FlowcatalystClaims {
@@ -1204,6 +1204,7 @@ async fn validate_id_token_with_jwks(
     };
 
     // Determine algorithm from header (default RS256)
+    #[allow(clippy::wildcard_enum_match_arm)] // jsonwebtoken::Algorithm is foreign
     let algorithm = match header.alg {
         jsonwebtoken::Algorithm::RS256 => Algorithm::RS256,
         jsonwebtoken::Algorithm::RS384 => Algorithm::RS384,
@@ -1319,6 +1320,7 @@ async fn validate_id_token_with_jwks(
 /// Validate issuer against IDP configuration (exact match or pattern)
 /// Whether an `aud` claim, in either RFC 7519 form (a string or an array
 /// of strings), names `client_id` (Go `audienceContains`).
+#[allow(clippy::wildcard_enum_match_arm)] // serde_json::Value is foreign
 fn audience_contains(aud: &serde_json::Value, client_id: &str) -> bool {
     match aud {
         serde_json::Value::String(a) => a == client_id,
@@ -1907,7 +1909,18 @@ pub(crate) async fn portal_verify_callback(
                 "EXTERNAL_GUEST",
                 "external guest accounts are not supported".to_string(),
             ),
-            other => (
+            other @ (IdTokenError::MissingIssuerUrl
+            | IdTokenError::MissingClientId
+            | IdTokenError::InvalidHeader(_)
+            | IdTokenError::Jwks(_)
+            | IdTokenError::NoMatchingKey(_)
+            | IdTokenError::MissingRsaComponent(_)
+            | IdTokenError::InvalidRsaKey(_)
+            | IdTokenError::UnsupportedKeyType(_)
+            | IdTokenError::Signature(_)
+            | IdTokenError::MissingClaim(_)
+            | IdTokenError::InvalidIssuer(_)
+            | IdTokenError::InvalidAudience(_)) => (
                 StatusCode::FORBIDDEN,
                 "OIDC_VERIFY",
                 format!("id_token verification failed: {other}"),

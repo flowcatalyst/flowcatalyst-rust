@@ -176,7 +176,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
                     }
                     principal.client_id = Some(cid);
                 }
-                _ => {
+                UserScope::Anchor | UserScope::Partner => {
                     principal.client_id = None;
                 }
             }

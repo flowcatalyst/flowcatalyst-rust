@@ -190,11 +190,11 @@ impl SigningGuard {
         }
         let account_ids: Vec<String> = distinct(signers.iter().filter_map(|s| match s {
             Signer::Named { account_id, .. } => Some(account_id.as_str()),
-            _ => None,
+            Signer::OfApplication(_) | Signer::Nobody => None,
         }));
         let application_codes: Vec<String> = distinct(signers.iter().filter_map(|s| match s {
             Signer::OfApplication(code) => Some(code.as_str()),
-            _ => None,
+            Signer::Named { .. } | Signer::Nobody => None,
         }));
         let (accounts, application_ids) = tokio::try_join!(
             self.accounts.find_signing_accounts(&account_ids),

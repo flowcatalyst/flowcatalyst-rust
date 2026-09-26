@@ -363,7 +363,17 @@ impl From<PlatformError> for UseCaseError {
             }
             PlatformError::Sqlx(e) => Self::internal("DATABASE_ERROR", e.to_string()),
             PlatformError::Internal { message } => Self::internal("INTERNAL_ERROR", message),
-            other => Self::internal("INTERNAL_ERROR", other.to_string()),
+            other @ (PlatformError::Unauthorized { .. }
+            | PlatformError::Forbidden { .. }
+            | PlatformError::Json(_)
+            | PlatformError::Configuration { .. }
+            | PlatformError::InvalidCredentials
+            | PlatformError::TokenExpired
+            | PlatformError::InvalidToken { .. }
+            | PlatformError::TooManyRequests { .. }
+            | PlatformError::SessionEndpoint { .. }) => {
+                Self::internal("INTERNAL_ERROR", other.to_string())
+            }
         }
     }
 }

@@ -1058,9 +1058,12 @@ mod tests {
 
     #[test]
     fn a_bad_or_disagreeing_if_match_is_a_400() {
-        let code = |r: Result<Option<i32>, PlatformError>| match r.unwrap_err() {
-            PlatformError::Coded { status, code, .. } => (status.as_u16(), code),
-            other => panic!("{other:?}"),
+        let code = |r: Result<Option<i32>, PlatformError>| {
+            let err = r.unwrap_err();
+            let PlatformError::Coded { status, code, .. } = err else {
+                panic!("{err:?}");
+            };
+            (status.as_u16(), code)
         };
         for value in ["*", "latest", "-1", "\"\""] {
             assert_eq!(

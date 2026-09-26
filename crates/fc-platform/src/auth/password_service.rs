@@ -670,9 +670,10 @@ mod tests {
              Password must contain at least one digit; \
              Password must contain at least one special character"
         );
-        match PlatformError::from(err) {
-            PlatformError::Validation { message } => assert!(message.starts_with("Password must")),
-            other => panic!("expected Validation, got {other:?}"),
-        }
+        let err = PlatformError::from(err);
+        let PlatformError::Validation { message } = &err else {
+            panic!("expected Validation, got {err:?}");
+        };
+        assert!(message.starts_with("Password must"));
     }
 }

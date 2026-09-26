@@ -122,7 +122,27 @@ fn is_unique_violation(e: &crate::shared::error::PlatformError) -> bool {
         crate::shared::error::PlatformError::Sqlx(sqlx::Error::Database(db)) => {
             db.code().as_deref() == Some(UNIQUE_VIOLATION)
         }
-        _ => false,
+        crate::shared::error::PlatformError::NotFound { .. }
+        | crate::shared::error::PlatformError::BusinessRule { .. }
+        | crate::shared::error::PlatformError::Concurrency { .. }
+        | crate::shared::error::PlatformError::Validation { .. }
+        | crate::shared::error::PlatformError::Unauthorized { .. }
+        | crate::shared::error::PlatformError::Forbidden { .. }
+        | crate::shared::error::PlatformError::Sqlx(_)
+        | crate::shared::error::PlatformError::Json(_)
+        | crate::shared::error::PlatformError::Configuration { .. }
+        | crate::shared::error::PlatformError::EventTypeNotFound { .. }
+        | crate::shared::error::PlatformError::SubscriptionNotFound { .. }
+        | crate::shared::error::PlatformError::ClientNotFound { .. }
+        | crate::shared::error::PlatformError::PrincipalNotFound { .. }
+        | crate::shared::error::PlatformError::ServiceAccountNotFound { .. }
+        | crate::shared::error::PlatformError::InvalidCredentials
+        | crate::shared::error::PlatformError::TokenExpired
+        | crate::shared::error::PlatformError::InvalidToken { .. }
+        | crate::shared::error::PlatformError::Internal { .. }
+        | crate::shared::error::PlatformError::TooManyRequests { .. }
+        | crate::shared::error::PlatformError::Coded { .. }
+        | crate::shared::error::PlatformError::SessionEndpoint { .. } => false,
     }
 }
 
@@ -144,11 +164,38 @@ fn write_failure<A: HasId>(
     let subject = aggregate_subject(aggregate);
     match e {
         e @ crate::shared::error::PlatformError::BusinessRule { .. } => UseCaseError::from(e),
-        e if is_unique_violation(&e) => UseCaseError::business_rule(
-            "DUPLICATE_KEY",
-            format!("{subject} conflicts with an existing row on a unique key"),
-        ),
-        e => UseCaseError::commit(format!("Failed to {what} {subject}: {e}")),
+        e @ (crate::shared::error::PlatformError::Duplicate { .. }
+        | crate::shared::error::PlatformError::Sqlx(_))
+            if is_unique_violation(&e) =>
+        {
+            UseCaseError::business_rule(
+                "DUPLICATE_KEY",
+                format!("{subject} conflicts with an existing row on a unique key"),
+            )
+        }
+        e @ (crate::shared::error::PlatformError::NotFound { .. }
+        | crate::shared::error::PlatformError::Duplicate { .. }
+        | crate::shared::error::PlatformError::Concurrency { .. }
+        | crate::shared::error::PlatformError::Validation { .. }
+        | crate::shared::error::PlatformError::Unauthorized { .. }
+        | crate::shared::error::PlatformError::Forbidden { .. }
+        | crate::shared::error::PlatformError::Sqlx(_)
+        | crate::shared::error::PlatformError::Json(_)
+        | crate::shared::error::PlatformError::Configuration { .. }
+        | crate::shared::error::PlatformError::EventTypeNotFound { .. }
+        | crate::shared::error::PlatformError::SubscriptionNotFound { .. }
+        | crate::shared::error::PlatformError::ClientNotFound { .. }
+        | crate::shared::error::PlatformError::PrincipalNotFound { .. }
+        | crate::shared::error::PlatformError::ServiceAccountNotFound { .. }
+        | crate::shared::error::PlatformError::InvalidCredentials
+        | crate::shared::error::PlatformError::TokenExpired
+        | crate::shared::error::PlatformError::InvalidToken { .. }
+        | crate::shared::error::PlatformError::Internal { .. }
+        | crate::shared::error::PlatformError::TooManyRequests { .. }
+        | crate::shared::error::PlatformError::Coded { .. }
+        | crate::shared::error::PlatformError::SessionEndpoint { .. }) => {
+            UseCaseError::commit(format!("Failed to {what} {subject}: {e}"))
+        }
     }
 }
 

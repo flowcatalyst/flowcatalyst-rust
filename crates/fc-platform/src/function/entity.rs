@@ -348,7 +348,7 @@ impl FunctionVersion {
     pub fn ready_at(&self) -> Option<DateTime<Utc>> {
         match self.state {
             VersionState::Ready(at) => Some(at),
-            _ => None,
+            VersionState::Published | VersionState::Retired(_) => None,
         }
     }
 
@@ -356,7 +356,7 @@ impl FunctionVersion {
     pub fn retired_at(&self) -> Option<DateTime<Utc>> {
         match self.state {
             VersionState::Retired(at) => Some(at),
-            _ => None,
+            VersionState::Published | VersionState::Ready(_) => None,
         }
     }
 
@@ -445,7 +445,7 @@ impl LoadState {
     pub fn error(&self) -> Option<&str> {
         match self {
             LoadState::Failed(error) => Some(error),
-            _ => None,
+            LoadState::Registered | LoadState::Loaded => None,
         }
     }
 }

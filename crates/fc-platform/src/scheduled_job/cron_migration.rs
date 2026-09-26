@@ -349,7 +349,11 @@ mod tests {
     fn rewrite(expr: &str) -> String {
         match translate(expr) {
             Translation::Rewrite(new) => new,
-            other => panic!("{expr}: {other:?}"),
+            other @ (Translation::Unreadable
+            | Translation::Same
+            | Translation::Inexpressible(_)) => {
+                panic!("{expr}: {other:?}")
+            }
         }
     }
 
@@ -458,7 +462,9 @@ mod tests {
             let stored = match translate(expr) {
                 Translation::Rewrite(new) => new,
                 Translation::Same => expr.to_string(),
-                other => panic!("{expr}: {other:?}"),
+                other @ (Translation::Unreadable | Translation::Inexpressible(_)) => {
+                    panic!("{expr}: {other:?}")
+                }
             };
             let old = cron::Schedule::from_str(expr).unwrap();
             for zone in zones {

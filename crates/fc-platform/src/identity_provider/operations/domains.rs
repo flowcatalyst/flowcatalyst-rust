@@ -99,7 +99,7 @@ pub fn validate_mapping_scope(
             "PRIMARY_CLIENT_NOT_ALLOWED",
             "primaryClientId is not allowed when mappingScope is ANCHOR",
         )),
-        _ => Ok((Some(scope), client)),
+        ScopeType::Anchor | ScopeType::Partner | ScopeType::Client => Ok((Some(scope), client)),
     }
 }
 

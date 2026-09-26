@@ -570,7 +570,15 @@ fn go_code_and_message(
         | PlatformError::Internal { .. } => {
             ("INTERNAL".to_string(), "Internal server error".to_string())
         }
-        _ => (legacy_code.to_string(), legacy_message.to_string()),
+        PlatformError::BusinessRule { .. }
+        | PlatformError::Concurrency { .. }
+        | PlatformError::InvalidCredentials
+        | PlatformError::TokenExpired
+        | PlatformError::InvalidToken { .. }
+        | PlatformError::TooManyRequests { .. }
+        | PlatformError::SessionEndpoint { .. } => {
+            (legacy_code.to_string(), legacy_message.to_string())
+        }
     }
 }
 
@@ -622,7 +630,9 @@ impl PlatformError {
                 "TOO_MANY_REQUESTS".to_string(),
             ),
             PlatformError::Coded { status, code, .. } => (*status, code.clone()),
-            _ => (
+            PlatformError::Json(_)
+            | PlatformError::Configuration { .. }
+            | PlatformError::Internal { .. } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR".to_string(),
             ),
@@ -693,14 +703,54 @@ impl IntoResponse for PlatformError {
             PlatformError::TooManyRequests {
                 retry_after_secs, ..
             } => Some(*retry_after_secs),
-            _ => None,
+            PlatformError::NotFound { .. }
+            | PlatformError::Duplicate { .. }
+            | PlatformError::BusinessRule { .. }
+            | PlatformError::Concurrency { .. }
+            | PlatformError::Validation { .. }
+            | PlatformError::Unauthorized { .. }
+            | PlatformError::Forbidden { .. }
+            | PlatformError::Sqlx(_)
+            | PlatformError::Json(_)
+            | PlatformError::Configuration { .. }
+            | PlatformError::EventTypeNotFound { .. }
+            | PlatformError::SubscriptionNotFound { .. }
+            | PlatformError::ClientNotFound { .. }
+            | PlatformError::PrincipalNotFound { .. }
+            | PlatformError::ServiceAccountNotFound { .. }
+            | PlatformError::InvalidCredentials
+            | PlatformError::TokenExpired
+            | PlatformError::InvalidToken { .. }
+            | PlatformError::Internal { .. }
+            | PlatformError::Coded { .. }
+            | PlatformError::SessionEndpoint { .. } => None,
         };
         let details = match self {
             PlatformError::Coded { mut details, .. } => {
                 details.remove(VERBATIM_CODE);
                 (!details.is_empty()).then_some(details)
             }
-            _ => None,
+            PlatformError::NotFound { .. }
+            | PlatformError::Duplicate { .. }
+            | PlatformError::BusinessRule { .. }
+            | PlatformError::Concurrency { .. }
+            | PlatformError::Validation { .. }
+            | PlatformError::Unauthorized { .. }
+            | PlatformError::Forbidden { .. }
+            | PlatformError::Sqlx(_)
+            | PlatformError::Json(_)
+            | PlatformError::Configuration { .. }
+            | PlatformError::EventTypeNotFound { .. }
+            | PlatformError::SubscriptionNotFound { .. }
+            | PlatformError::ClientNotFound { .. }
+            | PlatformError::PrincipalNotFound { .. }
+            | PlatformError::ServiceAccountNotFound { .. }
+            | PlatformError::InvalidCredentials
+            | PlatformError::TokenExpired
+            | PlatformError::InvalidToken { .. }
+            | PlatformError::Internal { .. }
+            | PlatformError::TooManyRequests { .. }
+            | PlatformError::SessionEndpoint { .. } => None,
         };
         let contract = FunctionContractError {
             status,

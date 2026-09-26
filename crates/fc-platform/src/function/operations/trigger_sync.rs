@@ -570,7 +570,7 @@ impl TriggerSync {
                     })
                     .collect(),
             ),
-            _ => None,
+            Wiring::Live { .. } | Wiring::HttpOnly => None,
         }
     }
 

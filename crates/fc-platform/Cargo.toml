@@ -146,3 +146,9 @@ tower = { workspace = true, features = ["util"] }
 hyper = { version = "1.0", features = ["full"] }
 http-body-util = "0.1"
 tempfile = { workspace = true }
+
+[lints.clippy]
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

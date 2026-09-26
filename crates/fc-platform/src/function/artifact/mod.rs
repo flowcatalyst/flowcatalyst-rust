@@ -373,18 +373,18 @@ mod tests {
             digest_mismatch(&d, &e).message(),
             format!("digest mismatch: expected {d} but got {e}")
         );
-        match too_large() {
-            crate::shared::error::PlatformError::Coded {
-                status,
-                code,
-                message,
-                ..
-            } => {
-                assert_eq!(status.as_u16(), 413);
-                assert_eq!(code, "ARTIFACT_TOO_LARGE");
-                assert_eq!(message, "artifact exceeds the 268435456-byte limit");
-            }
-            other => panic!("{other:?}"),
-        }
+        let err = too_large();
+        let crate::shared::error::PlatformError::Coded {
+            status,
+            code,
+            message,
+            ..
+        } = &err
+        else {
+            panic!("{err:?}");
+        };
+        assert_eq!(status.as_u16(), 413);
+        assert_eq!(code, "ARTIFACT_TOO_LARGE");
+        assert_eq!(message, "artifact exceeds the 268435456-byte limit");
     }
 }
