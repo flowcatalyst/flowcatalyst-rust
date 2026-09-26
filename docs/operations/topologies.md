@@ -34,7 +34,7 @@ There is no separate router, stream-processor, MCP or function-host binary any m
 
 Postgres is connected, migrated and seeded only when a role that needs it is on (Go's `needsDB`). A router-only, MCP-only or function-host-only node opens no database connection. The full variable reference is [configuration.md](configuration.md).
 
-**A function-host-only node** (`FC_PLATFORM_ENABLED=false FC_FUNCTION_HOST_ENABLED=true`, nothing else) is exactly the former `fc-fnhost` daemon: its `FC_FN_*` environment, function listeners on 8080/8081, `/health` `/ready` `/metrics` on 9090, and none of fc-server's own listeners — the density shape for scaling function pools independently. Beside other roles the host takes ports of its own (8090/8091/9091).
+**A function-host-only node** (`FC_PLATFORM_ENABLED=false FC_FUNCTION_HOST_ENABLED=true`, nothing else) is exactly the former `fc-fnhost` daemon: its `FC_FN_*` environment, function listeners on 8080/8081, `/health` `/ready` `/metrics` on 9090, and none of fc-server's own listeners — the density shape for scaling function pools independently. Beside other roles the host takes ports of its own (8095/8096/9091), clear of MCP's 8090.
 
 ---
 

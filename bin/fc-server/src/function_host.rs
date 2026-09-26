@@ -19,7 +19,7 @@
 //!   listeners: the density shape, a node that only hosts functions.
 //! - **Beside other roles**: the host runs in this process on ports of its
 //!   own, since `fc-server`'s listeners hold 8080 and 9090: `FC_FN_PORT`
-//!   (default **8090**), `FC_FN_PUBLIC_PORT` (**8091**) and
+//!   (default **8095**), `FC_FN_PUBLIC_PORT` (**8096**) and
 //!   `FC_FN_METRICS_PORT` (**9091**) for its observability listener — the
 //!   defaults `fc-dev` uses. A port another listener of this process holds
 //!   refuses the boot. The host starts once the API listener is bound (its
@@ -32,8 +32,9 @@ use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
 use tracing::info;
 
 /// The ports a host beside other roles defaults to (`fc-dev`'s).
-const SHARED_FN_PORT: &str = "8090";
-const SHARED_FN_PUBLIC_PORT: &str = "8091";
+// 8095/8096, not 8090/8091: MCP (`FC_MCP_PORT`, Go's default) holds 8090.
+const SHARED_FN_PORT: &str = "8095";
+const SHARED_FN_PUBLIC_PORT: &str = "8096";
 const SHARED_FN_METRICS_PORT: &str = "9091";
 
 /// Host only: the former `fc-fnhost` daemon on the process environment.
@@ -167,23 +168,28 @@ mod tests {
     #[test]
     fn beside_other_roles_the_host_defaults_to_its_own_ports() {
         let env = load(&[]);
-        assert_eq!(env.port, 8090);
-        assert_eq!(env.public_port, PublicPort::Port(8091));
+        assert_eq!(env.port, 8095);
+        assert_eq!(env.public_port, PublicPort::Port(8096));
         // fc-server's FC_METRICS_PORT is not the host's.
         assert_eq!(env.metrics_port, 9091);
     }
 
     #[test]
     fn a_port_another_listener_holds_refuses_the_boot() {
-        let err = SharedHost::from_process_env(pairs(&[]), &[("FC_MCP_PORT", 8090)])
+        let err = SharedHost::from_process_env(pairs(&[]), &[("FC_MCP_PORT", 8095)])
             .err()
             .expect("refused")
             .to_string();
         assert!(
-            err.contains("FC_FN_PORT and FC_MCP_PORT are both port 8090"),
+            err.contains("FC_FN_PORT and FC_MCP_PORT are both port 8095"),
             "{err}"
         );
-        assert!(SharedHost::from_process_env(pairs(&[]), &[("FC_API_PORT", 8080)]).is_ok());
+        // The defaults don't collide: fc-server's API (8080) and MCP (8090).
+        assert!(SharedHost::from_process_env(
+            pairs(&[]),
+            &[("FC_API_PORT", 8080), ("FC_MCP_PORT", 8090)]
+        )
+        .is_ok());
     }
 
     #[test]

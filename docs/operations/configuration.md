@@ -248,8 +248,8 @@ The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost
 | `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits |
 | `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
 | `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown |
-| `FC_FN_PORT` | `8080` host only / `8090` beside other roles | Private function listener (`/functions/<address>/…`) |
-| `FC_FN_PUBLIC_PORT` | `8081` host only / `8091` beside other roles | Public listener for claimed hostnames (`off` disables) |
+| `FC_FN_PORT` | `8080` host only / `8095` beside other roles | Private function listener (`/functions/<address>/…`) |
+| `FC_FN_PUBLIC_PORT` | `8081` host only / `8096` beside other roles | Public listener for claimed hostnames (`off` disables) |
 | `FC_METRICS_PORT` (host only) / `FC_FN_METRICS_PORT` (beside other roles) | `9090` / `9091` | The host's `/health`, `/ready`, `/metrics` |
 | `FC_EXIT_AFTER_START` | `false` | Host only: exit 0 right after start-up |
 
