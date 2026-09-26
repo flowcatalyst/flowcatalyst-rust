@@ -151,24 +151,33 @@ impl DispatchPools<'_> {
 
     /// Archive (soft-delete) a dispatch pool. The row is kept; status flips
     /// to ARCHIVED.
+    ///
+    /// The platform answers 204 (as Go); the pool is read back.
     pub async fn archive(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
         self.client
-            .post_action(&format!("/api/dispatch-pools/{}/archive", id))
-            .await
+            .post_empty(&format!("/api/dispatch-pools/{}/archive", id))
+            .await?;
+        self.get(id).await
     }
 
     /// Suspend a dispatch pool.
+    ///
+    /// The platform answers 204 (as Go); the pool is read back.
     pub async fn suspend(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
         self.client
-            .post_action(&format!("/api/dispatch-pools/{}/suspend", id))
-            .await
+            .post_empty(&format!("/api/dispatch-pools/{}/suspend", id))
+            .await?;
+        self.get(id).await
     }
 
     /// Activate a dispatch pool.
+    ///
+    /// The platform answers 204 (as Go); the pool is read back.
     pub async fn activate(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
         self.client
-            .post_action(&format!("/api/dispatch-pools/{}/activate", id))
-            .await
+            .post_empty(&format!("/api/dispatch-pools/{}/activate", id))
+            .await?;
+        self.get(id).await
     }
 
     /// Sync dispatch pools for an application — declarative reconciliation
