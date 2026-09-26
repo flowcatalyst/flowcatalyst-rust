@@ -190,14 +190,10 @@ async fn portal_reach(
     Ok(ApplicationScope::All)
 }
 
-/// [`portal_reach`], then 404 for an application outside it (the owner
+/// 404 for an application outside the caller's [`portal_reach`] (the owner
 /// ruling: an out-of-scope application answers as a missing one).
-async fn require_app_reach(
-    state: &BffDeveloperState,
-    auth: &AuthContext,
-    app_id: &str,
-) -> Result<(), PlatformError> {
-    if portal_reach(state, auth).await?.allows(app_id) {
+fn in_reach(reach: &ApplicationScope, app_id: &str) -> Result<(), PlatformError> {
+    if reach.allows(app_id) {
         Ok(())
     } else {
         Err(PlatformError::not_found("Application", app_id))
@@ -269,7 +265,7 @@ pub async fn get_application(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperApplicationSummary>, PlatformError> {
-    require_app_reach(&state, &auth.0, &app_id).await?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
         .application_repo
@@ -289,7 +285,7 @@ pub async fn get_current_openapi(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    require_app_reach(&state, &auth.0, &app_id).await?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
         .openapi_spec_repo
@@ -304,7 +300,7 @@ pub async fn list_versions(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiVersionsResponse>, PlatformError> {
-    require_app_reach(&state, &auth.0, &app_id).await?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let rows = state
         .openapi_spec_repo
@@ -333,7 +329,7 @@ pub async fn get_version(
     auth: Authenticated,
     Path((app_id, spec_id)): Path<(String, String)>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    require_app_reach(&state, &auth.0, &app_id).await?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let spec = state
         .openapi_spec_repo
@@ -349,7 +345,7 @@ pub async fn list_event_types(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperEventTypesResponse>, PlatformError> {
-    require_app_reach(&state, &auth.0, &app_id).await?;
+    in_reach(&portal_reach(&state, &auth.0).await?, &app_id)?;
 
     let app = state
         .application_repo
