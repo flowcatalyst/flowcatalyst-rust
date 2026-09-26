@@ -226,13 +226,12 @@ impl ScheduledJobInstanceRepository {
         &self,
         id: &str,
         created_at: DateTime<Utc>,
-        status: CompletionStatus,
+        status: InstanceStatus,
+        completion_status: Option<CompletionStatus>,
         result: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let new_status = match status {
-            CompletionStatus::Success => InstanceStatus::Completed,
-            CompletionStatus::Failure => InstanceStatus::Failed,
-        };
+        // Go's `MarkComplete`: the caller has resolved the instance status
+        // and the completion outcome (see the complete handler).
         sqlx::query(
             "UPDATE msg_scheduled_job_instances \
              SET status = $3, completion_status = $4, completion_result = $5, \
@@ -241,8 +240,8 @@ impl ScheduledJobInstanceRepository {
         )
         .bind(id)
         .bind(created_at)
-        .bind(new_status.as_str())
         .bind(status.as_str())
+        .bind(completion_status.map(|c| c.as_str()))
         .bind(result)
         .execute(&self.pool)
         .await?;

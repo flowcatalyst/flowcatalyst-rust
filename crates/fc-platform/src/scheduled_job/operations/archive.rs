@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobArchived;
-use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
+use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
@@ -79,13 +79,7 @@ impl<U: UnitOfWork> ArchiveScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        if job.status == ScheduledJobStatus::Archived {
-            return Err(UseCaseError::business_rule(
-                "ALREADY_ARCHIVED",
-                "ScheduledJob is already archived",
-            ));
-        }
-
+        // Go's `ArchiveScheduledJob` flips the status unconditionally.
         job.archive();
         let event = ScheduledJobArchived::new(ctx, &job.id, &job.code);
         Ok((job, event))
