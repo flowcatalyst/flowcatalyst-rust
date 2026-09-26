@@ -625,7 +625,9 @@ impl PrincipalRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (principal_id, client_id) DO NOTHING",
         )
-        .bind(crate::shared::tsid::generate(crate::EntityType::Principal))
+        .bind(crate::shared::tsid::generate(
+            crate::EntityType::ClientAccessGrant,
+        ))
         .bind(principal_id)
         .bind(client_id)
         .bind(principal_id)
@@ -1128,57 +1130,82 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
         .bind(p.all_applications)
         .execute(&mut **tx.inner).await?;
 
-        // 2. Sync roles: delete then re-insert
+        // 2. Sync roles: delete then re-insert, one statement for the set.
         sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
             .bind(&p.id)
             .execute(&mut **tx.inner)
             .await?;
-        for r in &p.roles {
+        if !p.roles.is_empty() {
+            let role_names: Vec<&str> = p.roles.iter().map(|r| r.role.as_str()).collect();
+            let sources: Vec<Option<&str>> = p
+                .roles
+                .iter()
+                .map(|r| r.assignment_source.map(|s| s.as_str()))
+                .collect();
+            let assigned_ats: Vec<DateTime<Utc>> = p.roles.iter().map(|r| r.assigned_at).collect();
             sqlx::query(
                 "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
-                 VALUES ($1, $2, $3, $4)"
+                 SELECT $1, r.role_name, r.source, r.assigned_at
+                 FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[])
+                      AS r(role_name, source, assigned_at)",
             )
             .bind(&p.id)
-            .bind(&r.role)
-            .bind(r.assignment_source.map(|s| s.as_str()))
-            .bind(r.assigned_at)
-            .execute(&mut **tx.inner).await?;
-        }
-
-        // 3. Sync client access grants: delete then re-insert
-        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
-            .bind(&p.id)
+            .bind(&role_names)
+            .bind(&sources)
+            .bind(&assigned_ats)
             .execute(&mut **tx.inner)
             .await?;
-        for client_id in &p.assigned_clients {
-            sqlx::query(
-                "INSERT INTO iam_client_access_grants (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7)"
-            )
-            .bind(crate::shared::tsid::generate(crate::EntityType::Principal))
-            .bind(&p.id)
-            .bind(client_id)
-            .bind(&p.id) // granted_by = self
-            .bind(now)
-            .bind(now)
-            .bind(now)
-            .execute(&mut **tx.inner).await?;
         }
 
-        // 4. Sync application access: delete then re-insert
+        // 3. Client access grants: each grant is its own row with its own id
+        //    and date (Go `ClientAccessGrant`), so a save keeps the grants
+        //    still assigned and only removes the dropped ones and adds the
+        //    new ones.
+        sqlx::query(
+            "DELETE FROM iam_client_access_grants
+             WHERE principal_id = $1 AND NOT (client_id = ANY($2::varchar[]))",
+        )
+        .bind(&p.id)
+        .bind(&p.assigned_clients)
+        .execute(&mut **tx.inner)
+        .await?;
+        if !p.assigned_clients.is_empty() {
+            let grant_ids: Vec<String> = p
+                .assigned_clients
+                .iter()
+                .map(|_| crate::shared::tsid::generate(crate::EntityType::ClientAccessGrant))
+                .collect();
+            sqlx::query(
+                "INSERT INTO iam_client_access_grants
+                     (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
+                 SELECT g.id, $1, g.client_id, $1, $4, $4, $4
+                 FROM UNNEST($2::varchar[], $3::varchar[]) AS g(id, client_id)
+                 ON CONFLICT (principal_id, client_id) DO NOTHING",
+            )
+            .bind(&p.id)
+            .bind(&grant_ids)
+            .bind(&p.assigned_clients)
+            .bind(now)
+            .execute(&mut **tx.inner)
+            .await?;
+        }
+
+        // 4. Sync application access: delete then re-insert, one statement.
         sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
             .bind(&p.id)
             .execute(&mut **tx.inner)
             .await?;
-        for app_id in &p.accessible_application_ids {
+        if !p.accessible_application_ids.is_empty() {
             sqlx::query(
                 "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
-                 VALUES ($1, $2, $3)"
+                 SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a
+                 ON CONFLICT DO NOTHING",
             )
             .bind(&p.id)
-            .bind(app_id)
+            .bind(&p.accessible_application_ids)
             .bind(now)
-            .execute(&mut **tx.inner).await?;
+            .execute(&mut **tx.inner)
+            .await?;
         }
 
         Ok(())

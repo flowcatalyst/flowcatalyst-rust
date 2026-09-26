@@ -93,6 +93,11 @@ pub struct UpdatePrincipalRequest {
     /// Home client ID (required when scope is CLIENT, ignored otherwise).
     /// Changing client requires anchor.
     pub client_id: Option<String>,
+
+    /// Optional; asserted against the stored email. A different value is
+    /// refused (`EMAIL_IMMUTABLE`), never treated as a rename (Go).
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 /// Assign role request
@@ -260,6 +265,22 @@ pub struct ClientAccessGrantResponse {
     pub granted_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+}
+
+/// A grant row answers with its own id and date (Go
+/// `clientAccessGrantFromEntity`).
+impl From<crate::principal::entity::ClientAccessGrant> for ClientAccessGrantResponse {
+    fn from(g: crate::principal::entity::ClientAccessGrant) -> Self {
+        Self {
+            id: g.id,
+            client_id: g.client_id,
+            // Go's `jsontime` layout: six fractional digits, `Z`.
+            granted_at: g
+                .granted_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
+            expires_at: None,
+        }
+    }
 }
 
 /// Client access list response
@@ -552,6 +573,8 @@ pub struct PrincipalsState {
     pub identity_provider_repo: Arc<crate::IdentityProviderRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub app_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    /// The client-access grant rows, each with its own id and date.
+    pub client_access_grant_repo: Arc<crate::ClientAccessGrantRepository>,
     /// A user's confirmed second factors, for the detail read.
     pub mfa_repo: Arc<crate::mfa::MfaRepository>,
     /// Backs `POST /api/principals/{id}/send-password-reset`, which emails the

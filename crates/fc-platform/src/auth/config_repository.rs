@@ -381,9 +381,11 @@ impl ClientAccessGrantRepository {
         Ok(row.map(ClientAccessGrant::from))
     }
 
+    /// A principal's grants, oldest first (Go `FindByPrincipal`).
     pub async fn find_by_principal(&self, principal_id: &str) -> Result<Vec<ClientAccessGrant>> {
         let rows = sqlx::query_as::<_, ClientAccessGrantRow>(
-            "SELECT * FROM iam_client_access_grants WHERE principal_id = $1",
+            "SELECT * FROM iam_client_access_grants WHERE principal_id = $1
+             ORDER BY granted_at, id",
         )
         .bind(principal_id)
         .fetch_all(&self.pool)
