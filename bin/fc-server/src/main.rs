@@ -1469,14 +1469,30 @@ mod drain_tests {
     use super::*;
     use std::time::Duration;
 
-    async fn slow(delay: Duration) -> Router {
-        Router::new().route(
+    /// A route that takes `delay`, and a signal that a request reached it
+    /// (so a test drains only once the request is really in flight, however
+    /// long the client takes to build and connect).
+    async fn slow(delay: Duration) -> (Router, Arc<tokio::sync::Notify>) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let signal = entered.clone();
+        let app = Router::new().route(
             "/slow",
-            axum::routing::post(move || async move {
-                tokio::time::sleep(delay).await;
-                "done"
+            axum::routing::post(move || {
+                let signal = signal.clone();
+                async move {
+                    signal.notify_one();
+                    tokio::time::sleep(delay).await;
+                    "done"
+                }
             }),
-        )
+        );
+        (app, entered)
+    }
+
+    async fn in_flight(entered: &tokio::sync::Notify) {
+        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+            .await
+            .expect("the request reached the handler");
     }
 
     /// A client that never goes through a system proxy (a machine proxy can
@@ -1509,9 +1525,10 @@ mod drain_tests {
     /// finished and answered, not cut, as Go's `apiSrv.Shutdown` does.
     #[tokio::test]
     async fn shutdown_finishes_the_request_in_flight() {
-        let (url, stop, task) = serve(slow(Duration::from_millis(300)).await).await;
+        let (app, entered) = slow(Duration::from_millis(300)).await;
+        let (url, stop, task) = serve(app).await;
         let call = tokio::spawn(async move { local_client().post(url).send().await });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        in_flight(&entered).await;
 
         assert!(drain_http(&stop, vec![task], Duration::from_secs(5)).await);
         let resp = call.await.unwrap().expect("answered, not reset");
@@ -1521,9 +1538,10 @@ mod drain_tests {
     /// The drain is bounded: past the timeout what is left is aborted.
     #[tokio::test]
     async fn the_drain_gives_up_at_its_timeout() {
-        let (url, stop, task) = serve(slow(Duration::from_secs(30)).await).await;
+        let (app, entered) = slow(Duration::from_secs(30)).await;
+        let (url, stop, task) = serve(app).await;
         tokio::spawn(async move { local_client().post(url).send().await });
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        in_flight(&entered).await;
 
         let started = std::time::Instant::now();
         assert!(!drain_http(&stop, vec![task], Duration::from_millis(200)).await);
