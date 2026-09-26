@@ -63,6 +63,7 @@ pub struct ProcessResponse {
     pub id: String,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub status: String,
     pub source: String,
@@ -72,6 +73,8 @@ pub struct ProcessResponse {
     pub body: String,
     pub diagram_type: String,
     pub tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -91,6 +94,7 @@ impl From<Process> for ProcessResponse {
             body: p.body,
             diagram_type: p.diagram_type,
             tags: p.tags,
+            created_by: p.created_by,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -230,18 +234,16 @@ pub async fn list_processes(
 ) -> Result<Json<ProcessListResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_processes(&auth.0)?;
 
-    // Default to CURRENT when no filters specified, matching event types.
-    let status: Option<ProcessStatus> =
-        crate::shared::enum_str::parse_opt(query.status.as_deref())?;
-    let default_status = if query.application.is_none()
-        && query.subdomain.is_none()
-        && status.is_none()
-        && query.search.is_none()
-    {
-        Some(ProcessStatus::Current)
-    } else {
-        status
-    };
+    // Go filters on the status as given: no default, and a status no
+    // process has (`ACTIVE`, say) is an empty list, not a 400.
+    let default_status: Option<ProcessStatus> =
+        match query.status.as_deref().filter(|s| !s.is_empty()) {
+            None => None,
+            Some(s) => match s.parse::<ProcessStatus>() {
+                Ok(status) => Some(status),
+                Err(_) => return Ok(Json(ProcessListResponse { items: Vec::new() })),
+            },
+        };
 
     let processes = state
         .process_repo
