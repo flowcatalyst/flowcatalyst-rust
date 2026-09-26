@@ -10,7 +10,6 @@ use crate::usecase::{
 };
 use crate::EventType;
 use crate::EventTypeRepository;
-use crate::EventTypeStatus;
 
 /// Command for updating an existing event type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,43 +108,14 @@ impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
                 format!("Event type with ID '{}' not found", command.event_type_id),
             )?;
 
-        // Business rule: can only update active event types
-        if event_type.status == EventTypeStatus::Archived {
-            return Err(UseCaseError::business_rule(
-                "CANNOT_UPDATE_ARCHIVED",
-                "Cannot update an archived event type",
-            ));
-        }
-
-        // Track changes
-        let mut updated_name: Option<&str> = None;
-        let mut updated_description: Option<&str> = None;
-
-        // Apply updates
+        // Apply updates. Go's `UpdateEventType` saves and emits even when
+        // nothing changed: a repeated update is a 204, not an error.
         if let Some(ref name) = command.name {
-            let name = name.trim();
-            if name != event_type.name {
-                event_type.name = name.to_string();
-                updated_name = Some(name);
-            }
+            event_type.name = name.trim().to_string();
         }
-
         if let Some(ref desc) = command.description {
-            let changed = event_type.description.as_deref() != Some(desc.as_str());
-            if changed {
-                event_type.description = Some(desc.clone());
-                updated_description = Some(desc.as_str());
-            }
+            event_type.description = Some(desc.clone());
         }
-
-        // Check if anything actually changed
-        if updated_name.is_none() && updated_description.is_none() {
-            return Err(UseCaseError::validation(
-                "NO_CHANGES",
-                "No changes detected",
-            ));
-        }
-
         event_type.updated_at = chrono::Utc::now();
 
         // Create domain event

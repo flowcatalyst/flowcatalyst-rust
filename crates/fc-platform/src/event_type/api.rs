@@ -43,54 +43,54 @@ pub struct CreateEventTypeRequest {
     pub client_id: Option<String>,
 }
 
-/// Update event type request
+/// Update event type request: Go's `UpdateEventTypeRequest` (`name` is
+/// required, a blank one is `NAME_REQUIRED`).
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEventTypeRequest {
     /// Human-readable name
-    pub name: Option<String>,
+    pub name: String,
 
     /// Description
+    #[serde(default)]
     pub description: Option<String>,
 }
 
-/// Add schema version request
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AddSchemaVersionRequest {
-    /// JSON schema for this version
-    pub schema: serde_json::Value,
-}
-
-/// Event type response DTO
+/// Event type response DTO: Go's `EventTypeResponse`
+/// (eventtype/api/dto.go).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeResponse {
     pub id: String,
     pub code: String,
     pub name: String,
-    pub description: Option<String>,
-    pub status: String,
     pub application: String,
     pub subdomain: String,
     pub aggregate: String,
-    #[serde(rename = "event")]
     pub event_name: String,
-    pub spec_versions: Vec<SpecVersionResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub status: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub spec_versions: Vec<SpecVersionResponse>,
 }
 
-/// Schema version response
+/// Schema version response (Go's `specVersionResponse`).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecVersionResponse {
-    /// Version string (converted from u32 to "X.0" format for frontend compatibility)
     pub version: String,
-    pub status: String,
-    /// Schema content (included for detail views)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The schema document (`null` when none).
+    #[schema(value_type = Option<Object>)]
     pub schema: Option<serde_json::Value>,
+    pub status: String,
+    pub created_at: String,
 }
 
 /// Event type list response
@@ -104,8 +104,9 @@ impl From<SpecVersion> for SpecVersionResponse {
     fn from(v: SpecVersion) -> Self {
         Self {
             version: v.version,
-            status: v.status.as_str().to_string(),
             schema: v.schema_content,
+            status: v.status.as_str().to_string(),
+            created_at: v.created_at.to_rfc3339(),
         }
     }
 }
@@ -116,15 +117,18 @@ impl From<EventType> for EventTypeResponse {
             id: et.id,
             code: et.code,
             name: et.name,
-            description: et.description,
-            status: et.status.as_str().to_string(),
             application: et.application,
             subdomain: et.subdomain,
             aggregate: et.aggregate,
             event_name: et.event_name,
-            spec_versions: et.spec_versions.into_iter().map(|v| v.into()).collect(),
+            description: et.description,
+            status: et.status.as_str().to_string(),
+            source: et.source.as_str().to_string(),
+            client_id: et.client_id,
+            created_by: et.created_by,
             created_at: et.created_at.to_rfc3339(),
             updated_at: et.updated_at.to_rfc3339(),
+            spec_versions: et.spec_versions.into_iter().map(|v| v.into()).collect(),
         }
     }
 }
@@ -191,22 +195,6 @@ pub async fn create_event_type(
 
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
-    // Resource-level client access (unchanged — this is the rule that
-    // anchor-level event types require anchor scope, partner/client-scoped
-    // event types require access to the client).
-    if let Some(ref cid) = req.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                cid
-            )));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can create anchor-level event types",
-        ));
-    }
-
     let cmd = CreateEventTypeCommand {
         code: req.code,
         name: req.name,
@@ -214,6 +202,18 @@ pub async fn create_event_type(
         client_id: req.client_id,
         schema: req.schema,
     };
+    // Go's `CreateEventType`: the command is validated, then the scope is
+    // checked (`CheckScopeAccess`: a client-scoped type needs that client,
+    // a platform one anchor).
+    state
+        .create_use_case
+        .validate(&cmd)
+        .await
+        .map_err(PlatformError::from)?;
+    crate::shared::authorization_service::checks::check_scope_access(
+        &auth.0,
+        cmd.client_id.as_deref(),
+    )?;
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
@@ -334,11 +334,13 @@ pub async fn list_event_types(
         status
     };
 
+    // Go accepts `clientId` but filters nothing by it (msg_event_types has no
+    // client column there).
     let event_types = state
         .event_type_repo
         .find_with_filters(
             query.application.as_deref(),
-            query.client_id.as_deref(),
+            None,
             default_status,
             query.subdomain.as_deref(),
             query.aggregate.as_deref(),
@@ -387,25 +389,28 @@ pub async fn update_event_type(
 
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
-    // Resource-level access check on the stored event type.
+    // Go `UpdateEventType.Validate`: the name is required.
+    if req.name.trim().is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "NAME_REQUIRED",
+            "Event type name is required",
+        ));
+    }
+    // Resource-level access check on the stored event type (Go
+    // `CheckScopeAccess`).
     let event_type = state
         .event_type_repo
         .find_by_id(&id)
         .await?
         .or_not_found("EventType", &id)?;
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can modify anchor-level event types",
-        ));
-    }
+    crate::shared::authorization_service::checks::check_scope_access(
+        &auth.0,
+        event_type.client_id.as_deref(),
+    )?;
 
     let cmd = UpdateEventTypeCommand {
         event_type_id: id,
-        name: req.name,
+        name: Some(req.name),
         description: req.description,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -423,10 +428,12 @@ pub async fn update_event_type(
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
-    request_body = AddSchemaVersionRequest,
+    request_body = crate::event_type::go_api::AddEventTypeSchemaRequest,
     responses(
         (status = 200, description = "Schema version added", body = EventTypeResponse),
-        (status = 404, description = "Event type not found")
+        (status = 400, description = "No version or schema"),
+        (status = 404, description = "Event type not found"),
+        (status = 409, description = "The version exists")
     ),
     security(("bearer_auth" = []))
 )]
@@ -434,45 +441,19 @@ pub async fn add_schema_version(
     State(state): State<EventTypesState>,
     auth: Authenticated,
     Path(id): Path<String>,
-    Json(req): Json<AddSchemaVersionRequest>,
+    Json(req): Json<crate::event_type::go_api::AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
-    use crate::event_type::operations::AddSchemaCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
-
-    let event_type = state
-        .event_type_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("EventType", &id)?;
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    }
-
-    let next_version = format!("{}.0", event_type.spec_versions.len() + 1);
-    let cmd = AddSchemaCommand {
-        event_type_id: id.clone(),
-        version: next_version,
-        mime_type: "application/schema+json".to_string(),
-        schema_content: Some(req.schema),
-        schema_type: None,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .add_schema_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .event_type_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("EventType", &id)?;
-    Ok(Json(refreshed.into()))
+    // Go registers one handler for `/versions` and `/schemas`: the version
+    // is the caller's, and a repeat is 409 `VERSION_EXISTS`.
+    crate::event_type::go_api::add_schema(
+        &state.event_type_repo,
+        &state.add_schema_use_case,
+        &auth,
+        id,
+        req,
+    )
+    .await
 }
 
 /// Delete event type (archive)
@@ -505,15 +486,10 @@ pub async fn delete_event_type(
         .find_by_id(&id)
         .await?
         .or_not_found("EventType", &id)?;
-    if let Some(ref cid) = event_type.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this event type"));
-        }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can delete anchor-level event types",
-        ));
-    }
+    crate::shared::authorization_service::checks::check_scope_access(
+        &auth.0,
+        event_type.client_id.as_deref(),
+    )?;
 
     let cmd = DeleteEventTypeCommand { event_type_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
