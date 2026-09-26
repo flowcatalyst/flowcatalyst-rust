@@ -40,11 +40,11 @@ pub struct CreateDispatchPoolRequest {
     /// Client ID (null for anchor-level)
     pub client_id: Option<String>,
 
-    /// Rate limit (messages per minute)
-    pub rate_limit: Option<u32>,
+    /// Rate limit (messages per minute; absent: none)
+    pub rate_limit: Option<i32>,
 
-    /// Max concurrent dispatches
-    pub concurrency: Option<u32>,
+    /// Max concurrent dispatches (default 10)
+    pub concurrency: Option<i32>,
 }
 
 /// Update dispatch pool request
@@ -58,24 +58,30 @@ pub struct UpdateDispatchPoolRequest {
     pub description: Option<String>,
 
     /// Rate limit (messages per minute)
-    pub rate_limit: Option<u32>,
+    pub rate_limit: Option<i32>,
 
     /// Max concurrent dispatches
-    pub concurrency: Option<u32>,
+    pub concurrency: Option<i32>,
 }
 
-/// Dispatch pool response DTO
+/// Dispatch pool response DTO (Go `DispatchPoolResponse`: optional members
+/// are omitted when unset).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchPoolResponse {
     pub id: String,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<i32>,
+    pub concurrency: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_identifier: Option<String>,
     pub status: String,
-    pub rate_limit: Option<u32>,
-    pub concurrency: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -87,10 +93,11 @@ impl From<DispatchPool> for DispatchPoolResponse {
             code: p.code,
             name: p.name,
             description: p.description,
+            rate_limit: p.rate_limit,
+            concurrency: p.concurrency,
             client_id: p.client_id,
+            client_identifier: p.client_identifier,
             status: p.status.as_str().to_string(),
-            rate_limit: p.rate_limit.map(|r| r as u32),
-            concurrency: Some(p.concurrency as u32),
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
         }
@@ -152,20 +159,9 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     Json(req): Json<CreateDispatchPoolRequest>,
 ) -> Result<(StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
-    // permission first; client reach is checked below.
+    // permission first; the use case then validates (400) and checks the
+    // caller's reach into the requested client (403 SCOPE_FORBIDDEN).
     crate::checks::can_write_dispatch_pools(&auth.0)?;
-    // Check access - anchor or client admin
-    if !auth.0.is_anchor() {
-        if let Some(ref client_id) = req.client_id {
-            if !auth.0.can_access_client(client_id) {
-                return Err(PlatformError::forbidden("No access to this client"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Client ID required for non-anchor users",
-            ));
-        }
-    }
 
     let command = CreateDispatchPoolCommand {
         code: req.code,
@@ -174,6 +170,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
         client_id: req.client_id,
         rate_limit: req.rate_limit,
         concurrency: req.concurrency,
+        caller: Some(auth.0.clone()),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -248,43 +245,23 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
 ) -> Result<Json<DispatchPoolListResponse>, PlatformError> {
     crate::checks::can_read_dispatch_pools(&auth.0)?;
 
-    let pools = if let Some(ref client_id) = query.client_id {
-        // Check access
-        if !auth.0.is_anchor() && !auth.0.can_access_client(client_id) {
-            return Err(PlatformError::forbidden("No access to this client"));
-        }
-        state
-            .dispatch_pool_repo
-            .find_by_client(Some(client_id.as_str()))
-            .await?
-    } else {
-        // Get active pools by default, or all pools accessible to user
-        state.dispatch_pool_repo.find_active().await?
-    };
-
-    // Filter by status if specified
+    // Go: the filters as given (no status filter means every status), then
+    // `FilterClientScoped`.
     let status_filter: Option<DispatchPoolStatus> =
         crate::shared::enum_str::parse_opt(query.status.as_deref())?;
-
-    // Filter by access for non-anchor users and by status
+    let pools = state
+        .dispatch_pool_repo
+        .find_with_filters(
+            status_filter,
+            query.client_id.as_deref().filter(|c| !c.is_empty()),
+        )
+        .await?;
     let filtered: Vec<DispatchPoolResponse> = pools
         .into_iter()
         .filter(|p| {
-            // Status filter
-            if let Some(ref status) = status_filter {
-                if p.status != *status {
-                    return false;
-                }
-            }
-            // Access filter
-            if auth.0.is_anchor() {
-                true
-            } else if let Some(ref cid) = p.client_id {
-                auth.0.can_access_client(cid)
-            } else {
-                // Anchor-level pools visible to all authenticated users
-                true
-            }
+            p.client_id
+                .as_deref()
+                .is_none_or(|cid| crate::shared::caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|p| p.into())
         .collect();
@@ -321,31 +298,16 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     crate::checks::can_write_dispatch_pools(&auth.0)?;
-    // Check access first
-    let pool = state
-        .dispatch_pool_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
 
-    if !auth.0.is_anchor() {
-        if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id) {
-                return Err(PlatformError::forbidden("No access to this dispatch pool"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Cannot update anchor-level dispatch pool",
-            ));
-        }
-    }
-
+    // The use case validates, loads (404) and checks the caller's scope on
+    // the pool (403 SCOPE_FORBIDDEN), in Go's order.
     let command = UpdateDispatchPoolCommand {
         id: id.clone(),
         name: req.name,
         description: req.description,
         rate_limit: req.rate_limit,
         concurrency: req.concurrency,
+        caller: Some(auth.0.clone()),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -366,7 +328,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
     responses(
-        (status = 200, description = "Dispatch pool archived", body = DispatchPoolResponse),
+        (status = 204, description = "Dispatch pool archived"),
         (status = 404, description = "Dispatch pool not found")
     ),
     security(("bearer_auth" = []))
@@ -375,7 +337,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     crate::checks::can_write_dispatch_pools(&auth.0)?;
@@ -386,30 +348,16 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
 
-    if !auth.0.is_anchor() {
-        if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id) {
-                return Err(PlatformError::forbidden("No access to this dispatch pool"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Cannot archive anchor-level dispatch pool",
-            ));
-        }
-    }
+    // Go `CheckScopeAccess`: a client's pool needs that client, a platform
+    // pool anchor scope.
+    crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     let command = ArchiveDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
     match state.archive_use_case.run(command, ctx).await.into_result() {
-        Ok(_event) => {
-            let pool = state
-                .dispatch_pool_repo
-                .find_by_id(&id)
-                .await?
-                .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
-            Ok(Json(pool.into()))
-        }
+        // Unconditional, as Go: 204 however often it is sent.
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }
@@ -424,7 +372,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
     responses(
-        (status = 200, description = "Dispatch pool suspended", body = DispatchPoolResponse),
+        (status = 204, description = "Dispatch pool suspended"),
         (status = 404, description = "Dispatch pool not found"),
         (status = 403, description = "Insufficient permissions")
     ),
@@ -434,7 +382,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     crate::checks::can_write_dispatch_pools(&auth.0)?;
@@ -445,17 +393,9 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
 
-    if !auth.0.is_anchor() {
-        if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id) {
-                return Err(PlatformError::forbidden("No access to this dispatch pool"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Cannot suspend anchor-level dispatch pool",
-            ));
-        }
-    }
+    // Go `CheckScopeAccess`: a client's pool needs that client, a platform
+    // pool anchor scope.
+    crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     // Go's SuspendDispatchPool: status SUSPENDED, event
     // platform:admin:dispatch-pool:suspended (it used to archive the pool).
@@ -463,14 +403,8 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
     match state.suspend_use_case.run(command, ctx).await.into_result() {
-        Ok(_event) => {
-            let pool = state
-                .dispatch_pool_repo
-                .find_by_id(&id)
-                .await?
-                .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
-            Ok(Json(pool.into()))
-        }
+        // Unconditional, as Go: 204 however often it is sent.
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }
@@ -485,7 +419,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
     responses(
-        (status = 200, description = "Dispatch pool activated", body = DispatchPoolResponse),
+        (status = 204, description = "Dispatch pool activated"),
         (status = 404, description = "Dispatch pool not found"),
         (status = 403, description = "Insufficient permissions")
     ),
@@ -495,7 +429,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
     crate::checks::can_write_dispatch_pools(&auth.0)?;
@@ -506,17 +440,9 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
 
-    if !auth.0.is_anchor() {
-        if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id) {
-                return Err(PlatformError::forbidden("No access to this dispatch pool"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Cannot activate anchor-level dispatch pool",
-            ));
-        }
-    }
+    // Go `CheckScopeAccess`: a client's pool needs that client, a platform
+    // pool anchor scope.
+    crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     // Go's ActivateDispatchPool: status ACTIVE, event
     // platform:admin:dispatch-pool:activated (it used to change nothing).
@@ -529,14 +455,8 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
         .await
         .into_result()
     {
-        Ok(_event) => {
-            let pool = state
-                .dispatch_pool_repo
-                .find_by_id(&id)
-                .await?
-                .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
-            Ok(Json(pool.into()))
-        }
+        // Unconditional, as Go: 204 however often it is sent.
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
 }
@@ -561,8 +481,15 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::can_delete_dispatch_pools(&auth.0)?;
+
+    // Go: 404 for a missing pool, then the caller's scope on it.
+    let pool = state
+        .dispatch_pool_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
+    crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     let command = DeleteDispatchPoolCommand { id };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());

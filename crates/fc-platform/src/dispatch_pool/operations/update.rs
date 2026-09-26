@@ -29,11 +29,16 @@ pub struct UpdateDispatchPoolCommand {
 
     /// Updated rate limit (messages per minute)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rate_limit: Option<u32>,
+    pub rate_limit: Option<i32>,
 
     /// Updated max concurrent dispatches
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub concurrency: Option<u32>,
+    pub concurrency: Option<i32>,
+
+    /// Who is updating it, for Go's scope check on the loaded pool (never
+    /// serialised). `None` is a platform-authored update.
+    #[serde(skip)]
+    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for UpdateDispatchPoolCommand {}
@@ -58,8 +63,18 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
     type Command = UpdateDispatchPoolCommand;
     type Event = DispatchPoolUpdated;
 
-    async fn validate(&self, _command: &UpdateDispatchPoolCommand) -> Result<(), UseCaseError> {
-        Ok(())
+    /// Go `UpdateDispatchPool.Validate`.
+    async fn validate(&self, command: &UpdateDispatchPoolCommand) -> Result<(), UseCaseError> {
+        if command.id.trim().is_empty() {
+            return Err(UseCaseError::validation("ID_REQUIRED", "id is required"));
+        }
+        if command.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
+            return Err(UseCaseError::validation(
+                "NAME_REQUIRED",
+                "name cannot be empty",
+            ));
+        }
+        super::create::validate_counts(command.rate_limit, command.concurrency)
     }
 
     async fn authorize(
@@ -102,16 +117,14 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
                 "DISPATCH_POOL_NOT_FOUND",
                 format!("Dispatch pool with ID '{}' not found", command.id),
             )?;
+        // Go: per-resource scope on the loaded pool.
+        if let Some(ref caller) = command.caller {
+            crate::shared::caller_reach::check_scope_access(caller, pool.client_id.as_deref())?;
+        }
 
         // Apply name update
         if let Some(ref name) = command.name {
             let name = name.trim();
-            if name.is_empty() {
-                return Err(UseCaseError::validation(
-                    "INVALID_NAME",
-                    "Name cannot be empty",
-                ));
-            }
             if pool.name != name {
                 pool.name = name.to_string();
             }
@@ -124,12 +137,12 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
 
         // Apply rate limit update (Some sets/changes; clearing requires a separate flag)
         if let Some(rate) = command.rate_limit {
-            pool.rate_limit = Some(rate as i32);
+            pool.rate_limit = Some(rate);
         }
 
         // Apply concurrency update
         if let Some(conc) = command.concurrency {
-            pool.concurrency = conc as i32;
+            pool.concurrency = conc;
         }
 
         pool.updated_at = Utc::now();
@@ -152,6 +165,7 @@ mod tests {
             description: None,
             rate_limit: Some(2000),
             concurrency: Some(20),
+            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

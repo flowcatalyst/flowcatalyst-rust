@@ -706,7 +706,8 @@ impl TriggerSync {
                     name: None,
                     description: None,
                     rate_limit: None,
-                    concurrency: Some(desired as u32),
+                    concurrency: Some(desired),
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -732,7 +733,8 @@ impl TriggerSync {
                     description: None,
                     client_id: None,
                     rate_limit: None,
-                    concurrency: Some(desired as u32),
+                    concurrency: Some(desired),
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,
