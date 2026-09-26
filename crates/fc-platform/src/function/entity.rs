@@ -19,8 +19,10 @@ use crate::usecase::{HasId, UseCaseError};
 
 // ── Function ────────────────────────────────────────────────────────────────
 
-/// A function's lifecycle status (Java `FunctionStatus`), stored as its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A function's lifecycle status (Java `FunctionStatus`), stored as its name
+/// and serialized as it (in `FunctionUpdated`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FunctionStatus {
     Active,
     Disabled,
@@ -802,6 +804,12 @@ pub struct SecretInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `FunctionUpdated` writes the status through serde: the same strings.
+    #[test]
+    fn function_status_serializes_as_its_name() {
+        crate::shared::enum_str::assert_str_enum(FunctionStatus::ALL, FunctionStatus::as_str);
+    }
 
     fn function() -> Function {
         Function::create(

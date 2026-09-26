@@ -373,7 +373,9 @@ impl<U: UnitOfWork> SetPortalIdentityStatusUseCase<U> {
             return Err(not_found("PortalIdentity", &cmd.id));
         }
         ident.status = IdentityStatus::parse(&cmd.status).unwrap_or(IdentityStatus::Active);
-        let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, &cmd.status);
+        // `validate` accepted only a status that parses, so this is the
+        // command's status.
+        let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, ident.status);
         Ok((ident, event))
     }
 }

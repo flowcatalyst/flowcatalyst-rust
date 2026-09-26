@@ -17,7 +17,9 @@
 
 use serde::Serialize;
 
-use crate::function::entity::{ClientPolicy, Function, FunctionDomain, FunctionVersion};
+use crate::function::entity::{
+    ClientPolicy, Function, FunctionDomain, FunctionStatus, FunctionVersion,
+};
 use crate::impl_domain_event;
 use crate::usecase::{EventMetadata, ExecutionContext};
 
@@ -93,7 +95,7 @@ pub struct FunctionUpdated {
     pub address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub status: String,
+    pub status: FunctionStatus,
 }
 impl_domain_event!(FunctionUpdated);
 
@@ -104,7 +106,7 @@ impl FunctionUpdated {
             function_id: f.id.clone(),
             address: f.address.render(),
             description: f.description.clone(),
-            status: f.status.as_str().to_string(),
+            status: f.status,
         }
     }
 }
