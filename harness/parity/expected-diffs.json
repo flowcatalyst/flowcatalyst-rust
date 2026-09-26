@@ -257,5 +257,47 @@
     "pointer": "/**",
     "reason": "Consequence of the leeway on the step before: on Go that replay revoked the family, so refresh2 is refused (400 invalid_grant); on Rust the family was never revoked (the replay was within the leeway), so refresh2 still rotates (200). Refreshing a genuinely revoked family is refused on Rust too (see refresh-revoked).",
     "ruling": "owner decisions 2026-09-25, #21 (Java ruling 5): a refresh token rotated out less than 10 s ago rotates again into a sibling in the same family"
+  },
+  {
+    "scenario": "anchor-domains:*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in platform:admin / platform:iam-admin roles hold platform:iam:service-account:{view,create,update,delete,manage}; Go's do not (only super-admin reaches them there), so the login's permission list is longer.",
+    "ruling": "owner decisions 2026-09-25 #21 (Java rulings of 2026-09-25, ruling 13; triage docs/parity/java-2026-09-25-triage.md, '14 + 13 role ceiling'): admin, iam-admin, iam-readonly and viewer carry the service-account permissions"
+  },
+  {
+    "scenario": "clients:*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in platform:admin / platform:iam-admin roles hold platform:iam:service-account:{view,create,update,delete,manage}; Go's do not (only super-admin reaches them there), so the login's permission list is longer.",
+    "ruling": "owner decisions 2026-09-25 #21 (Java rulings of 2026-09-25, ruling 13; triage docs/parity/java-2026-09-25-triage.md, '14 + 13 role ceiling'): admin, iam-admin, iam-readonly and viewer carry the service-account permissions"
+  },
+  {
+    "scenario": "idp-role-mappings:*",
+    "step": "confinement-login",
+    "pointer": "/permissions/**",
+    "reason": "Rust's built-in platform:admin / platform:iam-admin roles hold platform:iam:service-account:{view,create,update,delete,manage}; Go's do not (only super-admin reaches them there), so the login's permission list is longer.",
+    "ruling": "owner decisions 2026-09-25 #21 (Java rulings of 2026-09-25, ruling 13; triage docs/parity/java-2026-09-25-triage.md, '14 + 13 role ceiling'): admin, iam-admin, iam-readonly and viewer carry the service-account permissions"
+  },
+  {
+    "scenario": "principals: create/read*",
+    "step": "invite-confirm-session-authenticates-me",
+    "pointer": "/scope",
+    "reason": "/auth/me carries the caller's scope so the SPA can gate anchor-only pages; Go's omits it.",
+    "ruling": "owner decisions 2026-09-25, Follow-ups found during wave 1: '/auth/me should include the caller's scope/tier, so the SPA can gate anchor-only pages'"
+  },
+  {
+    "scenario": "service-accounts:*",
+    "step": "mint-token",
+    "pointer": "/scope",
+    "reason": "The minted token's scope lists the role's permissions; Rust's platform:messaging-admin also carries the function-runner permissions (platform:function:*), which Go has no function runner to define.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java"
+  },
+  {
+    "scenario": "service-accounts:*",
+    "step": "mint-token",
+    "pointer": "/accessToken/«jwt»/claims/scope",
+    "reason": "The minted token's scope lists the role's permissions; Rust's platform:messaging-admin also carries the function-runner permissions (platform:function:*), which Go has no function runner to define.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java"
   }
 ]
