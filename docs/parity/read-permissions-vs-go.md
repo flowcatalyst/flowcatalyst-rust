@@ -88,7 +88,7 @@ takes its parent's gate.
 | `GET /bff/debug/events*`, `/bff/debug/dispatch-jobs*` | `:view-raw` | `can_read_events_raw` / `can_read_dispatch_jobs_raw` |
 | `GET /api/event-types`, `/{id}`, `/by-code/{code}` | `CanReadEventTypes`, `FilterClientScoped` | `can_read_event_types`, rows confined |
 | `GET /api/processes*`, `/bff/processes*` | `CanReadProcesses` (`messaging:process:view`) | `can_read_processes` (also admits `application-service:process:view`) |
-| `GET /api/scheduled-jobs*`, `/bff/scheduled-jobs*` | `CanReadScheduledJobs`, rows confined | `can_read_scheduled_jobs` (instances: `scheduled-job-instance:view` also admitted), rows confined |
+| `GET /api/scheduled-jobs*`, `/bff/scheduled-jobs*` | `CanReadScheduledJobs`, rows confined | `can_read_scheduled_jobs` (API instances: `scheduled-job-instance:view` also admitted; the `/bff` instance routes ask `scheduled-job:view` alone, as Go), rows confined; an unreachable row is 404 |
 | `GET /api/service-accounts`, `/{id}`, `/code/{code}`, `/{id}/roles` | `CanReadServiceAccounts` | `can_read_service_accounts` |
 | `GET /api/subscriptions`, `/{id}` | `CanReadSubscriptions`, `FilterClientScoped` | `can_read_subscriptions`, rows confined |
 | `GET /api/applications/{appCode}/roles` | (Rust-only SDK route) | `can_read_roles` + application scope |

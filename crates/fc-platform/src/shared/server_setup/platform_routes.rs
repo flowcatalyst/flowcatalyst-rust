@@ -1199,6 +1199,7 @@ pub fn build_platform_routes(
         repo: repos.scheduled_job_repo.clone(),
         instance_repo: repos.scheduled_job_instance_repo.clone(),
         client_repo: repos.client_repo.clone(),
+        application_repo: repos.application_repo.clone(),
     };
 
     let bff_event_types_state = BffEventTypesState {
