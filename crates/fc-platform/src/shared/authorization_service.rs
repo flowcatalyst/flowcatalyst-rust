@@ -888,11 +888,37 @@ pub mod checks {
         require_permission(context, permissions::admin::APPLICATION_DELETE)
     }
 
-    /// Role administration through `/api/roles` and `/bff/roles`: anchor
-    /// reach and the role permission (owner decision #25, stricter than Go,
-    /// which asks the permission only).
+    /// Role administration through `/api/roles` and `/bff/roles`: the role
+    /// permission, as Go asks (`CanDeleteRoles`), then anchor reach (owner
+    /// decision #25, stricter than Go). The permission is checked first, so
+    /// a caller lacking it is refused exactly as Go refuses it; only a
+    /// non-anchor holder of the permission meets the extra anchor rule.
     pub fn can_administer_roles(context: &AuthContext, permission: &str) -> Result<()> {
+        require_permission(context, permission)?;
+        require_anchor_scope(context)
+    }
+
+    /// Role administration through `/bff/roles`: anchor scope, as Go's BFF
+    /// asks (`RequireAnchor`, shared/bff/roles.go), then the role
+    /// permission (owner decision #25).
+    pub fn can_administer_bff_roles(context: &AuthContext, permission: &str) -> Result<()> {
         anchor_with(context, permission)
+    }
+
+    /// Role create and update through `/api/roles`: any role write
+    /// permission, as Go's `CanWriteRoles` (`one of: …`), then anchor reach
+    /// (owner decision #25), in that order for the reason given on
+    /// [`can_administer_roles`].
+    pub fn can_write_roles(context: &AuthContext) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::ROLE_CREATE,
+                permissions::iam::ROLE_UPDATE,
+                permissions::iam::ROLE_DELETE,
+            ],
+        )?;
+        require_anchor_scope(context)
     }
 
     /// Re-running the built-in role sync: anchor and any role write

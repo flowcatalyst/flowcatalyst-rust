@@ -408,6 +408,9 @@ pub fn build_platform_routes(
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
+        permission_repo: Arc::new(
+            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
+        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
@@ -1084,6 +1087,9 @@ pub fn build_platform_routes(
         role_sync_service: Arc::new(crate::shared::role_sync_service::RoleSyncService::new(
             repos.role_repo.clone(),
         )),
+        permission_repo: Arc::new(
+            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
+        ),
     };
     // Temporary (docs/spec/audit-redaction.md, Java repo).
     let bff_audit_logs_state = crate::shared::bff_audit_logs_api::BffAuditLogsState {

@@ -133,7 +133,7 @@ impl RoleRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles")
+        let rows = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles ORDER BY name")
             .fetch_all(&self.pool)
             .await?;
 
@@ -141,30 +141,33 @@ impl RoleRepository {
     }
 
     pub async fn find_by_application(&self, application_code: &str) -> Result<Vec<AuthRole>> {
-        let rows =
-            sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE application_code = $1")
-                .bind(application_code)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as::<_, RoleRow>(
+            "SELECT * FROM iam_roles WHERE application_code = $1 ORDER BY name",
+        )
+        .bind(application_code)
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
 
     pub async fn find_by_application_id(&self, application_id: &str) -> Result<Vec<AuthRole>> {
-        let rows =
-            sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE application_id = $1")
-                .bind(application_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query_as::<_, RoleRow>(
+            "SELECT * FROM iam_roles WHERE application_id = $1 ORDER BY name",
+        )
+        .bind(application_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         self.hydrate_roles(rows).await
     }
 
     pub async fn find_by_source(&self, source: RoleSource) -> Result<Vec<AuthRole>> {
-        let rows = sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE source = $1")
-            .bind(source.as_str())
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            sqlx::query_as::<_, RoleRow>("SELECT * FROM iam_roles WHERE source = $1 ORDER BY name")
+                .bind(source.as_str())
+                .fetch_all(&self.pool)
+                .await?;
 
         self.hydrate_roles(rows).await
     }
@@ -205,8 +208,21 @@ impl RoleRepository {
             qb.push("client_managed = ").push_bind(cm);
         }
 
+        qb.push(" ORDER BY name");
         let rows: Vec<RoleRow> = qb.build_query_as().fetch_all(&self.pool).await?;
         self.hydrate_roles(rows).await
+    }
+
+    /// The distinct application codes roles use, sorted (Go
+    /// `RoleApplicationCodes`).
+    pub async fn find_application_codes(&self) -> Result<Vec<String>> {
+        let codes = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT application_code FROM iam_roles \
+             WHERE application_code IS NOT NULL ORDER BY application_code",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(codes)
     }
 
     pub async fn find_by_codes(&self, codes: &[String]) -> Result<Vec<AuthRole>> {
