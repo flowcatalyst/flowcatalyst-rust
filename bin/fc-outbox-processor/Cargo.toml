@@ -7,19 +7,12 @@ description = "FlowCatalyst Outbox Processor - Reads from app database outbox an
 
 [dependencies]
 fc-common = { path = "../../crates/fc-common" }
-fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mongo"] }
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mongo", "admin"] }
 
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
-sqlx = { workspace = true }
-mongodb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-async-trait = { workspace = true }
-chrono = { workspace = true }
-tower = { workspace = true }

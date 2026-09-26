@@ -9,6 +9,7 @@ pub mod group_state;
 pub mod http_dispatcher;
 pub mod recovery;
 pub mod repository;
+pub mod setup;
 
 #[cfg(feature = "mongo")]
 pub mod mongo;

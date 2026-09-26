@@ -15,7 +15,7 @@ fc-platform = { path = "../../crates/fc-platform" }
 fc-router = { path = "../../crates/fc-router", features = ["backends"] }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
-fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres"] }
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "admin"] }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

@@ -4,7 +4,11 @@
 //! to the FlowCatalyst HTTP API with message group ordering, as Go's outbox
 //! processor does (see `fc_outbox::enhanced_processor`).
 //!
-//! Supports multiple database backends: SQLite, PostgreSQL, MongoDB.
+//! Supports multiple database backends: SQLite, PostgreSQL, MongoDB. It is
+//! the third of FlowCatalyst's three binaries (`fc-server`, `fc-dev`,
+//! `fc-outbox-processor`): the application-side sidecar. `fc-server`'s
+//! outbox role (`FC_OUTBOX_ENABLED`) runs the same processor through the
+//! same start-up (`fc_outbox::setup`), without the MongoDB backend.
 //!
 //! ## Environment Variables
 //!
@@ -13,7 +17,7 @@
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
 //! | `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | Database type: `sqlite`, `postgres`, `mongo` |
-//! | `FC_OUTBOX_DB_URL` | - | Database connection URL (required) |
+//! | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | - | Database connection URL (required) |
 //! | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name |
 //! | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Table name for EVENT items |
 //! | `FC_OUTBOX_DISPATCH_JOBS_TABLE` | `outbox_messages` | Table name for DISPATCH_JOB items |
@@ -43,9 +47,8 @@
 //! | `POST /outbox/groups/{group}/skip` | Leave the blocking item failed and advance (404 if not Blocked) |
 
 use anyhow::Result;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::extract::State;
+use axum::routing::get;
 use axum::{Json, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -54,23 +57,10 @@ use tokio::signal;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use fc_outbox::repository::OutboxRepository;
-use fc_outbox::repository::OutboxTableConfig;
-use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
+use fc_outbox::setup;
+use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
 
-use sqlx::postgres::PgPoolOptions;
-use sqlx::sqlite::SqlitePoolOptions;
-
-use fc_common::config::{env_first, env_or, env_or_parse, env_required};
-
-/// Build table config from environment variables
-fn build_table_config() -> OutboxTableConfig {
-    OutboxTableConfig {
-        events_table: env_or("FC_OUTBOX_EVENTS_TABLE", "outbox_messages"),
-        dispatch_jobs_table: env_or("FC_OUTBOX_DISPATCH_JOBS_TABLE", "outbox_messages"),
-        audit_logs_table: env_or("FC_OUTBOX_AUDIT_LOGS_TABLE", "outbox_messages"),
-    }
-}
+use fc_common::config::env_or_parse;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -79,20 +69,20 @@ async fn main() -> Result<()> {
     info!("Starting FlowCatalyst Outbox Processor");
 
     // Configuration
-    let backend: OutboxBackend =
-        env_first(&["FC_OUTBOX_BACKEND", "FC_OUTBOX_DB_TYPE"], "postgres").parse()?;
+    let backend = setup::backend_from_env()?;
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
-    let admin_port: u16 = env_or_parse("FC_OUTBOX_ADMIN_PORT", 0);
+    let admin_port = setup::admin_port_from_env();
 
-    let table_config = build_table_config();
+    let table_config = setup::table_config_from_env();
     info!("Table config: {:?}", table_config.unique_tables());
 
     // Setup shutdown signal
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     // Initialize outbox repository
-    let outbox_repo = create_outbox_repository(backend, table_config).await?;
-    info!("Outbox repository initialized ({})", backend);
+    let url = setup::database_url_from_env(backend)
+        .ok_or_else(|| anyhow::anyhow!("FC_OUTBOX_DB_URL environment variable is required"))?;
+    let outbox_repo = setup::connect(backend, &url, table_config).await?;
 
     let config = EnhancedProcessorConfig::from_env();
     info!(
@@ -146,19 +136,13 @@ async fn main() -> Result<()> {
 
     // Group admin API, localhost only (Go `FC_OUTBOX_ADMIN_PORT`).
     let admin_handle = if admin_port > 0 {
-        let addr = SocketAddr::from(([127, 0, 0, 1], admin_port));
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        info!("Outbox admin API listening on http://{}", addr);
-        let app = admin_router(Arc::clone(&processor));
         let mut shutdown_rx = shutdown_tx.subscribe();
-        Some(tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.recv().await;
-                })
-                .await
-                .ok();
-        }))
+        Some(
+            setup::serve_admin(admin_port, Arc::clone(&processor), async move {
+                let _ = shutdown_rx.recv().await;
+            })
+            .await?,
+        )
     } else {
         None
     };
@@ -185,122 +169,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn create_outbox_repository(
-    backend: OutboxBackend,
-    table_config: OutboxTableConfig,
-) -> Result<Arc<dyn OutboxRepository>> {
-    match backend {
-        OutboxBackend::Sqlite => {
-            let url = env_required("FC_OUTBOX_DB_URL")?;
-            let pool = SqlitePoolOptions::new()
-                .max_connections(5)
-                .connect(&url)
-                .await?;
-            let repo = fc_outbox::sqlite::SqliteOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            info!("Using SQLite outbox: {}", url);
-            Ok(Arc::new(repo))
-        }
-        OutboxBackend::Postgres => {
-            let url = env_required("FC_OUTBOX_DB_URL")?;
-            let pool = PgPoolOptions::new()
-                .max_connections(10)
-                .connect(&url)
-                .await?;
-            let repo =
-                fc_outbox::postgres::PostgresOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            info!("Using PostgreSQL outbox");
-            Ok(Arc::new(repo))
-        }
-        OutboxBackend::Mongo => {
-            let url = env_required("FC_OUTBOX_DB_URL")?;
-            let db_name = env_or("FC_OUTBOX_MONGO_DB", "flowcatalyst");
-            let client = mongodb::Client::with_uri_str(&url).await?;
-            let repo = fc_outbox::mongo::MongoOutboxRepository::with_config(
-                client,
-                &db_name,
-                table_config,
-            );
-            repo.init_schema().await?;
-            info!("Using MongoDB outbox: {}", db_name);
-            Ok(Arc::new(repo))
-        }
-    }
-}
-
 type Processor = Arc<EnhancedOutboxProcessor>;
-
-/// Go's `AdminHandler` routes and answers.
-fn admin_router(processor: Processor) -> Router {
-    Router::new()
-        .route("/outbox/groups", get(admin_groups))
-        .route("/outbox/groups/blocked", get(admin_blocked))
-        .route("/outbox/groups/{group}/pause", post(admin_pause))
-        .route("/outbox/groups/{group}/resume", post(admin_resume))
-        .route("/outbox/groups/{group}/unblock", post(admin_unblock))
-        .route("/outbox/groups/{group}/skip", post(admin_skip))
-        .with_state(processor)
-}
-
-async fn admin_groups(State(p): State<Processor>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "groups": p.group_states() }))
-}
-
-async fn admin_blocked(State(p): State<Processor>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "blocked": p.blocked_groups() }))
-}
-
-async fn admin_pause(
-    State(p): State<Processor>,
-    Path(group): Path<String>,
-) -> Json<serde_json::Value> {
-    p.pause_group(&group);
-    Json(serde_json::json!({ "status": "PAUSED" }))
-}
-
-async fn admin_resume(
-    State(p): State<Processor>,
-    Path(group): Path<String>,
-) -> Json<serde_json::Value> {
-    p.resume_group(&group);
-    Json(serde_json::json!({ "status": "RUNNING" }))
-}
-
-async fn admin_unblock(
-    State(p): State<Processor>,
-    Path(group): Path<String>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    if p.unblock_group(&group).await {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "UNBLOCKED" })),
-        )
-    } else {
-        not_blocked()
-    }
-}
-
-async fn admin_skip(
-    State(p): State<Processor>,
-    Path(group): Path<String>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    if p.skip_group(&group) {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "SKIPPED" })),
-        )
-    } else {
-        not_blocked()
-    }
-}
-
-fn not_blocked() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_FOUND,
-        Json(serde_json::json!({ "error": "group not blocked" })),
-    )
-}
 
 async fn metrics_handler(State(p): State<Processor>) -> String {
     let m = p.metrics().await;
@@ -357,168 +226,5 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
-    use fc_outbox::repository::ClaimedBatch;
-    use fc_outbox::{DispatchOutcome, OutboxDispatcher};
-    use std::sync::Mutex;
-
-    /// A repository with one PENDING item that fails for good.
-    #[derive(Default)]
-    struct OneItem {
-        requeued: Mutex<Vec<String>>,
-        claimed: Mutex<bool>,
-        config: OutboxTableConfig,
-    }
-
-    #[async_trait]
-    impl OutboxRepository for OneItem {
-        async fn claim_pending(&self, _limit: u32) -> Result<ClaimedBatch> {
-            let mut claimed = self.claimed.lock().unwrap();
-            let mut batch = ClaimedBatch::default();
-            if !*claimed {
-                *claimed = true;
-                let now = chrono::Utc::now();
-                batch.push_row(
-                    "i1".into(),
-                    OutboxItemType::Event,
-                    Some("g".into()),
-                    "{}",
-                    0,
-                    None,
-                    now,
-                    now,
-                );
-            }
-            Ok(batch)
-        }
-        async fn mark_success(&self, _: OutboxItemType, _: &[String]) -> Result<()> {
-            Ok(())
-        }
-        async fn mark_failed(
-            &self,
-            _: OutboxItemType,
-            _: &[String],
-            _: OutboxStatus,
-            _: &str,
-            _: bool,
-        ) -> Result<()> {
-            Ok(())
-        }
-        async fn release(&self, _: OutboxItemType, _: &[String]) -> Result<()> {
-            Ok(())
-        }
-        async fn requeue(&self, _: OutboxItemType, ids: &[String]) -> Result<()> {
-            self.requeued.lock().unwrap().extend(ids.iter().cloned());
-            Ok(())
-        }
-        async fn recover_stuck(&self, _: Duration) -> Result<u64> {
-            Ok(0)
-        }
-        async fn init_schema(&self) -> Result<()> {
-            Ok(())
-        }
-        fn table_config(&self) -> &OutboxTableConfig {
-            &self.config
-        }
-    }
-
-    struct Refuse;
-
-    #[async_trait]
-    impl OutboxDispatcher for Refuse {
-        async fn send_batch(&self, items: &[OutboxItem]) -> Vec<DispatchOutcome> {
-            items
-                .iter()
-                .map(|_| DispatchOutcome::failed(OutboxStatus::Forbidden, "403"))
-                .collect()
-        }
-    }
-
-    async fn call(app: &Router, method: &str, uri: &str) -> (StatusCode, serde_json::Value) {
-        use tower::ServiceExt;
-        let response = app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
-    }
-
-    #[tokio::test]
-    async fn the_admin_api_answers_as_gos() {
-        let repo = Arc::new(OneItem::default());
-        let processor = Arc::new(EnhancedOutboxProcessor::with_dispatcher(
-            EnhancedProcessorConfig::default(),
-            repo.clone(),
-            Arc::new(Refuse),
-        ));
-        let app = admin_router(processor.clone());
-
-        assert_eq!(
-            call(&app, "POST", "/outbox/groups/g/unblock").await,
-            (
-                StatusCode::NOT_FOUND,
-                serde_json::json!({"error": "group not blocked"})
-            )
-        );
-
-        processor.poll_once().await.unwrap();
-        for _ in 0..200 {
-            if !processor.blocked_groups().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        assert_eq!(
-            call(&app, "GET", "/outbox/groups/blocked").await,
-            (
-                StatusCode::OK,
-                serde_json::json!({"blocked": [
-                    {"group": "g", "status": "BLOCKED", "blockedItemId": "i1", "error": "403"}
-                ]})
-            )
-        );
-        assert_eq!(
-            call(&app, "POST", "/outbox/groups/g/unblock").await,
-            (StatusCode::OK, serde_json::json!({"status": "UNBLOCKED"}))
-        );
-        assert_eq!(*repo.requeued.lock().unwrap(), vec!["i1"]);
-
-        assert_eq!(
-            call(&app, "POST", "/outbox/groups/p/pause").await,
-            (StatusCode::OK, serde_json::json!({"status": "PAUSED"}))
-        );
-        assert_eq!(
-            call(&app, "GET", "/outbox/groups").await,
-            (
-                StatusCode::OK,
-                serde_json::json!({"groups": [{"group": "p", "status": "PAUSED"}]})
-            )
-        );
-        assert_eq!(
-            call(&app, "POST", "/outbox/groups/p/resume").await,
-            (StatusCode::OK, serde_json::json!({"status": "RUNNING"}))
-        );
-        assert_eq!(
-            call(&app, "POST", "/outbox/groups/p/skip").await.0,
-            StatusCode::NOT_FOUND
-        );
     }
 }

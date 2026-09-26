@@ -97,7 +97,7 @@ IMDS reachability.
 
 ## Not in the task definitions (noted, unchanged)
 
-`FC_OUTBOX_*` (Go's outbox uses the shared pool when `postgres`; Rust needs `FC_OUTBOX_DB_URL`),
+`FC_OUTBOX_*` (both read a `postgres` outbox from the platform database unless `FC_OUTBOX_DB_URL` names another),
 `FC_STREAM_BATCH_SIZE`/`FC_STREAM_PARTITION_*` tuning, `FC_PRINCIPAL_VERSION_CACHE_*`, `FC_RL_*`, `FC_REDIS_URL`
 (both read it for rate limits), `FC_MCP_*`, `FC_ALB_*`, `FC_AUTH_ALLOW_TEST_HEADERS`. None is set in production.
 

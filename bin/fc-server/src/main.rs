@@ -398,8 +398,11 @@ async fn main() -> Result<()> {
 
     // Outbox processor
     if outbox_enabled {
+        let db = db
+            .as_ref()
+            .expect("the outbox processor needs the database");
         info!("Starting outbox processor subsystem...");
-        spawn_outbox_processor(active_rx.clone()).await?;
+        spawn_outbox_processor(active_rx.clone(), &db.pool).await?;
     }
 
     // ── ALB Traffic Watcher ──────────────────────────────────────────────────
@@ -1221,46 +1224,34 @@ impl StreamProcessorShutdown {
     }
 }
 
-/// Spawn the outbox processor, gated on leadership.
-async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<()> {
-    use fc_outbox::repository::{OutboxRepository, OutboxTableConfig};
+/// Spawn the outbox processor, gated on leadership: the same start-up as
+/// `fc-outbox-processor` (`fc_outbox::setup`). With `FC_OUTBOX_DB_URL`
+/// unset, a `postgres` outbox is read from the platform's own database, as
+/// Go's fc-server does. `FC_OUTBOX_ADMIN_PORT` serves Go's group admin API
+/// on localhost. The `mongo` backend is `fc-outbox-processor`'s only.
+async fn spawn_outbox_processor(
+    mut active_rx: watch::Receiver<bool>,
+    platform_pool: &sqlx::PgPool,
+) -> Result<()> {
+    use fc_outbox::setup;
     use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
-    let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
-
-    let table_config = OutboxTableConfig {
-        events_table: env_or("FC_OUTBOX_EVENTS_TABLE", "outbox_messages"),
-        dispatch_jobs_table: env_or("FC_OUTBOX_DISPATCH_JOBS_TABLE", "outbox_messages"),
-        audit_logs_table: env_or("FC_OUTBOX_AUDIT_LOGS_TABLE", "outbox_messages"),
-    };
-
-    let outbox_repo: Arc<dyn OutboxRepository> = match backend {
-        OutboxBackend::Sqlite => {
-            let url = std::env::var("FC_OUTBOX_DB_URL")
-                .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for sqlite outbox"))?;
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(5)
-                .connect(&url)
-                .await?;
-            let repo = fc_outbox::sqlite::SqliteOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            Arc::new(repo)
-        }
-        OutboxBackend::Postgres => {
-            let url = std::env::var("FC_OUTBOX_DB_URL")
-                .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for postgres outbox"))?;
-            let pool = sqlx::postgres::PgPoolOptions::new()
-                .max_connections(10)
-                .connect(&url)
-                .await?;
-            let repo =
-                fc_outbox::postgres::PostgresOutboxRepository::with_config(pool, table_config);
-            repo.init_schema().await?;
-            Arc::new(repo)
-        }
-        OutboxBackend::Mongo => {
+    let backend = setup::backend_from_env()?;
+    let table_config = setup::table_config_from_env();
+    let outbox_repo = match (backend, setup::database_url_from_env(backend)) {
+        (OutboxBackend::Mongo, _) => {
             return Err(anyhow::anyhow!(
                 "The mongo outbox backend is not supported by fc-server; run fc-outbox-processor instead"
+            ))
+        }
+        (_, Some(url)) => setup::connect(backend, &url, table_config).await?,
+        (OutboxBackend::Postgres, None) => {
+            info!("FC_OUTBOX_DB_URL unset: reading the outbox from the platform database");
+            setup::postgres_on_pool(platform_pool.clone(), table_config).await?
+        }
+        (_, None) => {
+            return Err(anyhow::anyhow!(
+                "FC_OUTBOX_DB_URL required for the {backend} outbox"
             ))
         }
     };
@@ -1269,6 +1260,11 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
     let config = EnhancedProcessorConfig::from_env();
 
     let processor = Arc::new(EnhancedOutboxProcessor::new(config, outbox_repo)?);
+
+    let admin_port = setup::admin_port_from_env();
+    if admin_port > 0 {
+        setup::serve_admin(admin_port, processor.clone(), std::future::pending()).await?;
+    }
 
     tokio::spawn(async move {
         loop {
