@@ -14,7 +14,13 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`feat/harness-delivery`)
 - [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
       `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
-- [ ] API parity converged: every diff fixed or ruled
+- [ ] API parity converged: every diff fixed or ruled. Run 5: 1231 OK / 113 ACCEPTED / 19 DIFF / 0 ERROR
+      (`docs/parity/api-run-5.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), portal
+      token `tier` (2), audit by-principal/facets (3), 3 unnamed Go defects, service-accounts list (below)
+- [ ] **Service-account events use the principal id, not the account id:** Go uses the account's `sac_` id
+      for `created`, `updated`, `deactivated`, `deleted` and `roles-assigned` (event subject, payload
+      `serviceAccountId`, audit `entityId`); Rust uses the principal's `prn_`. Subscribers matching on these
+      would see different ids. Fix after the use-case refactor.
 
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
 - [x] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
