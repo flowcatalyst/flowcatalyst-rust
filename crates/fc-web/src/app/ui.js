@@ -37,14 +37,69 @@ for (const d of document.querySelectorAll("dialog[data-open-on-load]")) {
   d.addEventListener("cancel", (e) => e.preventDefault());
   d.showModal();
 }
+// A dialog the server reopened with an error in it (a refused form):
+// closable as usual.
+for (const d of document.querySelectorAll("dialog[data-show-on-load]")) d.showModal();
+
+// Topcoat UI's dialogs fill the viewport with their own mask, so the
+// browser never sees a backdrop click: a click on the mask itself (not the
+// panel) closes a `data-light-dismiss` dialog.
+document.addEventListener("click", (e) => {
+  const d = e.target;
+  if (d instanceof HTMLDialogElement && d.open && d.matches("[data-light-dismiss]")) d.close();
+});
 
 // Escape closes the record drawer (EntityDrawer), unless a dialog or a
 // popover is open: those close first, natively.
+// The drawer can itself be a (non-modal) <dialog>: Topcoat UI's sheet.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || e.defaultPrevented) return;
-  if (document.querySelector("dialog[open], [popover]:popover-open")) return;
-  const drawer = [...document.querySelectorAll("[data-drawer]")].find((d) => !d.hidden);
+  if (document.querySelector("dialog[open]:not([data-drawer]), [popover]:popover-open")) return;
+  const drawer = [...document.querySelectorAll("[data-drawer]")].find(
+    (d) => !d.hidden && (!(d instanceof HTMLDialogElement) || d.open),
+  );
   drawer?.querySelector("[data-drawer-close]")?.click();
+});
+
+// Dual-pane pickers (`data-mirror` forms): the right pane shows what is
+// ticked on the left, with a count. Server-rendered right for the initial
+// state; this keeps it in step.
+function mirror(form) {
+  let count = 0;
+  for (const el of form.querySelectorAll("[data-mirror-of]")) {
+    const box = document.getElementById(el.dataset.mirrorOf);
+    const on = !!box?.checked;
+    el.hidden = !on;
+    if (on) count++;
+  }
+  for (const el of form.querySelectorAll("[data-mirror-count]")) el.textContent = String(count);
+  for (const el of form.querySelectorAll("[data-mirror-empty]")) el.hidden = count > 0;
+}
+document.addEventListener("change", (e) => {
+  const form = e.target instanceof Element ? e.target.closest("form[data-mirror]") : null;
+  if (form) mirror(form);
+});
+document.addEventListener("reset", (e) => {
+  if (e.target instanceof HTMLFormElement && e.target.matches("[data-mirror]")) {
+    setTimeout(() => mirror(e.target));
+  }
+});
+
+// Filter boxes (`data-filter-list="<list id>"`): hide the list's rows whose
+// `data-filter-text` doesn't contain the query.
+document.addEventListener("input", (e) => {
+  const box = e.target;
+  if (!(box instanceof HTMLInputElement) || !box.dataset.filterList) return;
+  const list = document.getElementById(box.dataset.filterList);
+  if (!list) return;
+  const q = box.value.trim().toLowerCase();
+  let shown = 0;
+  for (const row of list.querySelectorAll("[data-filter-text]")) {
+    const hit = !q || row.dataset.filterText.includes(q);
+    row.hidden = !hit;
+    if (hit) shown++;
+  }
+  for (const el of list.querySelectorAll("[data-filter-empty]")) el.hidden = shown > 0;
 });
 
 // The Filters popover opens under its button, right-aligned to it, as

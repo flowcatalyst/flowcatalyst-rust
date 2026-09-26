@@ -438,24 +438,36 @@ pub async fn set_principal_client_association(
     Json(req): Json<ClientAssociationRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     checks::can_grant_client_access(&auth.0)?;
+    Ok(Json(client_association(&state, &auth.0, &id, req).await?))
+}
+
+/// The body of `PUT /api/principals/{id}/client-association`, shared with
+/// the server-rendered `fc-web` UI.
+pub async fn client_association(
+    state: &PrincipalGoState,
+    ctx: &crate::AuthContext,
+    id: &str,
+    req: ClientAssociationRequest,
+) -> Result<PrincipalResponse, PlatformError> {
+    checks::can_grant_client_access(ctx)?;
     state
         .set_client_association_use_case
         .run(
             SetClientAssociationCommand {
-                user_id: id.clone(),
+                user_id: id.to_string(),
                 client_id: req.client_id,
                 mode: req.mode,
             },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_auth(ctx),
         )
         .await
         .into_result()?;
     let p = state
         .principal_repo
-        .find_by_id(&id)
+        .find_by_id(id)
         .await?
-        .ok_or_else(|| PlatformError::not_found_code("Principal", &id))?;
-    Ok(Json(p.into()))
+        .ok_or_else(|| PlatformError::not_found_code("Principal", id))?;
+    Ok(p.into())
 }
 
 /// Full-path router; merged at the root.

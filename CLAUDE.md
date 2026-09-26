@@ -383,8 +383,8 @@ anchor-tier gating, …) listed in `PROVENANCE.md`.
 (`grid grid-cols-N`, `flex justify-between`, `mb-4`, …) silently no-op.
 Use PrimeVue components, the global classes in
 `frontend/src/styles/main.css`, and scoped CSS. (This is about the Vue app
-only; the server-rendered `fc-web` trial crate at `/ui/*` makes its own
-styling choices, Tailwind included.)
+only. In the server-rendered `fc-web` crate at `/ui/*`, Tailwind and
+Topcoat UI's components are the intended tools; see its section below.)
 
 **List page + drawer.** Mirror Go's list pages (`ConnectionListPage.vue`,
 `UserListPage.vue`, `SubscriptionListPage.vue`):
@@ -465,20 +465,31 @@ crates/fc-web/Cargo.toml`.
   write through a repository from fc-web; the UoW rules above apply
   unchanged.
 - **Look = the SPA in `frontend/`** (Go's production UI): list pages with
-  rows that open a right-hand drawer.
-  - `styles.css` carries the PrimeVue Nora / FlowCatalyst values as
-    `.fc-*` classes, and `src/ui.rs` has the components (`page_header`,
-    `filter_select`, `tag`, `code_chips`, `confirm_dialog`, …).
-  - Reuse them. Don't use Topcoat UI (shadcn-style, doesn't match).
-  - Before adding a page, open the matching `.vue` list page and its drawer
-    and copy their values (columns, labels, tags, empty states).
+  rows that open a right-hand drawer. Before adding a page, open the
+  matching `.vue` list page and its drawer and copy their values (columns,
+  labels, tags, empty states).
+- **Build with Topcoat UI's components and Tailwind.** The no-Tailwind rule
+  is the Vue SPA's only. Components live in `src/components/` (installed
+  with `topcoat ui add <name>` from `crates/fc-web`, tracked in
+  `components.toml`) and are ours to edit; `styles.css` themes them toward
+  the SPA (Nora tokens on `:root`, the radius and type scale in the
+  `.tc-theme` scope a Topcoat-built page's root carries).
+  `docs/topcoat-components.md` has the catalogue, what each SPA pattern
+  maps to, the local edits, and the gaps that are still hand-built.
+  `app/users.rs` is the worked example. The older sections still use the
+  hand-built `.fc-*` kit (`src/ui.rs`, `styles.css`) until they migrate.
   - Gate pages and nav entries with the permission the API handler checks
     (and `frontend/src/stores/permissions.ts` uses), never less.
+- **Run the API's handler bodies, not a copy.** When an API handler holds
+  the rules (reach, ceilings, orchestration), extract its body into
+  fc-platform (e.g. `principal::admin`) and call that from both.
 - **Pages work as plain HTML first.** Filters are GET forms and actions are
   POST forms.
-  - Modals are native `<dialog>` opened with
-    `commandfor`/`command="show-modal"`.
-  - Menus are `popover`; collapsibles are `<details>`.
+  - Modals are native `<dialog>` (Topcoat's `dialog` / `alert_dialog`
+    with `open: false`) opened with `commandfor`/`command="show-modal"`,
+    so the browser gives the focus trap and Escape.
+  - Menus are `popover` or Topcoat's `dropdown_menu`; collapsibles are
+    `<details>`.
   - Signals and shards are only for in-place updates, such as the detail
     drawer, that HTML can't do.
 - **Assets bundle themselves** on the first start after a build

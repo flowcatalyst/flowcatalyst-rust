@@ -2,6 +2,7 @@
 //!
 //! User and service account identity management.
 
+pub mod admin;
 pub mod api;
 pub mod entity;
 pub mod go_api;

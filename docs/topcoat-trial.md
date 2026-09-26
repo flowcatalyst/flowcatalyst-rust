@@ -16,9 +16,10 @@ no Node/npm toolchain?
 | Piece | Where |
 |---|---|
 | UI crate | `crates/fc-web` (edition 2024) |
-| Pages | `/ui/login`; list + drawers for event types, subscriptions, connections, dispatch pools, clients, applications, roles (`/ui/authorization/roles`), events, dispatch jobs; the audit log (`/ui/platform/audit-log`). Each section's URL is the SPA's route under `/ui` |
-| Theme | `crates/fc-web/styles.css`: the SPA's look (PrimeVue Nora tokens, the FlowCatalyst density preset, navy chrome) as Tailwind tokens + `.fc-*` component classes |
-| FlowCatalyst components | `crates/fc-web/src/ui.rs` and `src/ui/`: `page_header`, `table_toolbar` (FcTableToolbar), `paginator`, `drawer_frame` / `drawer_header` (EntityDrawer), `form_field` / `detail_field` / `detail_value` (FcFormField, FcDetailField), `filter_select`, `tag`, `code_chips`, `confirm_dialog`, `json_block`, `local_time`, `empty_state`, flash messages |
+| Pages | `/ui/login`; list + drawers for users (`/ui/users`), event types, subscriptions, connections, dispatch pools, clients, applications, roles (`/ui/authorization/roles`), events, dispatch jobs; the audit log (`/ui/platform/audit-log`). Each section's URL is the SPA's route under `/ui` |
+| Theme | `crates/fc-web/styles.css`: the SPA's look (PrimeVue Nora tokens, the FlowCatalyst density preset, navy chrome) as the Topcoat UI theme tokens + Tailwind theme values, plus the older `.fc-*` component classes |
+| Topcoat UI components | `crates/fc-web/src/components/` (installed with `topcoat ui add`, state in `components.toml`), themed to the SPA; the users section is built from them. See [topcoat-components.md](topcoat-components.md) |
+| FlowCatalyst components (hand-built, older sections) | `crates/fc-web/src/ui.rs` and `src/ui/`: `page_header`, `table_toolbar` (FcTableToolbar), `paginator`, `drawer_frame` / `drawer_header` (EntityDrawer), `form_field` / `detail_field` / `detail_value` (FcFormField, FcDetailField), `filter_select`, `tag`, `code_chips`, `confirm_dialog`, `json_block`, `local_time`, `empty_state`, flash messages |
 | App shell | `crates/fc-web/src/app/shell.rs` + `nav.rs`: navy sidebar (themed logo, the SPA's `navigation.ts` gated by its own `canAccessPath` rule on the server, collapse), SidebarProfile menu, layout |
 | Auth convention test | `crates/fc-web/tests/auth_convention_test.rs` |
 | Asset bundle | written by the process itself on the first start after a build: `crates/fc-web/src/assets.rs` |
@@ -78,10 +79,18 @@ All), `Fc*` form components, `SidebarProfile`. fc-web mirrors each piece:
   users) evaluated on the server; ported routes open at `/ui<route>`, the
   rest open the SPA.
 
-The first pass used Topcoat UI's vendored components and its neutral theme.
-It worked, but it looked like a different product. The second pass replaced
-that with a theme copied from the Vue app's actual values, so the two UIs sit
-side by side without a seam:
+The first pass used Topcoat UI's components with its unmodified neutral
+(shadcn-style) theme, and the owner called the result "off". That was about
+fit and finish, not a rejection of Topcoat UI or Tailwind: the second pass
+misread it and hand-built a kit instead (below). The rule now: **in fc-web,
+Tailwind and Topcoat UI's own components are the intended tools**, themed
+toward the SPA; the no-Tailwind rule applies to the Vue SPA only. The users
+section (`/ui/users`) is built that way, and
+[topcoat-components.md](topcoat-components.md) has the catalogue, the
+theme, the gaps and the plan for moving the older sections over.
+
+The second pass copied the theme from the Vue app's actual values, so the
+two UIs sit side by side without a seam:
 
 - **Tokens and control styles:**
   - PrimeVue Nora: emerald primary, 2px form and tag radii, solid bold tags,
@@ -104,9 +113,11 @@ side by side without a seam:
 - **Timestamps:** localised in the browser, like the Vue app's
   `toLocaleString()`.
 
-Topcoat UI itself was dropped. Its components are shadcn-style, and
-restyling them to Nora would have meant rewriting them anyway. Our kit is
-about 300 lines of components plus about 800 lines of CSS.
+The older sections run on that hand-built kit (about 300 lines of
+components plus about 800 lines of CSS). It turned out that restyling
+Topcoat UI to Nora does not mean rewriting it: the users section gets the
+look from token values, Tailwind's radius and type scale, a few added
+variants and per-use overrides (see topcoat-components.md).
 
 Interactivity now comes mostly from the platform, not the Topcoat runtime:
 
@@ -153,6 +164,15 @@ copying it:
 - `shared::caller_reach::{read_client_filter, ensure_row_visible}` (the
   events and dispatch-job read handlers) and
   `DispatchJobRepository::find_attempts` (a new read; see below).
+- `principal::admin`: the bodies of the `/api/principals` handlers (list,
+  detail, create user, update, roles, client access, application access,
+  activate / deactivate, password reset and reset email, check email
+  domain, delete); the handlers keep their coarse permission check and
+  call these. Likewise `principal::go_api::client_association`,
+  `mfa::admin_api::reset_user_two_factor` and
+  `developer_credential::api::{set_credential, revoke_credential}`.
+  fc-dev hands fc-web the states those handlers were built with
+  (`fc_web::UserAdminStates`).
 
 ## Running it
 
@@ -232,6 +252,8 @@ Postgres.
      means "none".
    - `String::new()` isn't allowed either; `"".to_owned()` is.
    - Your own structs and enums can't cross into the browser.
+   - Neither can tuples: a shard prop typed `(bool, bool)` compiles and
+     then fails in the browser ("Unknown surrogate type").
 2. **`view!` type errors take a while to read.**
    - Every `view!` is its own anonymous type, so a page can't return
      different views from different branches. The fix is to compute state
@@ -261,9 +283,17 @@ Postgres.
    `TAILWIND_CLI`) turns off Cargo's default change detection. The Tailwind
    stylesheet then silently stopped updating when classes changed. The fix is
    to name the inputs explicitly (`styles.css`, `src`). Nothing warns you.
-6. **Topcoat UI doesn't match the product.** Its shadcn look needed
-   replacing, not theming. Budget for a house component kit from day one.
+6. **Topcoat UI's defaults don't match the product.** Its neutral theme is
+   shadcn's look; the SPA's needed theme values (tokens, radius, type
+   scale), four added variants and a handful of local edits. Components are
+   copied into the crate and edited there, so that is the intended
+   workflow, but `topcoat ui add --overwrite` drops the edits (they are
+   listed in topcoat-components.md).
 7. **Small API gotchas.**
+   - A `#[component]`, `#[route]` or `#[shard]` fn becomes a unit struct
+     of the same name, which shadows locals: a closure parameter called
+     `field` (the Topcoat component) or a variable called `roles` (a route
+     fn) fails with a confusing type error.
    - A `view!` outside a component needs the context passed explicitly.
    - Icon sizes take a `Length`, not a string.
    - `IconData` isn't `Copy`.
@@ -306,6 +336,14 @@ Postgres.
 ## Existing issues found along the way (not fixed here)
 
 Backend (main):
+
+- `PUT /api/principals/{id}` answers 400 "No changes detected" when the
+  name is unchanged, and the SPA's `saveUser` always sends the name before
+  the scope/client association, so changing only a user's Type or Client
+  fails against Rust (fc-web sends the name only when it changed).
+- `GET /api/principals/{id}/application-access` and the application-access
+  write load each application with its own query (N+1); the client-access
+  listing reports every grant's `grantedAt` as the user's creation time.
 
 - (Fixed on `feat/functions`, b05bff58: dispatch-pool writes had no
   permission check.)

@@ -52,7 +52,8 @@ FC_DATABASE_URL=postgresql://flowcatalyst:flowcatalyst@localhost:55432/flowcatal
 2. **Pages:** `#[page("/ui/(app)/<route>")]` and `…/{id}` render the list
    component; `…/new` is a `[GET, POST]` page that renders the list with
    the create drawer and re-renders it with the error on failure.
-3. **Drawer:** `drawer_frame` around a `#[shard("/ui/(app)/<route>/drawer")]`
+3. **Drawer:** Topcoat's `sheet` made click-through (`users.rs`), or the
+   older `drawer_frame`, around a `#[shard("/ui/(app)/<route>/drawer")]`
    taking `id: $(selected.get())` and the `editing` signal. Read view and
    edit form toggled with `:hidden=$(editing.get())`; the form carries
    `data-dirty-form` and `data-dirty-key`.
@@ -63,6 +64,9 @@ FC_DATABASE_URL=postgresql://flowcatalyst:flowcatalyst@localhost:55432/flowcatal
    `ExecutionContext::from_auth`, then flash + `see_other`. Never write
    through a repository.
 5. **Navigation:** add the SPA route to `nav::PORTED`.
+   New sections use Topcoat UI's components (`src/components/`) and the
+   `.tc-theme` scope, as `app/users.rs` does; see
+   `docs/topcoat-components.md`.
 6. **Verify:** fc-web tests; rebuild and restart fc-dev; screenshot list,
    drawer, edit and create; exercise every write with curl (send `Origin`
    and `Sec-Fetch-Site: same-origin`) and check `aud_logs`.
@@ -74,7 +78,11 @@ FC_DATABASE_URL=postgresql://flowcatalyst:flowcatalyst@localhost:55432/flowcatal
   permission check; dispatch-job attempts are never read back by the API.
 - **Login:** 2FA enrolment during sign-in is handed off to the SPA; port
   it (TOTP QR, email confirm) if fc-web should own the whole sign-in.
-- **Sections not ported:** users (platform and client-scoped), service
+- **Users (platform, `/ui/users`)** is ported, built from Topcoat UI's
+  components (see `docs/topcoat-components.md`). Not in it yet: the SPA's
+  CSV import dialog on the list page.
+- **Sections not ported:** client-scoped users
+  (`/client-administration/users`), service
   accounts, identity providers, email domains, OAuth clients, reset
   approvals, portal apps and users, CORS origins, login attempts,
   settings, debug grids, scheduled jobs, processes, functions, developer

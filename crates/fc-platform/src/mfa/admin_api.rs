@@ -39,14 +39,25 @@ pub async fn reset_two_factor(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
-    let ctx = &auth.0;
+    // Coarse permission gate before any load (Go PR-3(a)).
+    checks::can_write_principals(&auth.0)?;
+    Ok(Json(reset_user_two_factor(&state, &auth.0, &id).await?))
+}
+
+/// The body of `POST /api/principals/{id}/reset-2fa`, shared with the
+/// server-rendered `fc-web` UI.
+pub async fn reset_user_two_factor(
+    state: &TwoFactorLogin,
+    ctx: &crate::AuthContext,
+    id: &str,
+) -> Result<StatusChangeResponse, PlatformError> {
     // Coarse permission gate before any load (Go PR-3(a)).
     checks::can_write_principals(ctx)?;
     let p = state
         .principal_repo
-        .find_by_id(&id)
+        .find_by_id(id)
         .await?
-        .ok_or_else(|| PlatformError::not_found("Principal", &id))?;
+        .ok_or_else(|| PlatformError::not_found("Principal", id))?;
     // A non-anchor administrator reaches only CLIENT-scope users (Go
     // `blockNonClientTarget`), of a client it can access; out of scope is
     // the same 404 a missing id gets (Go `CanAccessScope`).
@@ -60,7 +71,7 @@ pub async fn reset_two_factor(
         None => ctx.is_anchor() || ctx.has_permission(crate::role::entity::permissions::ADMIN_ALL),
     };
     if !in_scope {
-        return Err(PlatformError::not_found("Principal", &id));
+        return Err(PlatformError::not_found("Principal", id));
     }
     if !p.is_user() {
         return Err(PlatformError::bad_request_code(
@@ -81,9 +92,9 @@ pub async fn reset_two_factor(
         &ctx.principal_id,
     )
     .await;
-    Ok(Json(StatusChangeResponse {
+    Ok(StatusChangeResponse {
         message: "Two-factor authentication reset".to_string(),
-    }))
+    })
 }
 
 /// Nested at `/api/principals`.

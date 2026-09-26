@@ -19,7 +19,6 @@ use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserIdentity, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::RoleAssignment;
-use crate::shared::enum_str::parse_opt;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
 use crate::AuditService;
@@ -323,7 +322,7 @@ pub struct RoleAssignmentDto {
 
 /// The wire label for a role's source. Unsourced assignments read as `ADMIN`,
 /// as in the Go port.
-fn assignment_source_label(r: &RoleAssignment) -> String {
+pub(super) fn assignment_source_label(r: &RoleAssignment) -> String {
     r.assignment_source
         .map_or("ADMIN", |s| s.as_str())
         .to_string()
@@ -610,136 +609,10 @@ pub async fn create_user(
     auth: Authenticated,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    use crate::principal::operations::{CreateUserCommand, GrantClientAccessCommand};
-    use crate::usecase::{ExecutionContext, UseCase};
-
-    // Go `createUser`: the user-write permission first; the tier bound once
-    // the scope is derived below.
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-
-    let domain = req
-        .email
-        .split('@')
-        .nth(1)
-        .ok_or_else(|| PlatformError::validation("Invalid email format"))?
-        .to_lowercase();
-
-    let is_anchor_domain = state.anchor_domain_repo.is_anchor_domain(&domain).await?;
-
-    let mapping = state
-        .email_domain_mapping_repo
-        .find_by_email_domain(&domain)
-        .await?;
-
-    // Resolve IdP type (INTERNAL / OIDC) so the use case can key its password
-    // handling off it. Unmapped domains default to INTERNAL — they can only
-    // log in through embedded auth anyway.
-    let idp_type = match &mapping {
-        Some(m) => state
-            .identity_provider_repo
-            .find_by_id(&m.identity_provider_id)
-            .await?
-            .map_or(IdentityProviderType::Internal, |idp| idp.r#type),
-        None => IdentityProviderType::Internal,
-    };
-
-    // Resolve the client reference (clt_ id or identifier) before the tier,
-    // so mapping allow-lists compare canonical ids (Go createUser,
-    // principal/api/api.go:594-606).
-    let req_client_id = match req.client_id.as_deref().map(str::trim) {
-        Some(r) if !r.is_empty() => Some(resolve_client_ref(&state, r).await?),
-        _ => None,
-    };
-    let (scope, primary_client_id) = derive_user_scope(
-        req.scope.as_deref(),
-        is_anchor_domain,
-        mapping.as_ref(),
-        req_client_id,
-    )?;
-
-    // Anchors create any scope and client. A client administrator creates
-    // CLIENT-tier users only, in a client it reaches (Go `createUser` +
-    // `RequireUserAdmin`, principal/api/api.go:608-616).
-    if !auth.0.is_anchor() && scope != UserScope::Client {
-        return Err(PlatformError::forbidden(
-            "Client administrators can only create client-scope users",
-        ));
-    }
-    crate::checks::require_user_admin(&auth.0, primary_client_id.as_deref())?;
-    // Before anything is written: a rejected redirect must not leave a user
-    // whose invite was never minted (Go createUser).
-    let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
-
-    // Partner-merge: if a user already exists for this email, emit a
-    // ClientAccessGranted event via the grant use case rather than a fresh
-    // UserCreated. Keeps events + audit logs accurate.
-    let granted_client_ids = if scope == UserScope::Partner {
-        let client_id = primary_client_id.clone().unwrap_or_default();
-        if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
-            let already_linked = existing.client_id.as_deref() == Some(client_id.as_str())
-                || existing.assigned_clients.iter().any(|c| c == &client_id);
-            if already_linked {
-                return Err(PlatformError::duplicate("Principal", "email", &req.email));
-            }
-            let cmd = GrantClientAccessCommand {
-                user_id: existing.id.clone(),
-                client_id: client_id.clone(),
-            };
-            let ctx = ExecutionContext::create(&auth.0.principal_id);
-            state
-                .grant_client_access_use_case
-                .run(cmd, ctx)
-                .await
-                .into_result()?;
-            let refreshed = state
-                .principal_repo
-                .find_by_id(&existing.id)
-                .await?
-                .or_not_found("Principal", &existing.id)?;
-            return Ok(Json(refreshed.into()));
-        }
-        // New partner user — home client + single grant for the requested
-        // client.
-        vec![client_id]
-    } else {
-        Vec::new()
-    };
-
-    let cmd = CreateUserCommand {
-        email: req.email.clone(),
-        name: Some(req.name.clone()),
-        scope,
-        client_id: primary_client_id,
-        granted_client_ids,
-        password: req.password.clone(),
-        enforce_password_complexity: req.enforce_password_complexity,
-        idp_type: Some(idp_type),
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = state
-        .create_user_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let created = state
-        .principal_repo
-        .find_by_id(&event.principal_id)
-        .await?
-        .or_not_found("Principal", &event.principal_id)?;
-
-    let invite_link = notify_new_user(
-        &state,
-        &created,
-        req.password.as_deref(),
-        req.send_invitation.unwrap_or(true),
-        req.return_invite_link.unwrap_or(false),
-        invite_redirect,
-    )
-    .await;
-    let mut response = PrincipalResponse::from(created);
-    response.invite_link = invite_link;
-    Ok(Json(response))
+    Ok(Json(super::admin::create_user(&state, &auth.0, req).await?))
 }
 
 /// Go `notifyNewUser` (principal/api/api.go:704-745), best-effort, for a
@@ -751,7 +624,7 @@ pub async fn create_user(
 /// `send_invitation: false` suppresses every platform email. The redirect
 /// rides on whichever invite is minted. Returns the link when one was
 /// returned.
-async fn notify_new_user(
+pub(super) async fn notify_new_user(
     state: &PrincipalsState,
     p: &Principal,
     password: Option<&str>,
@@ -820,7 +693,7 @@ fn require_user_resource_access(
 /// Load a principal a user-administration write targets, gated by
 /// [`require_user_resource_access`] (Go `requireUserResourceAccess`: out of
 /// reach is `Principal_NOT_FOUND`).
-async fn load_administered_user(
+pub(super) async fn load_administered_user(
     state: &PrincipalsState,
     ctx: &crate::AuthContext,
     id: &str,
@@ -837,7 +710,7 @@ async fn load_administered_user(
 /// [`load_administered_user`] for the role and application-access writes,
 /// which Go gates with `requireUserAdmin`: out of reach is `User_NOT_FOUND`
 /// (principal/operations/authz.go).
-async fn load_role_administered_user(
+pub(super) async fn load_role_administered_user(
     state: &PrincipalsState,
     ctx: &crate::AuthContext,
     id: &str,
@@ -853,7 +726,7 @@ async fn load_role_administered_user(
 
 /// Go `clientAppIDs`: the applications a client is entitled to (an enabled
 /// client config), the bound a client administrator is held to.
-async fn client_application_ids(
+pub(super) async fn client_application_ids(
     state: &PrincipalsState,
     client_id: Option<&str>,
 ) -> Result<std::collections::HashSet<String>, PlatformError> {
@@ -889,7 +762,7 @@ async fn role_definitions(
 /// Go `assertAssignableRoles`: a client administrator assigns (or removes)
 /// only application roles of applications the target's client is entitled
 /// to, never a platform role.
-async fn assert_assignable_roles(
+pub(super) async fn assert_assignable_roles(
     state: &PrincipalsState,
     names: &[String],
     allowed: &std::collections::HashSet<String>,
@@ -948,7 +821,7 @@ async fn protected_role_names(
 /// client administrator, `requested` (bounded by
 /// [`assert_assignable_roles`]) plus the target's protected roles (Go
 /// `assignRoles`, principal/api/api.go:1116-1181).
-async fn bounded_role_set(
+pub(super) async fn bounded_role_set(
     state: &PrincipalsState,
     ctx: &crate::AuthContext,
     target: &crate::Principal,
@@ -1175,7 +1048,7 @@ fn require_user_admin(
 /// Go `resolveInviteRedirect` (principal/api/api.go:756-767): absent or
 /// blank is none; otherwise an absolute http(s) URL with a host and no
 /// user info.
-fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
+pub(super) fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
     let Some(uri) = raw.map(str::trim).filter(|u| !u.is_empty()) else {
         return Ok(None);
     };
@@ -1198,7 +1071,7 @@ fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, Platform
 /// id. Go `resolveClientRef` (principal/api/api.go:825-845): the id first,
 /// then the identifier lower-cased; an unknown reference is a 404
 /// `Client_NOT_FOUND`, never a silently mis-scoped user.
-async fn resolve_client_ref(
+pub(super) async fn resolve_client_ref(
     state: &PrincipalsState,
     reference: &str,
 ) -> Result<String, PlatformError> {
@@ -1311,40 +1184,11 @@ pub async fn get_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    // Go `getByID` (principal/api/api.go:288-323): a principal reads itself
-    // with no permission; anyone else needs the user read permission, and a
-    // principal of a client the caller does not reach answers the same 404
-    // as a missing one.
-    let is_self = auth.0.principal_id == id;
-    if !is_self {
+    // A principal reads itself with no permission (Go `getByID`).
+    if auth.0.principal_id != id {
         crate::checks::can_read_principals(&auth.0)?;
     }
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    if !is_self {
-        if let Some(cid) = principal.client_id.as_deref() {
-            if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
-                return Err(PlatformError::not_found("Principal", &id));
-            }
-        }
-    }
-
-    // Go enriches the detail read with the confirmed second factors,
-    // best-effort: a lookup failure leaves them out.
-    let methods: Vec<String> = match state.mfa_repo.find_methods(&principal.id).await {
-        Ok(methods) => methods
-            .into_iter()
-            .filter(crate::mfa::entity::Method::is_confirmed)
-            .map(|m| m.method.as_str().to_string())
-            .collect(),
-        Err(_) => Vec::new(),
-    };
-    let mut response = PrincipalResponse::from(principal);
-    response.two_factor_methods = (!methods.is_empty()).then_some(methods);
-    Ok(Json(response))
+    Ok(Json(super::admin::detail(&state, &auth.0, &id).await?))
 }
 
 /// List principals
@@ -1374,87 +1218,10 @@ pub async fn list_principals(
     auth: Authenticated,
     Query(query): Query<PrincipalsQuery>,
 ) -> Result<Json<PrincipalListResponse>, PlatformError> {
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_read_principals(&auth.0)?;
-
-    // Validate client_id access upfront
-    if let Some(ref client_id) = query.client_id {
-        if !auth.0.can_access_client(client_id) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                client_id
-            )));
-        }
-    }
-
-    // Apply all combinable filters at the DB level
-    let principals = state
-        .principal_repo
-        .find_with_filters(
-            query.client_id.as_deref(),
-            parse_opt(query.scope.as_deref())?,
-            parse_opt(query.principal_type.as_deref())?,
-            query.active_filter(),
-            query.q.as_deref(),
-            query.email.as_deref(),
-        )
-        .await?;
-
-    // Post-filter: access control + roles (requires hydrated data)
-    let mut filtered: Vec<PrincipalResponse> = principals
-        .into_iter()
-        // Access control
-        .filter(|p| {
-            if auth.0.is_anchor() {
-                return true;
-            }
-            match &p.client_id {
-                Some(cid) => auth.0.can_access_client(cid),
-                None => p.scope == UserScope::Anchor && auth.0.is_anchor(),
-            }
-        })
-        .map(|p| p.into())
-        // Roles filter (requires checking hydrated roles, stays in-memory)
-        .filter(|p: &PrincipalResponse| match &query.roles {
-            Some(roles_str) if !roles_str.trim().is_empty() => {
-                // Go splitCSV (api.go:239-247): trimmed, empties dropped.
-                let required: Vec<&str> = roles_str
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|r| !r.is_empty())
-                    .collect();
-                required
-                    .iter()
-                    .any(|r| p.roles.iter().any(|role| role == r))
-            }
-            _ => true,
-        })
-        .collect();
-
-    // Go sortPrincipals (api.go:251-269): a stable ascending sort, reversed
-    // for "desc"; name and email compare case-insensitively.
-    match query.sort_field.as_deref() {
-        Some("name") => filtered.sort_by_key(|p| p.name.to_lowercase()),
-        Some("email") => filtered.sort_by_key(|p| p.email.as_deref().unwrap_or("").to_lowercase()),
-        _ => filtered.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
-    }
-    if query
-        .sort_order
-        .as_deref()
-        .is_some_and(|o| o.eq_ignore_ascii_case("desc"))
-    {
-        filtered.reverse();
-    }
-
-    let total = filtered.len();
-    let principals: Vec<PrincipalResponse> = match query.paging()? {
-        None => filtered,
-        Some((page, size)) => filtered
-            .into_iter()
-            .skip(page.saturating_mul(size))
-            .take(size)
-            .collect(),
-    };
-    Ok(Json(PrincipalListResponse { principals, total }))
+    Ok(Json(super::admin::list(&state, &auth.0, &query).await?))
 }
 
 /// Update principal
@@ -1479,42 +1246,10 @@ pub async fn update_principal(
     Path(id): Path<String>,
     Json(req): Json<UpdatePrincipalRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    use crate::principal::operations::UpdateUserCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
-    // The permission before anything is loaded, as Go's `update`
-    // (principal/api/api.go:1026-1032): without it, nothing is touched.
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-
-    // Handler-level auth: target-resource access + high-trust gates on
-    // scope/client_id changes. Field-level mutations happen inside the
-    // use case so the write commits atomically with the UserUpdated event.
-    load_administered_user(&state, &auth.0, &id).await?;
-
-    if (req.scope.is_some() || req.client_id.is_some()) && !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can change a principal's scope or client",
-        ));
-    }
-
-    let cmd = UpdateUserCommand {
-        principal_id: id.clone(),
-        name: req.name,
-        first_name: req.first_name,
-        last_name: req.last_name,
-        active: req.active,
-        scope: parse_opt(req.scope.as_deref())?,
-        client_id: req.client_id,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state.update_use_case.run(cmd, ctx).await.into_result()?;
-
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    Ok(Json(refreshed.into()))
+    Ok(Json(super::admin::update(&state, &auth.0, &id, req).await?))
 }
 
 /// Get roles assigned to a principal
@@ -1537,38 +1272,12 @@ pub async fn get_roles(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesListResponse>, PlatformError> {
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_read_principals(&auth.0)?;
-
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-
-    // Go (principal/api/api.go, PR-4): a principal of a client the caller
-    // does not reach answers the same 404 as a missing one.
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::not_found("Principal", &id));
-            }
-        }
-    }
-
-    // Convert role assignments to DTOs
-    let roles: Vec<RoleAssignmentDto> = principal
-        .roles
-        .iter()
-        .enumerate()
-        .map(|(i, r)| RoleAssignmentDto {
-            id: format!("{}-role-{}", id, i),
-            role_name: r.role.clone(),
-            assignment_source: assignment_source_label(r),
-            assigned_at: r.assigned_at.to_rfc3339(),
-        })
-        .collect();
-
-    Ok(Json(RolesListResponse { roles }))
+    Ok(Json(
+        super::admin::role_assignments(&state, &auth.0, &id).await?,
+    ))
 }
 
 /// Assign role to principal
@@ -1593,41 +1302,12 @@ pub async fn assign_role(
     Path(id): Path<String>,
     Json(req): Json<AssignRoleRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    use crate::principal::operations::AssignUserRolesCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_assign_principal_roles(&auth.0)?;
-
-    // Additive assign: take existing roles + new role, run through UoW.
-    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
-    if !auth.0.is_anchor() {
-        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
-        assert_assignable_roles(&state, std::slice::from_ref(&req.role), &allowed).await?;
-    }
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    let mut roles = before.clone();
-    if !roles.iter().any(|r| r == &req.role) {
-        roles.push(req.role.clone());
-    }
-    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &roles).await?;
-
-    let cmd = AssignUserRolesCommand {
-        user_id: id.clone(),
-        roles,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .assign_roles_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    Ok(Json(refreshed.into()))
+    Ok(Json(
+        super::admin::assign_role(&state, &auth.0, &id, req.role).await?,
+    ))
 }
 
 /// Batch assign roles to principal (declarative - replaces all roles)
@@ -1652,56 +1332,12 @@ pub async fn batch_assign_roles(
     Path(id): Path<String>,
     Json(req): Json<BatchAssignRolesRequest>,
 ) -> Result<Json<BatchAssignRolesResponse>, PlatformError> {
-    use crate::principal::operations::AssignUserRolesCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_assign_principal_roles(&auth.0)?;
-
-    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
-    let desired = bounded_role_set(&state, &auth.0, &principal, req.roles).await?;
-
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &desired).await?;
-
-    let old_roles: std::collections::HashSet<String> =
-        principal.roles.iter().map(|r| r.role.clone()).collect();
-    let new_roles_set: std::collections::HashSet<String> = desired.iter().cloned().collect();
-    let added: Vec<String> = new_roles_set.difference(&old_roles).cloned().collect();
-    let removed: Vec<String> = old_roles.difference(&new_roles_set).cloned().collect();
-
-    let cmd = AssignUserRolesCommand {
-        user_id: id.clone(),
-        roles: desired,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .assign_roles_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    let roles: Vec<RoleAssignmentDto> = refreshed
-        .roles
-        .iter()
-        .enumerate()
-        .map(|(i, r)| RoleAssignmentDto {
-            id: format!("{}-role-{}", id, i),
-            role_name: r.role.clone(),
-            assignment_source: assignment_source_label(r),
-            assigned_at: r.assigned_at.to_rfc3339(),
-        })
-        .collect();
-
-    Ok(Json(BatchAssignRolesResponse {
-        roles,
-        added,
-        removed,
-    }))
+    Ok(Json(
+        super::admin::set_roles(&state, &auth.0, &id, req.roles).await?,
+    ))
 }
 
 /// Remove role from principal
@@ -1725,44 +1361,12 @@ pub async fn remove_role(
     auth: Authenticated,
     Path((id, role)): Path<(String, String)>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    use crate::principal::operations::AssignUserRolesCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_assign_principal_roles(&auth.0)?;
-
-    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
-    // A client administrator removes only roles it could assign (Go
-    // `removeRole`).
-    if !auth.0.is_anchor() {
-        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
-        assert_assignable_roles(&state, std::slice::from_ref(&role), &allowed).await?;
-    }
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    let roles: Vec<String> = principal
-        .roles
-        .iter()
-        .filter(|r| r.role != role)
-        .map(|r| r.role.clone())
-        .collect();
-    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &roles).await?;
-
-    let cmd = AssignUserRolesCommand {
-        user_id: id.clone(),
-        roles,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .assign_roles_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    Ok(Json(refreshed.into()))
+    Ok(Json(
+        super::admin::remove_role(&state, &auth.0, &id, &role).await?,
+    ))
 }
 
 /// Get client access grants for a principal
@@ -1785,28 +1389,12 @@ pub async fn get_client_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAccessListResponse>, PlatformError> {
-    // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251).
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::require_anchor_scope(&auth.0)?;
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-
-    // Convert assigned_clients to grants (synthesized since we don't store grant metadata)
-    let grants: Vec<ClientAccessGrantResponse> = principal
-        .assigned_clients
-        .iter()
-        .enumerate()
-        .map(|(i, client_id)| ClientAccessGrantResponse {
-            id: format!("{}-{}", id, i), // Synthetic ID
-            client_id: client_id.clone(),
-            granted_at: principal.created_at.to_rfc3339(), // Use principal creation as fallback
-            expires_at: None,
-        })
-        .collect();
-
-    Ok(Json(ClientAccessListResponse { grants }))
+    Ok(Json(
+        super::admin::client_grants(&state, &auth.0, &id).await?,
+    ))
 }
 
 /// Grant client access to principal
@@ -1831,39 +1419,12 @@ pub async fn grant_client_access(
     Path(id): Path<String>,
     Json(req): Json<GrantClientAccessRequest>,
 ) -> Result<Json<ClientAccessGrantResponse>, PlatformError> {
-    use crate::principal::operations::GrantClientAccessCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_grant_client_access(&auth.0)?;
-
-    let client_id = req.client_id.clone();
-    let granted_at = chrono::Utc::now();
-    let cmd = GrantClientAccessCommand {
-        user_id: id.clone(),
-        client_id: client_id.clone(),
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .grant_client_access_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    Ok(Json(ClientAccessGrantResponse {
-        id: format!(
-            "{}-{}",
-            id,
-            refreshed.assigned_clients.len().saturating_sub(1)
-        ),
-        client_id,
-        granted_at: granted_at.to_rfc3339(),
-        expires_at: None,
-    }))
+    Ok(Json(
+        super::admin::grant_client_access(&state, &auth.0, &id, req.client_id).await?,
+    ))
 }
 
 /// Revoke client access from principal
@@ -1887,22 +1448,10 @@ pub async fn revoke_client_access(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
-    use crate::principal::operations::RevokeClientAccessCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_revoke_client_access(&auth.0)?;
-
-    let cmd = RevokeClientAccessCommand {
-        user_id: id,
-        client_id,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .revoke_client_access_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
+    super::admin::revoke_client_access(&state, &auth.0, &id, &client_id).await?;
     // 204, as Go answers (principal/api/api.go:114).
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1927,16 +1476,10 @@ pub async fn delete_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    use crate::principal::operations::DeleteUserCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_delete_principals(&auth.0)?;
-    load_administered_user(&state, &auth.0, &id).await?;
-
-    let cmd = DeleteUserCommand { principal_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state.delete_use_case.run(cmd, ctx).await.into_result()?;
-
+    super::admin::delete(&state, &auth.0, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2057,23 +1600,10 @@ pub async fn activate_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
-    use crate::principal::operations::ActivateUserCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-    load_administered_user(&state, &auth.0, &id).await?;
-
-    let cmd = ActivateUserCommand {
-        principal_id: id.clone(),
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state.activate_use_case.run(cmd, ctx).await.into_result()?;
-
-    tracing::info!(principal_id = %id, admin_id = %auth.0.principal_id, "Principal activated");
-
-    Ok(Json(StatusChangeResponse {
-        message: "Principal activated".to_string(),
-    }))
+    Ok(Json(super::admin::activate(&state, &auth.0, &id).await?))
 }
 
 /// Deactivate a principal
@@ -2099,28 +1629,10 @@ pub async fn deactivate_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
-    use crate::principal::operations::DeactivateUserCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-    load_administered_user(&state, &auth.0, &id).await?;
-
-    let cmd = DeactivateUserCommand {
-        principal_id: id.clone(),
-        reason: Some("Admin deactivated principal".to_string()),
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .deactivate_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    tracing::info!(principal_id = %id, admin_id = %auth.0.principal_id, "Principal deactivated");
-
-    Ok(Json(StatusChangeResponse {
-        message: "Principal deactivated".to_string(),
-    }))
+    Ok(Json(super::admin::deactivate(&state, &auth.0, &id).await?))
 }
 
 /// Reset a user's password
@@ -2149,29 +1661,12 @@ pub async fn reset_password(
     Path(id): Path<String>,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
-    use crate::principal::operations::ResetPasswordCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-    load_administered_user(&state, &auth.0, &id).await?;
-
-    let cmd = ResetPasswordCommand {
-        principal_id: id.clone(),
-        new_password: req.new_password,
-        enforce_password_complexity: req.enforce_password_complexity,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .reset_password_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    tracing::info!(principal_id = %id, admin_id = %auth.0.principal_id, "Password reset");
-
-    Ok(Json(StatusChangeResponse {
-        message: "Password reset successfully".to_string(),
-    }))
+    Ok(Json(
+        super::admin::reset_password(&state, &auth.0, &id, req).await?,
+    ))
 }
 
 /// Optional body of `send-password-reset` (Go `sendPasswordResetInput`).
@@ -2223,62 +1718,12 @@ pub async fn send_password_reset(
             .map_err(|e| PlatformError::bad_request_code("INVALID_BODY", e.to_string()))?
             .reset2fa
     };
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-
-    let emailer = &state.password_reset_emailer;
-
-    let principal = load_administered_user(&state, &auth.0, &id).await?;
-
-    if !principal.is_user() {
-        return Err(PlatformError::validation(
-            "Password reset only applies to user accounts",
-        ));
-    }
-    if principal.external_identity.is_some() {
-        return Err(PlatformError::validation(
-            "Cannot send password reset for OIDC-federated users — they manage credentials at their IDP",
-        ));
-    }
-    if principal
-        .user_identity
-        .as_ref()
-        .map(|i| i.email.is_empty())
-        .unwrap_or(true)
-    {
-        return Err(PlatformError::validation(
-            "User does not have an email address on file",
-        ));
-    }
-
-    emailer
-        .send_reset_email_with(
-            &principal,
-            crate::auth::password_reset_api::ResetOptions {
-                reset_2fa,
-                ..Default::default()
-            },
-        )
-        .await?;
-
-    tracing::info!(
-        principal_id = %id,
-        admin_id = %auth.0.principal_id,
-        "Admin triggered password reset email"
-    );
-
-    state
-        .audit_service
-        .log(
-            &auth.0,
-            "Principal",
-            &id,
-            "Password reset email sent by admin",
-        )
-        .await;
-
-    Ok(Json(StatusChangeResponse {
-        message: "Password reset email sent".to_string(),
-    }))
+    Ok(Json(
+        super::admin::send_password_reset(&state, &auth.0, &id, reset_2fa).await?,
+    ))
 }
 
 /// Check email domain configuration
@@ -2300,102 +1745,12 @@ pub async fn check_email_domain(
     auth: Authenticated,
     Query(query): Query<CheckEmailDomainQuery>,
 ) -> Result<Json<CheckEmailDomainResponse>, PlatformError> {
-    // Go `checkEmailDomain`: the user read permission, no anchor reach (a
-    // client administrator's create form calls it).
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_read_principals(&auth.0)?;
-
-    // Go checkEmailDomain (principal/api/api.go).
-    let email = query.email.trim().to_lowercase();
-    if email.is_empty() {
-        return Err(PlatformError::bad_request_code(
-            "EMAIL_REQUIRED",
-            "email query param is required",
-        ));
-    }
-    let domain = match email.find('@') {
-        Some(at) if at + 1 < email.len() => email[at + 1..].to_string(),
-        _ => {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_EMAIL",
-                "Invalid email format",
-            ))
-        }
-    };
-
-    let email_exists = state.principal_repo.find_by_email(&email).await?.is_some();
-    let is_anchor_domain = state.anchor_domain_repo.is_anchor_domain(&domain).await?;
-    let mapping = state
-        .email_domain_mapping_repo
-        .find_by_email_domain(&domain)
-        .await?;
-
-    // The IdP type; an unmapped domain or a missing IdP is INTERNAL.
-    let mut idp_type = "INTERNAL".to_string();
-    let mut idp_issuer = None;
-    if let Some(ref m) = mapping {
-        if let Some(idp) = state
-            .identity_provider_repo
-            .find_by_id(&m.identity_provider_id)
-            .await?
-        {
-            idp_type = idp.r#type.as_str().to_string();
-            idp_issuer = idp.oidc_issuer_url.clone();
-        }
-    }
-    let external = idp_type == "OIDC";
-
-    use crate::email_domain_mapping::entity::ScopeType;
-    let derived_scope = if is_anchor_domain {
-        "ANCHOR"
-    } else {
-        match mapping.as_ref().map(|m| m.scope_type) {
-            None => "CLIENT",
-            Some(ScopeType::Anchor) => "ANCHOR",
-            Some(ScopeType::Partner) => "PARTNER",
-            Some(ScopeType::Client) => "CLIENT",
-        }
-    };
-    // Go allowedClientIDsForDomain: PARTNER allows the primary and the
-    // granted clients; CLIENT just the primary.
-    let mut allowed_client_ids: Vec<String> = Vec::new();
-    if let Some(ref m) = mapping {
-        match m.scope_type {
-            ScopeType::Partner => {
-                for id in m
-                    .primary_client_id
-                    .iter()
-                    .chain(m.granted_client_ids.iter())
-                {
-                    if !id.is_empty() && !allowed_client_ids.contains(id) {
-                        allowed_client_ids.push(id.clone());
-                    }
-                }
-            }
-            ScopeType::Client => {
-                if let Some(p) = m.primary_client_id.as_ref().filter(|p| !p.is_empty()) {
-                    allowed_client_ids.push(p.clone());
-                }
-            }
-            ScopeType::Anchor => {}
-        }
-    }
-
-    Ok(Json(CheckEmailDomainResponse {
-        auth_method: if external { "external" } else { "internal" }.to_string(),
-        login_url: external
-            .then(|| format!("/auth/oidc/login?domain={}", urlencoding::encode(&domain))),
-        idp_issuer: if external { idp_issuer } else { None },
-        domain,
-        auth_provider: idp_type,
-        is_anchor_domain,
-        has_idp_config: external,
-        email_exists,
-        info: None,
-        warning: email_exists.then(|| "A user with this email address already exists.".to_string()),
-        derived_scope: derived_scope.to_string(),
-        requires_client_id: derived_scope != "ANCHOR",
-        allowed_client_ids,
-    }))
+    Ok(Json(
+        super::admin::check_email_domain(&state, &auth.0, &query.email).await?,
+    ))
 }
 
 // ============================================================================
@@ -2424,44 +1779,12 @@ pub async fn get_application_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_read_principals(&auth.0)?;
-
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-
-    // Go (principal/api/api.go, PR-4): a principal of a client the caller
-    // does not reach answers the same 404 as a missing one.
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::not_found("Principal", &id));
-            }
-        }
-    }
-
-    let app_repo = &state.application_repo;
-
-    // Resolve application details for each accessible application ID
-    let mut applications = Vec::new();
-    for app_id in &principal.accessible_application_ids {
-        if let Some(app) = app_repo.find_by_id(app_id).await? {
-            applications.push(ApplicationAccessResponse {
-                application_id: app.id,
-                application_code: app.code,
-                application_name: app.name,
-            });
-        }
-    }
-
-    let total = applications.len();
-    Ok(Json(ApplicationAccessListResponse {
-        applications,
-        total,
-        all_applications: principal.all_applications,
-    }))
+    Ok(Json(
+        super::admin::application_access(&state, &auth.0, &id).await?,
+    ))
 }
 
 /// Set application access for a principal (batch replace)
@@ -2488,110 +1811,12 @@ pub async fn set_application_access(
     Path(id): Path<String>,
     Json(req): Json<SetApplicationAccessRequest>,
 ) -> Result<Json<SetApplicationAccessResponse>, PlatformError> {
-    use crate::principal::operations::AssignApplicationAccessCommand;
-    use crate::usecase::{ExecutionContext, UseCase};
-
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_write_principals(&auth.0)?;
-
-    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
-
-    if req.all_applications == Some(true) {
-        // Granting every application exceeds what the caller may itself
-        // reach unless it has every application too (Go's rule).
-        if state.app_access.scope_for(&auth.0.principal_id).await?
-            != crate::shared::authorization_service::ApplicationScope::All
-        {
-            return Err(PlatformError::forbidden(
-                "Only an all-applications administrator may grant all-applications access",
-            ));
-        }
-    }
-
-    // A client administrator grants only applications the target's client is
-    // entitled to, and its SET keeps the grants outside that reach (Go
-    // `assignApplicationAccess`, principal/api/api.go:1183-1249).
-    let mut req = req;
-    if !auth.0.is_anchor() {
-        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
-        if let Some(app_id) = req.application_ids.iter().find(|a| !allowed.contains(*a)) {
-            return Err(PlatformError::forbidden_code(
-                "APP_FORBIDDEN",
-                format!("application the client cannot access: {app_id}"),
-            ));
-        }
-        for kept in principal
-            .accessible_application_ids
-            .iter()
-            .filter(|a| !allowed.contains(*a))
-        {
-            if !req.application_ids.contains(kept) {
-                req.application_ids.push(kept.clone());
-            }
-        }
-    }
-
-    let app_repo = &state.application_repo;
-
-    // Validate applications exist and are active (kept in handler for 400 mapping).
-    for app_id in &req.application_ids {
-        match app_repo.find_by_id(app_id).await? {
-            Some(app) => {
-                if !app.active {
-                    return Err(PlatformError::validation(format!(
-                        "Application is not active: {}",
-                        app_id
-                    )));
-                }
-            }
-            None => {
-                return Err(PlatformError::validation(format!(
-                    "Application not found: {}",
-                    app_id
-                )));
-            }
-        }
-    }
-
-    let old_set: std::collections::HashSet<&str> = principal
-        .accessible_application_ids
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
-    let new_set: std::collections::HashSet<&str> =
-        req.application_ids.iter().map(|s| s.as_str()).collect();
-    let added_count = new_set.difference(&old_set).count();
-    let removed_count = old_set.difference(&new_set).count();
-
-    let cmd = AssignApplicationAccessCommand {
-        user_id: id.clone(),
-        application_ids: req.application_ids.clone(),
-        all_applications: req.all_applications,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .assign_app_access_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-    state.app_access.forget(&id);
-
-    let mut applications = Vec::new();
-    for app_id in &req.application_ids {
-        if let Some(app) = app_repo.find_by_id(app_id).await? {
-            applications.push(ApplicationAccessResponse {
-                application_id: app.id,
-                application_code: app.code,
-                application_name: app.name,
-            });
-        }
-    }
-
-    Ok(Json(SetApplicationAccessResponse {
-        applications,
-        added: added_count,
-        removed: removed_count,
-        all_applications: req.all_applications.unwrap_or(principal.all_applications),
-    }))
+    Ok(Json(
+        super::admin::set_application_access(&state, &auth.0, &id, req).await?,
+    ))
 }
 
 /// Get available applications for a principal
@@ -2617,45 +1842,12 @@ pub async fn get_available_applications(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
+    // The coarse gate here too; the shared body checks it again
+    // with the per-resource reach rules.
     crate::checks::can_read_principals(&auth.0)?;
-
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-
-    // Go listAvailableApplications (principal/api/api.go): a principal of a
-    // client the caller does not reach answers the same 404 as a missing
-    // one.
-    if let Some(ref cid) = principal.client_id {
-        if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
-            return Err(PlatformError::not_found("Principal", &id));
-        }
-    }
-
-    // Every active application, ordered by code; a non-anchor caller's menu
-    // is bounded to the applications the target's client has enabled.
-    let mut apps = state.application_repo.find_active().await?;
-    if !auth.0.is_anchor() {
-        let allowed: std::collections::HashSet<String> = match principal.client_id.as_deref() {
-            Some(cid) => state
-                .app_client_config_repo
-                .find_by_client(cid)
-                .await?
-                .into_iter()
-                .filter(|c| c.enabled)
-                .map(|c| c.application_id)
-                .collect(),
-            None => Default::default(),
-        };
-        apps.retain(|a| allowed.contains(&a.id));
-    }
-    apps.sort_by(|a, b| a.code.cmp(&b.code));
-
-    Ok(Json(AvailableApplicationsResponse {
-        applications: apps.into_iter().map(Into::into).collect(),
-    }))
+    Ok(Json(
+        super::admin::available_applications(&state, &auth.0, &id).await?,
+    ))
 }
 
 /// Create principals router
