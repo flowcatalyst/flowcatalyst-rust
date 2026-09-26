@@ -34,7 +34,7 @@ pub struct ProbeResponse {
 /// Item 5 (bench rig finding 2026-09-07): answers 503 until
 /// [`crate::manager::QueueManager::consumers_started`] flips — the HTTP
 /// listener and `QueueManager::start()` are independent tasks with no
-/// ordering between them (`bin/fc-router/src/main.rs`), so before this fix
+/// ordering between them (in the binary that runs the router), so before this fix
 /// `/health` could (and under the bench rig's poll cadence, did) answer 200
 /// before a single consumer poll task existed. A caller that treats "health
 /// returns 200" as "the router is consuming" — the bench rig's drain clock,

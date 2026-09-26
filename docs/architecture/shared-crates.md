@@ -183,7 +183,7 @@ Public surface in `lib.rs`: every module is re-exported at top level so binaries
 - `AlbTrafficConfig`, `spawn_traffic_watcher` (feature `alb`) — ALB target-group automation.
 - HTTP API routes (`api::create_router`).
 
-Standalone binary (`bin/fc-router/`) and embedded usage (`bin/fc-server/src/main.rs::spawn_router`) both come from this crate.
+`fc-server`'s router role (`bin/fc-server/src/main.rs::start_router`, over `fc_router::bootstrap`) and `fc-dev` both run the router from this crate.
 
 ---
 

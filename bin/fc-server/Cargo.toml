@@ -51,4 +51,8 @@ rsa = { version = "0.9", features = ["pem"] }
 
 [features]
 default = []
+# The router role's optional extras (formerly the standalone fc-router's):
+# ALB self-registration, e-mail notifications, the OIDC-flow router UI auth.
 alb = ["fc-router/alb"]
+email = ["fc-router/email"]
+oidc-flow = ["fc-router/oidc-flow"]

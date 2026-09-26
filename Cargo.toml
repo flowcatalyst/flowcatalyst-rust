@@ -16,7 +16,6 @@ members = [
     "crates/fc-http-listener",
     "bin/fc-dev",
     "bin/fc-mcp-server",
-    "bin/fc-router",
     "bin/fc-outbox-processor",
     "bin/fc-server",
     "bin/fc-fnhost",

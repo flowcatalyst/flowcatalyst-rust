@@ -61,6 +61,7 @@
 //! | `FC_ALB_TARGET_GROUP_ARN` | - | ALB target group ARN |
 //! | `FC_ALB_TARGET_ID` | - | Target ID (instance ID or IP) |
 //! | `FC_ALB_TARGET_PORT` | `8080` | Port for ALB health checks |
+//! | `FC_ALB_DEREGISTRATION_DELAY_SECONDS` | `300` | Longest wait for deregistration to drain |
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -329,7 +330,10 @@ async fn main() -> Result<()> {
         None
     };
 
-    let is_leader = move || leader_election.as_ref().is_none_or(|e| e.is_leader());
+    let is_leader = {
+        let election = leader_election.clone();
+        move || election.as_ref().is_none_or(|e| e.is_leader())
+    };
 
     // ── Platform ─────────────────────────────────────────────────────────────
     let (app, repos) = match db.as_ref() {
@@ -416,6 +420,15 @@ async fn main() -> Result<()> {
                 target_id: std::env::var("FC_ALB_TARGET_ID")
                     .expect("FC_ALB_TARGET_ID required when FC_ALB_ENABLED=true"),
                 target_port: env_or_parse("FC_ALB_TARGET_PORT", 8080),
+                // Go: FC_ALB_DEREGISTRATION_DELAY_SECONDS, non-positive → 300 s.
+                deregistration_delay_seconds: env_or_parse::<i64>(
+                    "FC_ALB_DEREGISTRATION_DELAY_SECONDS",
+                    0,
+                )
+                .try_into()
+                .ok()
+                .filter(|s: &u64| *s > 0)
+                .unwrap_or(300),
             };
             let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
             let strategy = Arc::new(fc_router::AwsAlbTrafficStrategy::new(
@@ -929,7 +942,7 @@ fn build_platform_app(
 // ── Background Processor Spawners ────────────────────────────────────────────
 
 /// Start the message router (Go `newRouterServer` + `Server.Run`): the
-/// same runtime as the standalone `fc-router` binary, polling only while
+/// `fc_router::bootstrap::RouterRuntime`, polling only while
 /// this instance leads. Returns the runtime and its HTTP surface.
 async fn start_router(
     env: &fc_router::bootstrap::RouterEnv,

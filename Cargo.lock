@@ -3216,26 +3216,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fc-router-bin"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "dotenvy",
- "fc-common",
- "fc-router",
- "parking_lot 0.12.5",
- "reqwest",
- "rustls 0.23.37",
- "serde_json",
- "tokio",
- "tower",
- "tower-http 0.6.8",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "fc-sdk"
 version = "0.1.0"
 dependencies = [

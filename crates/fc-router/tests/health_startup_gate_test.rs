@@ -5,7 +5,7 @@
 //! *unconditional* 200 (only the body's `"status"` field varied between
 //! "UP"/"DEGRADED"), and `QueueManager::start()` — which spawns every
 //! consumer's poll task — runs as an independent tokio task with no
-//! ordering against the HTTP listener (`bin/fc-router/src/main.rs`). So
+//! ordering against the HTTP listener (in the binary that runs the router). So
 //! `/health` could answer ready before a single consumer poll task existed,
 //! making the rig's `drain_time_s` measure the router's boot time, not its
 //! drain.

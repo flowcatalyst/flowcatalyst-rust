@@ -113,8 +113,8 @@ impl QueueManager {
     /// after the router's duplicate guard had expired.
     ///
     /// Uses the default 60s drain budget ([`Self::DEFAULT_DRAIN_TIMEOUT`]).
-    /// Callers that want the budget to be operator/env-tunable (`bin/fc-router`
-    /// honours `FC_DRAIN_TIMEOUT_SECONDS`) should call
+    /// Callers that want the budget to be operator/env-tunable (the router
+    /// runtime honours `FC_DRAIN_TIMEOUT_SECONDS`) should call
     /// [`Self::shutdown_with_timeout`] directly instead.
     pub async fn shutdown(&self) {
         self.shutdown_with_timeout(Self::DEFAULT_DRAIN_TIMEOUT)
@@ -122,7 +122,7 @@ impl QueueManager {
     }
 
     /// Default drain budget for [`Self::shutdown`] — 60s, matching Go's
-    /// `DrainTimeout` default. `bin/fc-router`'s `FC_DRAIN_TIMEOUT_SECONDS`
+    /// `DrainTimeout` default. The runtime's `FC_DRAIN_TIMEOUT_SECONDS`
     /// also defaults to this.
     pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 
