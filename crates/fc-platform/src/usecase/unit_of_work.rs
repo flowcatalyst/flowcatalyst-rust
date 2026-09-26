@@ -500,11 +500,8 @@ impl<'a> AuditRow<'a> {
         event: &'a E,
         command: &C,
     ) -> Self {
-        let operation = std::any::type_name::<C>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("Unknown")
-            .to_string();
+        // Go's name for the command (see `usecase::audit_operation`).
+        let operation = super::audit_operation::audit_operation_name::<C>().to_string();
 
         let meta = event.metadata();
         Self {

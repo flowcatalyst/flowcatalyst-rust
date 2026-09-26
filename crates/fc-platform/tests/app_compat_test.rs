@@ -195,7 +195,7 @@ async fn integral_syncs_a_user_with_its_password_hash() {
     );
     // The hash never reaches the audit log.
     let (audit,): (Value,) = sqlx::query_as(
-        "SELECT operation_json FROM aud_logs WHERE operation = 'SyncUsersCommand' LIMIT 1",
+        "SELECT operation_json FROM aud_logs WHERE operation = 'SyncPrincipalsCommand' LIMIT 1",
     )
     .fetch_one(&app.pool)
     .await
