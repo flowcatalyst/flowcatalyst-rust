@@ -84,7 +84,7 @@ pub(crate) async fn monitoring_handler(State(state): State<AppState>) -> Json<Mo
 
     Json(MonitoringResponse {
         status: status.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: fc_common::BUILD_VERSION.to_string(),
         health_report,
         pool_stats,
         active_warnings,

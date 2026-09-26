@@ -55,7 +55,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             Json(SimpleHealthResponse {
                 status: "STARTING".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
+                version: fc_common::BUILD_VERSION.to_string(),
             }),
         )
             .into_response();
@@ -72,7 +72,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
 
     Json(SimpleHealthResponse {
         status: status.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: fc_common::BUILD_VERSION.to_string(),
     })
     .into_response()
 }
@@ -81,7 +81,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
 pub(crate) async fn simple_health_handler() -> Json<SimpleHealthResponse> {
     Json(SimpleHealthResponse {
         status: "UP".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: fc_common::BUILD_VERSION.to_string(),
     })
 }
 

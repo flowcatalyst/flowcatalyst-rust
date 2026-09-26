@@ -44,6 +44,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY bin ./bin
 COPY migrations ./migrations
+# The version the binary reports (owner decision #33), e.g.
+# --build-arg FC_BUILD_VERSION=$(git describe --tags --always); unset or empty
+# means the workspace package version.
+ARG FC_BUILD_VERSION=
+ENV FC_BUILD_VERSION=${FC_BUILD_VERSION}
 RUN cargo build --release --bin fc-server
 
 # ── Stage 4: Runtime — distroless (no shell, no package manager) ────

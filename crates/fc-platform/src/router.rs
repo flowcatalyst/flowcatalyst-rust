@@ -555,7 +555,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
 
         // 3. Set OpenAPI metadata
         openapi.info.title = "FlowCatalyst Platform API".to_string();
-        openapi.info.version = env!("CARGO_PKG_VERSION").to_string();
+        openapi.info.version = fc_common::BUILD_VERSION.to_string();
         openapi.info.description =
             Some("REST APIs for events, subscriptions, and administration".to_string());
         // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
@@ -962,7 +962,7 @@ fn is_html(headers: &axum::http::HeaderMap) -> bool {
 async fn health_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "UP",
-        "version": env!("CARGO_PKG_VERSION")
+        "version": fc_common::BUILD_VERSION
     }))
 }
 

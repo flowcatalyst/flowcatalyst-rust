@@ -47,6 +47,19 @@ pub mod tsid;
 
 pub use tsid::EntityType;
 
+/// The version every server binary reports (`/health`, the router's
+/// monitoring and health documents, the platform OpenAPI `info.version`):
+/// owner decision #33, "Rust reports its real build version".
+///
+/// A release build sets `FC_BUILD_VERSION` when compiling (the Docker images
+/// take it as a build argument: the release tag, else the commit), the way Go
+/// links `-X …/server.Version=<v>`; otherwise it is the workspace package
+/// version. An empty `FC_BUILD_VERSION` counts as unset.
+pub const BUILD_VERSION: &str = match option_env!("FC_BUILD_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
+
 // ============================================================================
 // Core Message Types
 // ============================================================================
