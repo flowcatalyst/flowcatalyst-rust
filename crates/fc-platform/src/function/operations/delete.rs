@@ -13,12 +13,9 @@ use serde::Serialize;
 use super::access::{function_by_address, Caller};
 use super::events::FunctionDeleted;
 use super::trigger_sync::TriggerSync;
-use crate::function::entity::Function;
 use crate::function::repository::FunctionRepository;
 use crate::function::FunctionAddress;
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// `DELETE /api/functions/{address}`.
 #[derive(Debug, Clone, Serialize)]
@@ -59,28 +56,14 @@ impl<U: UnitOfWork> UseCase for DeleteFunctionUseCase<U> {
         &self,
         command: DeleteCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<FunctionDeleted> {
-        let function = match self.prepare(&command, &ctx).await {
-            Ok(f) => f,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<FunctionDeleted>, UseCaseError> {
+        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        self.trigger_sync
+            .on_delete(&*self.unit_of_work, &function, &ctx)
+            .await?;
         let event = FunctionDeleted::new(&ctx, &function);
         self.unit_of_work
             .commit_delete(&function, &*self.functions, event, &command)
             .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteFunctionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<Function, UseCaseError> {
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
-        self.trigger_sync
-            .on_delete(&*self.unit_of_work, &function, ctx)
-            .await?;
-        Ok(function)
     }
 }

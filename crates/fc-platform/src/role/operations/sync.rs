@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::usecase::{
-    ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::ApplicationRepository;
 use crate::RoleRepository;
@@ -98,24 +98,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         &self,
         command: SyncRolesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RolesSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // role, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncRolesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncRolesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, RolesSynced), UseCaseError> {
+    ) -> Result<Committed<RolesSynced>, UseCaseError> {
         // Verify the application exists
         let application = self
             .application_repo
@@ -181,7 +164,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&RoleUpdated::new(
-                            ctx,
+                            &ctx,
                             &updated.id,
                             &updated.name,
                         ))?);
@@ -207,7 +190,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&RoleCreated::new(
-                        ctx, &role.id, &role.name,
+                        &ctx, &role.id, &role.name,
                     ))?);
                     created_count += 1;
                 }
@@ -240,7 +223,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&RoleDeleted::new(
-                        ctx, &role.id, &role.name,
+                        &ctx, &role.id, &role.name,
                     ))?);
                     deleted_count += 1;
                 }
@@ -248,7 +231,7 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
         }
 
         let event = RolesSynced {
-            metadata: RolesSynced::metadata_for(ctx, &command.application_code),
+            metadata: RolesSynced::metadata_for(&ctx, &command.application_code),
             created: created_count,
             updated: updated_count,
             removed: deleted_count,
@@ -256,7 +239,10 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
             application_code: command.application_code.clone(),
             synced_codes: synced_names,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // role, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

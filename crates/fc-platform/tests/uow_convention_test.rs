@@ -1,11 +1,12 @@
 //! Convention test: every `*UseCase::execute` body must terminate through
-//! `UnitOfWork::commit` / `commit_delete` / `emit_event`, OR only return
-//! `UseCaseResult::failure`s.
+//! `UnitOfWork::commit` / `commit_delete` / `commit_all` / `emit_event` /
+//! `emit_events` / `commit_all_with_events`, OR only return `Err(..)`s.
 //!
-//! `UseCaseResult::success` is sealed in the `usecase` module, so it's
-//! impossible to construct a success outside of UoW — but a use case could
+//! `execute` returns `Result<Committed<Event>, UseCaseError>`, and
+//! `Committed` can only be constructed inside the `usecase` module, so it's
+//! impossible to produce a success outside of UoW — but a use case could
 //! still do a direct repo write and then emit no event, and technically
-//! compile (it would only return `failure` at the end). This test catches
+//! compile (it would only return `Err` at the end). This test catches
 //! that anti-pattern.
 //!
 //! Complements `permission_convention_test.rs`, which checks handler-level
@@ -61,6 +62,17 @@ fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// `impl UseCase for X` or `impl<U: UnitOfWork> UseCase for X<U>` — the
+/// trait name preceded by a space or the generics' `>`, never part of a
+/// longer name.
+fn is_use_case_impl(line: &str) -> bool {
+    let line = line.trim_start();
+    (line.starts_with("impl ") || line.starts_with("impl<"))
+        && line
+            .match_indices("UseCase for ")
+            .any(|(i, _)| i > 0 && matches!(line.as_bytes()[i - 1], b' ' | b'>'))
+}
+
 /// Extract the bodies of every `execute` method that's part of an
 /// `impl<...> UseCase for X<...>` block.
 ///
@@ -74,9 +86,9 @@ fn extract_use_case_execute_bodies(content: &str) -> Vec<(String, String)> {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
-        if line.contains("impl ") && line.contains(" UseCase for ") {
+        if is_use_case_impl(line) {
             // Extract the struct name.
-            let after = line.split(" UseCase for ").nth(1).unwrap_or("");
+            let after = line.split("UseCase for ").nth(1).unwrap_or("");
             let struct_name = after
                 .split([' ', '<', '{'])
                 .find(|s| !s.is_empty())
@@ -142,35 +154,38 @@ fn read_balanced_body(lines: &[&str], start_line: usize) -> (String, usize) {
     (body, i)
 }
 
+/// `body` with its whitespace removed, so a call rustfmt splits across
+/// lines (`self.unit_of_work\n    .commit(`) still matches.
+fn squeezed(body: &str) -> String {
+    body.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
 fn has_uow_call(body: &str) -> bool {
+    let body = squeezed(body);
     UOW_PATTERNS.iter().any(|p| body.contains(p))
 }
 
 /// The body only returns failures (and never reaches a success path) —
 /// acceptable, because the seal prevents fabricating success. Detected
-/// heuristically: every terminal expression is a `UseCaseResult::failure`
-/// or propagates one.
+/// heuristically: the body returns an `Err(..)` and mentions nothing that
+/// could carry a success.
+///
+/// Conservative: if the body mentions any success-producing expression —
+/// the restricted `Committed::new(` constructor, a direct `Committed(..)`
+/// construction, a sealed outcome re-used through `.into_committed()`, an
+/// `Ok(..)`, or a `.map(|..|` over one — treat it as trying to produce a
+/// success and require UoW.
 fn only_returns_failures(body: &str) -> bool {
-    // If the body never contains a success-producing pattern AND never
-    // returns anything other than failure, it's trivially-compliant: the
-    // compiler would reject it otherwise. Simpler heuristic: the body
-    // mentions `UseCaseResult::failure` but NOT any success-producing
-    // expression (which, thanks to the seal, can only be a UoW call).
-    //
-    // Returns true only if every path is a failure. Conservative: if the
-    // body mentions any success-producing expression — the restricted
-    // `UseCaseResult::success(` constructor, a direct `UseCaseResult(Ok(..))`
-    // construction, a legacy `UseCaseResult::Success(` variant, or
-    // `result.map(` etc — treat it as trying to produce a success and
-    // require UoW.
     const SUCCESS_PATTERNS: &[&str] = &[
-        "UseCaseResult::success(",
-        "UseCaseResult(Ok",
-        "UseCaseResult::Success",
+        "Committed::new(",
+        "Committed(",
+        ".into_committed(",
+        "Ok(",
         ".map(|",
     ];
-    body.contains("UseCaseResult::failure")
-        && !SUCCESS_PATTERNS.iter().any(|p| body.contains(p))
+    let squeezed = squeezed(body);
+    squeezed.contains("Err(")
+        && !SUCCESS_PATTERNS.iter().any(|p| squeezed.contains(p))
         && !has_uow_call(body)
 }
 
@@ -182,6 +197,8 @@ fn every_use_case_terminates_through_unit_of_work() {
     walk_rs_files(&src_root(), &mut files);
 
     let mut violations = Vec::new();
+    let mut checked = 0usize;
+    let mut through_uow = 0usize;
 
     for file in &files {
         if should_skip(file) {
@@ -201,7 +218,9 @@ fn every_use_case_terminates_through_unit_of_work() {
             if skip_keys.contains(key.as_str()) {
                 continue;
             }
+            checked += 1;
             if has_uow_call(&body) {
+                through_uow += 1;
                 continue;
             }
             if only_returns_failures(&body) {
@@ -211,13 +230,22 @@ fn every_use_case_terminates_through_unit_of_work() {
         }
     }
 
+    println!("{checked} execute bodies, {through_uow} through UnitOfWork");
+    // Guard the scanner itself: if it stops finding `execute` bodies (or
+    // stops recognising the UoW calls in them), the test would pass
+    // vacuously.
+    assert!(
+        checked >= 100 && through_uow * 10 >= checked * 9,
+        "the scanner found {checked} execute bodies, {through_uow} through UnitOfWork"
+    );
+
     if !violations.is_empty() {
         let mut msg = String::from(
             "\n\nUse cases whose `execute` body doesn't terminate through `UnitOfWork`.\n\
              Every `*UseCase::execute` must either call one of \
-             `unit_of_work.commit/commit_delete/emit_event` on the happy path, \
-             or return only `UseCaseResult::failure`.\n\
-             Success can only be constructed inside the `usecase` module; skipping UoW \
+             `unit_of_work.commit/commit_delete/commit_all/emit_event/emit_events/\
+             commit_all_with_events` on the happy path, or return only `Err(..)`.\n\
+             `Committed` can only be constructed inside the `usecase` module; skipping UoW \
              means the use case never emits a domain event or audit log — a silent data \
              integrity bug.\n\n\
              Violators:\n",

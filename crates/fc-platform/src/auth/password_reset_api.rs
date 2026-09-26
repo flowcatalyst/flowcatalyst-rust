@@ -130,12 +130,7 @@ impl PasswordResetEmailer {
         // Best-effort domain event.
         let event = PasswordResetRequested::new(&principal.id, &email);
         let command = serde_json::json!({ "principalId": principal.id, "email": email });
-        if let Err(e) = self
-            .unit_of_work
-            .emit_event(event, &command)
-            .await
-            .into_result()
-        {
+        if let Err(e) = self.unit_of_work.emit_event(event, &command).await {
             warn!("Failed to emit PasswordResetRequested event: {}", e);
         }
 

@@ -6,10 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::DispatchPool;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::DispatchPoolRepository;
 
 /// Command for updating a dispatch pool.
@@ -89,25 +86,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         &self,
         command: UpdateDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolUpdated> {
-        let (pool, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateDispatchPoolCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(DispatchPool, DispatchPoolUpdated), UseCaseError> {
+    ) -> Result<Committed<DispatchPoolUpdated>, UseCaseError> {
         // Find the dispatch pool
         let mut pool = self
             .dispatch_pool_repo
@@ -148,8 +127,12 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
         pool.updated_at = Utc::now();
 
         // Create domain event
-        let event = DispatchPoolUpdated::new(ctx, &pool.id, &pool.name);
-        Ok((pool, event))
+        let event = DispatchPoolUpdated::new(&ctx, &pool.id, &pool.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
+            .await
     }
 }
 

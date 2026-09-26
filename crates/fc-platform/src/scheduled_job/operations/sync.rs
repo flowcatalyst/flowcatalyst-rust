@@ -21,7 +21,7 @@ use super::events::{
 use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
 use crate::scheduled_job::ScheduledJobRepository;
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,34 +120,9 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         &self,
         cmd: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
-        let (to_persist, rows, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        if to_persist.is_empty() {
-            // No changes to write; emit a summary event anyway so the audit
-            // log records that a sync run occurred (matches event_type sync).
-            return self.unit_of_work.emit_event(event, &cmd).await;
-        }
-
-        // Go's usecaseop.Sync: a created/updated/archived event per written
-        // job, then the rollup, atomic with the writes.
-        self.unit_of_work
-            .commit_all_with_events(&to_persist, &*self.repo, rows, event, &cmd)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
-    /// Diff the payload against the stored jobs: the rows to write and the
-    /// summary event.
-    async fn prepare(
-        &self,
-        cmd: &SyncScheduledJobsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<ScheduledJob>, Vec<RecordedEvent>, ScheduledJobsSynced), UseCaseError> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
+        // Diff the payload against the stored jobs: the rows to write and the
+        // summary event.
         let existing = match cmd.client_id.as_deref() {
             Some(cid) => self.repo.find_by_client(cid).await,
             None => {
@@ -221,7 +196,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                         job.record_update(Some(ctx.principal_id.clone()));
                         updated.push(job.id.clone());
                         rows.push(RecordedEvent::of(&ScheduledJobUpdated::new(
-                            ctx, &job.id, &job.code,
+                            &ctx, &job.id, &job.code,
                         ))?);
                         to_persist.push(job);
                     }
@@ -250,7 +225,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                     }
                     created.push(job.id.clone());
                     rows.push(RecordedEvent::of(&ScheduledJobCreated::new(
-                        ctx, &job.id, &job.code,
+                        &ctx, &job.id, &job.code,
                     ))?);
                     to_persist.push(job);
                 }
@@ -265,7 +240,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                     job.archive();
                     archived.push(job.id.clone());
                     rows.push(RecordedEvent::of(&ScheduledJobArchived::new(
-                        ctx, &job.id, &job.code,
+                        &ctx, &job.id, &job.code,
                     ))?);
                     to_persist.push(job);
                 }
@@ -273,12 +248,23 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
         }
 
         let event = ScheduledJobsSynced::new(
-            ctx,
+            &ctx,
             &cmd.scope,
             created.clone(),
             updated.clone(),
             archived.clone(),
         );
-        Ok((to_persist, rows, event))
+
+        if to_persist.is_empty() {
+            // No changes to write; emit a summary event anyway so the audit
+            // log records that a sync run occurred (matches event_type sync).
+            return self.unit_of_work.emit_event(event, &cmd).await;
+        }
+
+        // Go's usecaseop.Sync: a created/updated/archived event per written
+        // job, then the rollup, atomic with the writes.
+        self.unit_of_work
+            .commit_all_with_events(&to_persist, &*self.repo, rows, event, &cmd)
+            .await
     }
 }

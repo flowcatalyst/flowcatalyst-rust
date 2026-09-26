@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ConnectionRepository;
 use crate::SubscriptionRepository;
 
@@ -67,24 +65,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
         &self,
         command: DeleteConnectionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ConnectionDeleted> {
-        let (connection, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&connection, &*self.connection_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteConnectionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteConnectionCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Connection, ConnectionDeleted), UseCaseError> {
+    ) -> Result<Committed<ConnectionDeleted>, UseCaseError> {
         let connection = self
             .connection_repo
             .find_by_id(&command.connection_id)
@@ -106,8 +87,11 @@ impl<U: UnitOfWork> DeleteConnectionUseCase<U> {
             ));
         }
 
-        let event = ConnectionDeleted::new(ctx, &connection.id, &connection.code);
-        Ok((connection, event))
+        let event = ConnectionDeleted::new(&ctx, &connection.id, &connection.code);
+
+        self.unit_of_work
+            .commit_delete(&connection, &*self.connection_repo, event, &command)
+            .await
     }
 }
 

@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountSecretRegenerated;
-use crate::service_account::ServiceAccount;
 use crate::shared::encryption_service::{require_configured, EncryptionService};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ServiceAccountRepository;
 
 /// Generate a signing secret (URL-safe base64)
@@ -90,39 +87,7 @@ impl<U: UnitOfWork> UseCase for RegenerateSigningSecretUseCase<U> {
         &self,
         command: RegenerateSigningSecretCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RegenerateSigningSecretResult> {
-        let (service_account, event, result) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit through UnitOfWork, then map the event onto our
-        // wrapper (carrying the one-time secret).
-        self.unit_of_work
-            .commit(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
-            .map(|_| result)
-    }
-}
-
-impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RegenerateSigningSecretCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<
-        (
-            ServiceAccount,
-            ServiceAccountSecretRegenerated,
-            RegenerateSigningSecretResult,
-        ),
-        UseCaseError,
-    > {
+    ) -> Result<Committed<RegenerateSigningSecretResult>, UseCaseError> {
         // Find the service account
         let mut service_account = self
             .service_account_repo
@@ -146,7 +111,7 @@ impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
 
         // Create domain event
         let event =
-            ServiceAccountSecretRegenerated::new(ctx, &service_account.id, &service_account.code);
+            ServiceAccountSecretRegenerated::new(&ctx, &service_account.id, &service_account.code);
 
         // Create result with one-time secret
         let result = RegenerateSigningSecretResult {
@@ -154,7 +119,17 @@ impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
             signing_secret,
         };
 
-        Ok((service_account, event, result))
+        // Atomic commit through UnitOfWork, then map the event onto our
+        // wrapper (carrying the one-time secret).
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
+            .map(|committed| committed.map(|_| result))
     }
 }
 

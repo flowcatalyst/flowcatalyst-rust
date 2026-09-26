@@ -7,9 +7,7 @@ use std::sync::Arc;
 
 use super::events::ConnectionCreated;
 use crate::shared::caller_reach::check_scope_access;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::Connection;
 use crate::ConnectionRepository;
 use crate::ServiceAccountRepository;
@@ -118,24 +116,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         &self,
         command: CreateConnectionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ConnectionCreated> {
-        let (connection, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&connection, &*self.connection_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> CreateConnectionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &CreateConnectionCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Connection, ConnectionCreated), UseCaseError> {
+    ) -> Result<Committed<ConnectionCreated>, UseCaseError> {
         let code = command.code.trim().to_lowercase();
         let name = command.name.trim();
 
@@ -187,8 +168,12 @@ impl<U: UnitOfWork> CreateConnectionUseCase<U> {
             connection.external_id = Some(ext_id.clone());
         }
 
-        let event = ConnectionCreated::new(ctx, &connection.id, &connection.code, &connection.name);
-        Ok((connection, event))
+        let event =
+            ConnectionCreated::new(&ctx, &connection.id, &connection.code, &connection.name);
+
+        self.unit_of_work
+            .commit(&connection, &*self.connection_repo, event, &command)
+            .await
     }
 }
 

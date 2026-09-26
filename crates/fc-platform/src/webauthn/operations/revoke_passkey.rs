@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PasskeyRevoked;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::webauthn::entity::WebauthnCredential;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::webauthn::repository::WebauthnCredentialRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,24 +60,7 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
         &self,
         command: RevokePasskeyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PasskeyRevoked> {
-        let (credential, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&credential, &*self.credential_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RevokePasskeyUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RevokePasskeyCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(WebauthnCredential, PasskeyRevoked), UseCaseError> {
+    ) -> Result<Committed<PasskeyRevoked>, UseCaseError> {
         let credential = self
             .credential_repo
             .find_by_id(&command.credential_id)
@@ -97,7 +77,10 @@ impl<U: UnitOfWork> RevokePasskeyUseCase<U> {
             ));
         }
 
-        let event = PasskeyRevoked::new(ctx, &credential.id, &credential.principal_id);
-        Ok((credential, event))
+        let event = PasskeyRevoked::new(&ctx, &credential.id, &credential.principal_id);
+
+        self.unit_of_work
+            .commit_delete(&credential, &*self.credential_repo, event, &command)
+            .await
     }
 }

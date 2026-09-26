@@ -99,7 +99,7 @@ pub fn validate_mapping_scope(
             "PRIMARY_CLIENT_NOT_ALLOWED",
             "primaryClientId is not allowed when mappingScope is ANCHOR",
         )),
-        _ => Ok((Some(scope), client)),
+        ScopeType::Anchor | ScopeType::Partner | ScopeType::Client => Ok((Some(scope), client)),
     }
 }
 
@@ -165,7 +165,6 @@ where
         return uow
             .commit(&mapping, &*deps.edm_repo, event, command)
             .await
-            .into_result()
             .map(|_| ());
     };
     let link = client
@@ -181,7 +180,6 @@ where
         return uow
             .commit(&existing, &*deps.edm_repo, event, command)
             .await
-            .into_result()
             .map(|_| ());
     }
     move_mapping(uow, deps, &existing, idp, link, ctx, command).await
@@ -205,7 +203,6 @@ where
     let (mv, event) = plan_move(&deps.principal_repo, mapping, target, link_client, ctx).await?;
     uow.commit(&mv, &*deps.move_repo, event, command)
         .await
-        .into_result()
         .map(|_| ())
 }
 

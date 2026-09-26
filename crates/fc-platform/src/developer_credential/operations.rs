@@ -10,9 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::events::{DeveloperCredentialRevoked, DeveloperCredentialSet};
 use super::{DeveloperCredential, DEVELOPER_ROLE};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::PrincipalRepository;
 
 /// Set or rotate `principal_id`'s developer secret to `secret_ref` (the
@@ -72,7 +70,7 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
         &self,
         command: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let principal = match self
             .principal_repo
             .find_by_id(&command.principal_id)
@@ -82,16 +80,16 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
                 format!("User '{}' not found", command.principal_id),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         if !principal.is_user() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_USER",
                 "Developer credentials can only be set on USER type principals",
             ));
         }
         if !principal.roles.iter().any(|r| r.role == DEVELOPER_ROLE) {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_DEVELOPER",
                 "Principal does not hold the developer role",
             ));
@@ -133,7 +131,7 @@ impl<U: UnitOfWork> UseCase for RevokeDeveloperCredentialUseCase<U> {
         &self,
         command: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let principal = match self
             .principal_repo
             .find_by_id(&command.principal_id)
@@ -143,7 +141,7 @@ impl<U: UnitOfWork> UseCase for RevokeDeveloperCredentialUseCase<U> {
                 format!("User '{}' not found", command.principal_id),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         let credential = DeveloperCredential {
             principal_id: principal.id.clone(),

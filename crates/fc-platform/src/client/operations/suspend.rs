@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientSuspended;
-use crate::client::entity::{Client, ClientStatus};
+use crate::client::entity::ClientStatus;
 use crate::client::repository::ClientRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for suspending a client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,25 +80,7 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
         &self,
         command: SuspendClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientSuspended> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> SuspendClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SuspendClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Client, ClientSuspended), UseCaseError> {
+    ) -> Result<Committed<ClientSuspended>, UseCaseError> {
         let reason = command.reason.trim();
 
         // Fetch existing client
@@ -133,8 +113,12 @@ impl<U: UnitOfWork> SuspendClientUseCase<U> {
         client.suspend(reason);
 
         // Create domain event
-        let event = ClientSuspended::new(ctx, &client.id, reason);
-        Ok((client, event))
+        let event = ClientSuspended::new(&ctx, &client.id, reason);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
     }
 }
 

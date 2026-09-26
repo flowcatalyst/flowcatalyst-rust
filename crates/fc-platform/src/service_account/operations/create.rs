@@ -11,7 +11,7 @@ use crate::principal::entity::UserScope;
 use crate::role::entity::roles;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::encryption_service::{require_configured, EncryptionService};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::{ClientRepository, ServiceAccountRepository};
 use crate::{ServiceAccount, WebhookCredentials};
 
@@ -231,31 +231,23 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         &self,
         command: CreateServiceAccountCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<CreateServiceAccountResult> {
-        let code = match normalise_code(&command.code, command.application_id.is_none()) {
-            Ok(code) => code,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<CreateServiceAccountResult>, UseCaseError> {
+        let code = normalise_code(&command.code, command.application_id.is_none())?;
         let code = code.as_str();
         let name = command.name.trim();
 
         // Business rule: code must be unique (Go: 409 CODE_EXISTS,
         // create_credentials.go:91-98).
-        let existing = match self.service_account_repo.find_by_code(code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.service_account_repo.find_by_code(code).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Service account with code '{}' already exists", code),
             ));
         }
 
         let client_ids = dedupe_client_ids(command.client_ids.clone());
-        if let Err(e) = require_clients_exist(&self.client_repo, &client_ids).await {
-            return UseCaseResult::failure(e);
-        }
+        require_clients_exist(&self.client_repo, &client_ids).await?;
 
         // Generate credentials. The caller gets the plaintext once in the
         // result; only the `encrypted:` form is stored.
@@ -267,10 +259,7 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
                 enc.encrypt_ref(&signing_secret)?,
             ))
         });
-        let (auth_token_ref, signing_secret_ref) = match sealed {
-            Ok(refs) => refs,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let (auth_token_ref, signing_secret_ref) = sealed?;
 
         // Create the service account entity
         let mut service_account = ServiceAccount::new(code, name, UserScope::Anchor);
@@ -322,10 +311,9 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             signing_secret,
         };
 
-        // Atomic commit through UnitOfWork. `.map()` is defined inside the
-        // usecase module, so it can translate the committed event into our
-        // wrapper result (which carries the one-time secrets) without
-        // bypassing the seal.
+        // Atomic commit through UnitOfWork. `Committed::map` translates the
+        // committed event into our wrapper result (which carries the
+        // one-time secrets) without bypassing the seal.
         self.unit_of_work
             .commit(
                 &service_account,
@@ -334,7 +322,7 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
                 &command,
             )
             .await
-            .map(|_| result)
+            .map(|committed| committed.map(|_| result))
     }
 }
 

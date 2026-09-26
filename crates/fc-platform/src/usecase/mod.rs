@@ -1,7 +1,7 @@
 //! Use Case Infrastructure
 //!
 //! Provides the foundational patterns for implementing use cases:
-//! - `Result<T>` - sealed result type for use case outcomes
+//! - `Committed<T>` - sealed proof of a unit-of-work commit; `UseCaseResult<T>` - a use case's outcome
 //! - `UseCaseError` - categorized error types for consistent handling
 //! - `DomainEvent` - trait for domain events with CloudEvents structure
 //! - `ExecutionContext` - tracing and principal context for use case execution
@@ -21,7 +21,7 @@ mod event_persistence_snapshot_tests;
 pub use domain_event::{DomainEvent, EventMetadata, RecordedEvent};
 pub use error::{ErrorKind, OrNotFound, UseCaseError};
 pub use execution_context::ExecutionContext;
-pub use result::UseCaseResult;
+pub use result::{Committed, UseCaseResult};
 pub use unit_of_work::{
     DbTx, HasId, LockedRead, Persist, PgUnitOfWork, TxScopedUnitOfWork, UnitOfWork,
 };

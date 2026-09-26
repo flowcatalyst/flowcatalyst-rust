@@ -23,9 +23,7 @@ use crate::function::entity::FunctionDomain;
 use crate::function::repository::FunctionRepository;
 use crate::function::route_repository::FunctionRouteRepository;
 use crate::function::{FunctionOwner, Hostname};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 fn domain_taken() -> UseCaseError {
     UseCaseError::business_rule("DOMAIN_TAKEN", "hostname is already claimed")
@@ -80,20 +78,7 @@ impl<U: UnitOfWork> UseCase for ClaimFunctionDomainUseCase<U> {
         &self,
         command: ClaimCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DomainClaimed> {
-        let claimed = match self.prepare(&command).await {
-            Ok(d) => d,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let event = DomainClaimed::new(&ctx, &claimed);
-        self.unit_of_work
-            .commit(&claimed, &*self.domains, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ClaimFunctionDomainUseCase<U> {
-    async fn prepare(&self, command: &ClaimCommand) -> Result<FunctionDomain, UseCaseError> {
+    ) -> Result<Committed<DomainClaimed>, UseCaseError> {
         let hostname = Hostname::parse(command.hostname.as_deref().unwrap_or(""))?;
         // Equal to or covered by an existing claim: `covering` looks at the
         // hostname itself and each ancestor.
@@ -104,11 +89,11 @@ impl<U: UnitOfWork> ClaimFunctionDomainUseCase<U> {
         if self.domains.any_under(&hostname).await? {
             return Err(domain_taken());
         }
-        Ok(FunctionDomain::claim(
-            command.owner.clone(),
-            hostname,
-            Utc::now(),
-        ))
+        let claimed = FunctionDomain::claim(command.owner.clone(), hostname, Utc::now());
+        let event = DomainClaimed::new(&ctx, &claimed);
+        self.unit_of_work
+            .commit(&claimed, &*self.domains, event, &command)
+            .await
     }
 }
 
@@ -154,20 +139,7 @@ impl<U: UnitOfWork> UseCase for ReleaseFunctionDomainUseCase<U> {
         &self,
         command: ReleaseCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DomainReleased> {
-        let domain = match self.prepare(&command).await {
-            Ok(d) => d,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let event = DomainReleased::new(&ctx, &domain);
-        self.unit_of_work
-            .commit_delete(&domain, &*self.domains, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ReleaseFunctionDomainUseCase<U> {
-    async fn prepare(&self, command: &ReleaseCommand) -> Result<FunctionDomain, UseCaseError> {
+    ) -> Result<Committed<DomainReleased>, UseCaseError> {
         let hostname = Hostname::parse(&command.hostname)?;
         let domain = domain_by_hostname(&self.domains, &hostname, &self.caller).await?;
         let using = self.routes.list_under(&domain.hostname).await?;
@@ -195,6 +167,9 @@ impl<U: UnitOfWork> ReleaseFunctionDomainUseCase<U> {
                 format!("domain is in use by: {}", names.join(", ")),
             ));
         }
-        Ok(domain)
+        let event = DomainReleased::new(&ctx, &domain);
+        self.unit_of_work
+            .commit_delete(&domain, &*self.domains, event, &command)
+            .await
     }
 }

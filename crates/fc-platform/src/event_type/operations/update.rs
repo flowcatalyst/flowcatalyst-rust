@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::EventType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EventTypeRepository;
 
 /// Command for updating an existing event type.
@@ -79,25 +76,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         &self,
         command: UpdateEventTypeCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypeUpdated> {
-        let (event_type, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateEventTypeCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(EventType, EventTypeUpdated), UseCaseError> {
+    ) -> Result<Committed<EventTypeUpdated>, UseCaseError> {
         // Fetch existing event type
         let mut event_type = self
             .event_type_repo
@@ -120,12 +99,16 @@ impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
 
         // Create domain event
         let event = EventTypeUpdated::new(
-            ctx,
+            &ctx,
             &event_type.id,
             &event_type.name,
             event_type.description.as_deref(),
         );
-        Ok((event_type, event))
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
     }
 }
 

@@ -58,32 +58,114 @@ pub struct Process {
 /// Why a process code was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProcessCodeError {
+    /// Empty or only whitespace.
+    #[error("Process code is required")]
+    Required,
     #[error("Process code must follow format: application:subdomain:process-name")]
     WrongSegmentCount,
-    #[error("Process code segments cannot be empty")]
-    EmptySegment,
+    /// The named segment (`application`, `subdomain` or `process-name`) is
+    /// empty or only whitespace.
+    #[error("Process code part '{0}' cannot be empty")]
+    EmptySegment(&'static str),
+}
+
+/// The segments of a process code, in order.
+const CODE_SEGMENTS: [&str; 3] = ["application", "subdomain", "process-name"];
+
+/// A process code, `application:subdomain:process-name`: exactly three
+/// colon-separated segments, none of them blank, kept exactly as given.
+///
+/// The only way in is [`ProcessCode::parse`] (or `TryFrom<&str>`, or
+/// deserializing, which parse). It serializes as the plain string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ProcessCode(String);
+
+impl ProcessCode {
+    pub fn parse(code: &str) -> Result<Self, ProcessCodeError> {
+        if code.trim().is_empty() {
+            return Err(ProcessCodeError::Required);
+        }
+        let parts: Vec<&str> = code.split(':').collect();
+        if parts.len() != CODE_SEGMENTS.len() {
+            return Err(ProcessCodeError::WrongSegmentCount);
+        }
+        for (part, name) in parts.iter().zip(CODE_SEGMENTS) {
+            if part.trim().is_empty() {
+                return Err(ProcessCodeError::EmptySegment(name));
+            }
+        }
+        Ok(Self(code.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Segment `i` of the three `parse` checked.
+    fn segment(&self, i: usize) -> &str {
+        self.0.split(':').nth(i).unwrap_or_default()
+    }
+
+    pub fn application(&self) -> &str {
+        self.segment(0)
+    }
+
+    pub fn subdomain(&self) -> &str {
+        self.segment(1)
+    }
+
+    pub fn process_name(&self) -> &str {
+        self.segment(2)
+    }
+}
+
+impl TryFrom<&str> for ProcessCode {
+    type Error = ProcessCodeError;
+
+    fn try_from(code: &str) -> Result<Self, Self::Error> {
+        Self::parse(code)
+    }
+}
+
+impl AsRef<str> for ProcessCode {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ProcessCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for ProcessCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProcessCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        Self::parse(&code).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Process {
-    /// Create from a colon-separated code (application:subdomain:process-name) and name.
-    pub fn new(code: impl Into<String>, name: impl Into<String>) -> Result<Self, ProcessCodeError> {
-        let code = code.into();
-        let parts: Vec<&str> = code.split(':').collect();
-        if parts.len() != 3 {
-            return Err(ProcessCodeError::WrongSegmentCount);
-        }
-        for part in &parts {
-            if part.trim().is_empty() {
-                return Err(ProcessCodeError::EmptySegment);
-            }
-        }
-        let application = parts[0].to_string();
-        let subdomain = parts[1].to_string();
-        let process_name = parts[2].to_string();
+    /// Create from a parsed code (application:subdomain:process-name) and name.
+    pub fn new(code: ProcessCode, name: impl Into<String>) -> Self {
+        let application = code.application().to_string();
+        let subdomain = code.subdomain().to_string();
+        let process_name = code.process_name().to_string();
         let now = Utc::now();
-        Ok(Self {
+        Self {
             id: crate::shared::tsid::generate(crate::EntityType::Process),
-            code,
+            code: code.into_string(),
             name: name.into(),
             description: None,
             status: ProcessStatus::Current,
@@ -97,7 +179,7 @@ impl Process {
             created_by: None,
             created_at: now,
             updated_at: now,
-        })
+        }
     }
 
     pub fn archive(&mut self) {
@@ -111,9 +193,14 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
+    fn code(s: &str) -> ProcessCode {
+        ProcessCode::parse(s).expect("valid code")
+    }
+
     #[test]
-    fn new_accepts_valid_three_part_code() {
-        let p = Process::new("orders:fulfillment:shipment-flow", "Shipment Flow").unwrap();
+    fn new_splits_a_valid_three_part_code() {
+        let p = Process::new(code("orders:fulfillment:shipment-flow"), "Shipment Flow");
+        assert_eq!(p.code, "orders:fulfillment:shipment-flow");
         assert_eq!(p.application, "orders");
         assert_eq!(p.subdomain, "fulfillment");
         assert_eq!(p.process_name, "shipment-flow");
@@ -122,28 +209,46 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_wrong_segment_count() {
-        assert_eq!(
-            Process::new("a:b", "x").unwrap_err(),
-            ProcessCodeError::WrongSegmentCount
-        );
-        assert!(Process::new("a:b:c:d", "x").is_err());
+    fn parse_rejects_a_blank_code() {
+        assert_eq!(ProcessCode::parse(" "), Err(ProcessCodeError::Required));
     }
 
     #[test]
-    fn new_rejects_empty_segment() {
+    fn parse_rejects_wrong_segment_count() {
         assert_eq!(
-            Process::new("a::c", "x").unwrap_err(),
-            ProcessCodeError::EmptySegment
+            ProcessCode::parse("a:b"),
+            Err(ProcessCodeError::WrongSegmentCount)
         );
-        assert!(Process::new(":b:c", "x").is_err());
-        assert!(Process::new("a:b:", "x").is_err());
-        assert!(Process::new("a: :c", "x").is_err());
+        assert!(ProcessCode::try_from("a:b:c:d").is_err());
+    }
+
+    #[test]
+    fn parse_names_the_empty_segment() {
+        assert_eq!(
+            ProcessCode::parse("a::c"),
+            Err(ProcessCodeError::EmptySegment("subdomain"))
+        );
+        assert_eq!(
+            ProcessCode::parse(":b:c"),
+            Err(ProcessCodeError::EmptySegment("application"))
+        );
+        assert_eq!(
+            ProcessCode::parse("a:b:").unwrap_err().to_string(),
+            "Process code part 'process-name' cannot be empty"
+        );
+        assert!(ProcessCode::parse("a: :c").is_err());
+    }
+
+    #[test]
+    fn a_code_serializes_as_given() {
+        let c = code(" a:b:c ");
+        assert_eq!(serde_json::to_string(&c).unwrap(), r#"" a:b:c ""#);
+        assert!(serde_json::from_str::<ProcessCode>(r#""a:b""#).is_err());
     }
 
     #[test]
     fn archive_flips_status() {
-        let mut p = Process::new("a:b:c", "x").unwrap();
+        let mut p = Process::new(code("a:b:c"), "x");
         let before = p.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(2));
         p.archive();

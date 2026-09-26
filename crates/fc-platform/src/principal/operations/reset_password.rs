@@ -12,11 +12,8 @@ use std::sync::Arc;
 
 use super::events::PasswordResetCompleted;
 use crate::auth::password_service::PasswordService;
-use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,24 +100,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         &self,
         command: ResetPasswordCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PasswordResetCompleted> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ResetPasswordUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ResetPasswordCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, PasswordResetCompleted), UseCaseError> {
+    ) -> Result<Committed<PasswordResetCompleted>, UseCaseError> {
         // Load the principal.
         let mut principal = self
             .principal_repo
@@ -166,8 +146,11 @@ impl<U: UnitOfWork> ResetPasswordUseCase<U> {
         }
         principal.updated_at = chrono::Utc::now();
 
-        let event = PasswordResetCompleted::from_ctx(ctx, &principal.id);
-        Ok((principal, event))
+        let event = PasswordResetCompleted::from_ctx(&ctx, &principal.id);
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

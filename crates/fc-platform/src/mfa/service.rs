@@ -231,7 +231,11 @@ impl MfaService {
         };
         let secret = decrypt(enc, &method).map_err(|e| match e {
             EnrollError::Other(e) => e,
-            _ => PlatformError::internal("mfa: decrypt totp secret"),
+            EnrollError::EncryptionUnavailable
+            | EnrollError::AlreadyEnrolled
+            | EnrollError::NoPendingEnrollment => {
+                PlatformError::internal("mfa: decrypt totp secret")
+            }
         })?;
         let Some(step) = crypto::validate_totp(&secret, code, Utc::now().timestamp()) else {
             return Ok(false);

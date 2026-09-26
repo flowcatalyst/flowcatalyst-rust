@@ -172,10 +172,10 @@ mod tests {
     }
 
     fn status(e: &PlatformError) -> (u16, String) {
-        match e {
-            PlatformError::Coded { status, code, .. } => (status.as_u16(), code.clone()),
-            other => panic!("{other:?}"),
-        }
+        let PlatformError::Coded { status, code, .. } = e else {
+            panic!("{e:?}");
+        };
+        (status.as_u16(), code.clone())
     }
 
     async fn run(
@@ -248,16 +248,16 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(status(&err), (422, "DIGEST_MISMATCH".into()));
-        match err {
-            PlatformError::Coded { message, .. } => assert_eq!(
-                message,
-                format!(
-                    "digest mismatch: expected {claimed} but got {}",
-                    digest_of(b"what it sent")
-                )
-            ),
-            other => panic!("{other:?}"),
-        }
+        let PlatformError::Coded { message, .. } = &err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(
+            message,
+            &format!(
+                "digest mismatch: expected {claimed} but got {}",
+                digest_of(b"what it sent")
+            )
+        );
         assert!(!d.store.exists("fnc_1", &claimed).await.unwrap());
         assert_eq!(d.temp_files(), 0);
     }

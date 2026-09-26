@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeCreated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::event_type::entity::{EventTypeCode, EventTypeCodeError};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::EventType;
 use crate::EventTypeRepository;
 
@@ -15,8 +16,9 @@ use crate::EventTypeRepository;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEventTypeCommand {
-    /// Event type code following format: {application}:{subdomain}:{aggregate}:{event}
-    pub code: String,
+    /// Event type code following format: {application}:{subdomain}:{aggregate}:{event}.
+    /// Parsed where the command is built ([`CreateEventTypeCommand::parse_code`]).
+    pub code: EventTypeCode,
 
     /// Human-readable name
     pub name: String,
@@ -37,6 +39,34 @@ pub struct CreateEventTypeCommand {
 
 impl crate::usecase::AuditMasked for CreateEventTypeCommand {}
 
+impl CreateEventTypeCommand {
+    /// Parse a requested code for this command, with Go `CreateEventType`'s
+    /// validation errors in its order: `CODE_REQUIRED` for a blank code,
+    /// then `NAME_REQUIRED` for a blank name, then `INVALID_CODE_FORMAT`.
+    /// The name is looked at only so that a blank name still wins over a
+    /// malformed code, as it did when all three were checked in `validate`.
+    ///
+    /// Handlers call this after their permission check, where they build
+    /// the command, so an unauthorised caller gets 403 before any 400.
+    pub fn parse_code(code: &str, name: &str) -> Result<EventTypeCode, UseCaseError> {
+        let parsed = EventTypeCode::parse(code);
+        if parsed == Err(EventTypeCodeError::Required) {
+            return Err(UseCaseError::validation(
+                "CODE_REQUIRED",
+                "Event type code is required",
+            ));
+        }
+        if name.trim().is_empty() {
+            return Err(name_required());
+        }
+        parsed.map_err(|e| UseCaseError::validation("INVALID_CODE_FORMAT", e.to_string()))
+    }
+}
+
+fn name_required() -> UseCaseError {
+    UseCaseError::validation("NAME_REQUIRED", "Event type name is required")
+}
+
 /// Use case for creating a new event type.
 ///
 /// # Example
@@ -47,14 +77,15 @@ impl crate::usecase::AuditMasked for CreateEventTypeCommand {}
 ///     unit_of_work.clone(),
 /// );
 ///
+/// let name = "Shipment Shipped".to_string();
 /// let command = CreateEventTypeCommand {
-///     code: "orders:fulfillment:shipment:shipped".to_string(),
-///     name: "Shipment Shipped".to_string(),
+///     code: CreateEventTypeCommand::parse_code("orders:fulfillment:shipment:shipped", &name)?,
+///     name,
 ///     description: Some("Emitted when a shipment leaves".to_string()),
 ///     client_id: None,
 /// };
 ///
-/// let result = use_case.execute(command, ctx).await;
+/// let result = use_case.run(command, ctx).await;
 /// ```
 pub struct CreateEventTypeUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,
@@ -75,49 +106,11 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
     type Command = CreateEventTypeCommand;
     type Event = EventTypeCreated;
 
+    /// The code is an [`EventTypeCode`], parsed when the command was built.
     async fn validate(&self, command: &CreateEventTypeCommand) -> Result<(), UseCaseError> {
-        // Validation: code is required
-        if command.code.trim().is_empty() {
-            return Err(UseCaseError::validation(
-                "CODE_REQUIRED",
-                "Event type code is required",
-            ));
-        }
-
-        // Validation: name is required
         if command.name.trim().is_empty() {
-            return Err(UseCaseError::validation(
-                "NAME_REQUIRED",
-                "Event type name is required",
-            ));
+            return Err(name_required());
         }
-
-        // Validation: code format
-        let parts: Vec<&str> = command.code.split(':').collect();
-        if parts.len() != 4 {
-            return Err(UseCaseError::validation(
-                "INVALID_CODE_FORMAT",
-                "Event type code must follow format: application:subdomain:aggregate:event",
-            ));
-        }
-
-        // Validate each part is not empty
-        for (i, part) in parts.iter().enumerate() {
-            if part.trim().is_empty() {
-                let part_name = match i {
-                    0 => "application",
-                    1 => "subdomain",
-                    2 => "aggregate",
-                    3 => "event",
-                    _ => "unknown",
-                };
-                return Err(UseCaseError::validation(
-                    "INVALID_CODE_FORMAT",
-                    format!("Event type code part '{}' cannot be empty", part_name),
-                ));
-            }
-        }
-
         Ok(())
     }
 
@@ -133,55 +126,34 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         &self,
         command: CreateEventTypeCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypeCreated> {
+    ) -> Result<Committed<EventTypeCreated>, UseCaseError> {
         // Business rule: code must be unique
-        let existing = match self.event_type_repo.find_by_code(&command.code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self
+            .event_type_repo
+            .find_by_code(command.code.as_str())
+            .await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Event type with code '{}' already exists", command.code),
             ));
         }
 
         // Create the event type entity
-        let event_type = match EventType::new(&command.code, &command.name) {
-            Ok(mut et) => {
-                if let Some(desc) = &command.description {
-                    et.description = Some(desc.clone());
-                }
-                if let Some(client_id) = &command.client_id {
-                    et.client_id = Some(client_id.clone());
-                }
-                if let Some(schema) = &command.schema {
-                    let spec = crate::SpecVersion::new(&et.id, "1.0", Some(schema.clone()));
-                    et.add_schema_version(spec);
-                }
-                et.created_by = Some(ctx.principal_id.clone());
-                et
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation(
-                    "INVALID_CODE_FORMAT",
-                    e.to_string(),
-                ));
-            }
-        };
+        let mut event_type = EventType::new(command.code.clone(), &command.name);
+        if let Some(desc) = &command.description {
+            event_type.description = Some(desc.clone());
+        }
+        if let Some(client_id) = &command.client_id {
+            event_type.client_id = Some(client_id.clone());
+        }
+        if let Some(schema) = &command.schema {
+            let spec = crate::SpecVersion::new(&event_type.id, "1.0", Some(schema.clone()));
+            event_type.add_schema_version(spec);
+        }
+        event_type.created_by = Some(ctx.principal_id.clone());
 
-        let event = EventTypeCreated {
-            metadata: EventTypeCreated::metadata_for(&ctx, &event_type.id),
-            event_type_id: event_type.id.clone(),
-            code: event_type.code.clone(),
-            name: event_type.name.clone(),
-            description: command.description.clone(),
-            application: event_type.application.clone(),
-            subdomain: event_type.subdomain.clone(),
-            aggregate: event_type.aggregate.clone(),
-            event_name: event_type.event_name.clone(),
-            client_id: command.client_id.clone(),
-        };
+        let event = EventTypeCreated::new(&ctx, &event_type);
 
         // Atomic commit: entity + event + audit log
         self.unit_of_work
@@ -201,7 +173,7 @@ mod tests {
     #[test]
     fn test_command_serialization() {
         let cmd = CreateEventTypeCommand {
-            code: "orders:fulfillment:shipment:shipped".to_string(),
+            code: EventTypeCode::parse("orders:fulfillment:shipment:shipped").unwrap(),
             name: "Shipment Shipped".to_string(),
             description: Some("When a shipment leaves".to_string()),
             client_id: None,
@@ -209,12 +181,62 @@ mod tests {
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("orders:fulfillment:shipment:shipped"));
+        assert!(json.contains(r#""code":"orders:fulfillment:shipment:shipped""#));
+    }
+
+    fn parse_err(code: &str, name: &str) -> (String, String) {
+        let e = CreateEventTypeCommand::parse_code(code, name).unwrap_err();
+        (e.code().to_string(), e.message().to_string())
+    }
+
+    /// The codes and messages `validate` answered before the code was
+    /// parsed, in Go's order (code required, name required, format).
+    #[test]
+    fn parse_code_answers_the_validation_errors_in_gos_order() {
+        let err = |code: &str, msg: &str| (code.to_string(), msg.to_string());
+        assert_eq!(
+            parse_err(" ", ""),
+            err("CODE_REQUIRED", "Event type code is required")
+        );
+        assert_eq!(
+            parse_err("a:b", " "),
+            err("NAME_REQUIRED", "Event type name is required")
+        );
+        assert_eq!(
+            parse_err("a:b:c", "X"),
+            err(
+                "INVALID_CODE_FORMAT",
+                "Event type code must follow format: application:subdomain:aggregate:event"
+            )
+        );
+        assert_eq!(
+            parse_err("a: :c:d", "X"),
+            err(
+                "INVALID_CODE_FORMAT",
+                "Event type code part 'subdomain' cannot be empty"
+            )
+        );
+        assert_eq!(
+            parse_err("a:b:c:", "X"),
+            err(
+                "INVALID_CODE_FORMAT",
+                "Event type code part 'event' cannot be empty"
+            )
+        );
+        assert_eq!(
+            CreateEventTypeCommand::parse_code(" a:b:c:d ", "X")
+                .unwrap()
+                .as_str(),
+            " a:b:c:d "
+        );
     }
 
     #[test]
     fn test_event_type_has_id() {
-        let et = EventType::new("app:domain:agg:evt", "Test Event").unwrap();
+        let et = EventType::new(
+            EventTypeCode::parse("app:domain:agg:evt").unwrap(),
+            "Test Event",
+        );
         assert!(!et.id().is_empty());
     }
 }

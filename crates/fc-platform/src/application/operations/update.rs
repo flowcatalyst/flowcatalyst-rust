@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 
 /// Command for updating an application.
@@ -92,25 +90,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationUseCase<U> {
         &self,
         command: UpdateApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationUpdated> {
-        let (application, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateApplicationCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Application, ApplicationUpdated), UseCaseError> {
+    ) -> Result<Committed<ApplicationUpdated>, UseCaseError> {
         // Find the application
         let mut application = self
             .application_repo
@@ -165,8 +145,12 @@ impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
         application.updated_at = Utc::now();
 
         // Create domain event
-        let event = ApplicationUpdated::new(ctx, &application.id, &application.name);
-        Ok((application, event))
+        let event = ApplicationUpdated::new(&ctx, &application.id, &application.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
     }
 }
 

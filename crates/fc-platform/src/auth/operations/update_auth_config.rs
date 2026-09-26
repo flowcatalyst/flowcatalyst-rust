@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::AuthConfigUpdated;
-use crate::auth::config_entity::{AuthConfigType, AuthProvider, ClientAuthConfig};
+use crate::auth::config_entity::{AuthConfigType, AuthProvider};
 use crate::auth::config_repository::ClientAuthConfigRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,24 +81,7 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
         &self,
         command: UpdateAuthConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AuthConfigUpdated> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&config, &*self.auth_config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateAuthConfigCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ClientAuthConfig, AuthConfigUpdated), UseCaseError> {
+    ) -> Result<Committed<AuthConfigUpdated>, UseCaseError> {
         let mut config = self
             .auth_config_repo
             .find_by_id(&command.auth_config_id)
@@ -143,7 +124,10 @@ impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
 
         config.updated_at = chrono::Utc::now();
 
-        let event = AuthConfigUpdated::new(ctx, &config.id, &config.email_domain);
-        Ok((config, event))
+        let event = AuthConfigUpdated::new(&ctx, &config.id, &config.email_domain);
+
+        self.unit_of_work
+            .commit(&config, &*self.auth_config_repo, event, &command)
+            .await
     }
 }

@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountDeleted;
-use crate::service_account::ServiceAccount;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ServiceAccountRepository;
 
 /// Command for deleting a service account.
@@ -57,30 +54,7 @@ impl<U: UnitOfWork> UseCase for DeleteServiceAccountUseCase<U> {
         &self,
         command: DeleteServiceAccountCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ServiceAccountDeleted> {
-        let (service_account, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteServiceAccountUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteServiceAccountCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ServiceAccount, ServiceAccountDeleted), UseCaseError> {
+    ) -> Result<Committed<ServiceAccountDeleted>, UseCaseError> {
         // Find the service account
         let service_account = self
             .service_account_repo
@@ -92,8 +66,17 @@ impl<U: UnitOfWork> DeleteServiceAccountUseCase<U> {
             )?;
 
         // Create domain event
-        let event = ServiceAccountDeleted::new(ctx, &service_account.id, &service_account.code);
-        Ok((service_account, event))
+        let event = ServiceAccountDeleted::new(&ctx, &service_account.id, &service_account.code);
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
     }
 }
 

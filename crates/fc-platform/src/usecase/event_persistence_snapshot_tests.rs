@@ -19,7 +19,10 @@ use serde::Serialize;
 use super::unit_of_work::{AuditRow, EventRow};
 use super::{AuditMasked, DomainEvent, ExecutionContext};
 
+use crate::application::client_config::ApplicationClientConfig;
 use crate::application::operations::events::{ApplicationClientConfigUpdated, ApplicationCreated};
+use crate::application::operations::UpdateApplicationClientConfigCommand;
+use crate::application_openapi_spec::entity::OpenApiSpec;
 use crate::application_openapi_spec::operations::events::ApplicationOpenApiSpecSynced;
 use crate::auth::operations::events::{AuthConfigCreated, IdpRoleMappingCreated};
 use crate::client::operations::events::ClientCreated;
@@ -27,6 +30,7 @@ use crate::connection::operations::events::ConnectionCreated;
 use crate::cors::operations::events::CorsOriginAdded;
 use crate::dispatch_pool::operations::events::DispatchPoolsSynced;
 use crate::email_domain_mapping::operations::events::EmailDomainMappingCreated;
+use crate::event_type::entity::{EventType, EventTypeCode};
 use crate::event_type::operations::{EventTypeCreated, EventTypesSynced};
 use crate::identity_provider::api::seal_client_secret;
 use crate::identity_provider::entity::IdentityProviderType;
@@ -36,7 +40,8 @@ use crate::identity_provider::operations::events::{
 use crate::identity_provider::operations::{
     CreateIdentityProviderCommand, UpdateIdentityProviderCommand,
 };
-use crate::platform_config::entity::{ConfigScope, ConfigValueType};
+use crate::platform_config::access_entity::PlatformConfigAccess;
+use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
 use crate::platform_config::operations::events::{
     PlatformConfigAccessGranted, PlatformConfigPropertySet,
 };
@@ -142,32 +147,48 @@ fn application_created() {
     check(&e, EXPECTED_APPLICATION_CREATED);
 }
 
+/// Mirrors `UpdateApplicationClientConfigUseCase::execute`.
 #[test]
 fn application_client_config_updated() {
-    let e = fixed!(ApplicationClientConfigUpdated {
-        metadata: ApplicationClientConfigUpdated::metadata_for(&ctx(), "app_1"),
+    let command = UpdateApplicationClientConfigCommand {
         application_id: "app_1".to_string(),
         client_id: "clt_1".to_string(),
-        config_id: "acc_1".to_string(),
         enabled: Some(true),
         base_url_override: None,
-        config_changed: false,
-    });
+        config: None,
+    };
+    let config = ApplicationClientConfig {
+        id: "acc_1".to_string(),
+        application_id: "app_1".to_string(),
+        client_id: "clt_1".to_string(),
+        enabled: true,
+        base_url_override: None,
+        config_json: None,
+        created_at: fixed_time(),
+        updated_at: fixed_time(),
+    };
+    let e = fixed!(ApplicationClientConfigUpdated::new(
+        &ctx(),
+        &command,
+        &config
+    ));
     check(&e, EXPECTED_APPLICATION_CLIENT_CONFIG_UPDATED);
 }
 
+/// Mirrors `SyncOpenApiSpecUseCase` for a new version.
 #[test]
 fn application_openapi_spec_synced() {
+    let mut spec = OpenApiSpec::new(
+        "app_1",
+        "1.2.0",
+        serde_json::json!({"openapi": "3.1.0"}),
+        "sha256:abc",
+    );
+    spec.id = "spec_1".to_string();
     let e = fixed!(ApplicationOpenApiSpecSynced {
-        metadata: ApplicationOpenApiSpecSynced::metadata_for(&ctx(), "app_1", "spec_1"),
-        application_id: "app_1".to_string(),
-        application_code: "orders".to_string(),
-        spec_id: "spec_1".to_string(),
-        version: "1.2.0".to_string(),
-        spec_hash: "sha256:abc".to_string(),
         archived_prior_version: Some("1.1.0".to_string()),
         has_breaking: true,
-        unchanged: false,
+        ..ApplicationOpenApiSpecSynced::new(&ctx(), "app_1", "orders", &spec)
     });
     check(&e, EXPECTED_APPLICATION_OPENAPI_SPEC_SYNCED);
 }
@@ -254,21 +275,16 @@ fn identity_provider_created() {
 
 // ── event_type ──────────────────────────────────────────────────────────────
 
-/// Mirrors `CreateEventTypeUseCase::execute`.
+/// Mirrors `CreateEventTypeUseCase::execute` (and the sync's per-row
+/// created event, which uses the same constructor).
 #[test]
 fn event_type_created() {
-    let e = fixed!(EventTypeCreated {
-        metadata: EventTypeCreated::metadata_for(&ctx(), "evt_type_1"),
-        event_type_id: "evt_type_1".to_string(),
-        code: "orders:fulfillment:shipment:shipped".to_string(),
-        name: "Shipment shipped".to_string(),
-        description: Some("A shipment left the warehouse".to_string()),
-        application: "orders".to_string(),
-        subdomain: "fulfillment".to_string(),
-        aggregate: "shipment".to_string(),
-        event_name: "shipped".to_string(),
-        client_id: Some("clt_1".to_string()),
-    });
+    let code = EventTypeCode::parse("orders:fulfillment:shipment:shipped").unwrap();
+    let mut event_type = EventType::new(code, "Shipment shipped");
+    event_type.id = "evt_type_1".to_string();
+    event_type.description = Some("A shipment left the warehouse".to_string());
+    event_type.client_id = Some("clt_1".to_string());
+    let e = fixed!(EventTypeCreated::new(&ctx(), &event_type));
     check(&e, EXPECTED_EVENT_TYPE_CREATED);
 }
 
@@ -306,17 +322,38 @@ fn platform_config_property_set() {
     check(&e, EXPECTED_PLATFORM_CONFIG_PROPERTY_SET);
 }
 
+/// `SetPlatformConfigPropertyUseCase::execute`'s constructor writes what the
+/// literal above pins, field for field (the literal's `NUMBER` value type
+/// is not one `ConfigValueType` has, so the constructor is pinned here
+/// against the same literal with a real one).
 #[test]
-fn platform_config_access_granted() {
-    let e = fixed!(PlatformConfigAccessGranted {
-        metadata: PlatformConfigAccessGranted::metadata_for(&ctx(), "pca_1"),
-        access_id: "pca_1".to_string(),
+fn platform_config_property_set_from_the_aggregate() {
+    let mut config = PlatformConfig::new("orders", "limits", "max_batch", "100");
+    config.id = "pcf_1".to_string();
+    config.scope = ConfigScope::Client;
+    config.client_id = Some("clt_1".to_string());
+    config.value_type = ConfigValueType::Secret;
+    let built = fixed!(PlatformConfigPropertySet::new(&ctx(), &config, true));
+    let literal = fixed!(PlatformConfigPropertySet {
+        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
+        config_id: "pcf_1".to_string(),
         application_code: "orders".to_string(),
-        role_code: "orders:viewer".to_string(),
-        can_read: true,
-        can_write: false,
+        section: "limits".to_string(),
+        property: "max_batch".to_string(),
+        scope: "CLIENT".to_string(),
+        client_id: Some("clt_1".to_string()),
+        value_type: "SECRET".to_string(),
         was_created: true,
     });
+    assert_eq!(persisted(&built, &CMD), persisted(&literal, &CMD));
+}
+
+/// Mirrors `GrantPlatformConfigAccessUseCase::execute`.
+#[test]
+fn platform_config_access_granted() {
+    let mut access = PlatformConfigAccess::new("orders", "orders:viewer");
+    access.id = "pca_1".to_string();
+    let e = fixed!(PlatformConfigAccessGranted::new(&ctx(), &access, true));
     check(&e, EXPECTED_PLATFORM_CONFIG_ACCESS_GRANTED);
 }
 

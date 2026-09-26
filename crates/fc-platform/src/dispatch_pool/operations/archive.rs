@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolArchived;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::DispatchPool;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::DispatchPoolRepository;
 use crate::DispatchPoolStatus;
 
@@ -58,25 +55,7 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         &self,
         command: ArchiveDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolArchived> {
-        let (pool, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ArchiveDispatchPoolUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ArchiveDispatchPoolCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(DispatchPool, DispatchPoolArchived), UseCaseError> {
+    ) -> Result<Committed<DispatchPoolArchived>, UseCaseError> {
         // Find the dispatch pool
         let mut pool = self
             .dispatch_pool_repo
@@ -99,8 +78,12 @@ impl<U: UnitOfWork> ArchiveDispatchPoolUseCase<U> {
         pool.archive();
 
         // Create domain event
-        let event = DispatchPoolArchived::new(ctx, &pool.id, &pool.code);
-        Ok((pool, event))
+        let event = DispatchPoolArchived::new(&ctx, &pool.id, &pool.code);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
+            .await
     }
 }
 

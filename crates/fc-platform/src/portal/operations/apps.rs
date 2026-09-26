@@ -24,7 +24,7 @@ use crate::portal::entity::{
 use crate::portal::repository::{
     PortalAppRepository, PortalIdentityRepository, PortalOAuthClientReader,
 };
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::{ClientRepository, OAuthClientRepository};
 
 // ── Create (with its portal OAuth client) ─────────────────────────────────
@@ -128,60 +128,6 @@ impl<U: UnitOfWork> CreatePortalAppWithOAuthClientUseCase<U> {
             unit_of_work,
         }
     }
-
-    async fn prepare(
-        &self,
-        cmd: &CreateAppWithOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PortalApp, PortalAppChanged, OAuthClient, OAuthClientCreated), UseCaseError> {
-        if self.clients.find_by_id(&cmd.client_id).await?.is_none() {
-            return Err(not_found("Client", &cmd.client_id));
-        }
-        if let Some(existing) = self
-            .apps
-            .find_by_client_and_code(&cmd.client_id, &cmd.code)
-            .await?
-        {
-            return Err(UseCaseError::business_rule(
-                "CODE_EXISTS",
-                format!(
-                    "portal app code '{}' already exists for this client",
-                    existing.code
-                ),
-            ));
-        }
-        let mut app = PortalApp::new(&cmd.client_id, &cmd.code, &cmd.name);
-        app.description = trimmed_or_none(cmd.description.as_deref());
-
-        let client_type =
-            parse_client_type(&cmd.client_type).unwrap_or(OAuthClientType::Confidential);
-        let mut oc = OAuthClient::new(&cmd.oauth_client_id, format!("{} (portal)", app.name));
-        oc.id = cmd.oauth_client_row_id.clone();
-        oc.client_type = client_type;
-        oc.redirect_uris = cmd
-            .redirect_uris
-            .iter()
-            .map(|u| u.trim())
-            .filter(|u| !u.is_empty())
-            .map(String::from)
-            .collect();
-        // Portal logins never get refresh tokens.
-        oc.grant_types = vec![GrantType::AuthorizationCode];
-        oc.default_scopes = vec!["openid".into(), "profile".into(), "email".into()];
-        oc.pkce_required = true;
-        oc.portal_client_id = Some(app.client_id.clone());
-        oc.portal_app_id = Some(app.id.clone());
-        if client_type == OAuthClientType::Confidential {
-            let secret_ref = cmd.client_secret_ref.clone().ok_or_else(|| {
-                UseCaseError::internal("SECRET", "no client secret was generated")
-            })?;
-            oc.set_secret_ref(secret_ref);
-        }
-
-        let app_event = PortalAppChanged::new(ctx, APP_CREATED, &app);
-        let oc_event = OAuthClientCreated::new(ctx, &oc.id, &oc.client_id, &oc.client_name);
-        Ok((app, app_event, oc, oc_event))
-    }
 }
 
 #[async_trait]
@@ -220,20 +166,61 @@ impl<U: UnitOfWork> UseCase for CreatePortalAppWithOAuthClientUseCase<U> {
         &self,
         cmd: CreateAppWithOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PortalAppChanged> {
-        let (app, app_event, oc, oc_event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let app_event = match self
+    ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
+        if self.clients.find_by_id(&cmd.client_id).await?.is_none() {
+            return Err(not_found("Client", &cmd.client_id));
+        }
+        if let Some(existing) = self
+            .apps
+            .find_by_client_and_code(&cmd.client_id, &cmd.code)
+            .await?
+        {
+            return Err(UseCaseError::business_rule(
+                "CODE_EXISTS",
+                format!(
+                    "portal app code '{}' already exists for this client",
+                    existing.code
+                ),
+            ));
+        }
+        let mut app = PortalApp::new(&cmd.client_id, &cmd.code, &cmd.name);
+        app.description = trimmed_or_none(cmd.description.as_deref());
+
+        let client_type =
+            parse_client_type(&cmd.client_type).unwrap_or(OAuthClientType::Confidential);
+        let mut oc = OAuthClient::builder()
+            .client_id(&cmd.oauth_client_id)
+            .client_name(format!("{} (portal)", app.name))
+            .id(cmd.oauth_client_row_id.clone())
+            .client_type(client_type)
+            .redirect_uris(
+                cmd.redirect_uris
+                    .iter()
+                    .map(|u| u.trim())
+                    .filter(|u| !u.is_empty())
+                    .map(String::from)
+                    .collect(),
+            )
+            // Portal logins never get refresh tokens.
+            .grant_types(vec![GrantType::AuthorizationCode])
+            .default_scopes(vec!["openid".into(), "profile".into(), "email".into()])
+            .pkce_required(true)
+            .portal_client_id(app.client_id.clone())
+            .portal_app_id(app.id.clone())
+            .build();
+        if client_type == OAuthClientType::Confidential {
+            let secret_ref = cmd.client_secret_ref.clone().ok_or_else(|| {
+                UseCaseError::internal("SECRET", "no client secret was generated")
+            })?;
+            oc.set_secret_ref(secret_ref);
+        }
+
+        let app_event = PortalAppChanged::new(&ctx, APP_CREATED, &app);
+        let oc_event = OAuthClientCreated::new(&ctx, &oc.id, &oc.client_id, &oc.client_name);
+        let app_event = self
             .unit_of_work
             .commit(&app, &*self.apps, app_event, &cmd)
-            .await
-            .into_result()
-        {
-            Ok(e) => e,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+            .await?;
         self.unit_of_work
             .commit(&oc, &*self.oauth_clients, oc_event, &cmd)
             .await
@@ -303,11 +290,8 @@ impl<U: UnitOfWork> UseCase for UpdatePortalAppUseCase<U> {
         &self,
         cmd: UpdateAppCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PortalAppChanged> {
-        let mut app = match find_client_app(&self.apps, &cmd.client_id, &cmd.id).await {
-            Ok(a) => a,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
+        let mut app = find_client_app(&self.apps, &cmd.client_id, &cmd.id).await?;
         if let Some(name) = &cmd.name {
             app.name = name.trim().to_string();
         }
@@ -387,19 +371,12 @@ impl<U: UnitOfWork> UseCase for DeletePortalAppUseCase<U> {
         &self,
         cmd: DeleteAppCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PortalAppChanged> {
-        let app = match find_client_app(&self.apps, &cmd.client_id, &cmd.id).await {
-            Ok(a) => a,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let portal_clients = match self
+    ) -> Result<Committed<PortalAppChanged>, UseCaseError> {
+        let app = find_client_app(&self.apps, &cmd.client_id, &cmd.id).await?;
+        let portal_clients = self
             .portal_oauth
             .find_by_portal_client(&app.client_id)
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
         let mut deleted = Vec::new();
         for pc in portal_clients
             .iter()
@@ -410,14 +387,9 @@ impl<U: UnitOfWork> UseCase for DeletePortalAppUseCase<U> {
             let mut oc = OAuthClient::new(&pc.client_id, &pc.client_name);
             oc.id = pc.id.clone();
             let event = OAuthClientDeleted::new(&ctx, &oc.id, &oc.client_id);
-            if let Err(e) = self
-                .unit_of_work
+            self.unit_of_work
                 .commit_delete(&oc, &*self.oauth_clients, event, &cmd)
-                .await
-                .into_result()
-            {
-                return UseCaseResult::failure(e);
-            }
+                .await?;
             deleted.push(pc.client_id.clone());
         }
         let mut event = PortalAppChanged::new(&ctx, APP_DELETED, &app);
@@ -494,19 +466,13 @@ impl<U: UnitOfWork> UseCase for AssignUnassignedPortalIdentitiesUseCase<U> {
         &self,
         cmd: AssignUnassignedCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AssignedToApp> {
-        let app = match load_client_app(&self.apps, &cmd.client_id, &cmd.portal_app_id).await {
-            Ok(a) => a,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let mut idents = match self.identities.find_unassigned(&cmd.client_id).await {
-            Ok(i) => i,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+    ) -> Result<Committed<AssignedToApp>, UseCaseError> {
+        let app = load_client_app(&self.apps, &cmd.client_id, &cmd.portal_app_id).await?;
+        let mut idents = self.identities.find_unassigned(&cmd.client_id).await?;
         let Some(mut last) = idents.pop() else {
             let mut details = HashMap::new();
             details.insert("portalAppCode".to_string(), serde_json::json!(app.code));
-            return UseCaseResult::failure(UseCaseError::unchanged(
+            return Err(UseCaseError::unchanged(
                 NOTHING_TO_ASSIGN,
                 "no portal user is without a portal app",
                 details,
@@ -524,14 +490,9 @@ impl<U: UnitOfWork> UseCase for AssignUnassignedPortalIdentitiesUseCase<U> {
                 &app.code,
                 admin,
             );
-            if let Err(e) = self
-                .unit_of_work
+            self.unit_of_work
                 .commit(&*ident, &*self.identities, event, &cmd)
-                .await
-                .into_result()
-            {
-                return UseCaseResult::failure(e);
-            }
+                .await?;
             assigned.push(ident.id.clone());
         }
         last.grant(&app.id, IdentitySource::Admin);

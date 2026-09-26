@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::CorsOriginDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::CorsOriginRepository;
 
 /// Command for deleting a CORS allowed origin.
@@ -54,24 +52,7 @@ impl<U: UnitOfWork> UseCase for DeleteCorsOriginUseCase<U> {
         &self,
         command: DeleteCorsOriginCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<CorsOriginDeleted> {
-        let (origin, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&origin, &*self.cors_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteCorsOriginUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteCorsOriginCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::CorsAllowedOrigin, CorsOriginDeleted), UseCaseError> {
+    ) -> Result<Committed<CorsOriginDeleted>, UseCaseError> {
         let origin = self
             .cors_repo
             .find_by_id(&command.origin_id)
@@ -81,8 +62,11 @@ impl<U: UnitOfWork> DeleteCorsOriginUseCase<U> {
                 format!("CORS origin with ID '{}' not found", command.origin_id),
             )?;
 
-        let event = CorsOriginDeleted::new(ctx, &origin.id, &origin.origin);
-        Ok((origin, event))
+        let event = CorsOriginDeleted::new(&ctx, &origin.id, &origin.origin);
+
+        self.unit_of_work
+            .commit_delete(&origin, &*self.cors_repo, event, &command)
+            .await
     }
 }
 

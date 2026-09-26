@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationEnabledForClient;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -83,24 +81,7 @@ impl<U: UnitOfWork> UseCase for EnableApplicationForClientUseCase<U> {
         &self,
         command: EnableApplicationForClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationEnabledForClient> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> EnableApplicationForClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &EnableApplicationForClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ApplicationClientConfig, ApplicationEnabledForClient), UseCaseError> {
+    ) -> Result<Committed<ApplicationEnabledForClient>, UseCaseError> {
         // Validate application exists
         self.application_repo
             .find_by_id(&command.application_id)
@@ -137,12 +118,15 @@ impl<U: UnitOfWork> EnableApplicationForClientUseCase<U> {
         };
 
         let event = ApplicationEnabledForClient::new(
-            ctx,
+            &ctx,
             &command.application_id,
             &command.client_id,
             &config.id,
         );
-        Ok((config, event))
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
     }
 }
 

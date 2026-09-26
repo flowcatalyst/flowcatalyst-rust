@@ -9,10 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientUpdated;
-use crate::auth::oauth_entity::{GrantType, OAuthClient};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::auth::oauth_entity::GrantType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,24 +100,7 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
         &self,
         command: UpdateOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientUpdated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientUpdated), UseCaseError> {
+    ) -> Result<Committed<OAuthClientUpdated>, UseCaseError> {
         let mut client = self
             .oauth_client_repo
             .find_by_id(&command.oauth_client_id)
@@ -171,7 +152,10 @@ impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
         crate::portal::validate_oauth_client_plane(&client)?;
         client.updated_at = chrono::Utc::now();
 
-        let event = OAuthClientUpdated::new(ctx, &client.id, &client.client_name);
-        Ok((client, event))
+        let event = OAuthClientUpdated::new(&ctx, &client.id, &client.client_name);
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

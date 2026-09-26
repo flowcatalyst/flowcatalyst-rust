@@ -584,9 +584,14 @@ pub async fn publish_version(
     let outcome = state
         .ops
         .unit_of_work
-        .run(move |scoped| async move { ops.publish_in(caller, scoped).run(command, ctx).await })
+        .run(move |scoped| async move {
+            ops.publish_in(caller, scoped)
+                .run(command, ctx)
+                .await
+                .into_committed()
+        })
         .await
-        .into_result();
+        .map(crate::usecase::Committed::into_inner);
     match outcome {
         Ok(event) => Ok((StatusCode::CREATED, Json(PublishResponse::of(&event)))),
         Err(e) if e.is_unchanged() => {
@@ -856,9 +861,14 @@ pub async fn promote(
     let outcome = state
         .ops
         .unit_of_work
-        .run(move |scoped| async move { ops.promote_in(caller, scoped).run(command, ctx).await })
+        .run(move |scoped| async move {
+            ops.promote_in(caller, scoped)
+                .run(command, ctx)
+                .await
+                .into_committed()
+        })
         .await
-        .into_result();
+        .map(crate::usecase::Committed::into_inner);
     let event = match outcome {
         Ok(event) => event,
         // The alias already names this version: nothing written.
@@ -1048,9 +1058,12 @@ mod tests {
 
     #[test]
     fn a_bad_or_disagreeing_if_match_is_a_400() {
-        let code = |r: Result<Option<i32>, PlatformError>| match r.unwrap_err() {
-            PlatformError::Coded { status, code, .. } => (status.as_u16(), code),
-            other => panic!("{other:?}"),
+        let code = |r: Result<Option<i32>, PlatformError>| {
+            let err = r.unwrap_err();
+            let PlatformError::Coded { status, code, .. } = err else {
+                panic!("{err:?}");
+            };
+            (status.as_u16(), code)
         };
         for value in ["*", "latest", "-1", "\"\""] {
             assert_eq!(

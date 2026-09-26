@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserDeleted;
-use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for deleting a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,25 +61,7 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
         &self,
         command: DeleteUserCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserDeleted> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteUserUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteUserCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, UserDeleted), UseCaseError> {
+    ) -> Result<Committed<UserDeleted>, UseCaseError> {
         // Business rule: cannot delete yourself
         if command.principal_id == ctx.principal_id {
             return Err(UseCaseError::business_rule(
@@ -102,8 +81,12 @@ impl<U: UnitOfWork> DeleteUserUseCase<U> {
             )?;
 
         // Create domain event
-        let event = UserDeleted::new(ctx, &principal.id, principal.email().unwrap_or(""));
-        Ok((principal, event))
+        let event = UserDeleted::new(&ctx, &principal.id, principal.email().unwrap_or(""));
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

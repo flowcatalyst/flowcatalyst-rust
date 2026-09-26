@@ -20,19 +20,30 @@ write handler is a privilege-escalation bug.
 
 ## UoW Invariant (Sealed)
 
-`UseCaseResult::success` is sealed (`pub(in crate::usecase)`). The only code
-that can construct a success is `UnitOfWork::commit` / `commit_delete` /
-`emit_event` / `commit_all`, plus the `.map()` combinator inside the usecase
-module. A use case that tries to `return UseCaseResult::success(event)` without
-routing through UoW fails to compile. This is **stronger than the TS runtime
-token** — compile-time guaranteed, zero cost.
+`UseCase::execute` returns `Result<Committed<Event>, UseCaseError>`.
+`Committed<T>` (`usecase/result.rs`) is sealed: its constructor is
+`pub(in crate::usecase)`, so the only code that can produce one is
+`UnitOfWork::commit` / `commit_delete` / `commit_all` / `emit_event` /
+`emit_events` / `commit_all_with_events` and `PgUnitOfWork::run` / `run_as`.
+A use case that tries to hand-build a success without routing through UoW
+fails to compile. This is **stronger than the TS runtime token** —
+compile-time guaranteed, zero cost. `Committed::map` / `into_inner` /
+`as_ref` are public: mapping a committed value can't forge one.
 
 What this means for every `*UseCase::execute`:
 1. The happy path must end in `unit_of_work.commit(...)`, `commit_delete(...)`,
-   `emit_event(...)`, or `commit_all(...)` — or in `.map(|_| ...)` chained onto
-   one of those.
-2. The only other legal tail is `UseCaseResult::failure(...)`.
+   `emit_event(...)`, `commit_all(...)` (etc.) — or in a
+   `.map(|c| c.map(...))` over one of those.
+2. Everything before that is plain `Result` code: `?` works on repository
+   calls (`PlatformError` converts), `.or_not_found(..)?`, and
+   `return Err(UseCaseError::...)` for validation / business-rule failures.
 3. You cannot skip UoW and return a hand-built success. It's a type error.
+
+Handlers call `UseCase::run`, which still returns `UseCaseResult<Event>`
+(consumed with `.into_result()`). Inside a `PgUnitOfWork::run(|session| …)`
+closure, end with the last use case's `.run(..).await.into_committed()`;
+`run` itself returns `Result<Committed<T>, UseCaseError>`
+(`.await?.into_inner()` in the handler).
 
 Aggregates can't persist themselves — `impl Persist<X> for XRepository`
 lives on the repository, not on the aggregate. Use cases write via

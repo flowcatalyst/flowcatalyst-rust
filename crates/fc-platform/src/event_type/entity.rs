@@ -139,37 +139,121 @@ pub struct EventType {
 /// Why an event type code was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EventTypeCodeError {
+    /// Empty or only whitespace.
+    #[error("Event type code is required")]
+    Required,
     #[error("Event type code must follow format: application:subdomain:aggregate:event")]
     WrongSegmentCount,
-    #[error("Event type code segments cannot be empty")]
-    EmptySegment,
+    /// The named segment (`application`, `subdomain`, `aggregate` or
+    /// `event`) is empty or only whitespace.
+    #[error("Event type code part '{0}' cannot be empty")]
+    EmptySegment(&'static str),
+}
+
+/// The segments of an event type code, in order.
+const CODE_SEGMENTS: [&str; 4] = ["application", "subdomain", "aggregate", "event"];
+
+/// An event type code, `application:subdomain:aggregate:event`: exactly
+/// four colon-separated segments, none of them blank. The code is kept
+/// exactly as given (no trimming, no case change), as it always has been.
+///
+/// The only way in is [`EventTypeCode::parse`] (or `TryFrom<&str>`, or
+/// deserializing, which parse), so a value of this type is always valid.
+/// It serializes as the plain string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EventTypeCode(String);
+
+impl EventTypeCode {
+    pub fn parse(code: &str) -> Result<Self, EventTypeCodeError> {
+        if code.trim().is_empty() {
+            return Err(EventTypeCodeError::Required);
+        }
+        let parts: Vec<&str> = code.split(':').collect();
+        if parts.len() != CODE_SEGMENTS.len() {
+            return Err(EventTypeCodeError::WrongSegmentCount);
+        }
+        for (part, name) in parts.iter().zip(CODE_SEGMENTS) {
+            if part.trim().is_empty() {
+                return Err(EventTypeCodeError::EmptySegment(name));
+            }
+        }
+        Ok(Self(code.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Segment `i` of the four `parse` checked.
+    fn segment(&self, i: usize) -> &str {
+        self.0.split(':').nth(i).unwrap_or_default()
+    }
+
+    pub fn application(&self) -> &str {
+        self.segment(0)
+    }
+
+    pub fn subdomain(&self) -> &str {
+        self.segment(1)
+    }
+
+    pub fn aggregate(&self) -> &str {
+        self.segment(2)
+    }
+
+    pub fn event_name(&self) -> &str {
+        self.segment(3)
+    }
+}
+
+impl TryFrom<&str> for EventTypeCode {
+    type Error = EventTypeCodeError;
+
+    fn try_from(code: &str) -> Result<Self, Self::Error> {
+        Self::parse(code)
+    }
+}
+
+impl AsRef<str> for EventTypeCode {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EventTypeCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for EventTypeCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for EventTypeCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        Self::parse(&code).map_err(serde::de::Error::custom)
+    }
 }
 
 impl EventType {
-    /// Create from a colon-separated code (application:subdomain:aggregate:event) and name.
-    /// Returns Err if the code format is invalid.
-    pub fn new(
-        code: impl Into<String>,
-        name: impl Into<String>,
-    ) -> Result<Self, EventTypeCodeError> {
-        let code = code.into();
-        let parts: Vec<&str> = code.split(':').collect();
-        if parts.len() != 4 {
-            return Err(EventTypeCodeError::WrongSegmentCount);
-        }
-        for part in &parts {
-            if part.trim().is_empty() {
-                return Err(EventTypeCodeError::EmptySegment);
-            }
-        }
-        let application = parts[0].to_string();
-        let subdomain = parts[1].to_string();
-        let aggregate = parts[2].to_string();
-        let event_name = parts[3].to_string();
+    /// Create from a parsed code (application:subdomain:aggregate:event) and name.
+    pub fn new(code: EventTypeCode, name: impl Into<String>) -> Self {
+        let application = code.application().to_string();
+        let subdomain = code.subdomain().to_string();
+        let aggregate = code.aggregate().to_string();
+        let event_name = code.event_name().to_string();
         let now = Utc::now();
-        Ok(Self {
+        Self {
             id: crate::shared::tsid::generate(crate::EntityType::EventType),
-            code,
+            code: code.into_string(),
             name: name.into(),
             description: None,
             spec_versions: vec![],
@@ -184,7 +268,7 @@ impl EventType {
             created_by: None,
             created_at: now,
             updated_at: now,
-        })
+        }
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
@@ -212,12 +296,18 @@ mod tests {
     use super::*;
     use std::str::FromStr;
 
-    // ── EventType::new validation ────────────────────────────────────────
+    // ── EventTypeCode parsing ─────────────────────────────────────────────
+
+    fn code(s: &str) -> EventTypeCode {
+        EventTypeCode::parse(s).expect("valid code")
+    }
 
     #[test]
-    fn new_accepts_valid_four_part_code() {
-        let et = EventType::new("orders:fulfillment:shipment:shipped", "Shipment Shipped")
-            .expect("valid code");
+    fn new_splits_a_valid_four_part_code() {
+        let et = EventType::new(
+            code("orders:fulfillment:shipment:shipped"),
+            "Shipment Shipped",
+        );
         assert_eq!(et.code, "orders:fulfillment:shipment:shipped");
         assert_eq!(et.application, "orders");
         assert_eq!(et.subdomain, "fulfillment");
@@ -229,41 +319,71 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_too_few_segments() {
+    fn a_code_is_kept_exactly_as_given() {
+        let c = code(" Orders:a:b:c ");
+        assert_eq!(c.as_str(), " Orders:a:b:c ");
+        assert_eq!(c.application(), " Orders");
+        assert_eq!(c.event_name(), "c ");
+        assert_eq!(serde_json::to_string(&c).unwrap(), r#"" Orders:a:b:c ""#);
+        let back: EventTypeCode = serde_json::from_str(r#"" Orders:a:b:c ""#).unwrap();
+        assert_eq!(back, c);
+        assert!(serde_json::from_str::<EventTypeCode>(r#""a:b""#).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_a_blank_code() {
+        assert_eq!(EventTypeCode::parse(""), Err(EventTypeCodeError::Required));
         assert_eq!(
-            EventType::new("orders:fulfillment:shipment", "x").unwrap_err(),
-            EventTypeCodeError::WrongSegmentCount
+            EventTypeCode::parse("  "),
+            Err(EventTypeCodeError::Required)
         );
-        assert!(EventType::new("orders:fulfillment", "x").is_err());
-        assert!(EventType::new("orders", "x").is_err());
-        assert!(EventType::new("", "x").is_err());
     }
 
     #[test]
-    fn new_rejects_too_many_segments() {
-        assert!(EventType::new("orders:fulfillment:shipment:shipped:extra", "x").is_err());
-    }
-
-    #[test]
-    fn new_rejects_empty_segment() {
+    fn parse_rejects_too_few_segments() {
         assert_eq!(
-            EventType::new("orders::shipment:shipped", "x").unwrap_err(),
-            EventTypeCodeError::EmptySegment
+            EventTypeCode::parse("orders:fulfillment:shipment"),
+            Err(EventTypeCodeError::WrongSegmentCount)
         );
-        assert!(EventType::new(":fulfillment:shipment:shipped", "x").is_err());
-        assert!(EventType::new("orders:fulfillment:shipment:", "x").is_err());
+        assert!(EventTypeCode::parse("orders:fulfillment").is_err());
+        assert!(EventTypeCode::parse("orders").is_err());
     }
 
     #[test]
-    fn new_rejects_whitespace_only_segment() {
-        assert!(EventType::new("orders: :shipment:shipped", "x").is_err());
+    fn parse_rejects_too_many_segments() {
+        assert_eq!(
+            EventTypeCode::try_from("orders:fulfillment:shipment:shipped:extra"),
+            Err(EventTypeCodeError::WrongSegmentCount)
+        );
+    }
+
+    #[test]
+    fn parse_names_the_empty_segment() {
+        assert_eq!(
+            EventTypeCode::parse("orders::shipment:shipped"),
+            Err(EventTypeCodeError::EmptySegment("subdomain"))
+        );
+        assert_eq!(
+            EventTypeCode::parse(":fulfillment:shipment:shipped"),
+            Err(EventTypeCodeError::EmptySegment("application"))
+        );
+        assert_eq!(
+            EventTypeCode::parse("orders:fulfillment:shipment:"),
+            Err(EventTypeCodeError::EmptySegment("event"))
+        );
+        assert_eq!(
+            EventTypeCode::parse("orders: :shipment:shipped")
+                .unwrap_err()
+                .to_string(),
+            "Event type code part 'subdomain' cannot be empty"
+        );
     }
 
     // ── State transitions ─────────────────────────────────────────────────
 
     #[test]
     fn archive_flips_status_and_bumps_updated_at() {
-        let mut et = EventType::new("a:b:c:d", "Name").unwrap();
+        let mut et = EventType::new(code("a:b:c:d"), "Name");
         let before = et.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(2));
         et.archive();
@@ -273,7 +393,7 @@ mod tests {
 
     #[test]
     fn add_schema_version_appends_and_bumps_updated_at() {
-        let mut et = EventType::new("a:b:c:d", "Name").unwrap();
+        let mut et = EventType::new(code("a:b:c:d"), "Name");
         let before = et.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(2));
         let sv = SpecVersion::new(&et.id, "1.0.0", None);

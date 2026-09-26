@@ -14,9 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationServiceAccountProvisioned;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,24 +77,7 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
         &self,
         command: AttachServiceAccountToApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationServiceAccountProvisioned> {
-        let (application, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AttachServiceAccountToApplicationUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AttachServiceAccountToApplicationCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Application, ApplicationServiceAccountProvisioned), UseCaseError> {
+    ) -> Result<Committed<ApplicationServiceAccountProvisioned>, UseCaseError> {
         let mut application = self
             .application_repo
             .find_by_id(&command.application_id)
@@ -118,12 +99,15 @@ impl<U: UnitOfWork> AttachServiceAccountToApplicationUseCase<U> {
         application.updated_at = chrono::Utc::now();
 
         let event = ApplicationServiceAccountProvisioned::new(
-            ctx,
+            &ctx,
             &application.id,
             &application.code,
             &command.service_account_id,
             &command.service_account_code,
         );
-        Ok((application, event))
+
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
     }
 }

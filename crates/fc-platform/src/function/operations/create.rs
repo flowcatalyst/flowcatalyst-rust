@@ -15,9 +15,7 @@ use super::events::FunctionCreated;
 use crate::function::entity::Function;
 use crate::function::repository::FunctionRepository;
 use crate::function::{java_is_blank, DnsLabel, FunctionAddress, FunctionOwner, Runtime};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::{ApplicationRepository, ClientRepository};
 
 /// `POST /api/functions`. An absent or blank `clientId` means a
@@ -119,20 +117,7 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
         &self,
         command: CreateCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<FunctionCreated> {
-        let function = match self.prepare(&command).await {
-            Ok(f) => f,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let event = FunctionCreated::new(&ctx, &function);
-        self.unit_of_work
-            .commit(&function, &*self.functions, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> CreateFunctionUseCase<U> {
-    async fn prepare(&self, command: &CreateCommand) -> Result<Function, UseCaseError> {
+    ) -> Result<Committed<FunctionCreated>, UseCaseError> {
         let code = parse_application_code(command.application_code.as_deref().unwrap_or(""))?;
         let application = self
             .applications
@@ -183,13 +168,17 @@ impl<U: UnitOfWork> CreateFunctionUseCase<U> {
         }
 
         let runtime = Runtime::parse_strict(command.runtime.as_deref().unwrap_or(""))?;
-        Ok(Function::create(
+        let function = Function::create(
             application.id,
             address,
             owner,
             runtime,
             command.description.clone(),
-        ))
+        );
+        let event = FunctionCreated::new(&ctx, &function);
+        self.unit_of_work
+            .commit(&function, &*self.functions, event, &command)
+            .await
     }
 }
 

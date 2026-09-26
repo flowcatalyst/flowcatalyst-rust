@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessArchived;
-use crate::process::entity::Process;
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,24 +57,7 @@ impl<U: UnitOfWork> UseCase for ArchiveProcessUseCase<U> {
         &self,
         command: ArchiveProcessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ProcessArchived> {
-        let (process, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&process, &*self.process_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ArchiveProcessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ArchiveProcessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Process, ProcessArchived), UseCaseError> {
+    ) -> Result<Committed<ProcessArchived>, UseCaseError> {
         let mut process = self
             .process_repo
             .find_by_id(&command.process_id)
@@ -90,7 +70,10 @@ impl<U: UnitOfWork> ArchiveProcessUseCase<U> {
         // Go's `ArchiveProcess` archives unconditionally: a repeat is a 204.
         process.archive();
 
-        let event = ProcessArchived::new(ctx, &process.id, &process.code);
-        Ok((process, event))
+        let event = ProcessArchived::new(&ctx, &process.id, &process.code);
+
+        self.unit_of_work
+            .commit(&process, &*self.process_repo, event, &command)
+            .await
     }
 }

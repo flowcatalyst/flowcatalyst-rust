@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::events::AnchorDomainCreated;
 use crate::auth::config_entity::AnchorDomain;
 use crate::auth::config_repository::AnchorDomainRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,16 +68,13 @@ impl<U: UnitOfWork> UseCase for CreateAnchorDomainUseCase<U> {
         &self,
         command: CreateAnchorDomainCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AnchorDomainCreated> {
+    ) -> Result<Committed<AnchorDomainCreated>, UseCaseError> {
         let domain = command.domain.trim().to_lowercase();
 
         // Business rule: domain must be unique
-        let existing = match self.anchor_domain_repo.find_by_domain(&domain).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.anchor_domain_repo.find_by_domain(&domain).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "DOMAIN_EXISTS",
                 format!("Anchor domain '{}' already exists", domain),
             ));

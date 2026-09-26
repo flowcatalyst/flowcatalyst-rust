@@ -29,10 +29,10 @@ pub mod service_account;
 // Event platform aggregates
 pub mod dispatch_job;
 pub mod dispatch_job_actions;
-pub mod function;
 pub mod dispatch_pool;
 pub mod event;
 pub mod event_type;
+pub mod function;
 pub mod process;
 pub mod scheduled_job;
 pub mod subscription;
@@ -73,8 +73,8 @@ pub use shared::tsid::EntityType;
 
 // Re-export use case infrastructure
 pub use usecase::{
-    DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, UnitOfWork, UseCaseError,
-    UseCaseResult,
+    Committed, DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, UnitOfWork,
+    UseCaseError, UseCaseResult,
 };
 // Note: impl_domain_event! macro is automatically exported at crate root via #[macro_export]
 

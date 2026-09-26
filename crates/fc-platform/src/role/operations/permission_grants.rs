@@ -15,9 +15,7 @@ use super::permission_events::{PermissionDefined, PermissionDeleted};
 use crate::role::permission_catalog::CatalogPermission;
 use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 fn require_names(role_name: &str, permission: &str) -> Result<(), UseCaseError> {
     if role_name.trim().is_empty() {
@@ -86,7 +84,7 @@ impl<U: UnitOfWork> UseCase for GrantPermissionUseCase<U> {
         &self,
         command: GrantPermissionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RolePermissionGranted> {
+    ) -> Result<Committed<RolePermissionGranted>, UseCaseError> {
         let mut role = match self
             .role_repo
             .find_by_name(&command.role_name)
@@ -96,16 +94,14 @@ impl<U: UnitOfWork> UseCase for GrantPermissionUseCase<U> {
                 format!("Role not found: {}", command.role_name),
             ) {
             Ok(r) => r,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         if !role.permissions.contains(&command.permission) {
-            if let Err(e) = super::require_confined(
+            super::require_confined(
                 role.owning_application_code(),
                 [command.permission.as_str()],
                 command.cross_application,
-            ) {
-                return UseCaseResult::failure(e);
-            }
+            )?;
         }
         role.grant_permission(command.permission.clone());
         role.updated_at = chrono::Utc::now();
@@ -163,7 +159,7 @@ impl<U: UnitOfWork> UseCase for RevokePermissionUseCase<U> {
         &self,
         command: RevokePermissionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RolePermissionRevoked> {
+    ) -> Result<Committed<RolePermissionRevoked>, UseCaseError> {
         let mut role = match self
             .role_repo
             .find_by_name(&command.role_name)
@@ -173,7 +169,7 @@ impl<U: UnitOfWork> UseCase for RevokePermissionUseCase<U> {
                 format!("Role not found: {}", command.role_name),
             ) {
             Ok(r) => r,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         role.revoke_permission(&command.permission);
         role.updated_at = chrono::Utc::now();
@@ -261,7 +257,7 @@ impl<U: UnitOfWork> UseCase for DefinePermissionUseCase<U> {
         &self,
         command: DefinePermissionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PermissionDefined> {
+    ) -> Result<Committed<PermissionDefined>, UseCaseError> {
         let code = command.code();
         let description = command
             .description
@@ -269,10 +265,7 @@ impl<U: UnitOfWork> UseCase for DefinePermissionUseCase<U> {
             .map(str::trim)
             .filter(|d| !d.is_empty())
             .map(str::to_string);
-        let existing = match self.repo.find_by_code(&code).await {
-            Ok(e) => e,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.repo.find_by_code(&code).await?;
         let permission = match existing {
             Some(mut p) => {
                 p.description = description;
@@ -282,7 +275,7 @@ impl<U: UnitOfWork> UseCase for DefinePermissionUseCase<U> {
             None => match CatalogPermission::new(&code, description) {
                 Some(p) => p,
                 None => {
-                    return UseCaseResult::failure(UseCaseError::validation(
+                    return Err(UseCaseError::validation(
                         "INVALID_PERMISSION",
                         "a permission is application:context:aggregate:action",
                     ))
@@ -351,7 +344,7 @@ impl<U: UnitOfWork> UseCase for DeletePermissionUseCase<U> {
         &self,
         command: DeletePermissionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PermissionDeleted> {
+    ) -> Result<Committed<PermissionDeleted>, UseCaseError> {
         let permission = match self
             .repo
             .find_by_code(&command.permission)
@@ -361,7 +354,7 @@ impl<U: UnitOfWork> UseCase for DeletePermissionUseCase<U> {
                 format!("Permission not found: {}", command.permission),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         let event = PermissionDeleted::new(&ctx, &permission.id, &permission.code);
         self.unit_of_work

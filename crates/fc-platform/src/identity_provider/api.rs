@@ -253,9 +253,10 @@ async fn create_identity_provider(
             CreateIdentityProviderUseCase::new(idp_repo, domains, session)
                 .run(cmd, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()?;
+        .map(crate::usecase::Committed::into_inner)?;
 
     // Go answers with the provider (the SPA's toast reads its name).
     let idp = state
@@ -385,9 +386,10 @@ async fn update_identity_provider(
             UpdateIdentityProviderUseCase::new(idp_repo, domains, session)
                 .run(cmd, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()?;
+        .map(crate::usecase::Committed::into_inner)?;
 
     // Go answers 200 with the updated provider (the SPA's detail page sets
     // it as the view's model).

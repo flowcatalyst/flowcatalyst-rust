@@ -6,11 +6,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::RoleUpdated;
-use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::entity::RoleSource;
 use crate::role::repository::RoleRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for updating an existing role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,25 +96,7 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
         &self,
         command: UpdateRoleCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RoleUpdated> {
-        let (role, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&role, &*self.role_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateRoleUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateRoleCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(AuthRole, RoleUpdated), UseCaseError> {
+    ) -> Result<Committed<RoleUpdated>, UseCaseError> {
         // Fetch existing role
         let mut role = self
             .role_repo
@@ -203,8 +183,12 @@ impl<U: UnitOfWork> UpdateRoleUseCase<U> {
         role.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = RoleUpdated::new(ctx, &role.id, &role.name);
-        Ok((role, event))
+        let event = RoleUpdated::new(&ctx, &role.id, &role.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&role, &*self.role_repo, event, &command)
+            .await
     }
 }
 

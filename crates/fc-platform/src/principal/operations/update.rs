@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserUpdated;
-use crate::principal::entity::{Principal, UserScope};
+use crate::principal::entity::UserScope;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for updating an existing user / principal.
 ///
@@ -106,24 +104,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         &self,
         command: UpdateUserCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserUpdated> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateUserUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateUserCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, UserUpdated), UseCaseError> {
+    ) -> Result<Committed<UserUpdated>, UseCaseError> {
         // Fetch existing principal
         let mut principal = self
             .principal_repo
@@ -195,7 +176,7 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
                     }
                     principal.client_id = Some(cid);
                 }
-                _ => {
+                UserScope::Anchor | UserScope::Partner => {
                     principal.client_id = None;
                 }
             }
@@ -215,8 +196,11 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
 
         principal.updated_at = chrono::Utc::now();
 
-        let event = UserUpdated::new(ctx, &principal.id, &principal.name);
-        Ok((principal, event))
+        let event = UserUpdated::new(&ctx, &principal.id, &principal.name);
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

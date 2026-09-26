@@ -16,9 +16,7 @@ use crate::connection::repository::ConnectionRepository;
 use crate::connection::sync_plan::{ConnectionSyncPlan, SOURCE_API, SOURCE_CODE};
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ApplicationRepository, SubscriptionRepository};
 
 /// Go `ConnectionsSynced`.
@@ -278,11 +276,8 @@ impl<U: UnitOfWork> UseCase for SyncConnectionsUseCase<U> {
         &self,
         command: SyncConnectionsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ConnectionsSynced> {
-        let (plan, event) = match self.plan(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<ConnectionsSynced>, UseCaseError> {
+        let (plan, event) = self.plan(&command, &ctx).await?;
         self.unit_of_work
             .commit(&plan, &*self.connection_repo, event, &command)
             .await

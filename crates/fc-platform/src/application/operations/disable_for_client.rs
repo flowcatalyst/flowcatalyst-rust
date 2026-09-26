@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDisabledForClient;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationClientConfigRepository;
 
 /// Command for disabling an application for a specific client.
@@ -71,24 +69,7 @@ impl<U: UnitOfWork> UseCase for DisableApplicationForClientUseCase<U> {
         &self,
         command: DisableApplicationForClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationDisabledForClient> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DisableApplicationForClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DisableApplicationForClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::ApplicationClientConfig, ApplicationDisabledForClient), UseCaseError> {
+    ) -> Result<Committed<ApplicationDisabledForClient>, UseCaseError> {
         // Find existing config
         let mut config = self
             .config_repo
@@ -103,12 +84,15 @@ impl<U: UnitOfWork> DisableApplicationForClientUseCase<U> {
         config.disable();
 
         let event = ApplicationDisabledForClient::new(
-            ctx,
+            &ctx,
             &command.application_id,
             &command.client_id,
             &config.id,
         );
-        Ok((config, event))
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
     }
 }
 

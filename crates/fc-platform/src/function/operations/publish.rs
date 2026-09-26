@@ -44,9 +44,7 @@ use crate::function::{
     java_is_blank, ClientCeilings, Digest, FunctionAddress, FunctionLimits, JsonNode, Manifest,
     Runtime,
 };
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// `POST /api/functions/{address}/versions`. The audit row carries the
 /// command as Java's does: the bundle and manifest included, masked only by
@@ -143,11 +141,8 @@ impl<U: UnitOfWork> UseCase for PublishVersionUseCase<U> {
         &self,
         command: PublishCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<VersionPublished> {
-        let (version, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<VersionPublished>, UseCaseError> {
+        let (version, event) = self.prepare(&command, &ctx).await?;
         self.unit_of_work
             .commit(&version, &*self.versions, event, &command)
             .await

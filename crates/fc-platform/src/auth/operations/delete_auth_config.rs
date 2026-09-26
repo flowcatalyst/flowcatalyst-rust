@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::AuthConfigDeleted;
-use crate::auth::config_entity::ClientAuthConfig;
 use crate::auth::config_repository::ClientAuthConfigRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,24 +57,7 @@ impl<U: UnitOfWork> UseCase for DeleteAuthConfigUseCase<U> {
         &self,
         command: DeleteAuthConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AuthConfigDeleted> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&config, &*self.auth_config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteAuthConfigUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteAuthConfigCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ClientAuthConfig, AuthConfigDeleted), UseCaseError> {
+    ) -> Result<Committed<AuthConfigDeleted>, UseCaseError> {
         let config = self
             .auth_config_repo
             .find_by_id(&command.auth_config_id)
@@ -87,7 +67,10 @@ impl<U: UnitOfWork> DeleteAuthConfigUseCase<U> {
                 format!("Auth config '{}' not found", command.auth_config_id),
             )?;
 
-        let event = AuthConfigDeleted::new(ctx, &config.id, &config.email_domain);
-        Ok((config, event))
+        let event = AuthConfigDeleted::new(&ctx, &config.id, &config.email_domain);
+
+        self.unit_of_work
+            .commit_delete(&config, &*self.auth_config_repo, event, &command)
+            .await
     }
 }

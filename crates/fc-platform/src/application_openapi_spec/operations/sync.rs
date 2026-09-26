@@ -20,7 +20,7 @@ use super::diff::{compute_change_notes, spec_hash};
 use super::events::ApplicationOpenApiSpecSynced;
 use crate::application_openapi_spec::entity::OpenApiSpec;
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for syncing an application's OpenAPI document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,11 +120,8 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         &self,
         command: SyncOpenApiSpecCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationOpenApiSpecSynced> {
-        let event = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<ApplicationOpenApiSpecSynced>, UseCaseError> {
+        let event = self.prepare(&command, &ctx).await?;
 
         self.unit_of_work.emit_event(event, &command).await
     }
@@ -147,22 +144,15 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         // No-op short-circuit: byte-identical to existing CURRENT.
         if let Some(ref existing) = prior {
             if existing.spec_hash == new_hash {
-                let event = ApplicationOpenApiSpecSynced {
-                    metadata: ApplicationOpenApiSpecSynced::metadata_for(
+                return Ok(ApplicationOpenApiSpecSynced {
+                    unchanged: true,
+                    ..ApplicationOpenApiSpecSynced::new(
                         ctx,
                         &command.application_id,
-                        &existing.id,
-                    ),
-                    application_id: command.application_id.clone(),
-                    application_code: command.application_code.clone(),
-                    spec_id: existing.id.clone(),
-                    version: existing.version.clone(),
-                    spec_hash: existing.spec_hash.clone(),
-                    archived_prior_version: None,
-                    has_breaking: false,
-                    unchanged: true,
-                };
-                return Ok(event);
+                        &command.application_code,
+                        existing,
+                    )
+                });
             }
         }
 
@@ -219,22 +209,16 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
             )));
         }
 
-        let event = ApplicationOpenApiSpecSynced {
-            metadata: ApplicationOpenApiSpecSynced::metadata_for(
-                ctx,
-                &command.application_id,
-                &new_spec.id,
-            ),
-            application_id: command.application_id.clone(),
-            application_code: command.application_code.clone(),
-            spec_id: new_spec.id.clone(),
-            version: new_spec.version.clone(),
-            spec_hash: new_spec.spec_hash.clone(),
+        Ok(ApplicationOpenApiSpecSynced {
             archived_prior_version,
             has_breaking: change_notes.has_breaking,
-            unchanged: false,
-        };
-        Ok(event)
+            ..ApplicationOpenApiSpecSynced::new(
+                ctx,
+                &command.application_id,
+                &command.application_code,
+                &new_spec,
+            )
+        })
     }
 }
 

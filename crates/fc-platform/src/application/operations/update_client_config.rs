@@ -10,9 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationClientConfigUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -93,24 +91,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         &self,
         command: UpdateApplicationClientConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationClientConfigUpdated> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateApplicationClientConfigCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ApplicationClientConfig, ApplicationClientConfigUpdated), UseCaseError> {
+    ) -> Result<Committed<ApplicationClientConfigUpdated>, UseCaseError> {
         // Verify application exists
         self.application_repo
             .find_by_id(&command.application_id)
@@ -148,21 +129,15 @@ impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
                 Some(url.clone())
             };
         }
-        let config_changed = command.config.is_some();
         if let Some(ref cfg) = command.config {
             config.config_json = Some(cfg.clone());
         }
         config.updated_at = chrono::Utc::now();
 
-        let event = ApplicationClientConfigUpdated {
-            metadata: ApplicationClientConfigUpdated::metadata_for(ctx, &command.application_id),
-            application_id: command.application_id.clone(),
-            client_id: command.client_id.clone(),
-            config_id: config.id.clone(),
-            enabled: command.enabled,
-            base_url_override: command.base_url_override.clone(),
-            config_changed,
-        };
-        Ok((config, event))
+        let event = ApplicationClientConfigUpdated::new(&ctx, &command, &config);
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
     }
 }

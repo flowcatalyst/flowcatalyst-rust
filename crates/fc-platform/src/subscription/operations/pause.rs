@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::SubscriptionPaused;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::Subscription;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::SubscriptionRepository;
 
 /// Command for pausing a subscription.
@@ -63,25 +60,7 @@ impl<U: UnitOfWork> UseCase for PauseSubscriptionUseCase<U> {
         &self,
         command: PauseSubscriptionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SubscriptionPaused> {
-        let (subscription, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&subscription, &*self.subscription_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> PauseSubscriptionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &PauseSubscriptionCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Subscription, SubscriptionPaused), UseCaseError> {
+    ) -> Result<Committed<SubscriptionPaused>, UseCaseError> {
         // Fetch existing subscription
         let mut subscription = self
             .subscription_repo
@@ -102,8 +81,12 @@ impl<U: UnitOfWork> PauseSubscriptionUseCase<U> {
         subscription.pause();
 
         // Create domain event
-        let event = SubscriptionPaused::new(ctx, &subscription.id);
-        Ok((subscription, event))
+        let event = SubscriptionPaused::new(&ctx, &subscription.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&subscription, &*self.subscription_repo, event, &command)
+            .await
     }
 }
 

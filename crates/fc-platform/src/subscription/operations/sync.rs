@@ -13,7 +13,7 @@ use super::events::{
 };
 use crate::subscription::entity::SubscriptionSource;
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
@@ -161,25 +161,8 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         &self,
         command: SyncSubscriptionsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SubscriptionsSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // subscription, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncSubscriptionsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, SubscriptionsSynced), UseCaseError> {
-        let connection_ids = self.resolve_connections(command).await?;
+    ) -> Result<Committed<SubscriptionsSynced>, UseCaseError> {
+        let connection_ids = self.resolve_connections(&command).await?;
 
         // Resolve every referenced dispatch pool in one query, before any
         // write. An unknown code is a validation error naming it, rather
@@ -255,7 +238,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
-                            ctx,
+                            &ctx,
                             &updated.id,
                             &updated.name,
                         ))?);
@@ -263,30 +246,31 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     }
                 }
                 None => {
-                    let mut sub = Subscription::new(&input.code, &input.name, &input.target);
-                    sub.connection_id = connection_id;
-                    sub.application_code = Some(command.application_code.clone());
-                    sub.client_id = command.client_id.clone();
-                    sub.source = SubscriptionSource::Api;
-                    sub.description = input.description.clone();
-                    sub.event_types = bindings;
-                    sub.data_only = input.data_only;
-                    sub.created_by = Some(ctx.principal_id.clone());
-                    if let Some(retries) = input.max_retries {
-                        sub.max_retries = retries as i32;
-                    }
-                    if let Some(timeout) = input.timeout_seconds {
-                        sub.timeout_seconds = timeout as i32;
-                    }
-                    // Ruling X-01: absent means NEXT_ON_ERROR, unknown means
-                    // NEXT_ON_ERROR with a warning. An existing subscription's
-                    // mode is left alone on update, as before.
-                    sub.mode =
-                        crate::dispatch_job::entity::parse_dispatch_mode(input.mode.as_deref());
-                    if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
-                        sub.dispatch_pool_id = Some(pool.id.clone());
-                        sub.dispatch_pool_code = Some(pool.code.clone());
-                    }
+                    let pool = requested_pool_code(input).and_then(|c| pools.get(c));
+                    let sub = Subscription::builder()
+                        .code(&input.code)
+                        .name(&input.name)
+                        .endpoint(&input.target)
+                        .maybe_connection_id(connection_id)
+                        .application_code(command.application_code.clone())
+                        .maybe_client_id(command.client_id.clone())
+                        .source(SubscriptionSource::Api)
+                        .maybe_description(input.description.clone())
+                        .event_types(bindings)
+                        .data_only(input.data_only)
+                        .created_by(ctx.principal_id.clone())
+                        .maybe_max_retries(input.max_retries.map(|r| r as i32))
+                        .maybe_timeout_seconds(input.timeout_seconds.map(|t| t as i32))
+                        // Ruling X-01: absent means NEXT_ON_ERROR, unknown
+                        // means NEXT_ON_ERROR with a warning. An existing
+                        // subscription's mode is left alone on update, as
+                        // before.
+                        .mode(crate::dispatch_job::entity::parse_dispatch_mode(
+                            input.mode.as_deref(),
+                        ))
+                        .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
+                        .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
+                        .build();
                     if let Err(e) = self.subscription_repo.insert(&sub).await {
                         return Err(UseCaseError::commit(format!(
                             "Failed to create subscription '{}': {}",
@@ -294,7 +278,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
-                        ctx, &sub.id, &sub.code, &sub.name,
+                        &ctx, &sub.id, &sub.code, &sub.name,
                     ))?);
                     created_count += 1;
                 }
@@ -314,7 +298,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
-                        ctx, &sub.id, &sub.code,
+                        &ctx, &sub.id, &sub.code,
                     ))?);
                     deleted_count += 1;
                 }
@@ -322,7 +306,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         }
 
         let event = SubscriptionsSynced {
-            metadata: SubscriptionsSynced::metadata_for(ctx, &command.application_code),
+            metadata: SubscriptionsSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             client_id: command.client_id.clone(),
             created: created_count,
@@ -330,7 +314,10 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             deleted: deleted_count,
             synced_codes,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // subscription, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

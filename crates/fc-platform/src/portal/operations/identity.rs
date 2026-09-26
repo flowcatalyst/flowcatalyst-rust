@@ -17,7 +17,7 @@ use super::events::{
 use super::{load_client_app, not_found};
 use crate::portal::entity::{IdentitySource, IdentityStatus, PortalApp, PortalIdentity};
 use crate::portal::repository::{PortalAppRepository, PortalIdentityRepository};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientRepository;
 
 // ── Ensure ────────────────────────────────────────────────────────────────
@@ -156,11 +156,8 @@ impl<U: UnitOfWork> UseCase for EnsurePortalIdentityUseCase<U> {
         &self,
         cmd: EnsureCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityEnsured> {
-        let (ident, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<IdentityEnsured>, UseCaseError> {
+        let (ident, event) = self.prepare(&cmd, &ctx).await?;
         self.unit_of_work
             .commit(&ident, &*self.identities, event, &cmd)
             .await
@@ -254,11 +251,8 @@ impl<U: UnitOfWork> UseCase for GrantPortalIdentityAppUseCase<U> {
         &self,
         cmd: AppGrantCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityAppGranted> {
-        let (mut ident, app) = match load_grant_targets(&self.identities, &self.apps, &cmd).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<IdentityAppGranted>, UseCaseError> {
+        let (mut ident, app) = load_grant_targets(&self.identities, &self.apps, &cmd).await?;
         ident.grant(&app.id, IdentitySource::Admin);
         let event = IdentityAppGranted::new(
             &ctx,
@@ -318,11 +312,8 @@ impl<U: UnitOfWork> UseCase for RevokePortalIdentityAppUseCase<U> {
         &self,
         cmd: AppGrantCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityAppRevoked> {
-        let (mut ident, app) = match load_grant_targets(&self.identities, &self.apps, &cmd).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<IdentityAppRevoked>, UseCaseError> {
+        let (mut ident, app) = load_grant_targets(&self.identities, &self.apps, &cmd).await?;
         ident.revoke(&app.id);
         let event = IdentityAppRevoked::new(&ctx, &ident.id, &ident.client_id, &app.id, &app.code);
         self.unit_of_work
@@ -382,7 +373,9 @@ impl<U: UnitOfWork> SetPortalIdentityStatusUseCase<U> {
             return Err(not_found("PortalIdentity", &cmd.id));
         }
         ident.status = IdentityStatus::parse(&cmd.status).unwrap_or(IdentityStatus::Active);
-        let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, &cmd.status);
+        // `validate` accepted only a status that parses, so this is the
+        // command's status.
+        let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, ident.status);
         Ok((ident, event))
     }
 }
@@ -422,11 +415,8 @@ impl<U: UnitOfWork> UseCase for SetPortalIdentityStatusUseCase<U> {
         &self,
         cmd: SetStatusCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityStatusSet> {
-        let (ident, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<IdentityStatusSet>, UseCaseError> {
+        let (ident, event) = self.prepare(&cmd, &ctx).await?;
         self.unit_of_work
             .commit(&ident, &*self.identities, event, &cmd)
             .await
@@ -495,11 +485,8 @@ impl<U: UnitOfWork> UseCase for DeletePortalIdentityUseCase<U> {
         &self,
         cmd: DeleteCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityDeleted> {
-        let (ident, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<IdentityDeleted>, UseCaseError> {
+        let (ident, event) = self.prepare(&cmd, &ctx).await?;
         self.unit_of_work
             .commit_delete(&ident, &*self.identities, event, &cmd)
             .await

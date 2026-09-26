@@ -749,9 +749,10 @@ async fn sync_principals(
             SyncPrincipalsUseCase::new(principal_repo, application_repo, caller, session)
                 .run(command, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()
+        .map(crate::usecase::Committed::into_inner)
     {
         Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,

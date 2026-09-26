@@ -14,13 +14,10 @@ use serde::Serialize;
 
 use super::access::{function_by_address, resource_not_found, Caller};
 use super::events::VersionRetired;
-use crate::function::entity::FunctionVersion;
 use crate::function::repository::FunctionRepository;
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::FunctionAddress;
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// `POST /api/functions/{address}/versions/{v}/retire`.
 #[derive(Debug, Clone, Serialize)]
@@ -62,23 +59,7 @@ impl<U: UnitOfWork> UseCase for RetireVersionUseCase<U> {
         &self,
         command: RetireCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<VersionRetired> {
-        let (version, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        self.unit_of_work
-            .commit(&version, &*self.versions, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RetireVersionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RetireCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(FunctionVersion, VersionRetired), UseCaseError> {
+    ) -> Result<Committed<VersionRetired>, UseCaseError> {
         let f = function_by_address(&self.functions, &command.address, &self.caller).await?;
         let mut v = self
             .versions
@@ -113,7 +94,10 @@ impl<U: UnitOfWork> RetireVersionUseCase<U> {
             ));
         }
         v.retire(Utc::now())?;
-        let event = VersionRetired::new(ctx, &f, &v);
-        Ok((v, event))
+        let event = VersionRetired::new(&ctx, &f, &v);
+        let (version, event) = (v, event);
+        self.unit_of_work
+            .commit(&version, &*self.versions, event, &command)
+            .await
     }
 }

@@ -11,11 +11,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobUpdated;
-use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,24 +103,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         &self,
         cmd: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
-        let (job, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&job, &*self.repo, event, &cmd)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateScheduledJobUseCase<U> {
-    async fn prepare(
-        &self,
-        cmd: &UpdateScheduledJobCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ScheduledJob, ScheduledJobUpdated), UseCaseError> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let mut job = self
             .repo
             .find_by_id(&cmd.scheduled_job_id)
@@ -205,7 +185,10 @@ impl<U: UnitOfWork> UpdateScheduledJobUseCase<U> {
 
         job.record_update(Some(ctx.principal_id.clone()));
 
-        let event = ScheduledJobUpdated::new(ctx, &job.id, &job.code);
-        Ok((job, event))
+        let event = ScheduledJobUpdated::new(&ctx, &job.id, &job.code);
+
+        self.unit_of_work
+            .commit(&job, &*self.repo, event, &cmd)
+            .await
     }
 }

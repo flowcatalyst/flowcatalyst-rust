@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::{EventTypeCreated, EventTypeDeleted, EventTypeUpdated, EventTypesSynced};
-use crate::event_type::entity::{EventType, EventTypeSource, SpecVersion};
+use crate::event_type::entity::{
+    EventType, EventTypeCode, EventTypeCodeError, EventTypeSource, SpecVersion,
+};
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::EventTypeRepository;
 
@@ -53,6 +55,22 @@ pub struct SyncEventTypesResult {
     pub deleted: u32,
 }
 
+/// A listed code that is not an event type code (checked when the sync
+/// reaches it, as it creates the type). The sync keeps its own code and
+/// its messages: a blank code reads as a wrong segment count, and an empty
+/// segment is not named.
+fn invalid_sync_code(e: EventTypeCodeError) -> UseCaseError {
+    let message = match e {
+        EventTypeCodeError::Required | EventTypeCodeError::WrongSegmentCount => {
+            EventTypeCodeError::WrongSegmentCount.to_string()
+        }
+        EventTypeCodeError::EmptySegment(_) => {
+            "Event type code segments cannot be empty".to_string()
+        }
+    };
+    UseCaseError::validation("INVALID_EVENT_TYPE_CODE", message)
+}
+
 pub struct SyncEventTypesUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,
     unit_of_work: Arc<U>,
@@ -94,24 +112,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         &self,
         command: SyncEventTypesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypesSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // event type, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncEventTypesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, EventTypesSynced), UseCaseError> {
+    ) -> Result<Committed<EventTypesSynced>, UseCaseError> {
         // Fetch existing event types for this application
         let existing = self
             .event_type_repo
@@ -148,7 +149,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&EventTypeUpdated::new(
-                            ctx,
+                            &ctx,
                             &updated.id,
                             &updated.name,
                             updated.description.as_deref(),
@@ -159,9 +160,8 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                 }
                 None => {
                     // Create new event type
-                    let mut et = EventType::new(&input.code, &input.name).map_err(|e| {
-                        UseCaseError::validation("INVALID_EVENT_TYPE_CODE", e.to_string())
-                    })?;
+                    let code = EventTypeCode::parse(&input.code).map_err(invalid_sync_code)?;
+                    let mut et = EventType::new(code, &input.name);
                     et.source = EventTypeSource::Api;
                     et.description = input.description.clone();
                     if let Err(e) = self.event_type_repo.insert(&et).await {
@@ -170,18 +170,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                             input.code, e
                         )));
                     }
-                    rows.push(RecordedEvent::of(&EventTypeCreated {
-                        metadata: EventTypeCreated::metadata_for(ctx, &et.id),
-                        event_type_id: et.id.clone(),
-                        code: et.code.clone(),
-                        name: et.name.clone(),
-                        description: et.description.clone(),
-                        application: et.application.clone(),
-                        subdomain: et.subdomain.clone(),
-                        aggregate: et.aggregate.clone(),
-                        event_name: et.event_name.clone(),
-                        client_id: et.client_id.clone(),
-                    })?);
+                    rows.push(RecordedEvent::of(&EventTypeCreated::new(&ctx, &et))?);
                     created_count += 1;
                     et.id.clone()
                 }
@@ -243,7 +232,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&EventTypeDeleted::new(
-                        ctx, &et.id, &et.code,
+                        &ctx, &et.id, &et.code,
                     ))?);
                     deleted_count += 1;
                 }
@@ -251,7 +240,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
         }
 
         let event = EventTypesSynced {
-            metadata: EventTypesSynced::metadata_for(ctx, &command.application_code),
+            metadata: EventTypesSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             created: created_count,
             updated: updated_count,
@@ -261,7 +250,10 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
             schemas_updated,
             schemas_unchanged,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // event type, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

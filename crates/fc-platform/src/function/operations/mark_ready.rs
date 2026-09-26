@@ -23,12 +23,10 @@ use serde::Serialize;
 
 use super::access::resource_not_found;
 use super::events::VersionReady;
-use crate::function::entity::{FunctionVersion, VersionState};
+use crate::function::entity::VersionState;
 use crate::function::repository::FunctionRepository;
 use crate::function::version_repository::{FunctionVersionRepository, VersionById};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// The refusal the heartbeat catches and ignores.
 pub const VERSION_NOT_PUBLISHED: &str = "VERSION_NOT_PUBLISHED";
@@ -88,23 +86,7 @@ impl<U: UnitOfWork> UseCase for MarkVersionReadyUseCase<U> {
         &self,
         command: MarkVersionReadyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<VersionReady> {
-        let (version, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        self.unit_of_work
-            .commit(&version, &*self.versions, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> MarkVersionReadyUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &MarkVersionReadyCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(FunctionVersion, VersionReady), UseCaseError> {
+    ) -> Result<Committed<VersionReady>, UseCaseError> {
         let mut v = self
             .unit_of_work
             .read_locked(&*self.versions, &VersionById(command.version_id.clone()))
@@ -126,7 +108,10 @@ impl<U: UnitOfWork> MarkVersionReadyUseCase<U> {
             .await?
             .ok_or_else(|| resource_not_found("Function", &v.function_id))?;
         v.mark_ready(Utc::now());
-        let event = VersionReady::new(ctx, &f, &v, &command.host_id);
-        Ok((v, event))
+        let event = VersionReady::new(&ctx, &f, &v, &command.host_id);
+        let (version, event) = (v, event);
+        self.unit_of_work
+            .commit(&version, &*self.versions, event, &command)
+            .await
     }
 }

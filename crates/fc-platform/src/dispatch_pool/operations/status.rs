@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::{DispatchPoolActivated, DispatchPoolSuspended};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::DispatchPoolRepository;
 
 /// Command for suspending a dispatch pool.
@@ -77,7 +75,7 @@ impl<U: UnitOfWork> UseCase for SuspendDispatchPoolUseCase<U> {
         &self,
         command: SuspendDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolSuspended> {
+    ) -> Result<Committed<DispatchPoolSuspended>, UseCaseError> {
         let mut pool = match self
             .dispatch_pool_repo
             .find_by_id(&command.id)
@@ -87,7 +85,7 @@ impl<U: UnitOfWork> UseCase for SuspendDispatchPoolUseCase<U> {
                 format!("Dispatch pool with ID '{}' not found", command.id),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         pool.suspend();
         let event = DispatchPoolSuspended::new(&ctx, &pool.id, &pool.code);
@@ -133,7 +131,7 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
         &self,
         command: ActivateDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolActivated> {
+    ) -> Result<Committed<DispatchPoolActivated>, UseCaseError> {
         let mut pool = match self
             .dispatch_pool_repo
             .find_by_id(&command.id)
@@ -143,7 +141,7 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
                 format!("Dispatch pool with ID '{}' not found", command.id),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         pool.activate();
         let event = DispatchPoolActivated::new(&ctx, &pool.id, &pool.code);

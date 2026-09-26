@@ -267,8 +267,11 @@ async fn test_event_type_crud() {
     let (pool, _container) = setup_test_db().await;
     let repo = EventTypeRepository::new(&pool);
 
-    let event_type = EventType::new("orders:fulfillment:shipment:shipped", "Shipment Shipped")
-        .expect("Failed to create event type");
+    let code = fc_platform::event_type::entity::EventTypeCode::parse(
+        "orders:fulfillment:shipment:shipped",
+    )
+    .expect("valid code");
+    let event_type = EventType::new(code, "Shipment Shipped");
     repo.insert(&event_type)
         .await
         .expect("Failed to insert event type");
@@ -574,10 +577,7 @@ async fn test_unit_of_work_commit() {
     };
 
     let result = uow.commit(&client, &client_repo, event, &command).await;
-    assert!(
-        result.into_result().is_ok(),
-        "UnitOfWork commit should succeed"
-    );
+    assert!(result.is_ok(), "UnitOfWork commit should succeed");
 
     // Verify event was persisted (use find_by_type since find_all doesn't exist)
     let event_repo = EventRepository::new(&pool);
@@ -627,9 +627,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };
-            uow.commit(&client, repo, event, &command)
-                .await
-                .into_result()
+            uow.commit(&client, repo, event, &command).await
         }
     };
 
@@ -940,8 +938,7 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     };
     let result = PgUnitOfWork::new(pool.clone())
         .emit_event(event, &command)
-        .await
-        .into_result();
+        .await;
     assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
 
     let (count,): (i64,) = sqlx::query_as(

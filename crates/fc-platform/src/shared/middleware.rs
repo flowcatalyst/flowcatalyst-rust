@@ -162,7 +162,26 @@ fn invalid_token_description(e: &crate::PlatformError) -> String {
             "token has invalid claims: token is expired".to_string()
         }
         crate::PlatformError::InvalidToken { message } => message.clone(),
-        other => other.to_string(),
+        other @ (crate::PlatformError::NotFound { .. }
+        | crate::PlatformError::Duplicate { .. }
+        | crate::PlatformError::BusinessRule { .. }
+        | crate::PlatformError::Concurrency { .. }
+        | crate::PlatformError::Validation { .. }
+        | crate::PlatformError::Unauthorized { .. }
+        | crate::PlatformError::Forbidden { .. }
+        | crate::PlatformError::Sqlx(_)
+        | crate::PlatformError::Json(_)
+        | crate::PlatformError::Configuration { .. }
+        | crate::PlatformError::EventTypeNotFound { .. }
+        | crate::PlatformError::SubscriptionNotFound { .. }
+        | crate::PlatformError::ClientNotFound { .. }
+        | crate::PlatformError::PrincipalNotFound { .. }
+        | crate::PlatformError::ServiceAccountNotFound { .. }
+        | crate::PlatformError::InvalidCredentials
+        | crate::PlatformError::Internal { .. }
+        | crate::PlatformError::TooManyRequests { .. }
+        | crate::PlatformError::Coded { .. }
+        | crate::PlatformError::SessionEndpoint { .. }) => other.to_string(),
     }
 }
 

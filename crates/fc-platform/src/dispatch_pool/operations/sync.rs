@@ -11,7 +11,7 @@ use super::events::{
     DispatchPoolArchived, DispatchPoolCreated, DispatchPoolUpdated, DispatchPoolsSynced,
 };
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::DispatchPool;
 use crate::DispatchPoolRepository;
@@ -129,24 +129,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         &self,
         command: SyncDispatchPoolsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolsSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/archived event per synced
-        // pool, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncDispatchPoolsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, DispatchPoolsSynced), UseCaseError> {
+    ) -> Result<Committed<DispatchPoolsSynced>, UseCaseError> {
         // Fetch existing pools
         let existing = self.dispatch_pool_repo.find_all().await?;
 
@@ -176,7 +159,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&DispatchPoolUpdated::new(
-                        ctx,
+                        &ctx,
                         &updated.id,
                         &updated.name,
                     ))?);
@@ -194,7 +177,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&DispatchPoolCreated::new(
-                        ctx, &pool.id, &pool.code, &pool.name,
+                        &ctx, &pool.id, &pool.code, &pool.name,
                     ))?);
                     created_count += 1;
                 }
@@ -217,7 +200,7 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&DispatchPoolArchived::new(
-                        ctx,
+                        &ctx,
                         &archived.id,
                         &archived.code,
                     ))?);
@@ -227,14 +210,17 @@ impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
         }
 
         let event = DispatchPoolsSynced {
-            metadata: DispatchPoolsSynced::metadata_for(ctx, &command.application_code),
+            metadata: DispatchPoolsSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             created: created_count,
             updated: updated_count,
             deleted: deleted_count,
             synced_codes,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/archived event per synced
+        // pool, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

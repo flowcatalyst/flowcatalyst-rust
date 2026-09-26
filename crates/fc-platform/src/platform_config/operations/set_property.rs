@@ -8,9 +8,7 @@ use super::events::PlatformConfigPropertySet;
 use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
 use crate::platform_config::repository::PlatformConfigRepository;
 use crate::shared::encryption_service::{require_configured, EncryptionService};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,26 +115,7 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         &self,
         command: SetPlatformConfigPropertyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PlatformConfigPropertySet> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // The audit row masks `value` through the command's AuditMasked
-        // declaration; the unit of work applies it.
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SetPlatformConfigPropertyCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PlatformConfig, PlatformConfigPropertySet), UseCaseError> {
+    ) -> Result<Committed<PlatformConfigPropertySet>, UseCaseError> {
         // Upsert by natural key: (app_code, section, property, scope, client_id).
         let existing = self
             .config_repo
@@ -183,17 +162,12 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         config.description = command.description.clone();
         config.updated_at = chrono::Utc::now();
 
-        let event = PlatformConfigPropertySet {
-            metadata: PlatformConfigPropertySet::metadata_for(ctx, &config.id),
-            config_id: config.id.clone(),
-            application_code: config.application_code.clone(),
-            section: config.section.clone(),
-            property: config.property.clone(),
-            scope: config.scope.as_str().to_string(),
-            client_id: config.client_id.clone(),
-            value_type: config.value_type.as_str().to_string(),
-            was_created,
-        };
-        Ok((config, event))
+        let event = PlatformConfigPropertySet::new(&ctx, &config, was_created);
+
+        // The audit row masks `value` through the command's AuditMasked
+        // declaration; the unit of work applies it.
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
     }
 }

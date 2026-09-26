@@ -16,6 +16,7 @@ pub fn jsonb_text(value: &Value) -> String {
     out
 }
 
+#[allow(clippy::wildcard_enum_match_arm)] // serde_json::Value is foreign: scalars print as JSON
 fn write(value: &Value, out: &mut String) {
     match value {
         Value::Object(map) => {

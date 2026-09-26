@@ -14,7 +14,7 @@ use super::domains::{
 };
 use super::events::IdentityProviderCreated;
 use crate::identity_provider::entity::IdentityProviderType;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::IdentityProviderRepository;
 
 /// Command for creating a new identity provider.
@@ -128,53 +128,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         &self,
         command: CreateIdentityProviderCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityProviderCreated> {
-        let (idp, event, scope, client, domains) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        let created = self
-            .unit_of_work
-            .commit(&idp, &*self.idp_repo, event, &command)
-            .await;
-        if created.as_result().is_err() {
-            return created;
-        }
-        for domain in &domains {
-            if let Err(e) = map_domain(
-                &*self.unit_of_work,
-                &self.domains,
-                &idp,
-                domain,
-                scope,
-                client.as_deref(),
-                &ctx,
-                &command,
-            )
-            .await
-            {
-                return UseCaseResult::failure(e);
-            }
-        }
-        created
-    }
-}
-
-type Prepared = (
-    crate::IdentityProvider,
-    IdentityProviderCreated,
-    Option<crate::email_domain_mapping::entity::ScopeType>,
-    Option<String>,
-    Vec<String>,
-);
-
-impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &CreateIdentityProviderCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<Prepared, UseCaseError> {
+    ) -> Result<Committed<IdentityProviderCreated>, UseCaseError> {
         if self.idp_repo.find_by_code(&command.code).await?.is_some() {
             return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
@@ -201,8 +155,26 @@ impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
         idp.sync_roles_from_idp = command.sync_roles_from_idp;
         idp.allowed_role_ids = command.allowed_role_ids.clone();
 
-        let event = IdentityProviderCreated::new(ctx, &idp.id, &idp.code);
-        Ok((idp, event, scope, client, domains))
+        let event = IdentityProviderCreated::new(&ctx, &idp.id, &idp.code);
+
+        let created = self
+            .unit_of_work
+            .commit(&idp, &*self.idp_repo, event, &command)
+            .await?;
+        for domain in &domains {
+            map_domain(
+                &*self.unit_of_work,
+                &self.domains,
+                &idp,
+                domain,
+                scope,
+                client.as_deref(),
+                &ctx,
+                &command,
+            )
+            .await?;
+        }
+        Ok(created)
     }
 }
 

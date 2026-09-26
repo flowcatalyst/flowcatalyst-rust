@@ -12,7 +12,7 @@ use serde::Serialize;
 use super::domain_event::DomainEvent;
 use super::error::UseCaseError;
 use super::execution_context::ExecutionContext;
-use super::result::UseCaseResult;
+use super::result::{Committed, UseCaseResult};
 
 /// Trait that every use case must implement.
 ///
@@ -63,12 +63,15 @@ pub trait UseCase: Send + Sync {
     /// Load aggregates, check business rules (uniqueness, state transitions),
     /// build the domain event, and call `unit_of_work.commit()`.
     ///
-    /// This is only called after `validate` and `authorize` both pass.
+    /// This is only called after `validate` and `authorize` both pass. Its
+    /// success is a [`Committed`] value, which only the unit of work can
+    /// build, so the happy path must end in a `unit_of_work.*` call; `?`
+    /// works for everything before it.
     async fn execute(
         &self,
         command: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event>;
+    ) -> Result<Committed<Self::Event>, UseCaseError>;
 
     /// Run the full pipeline: validate → authorize → execute.
     ///
@@ -84,6 +87,6 @@ pub trait UseCase: Send + Sync {
         if let Err(e) = self.authorize(&command, &ctx).await {
             return UseCaseResult::failure(e);
         }
-        self.execute(command, ctx).await
+        self.execute(command, ctx).await.into()
     }
 }

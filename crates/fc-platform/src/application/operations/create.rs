@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationCreated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 use crate::{Application, ApplicationType};
 
@@ -117,18 +117,15 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         &self,
         command: CreateApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationCreated> {
+    ) -> Result<Committed<ApplicationCreated>, UseCaseError> {
         let code_lower = command.code.trim().to_lowercase();
         let code = code_lower.as_str();
         let name = command.name.trim();
 
         // Business rule: code must be unique
-        let existing = match self.application_repo.find_by_code(code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.application_repo.find_by_code(code).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Application with code '{}' already exists", code),
             ));

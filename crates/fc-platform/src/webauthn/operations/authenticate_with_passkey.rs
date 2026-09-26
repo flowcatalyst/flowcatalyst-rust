@@ -20,10 +20,7 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 use super::events::PasskeyAuthenticated;
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::webauthn::entity::WebauthnCredential;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
 
@@ -96,24 +93,7 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
         &self,
         command: AuthenticatePasskeyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PasskeyAuthenticated> {
-        let (credential, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&credential, &*self.credential_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AuthenticatePasskeyCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(WebauthnCredential, PasskeyAuthenticated), UseCaseError> {
+    ) -> Result<Committed<PasskeyAuthenticated>, UseCaseError> {
         let state = command.authentication_state.clone().ok_or_else(|| {
             UseCaseError::business_rule("STATE_MISSING", "authentication ceremony state missing")
         })?;
@@ -177,7 +157,10 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
         credential.record_authentication(&result);
 
         // 6. Commit credential update + login event.
-        let event = PasskeyAuthenticated::new(ctx, &credential.id, &credential.principal_id);
-        Ok((credential, event))
+        let event = PasskeyAuthenticated::new(&ctx, &credential.id, &credential.principal_id);
+
+        self.unit_of_work
+            .commit(&credential, &*self.credential_repo, event, &command)
+            .await
     }
 }

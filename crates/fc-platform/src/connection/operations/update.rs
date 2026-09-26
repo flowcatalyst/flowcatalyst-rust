@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use super::events::ConnectionUpdated;
 use crate::connection::entity::ConnectionStatus;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ConnectionRepository;
 
 /// Command for updating a connection.
@@ -86,24 +84,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         &self,
         command: UpdateConnectionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ConnectionUpdated> {
-        let (connection, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&connection, &*self.connection_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateConnectionCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Connection, ConnectionUpdated), UseCaseError> {
+    ) -> Result<Committed<ConnectionUpdated>, UseCaseError> {
         let mut connection = self
             .connection_repo
             .find_by_id(&command.connection_id)
@@ -164,8 +145,11 @@ impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
         }
         connection.updated_at = chrono::Utc::now();
 
-        let event = ConnectionUpdated::new(ctx, &connection.id, &connection.name);
-        Ok((connection, event))
+        let event = ConnectionUpdated::new(&ctx, &connection.id, &connection.name);
+
+        self.unit_of_work
+            .commit(&connection, &*self.connection_repo, event, &command)
+            .await
     }
 }
 

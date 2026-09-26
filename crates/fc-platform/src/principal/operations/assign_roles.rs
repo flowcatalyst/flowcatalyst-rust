@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RolesAssigned;
-use crate::principal::entity::{Principal, PrincipalType};
+use crate::principal::entity::PrincipalType;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::PrincipalRepository;
 use crate::RoleRepository;
 
@@ -71,24 +69,7 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
         &self,
         command: AssignUserRolesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RolesAssigned> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AssignUserRolesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AssignUserRolesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, RolesAssigned), UseCaseError> {
+    ) -> Result<Committed<RolesAssigned>, UseCaseError> {
         let mut principal = self
             .principal_repo
             .find_by_id(&command.user_id)
@@ -140,8 +121,11 @@ impl<U: UnitOfWork> AssignUserRolesUseCase<U> {
             .collect();
         principal.updated_at = chrono::Utc::now();
 
-        let event = RolesAssigned::new(ctx, &principal.id, command.roles.clone(), added, removed);
-        Ok((principal, event))
+        let event = RolesAssigned::new(&ctx, &principal.id, command.roles.clone(), added, removed);
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

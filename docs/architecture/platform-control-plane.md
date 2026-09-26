@@ -87,20 +87,20 @@ async fn handler(State(state): State<...>, auth: AuthContext, Json(req): Json<Cr
 
 ### The seal
 
-`UseCaseResult::success` is `pub(in crate::usecase)`. The only constructors are inside `usecase/result.rs` and `usecase/unit_of_work.rs`. Concretely this means a use case **cannot** build a success result by hand:
+`execute` returns `Result<Committed<Event>, UseCaseError>`, and `Committed::new` is `pub(in crate::usecase)`. The only constructors are inside `usecase/result.rs` and `usecase/unit_of_work.rs`. Concretely this means a use case **cannot** build a success result by hand:
 
 ```rust
-// won't compile — UseCaseResult::success is module-private
-return UseCaseResult::success(MyEvent::new(...));
+// won't compile — Committed::new is module-private
+return Ok(Committed::new(MyEvent::new(...)));
 ```
 
-The only paths to `Ok(_)` for a write use case are:
+Everything before the commit is ordinary `Result` code — `?` on repository calls, `return Err(UseCaseError::...)` for rule violations. The only paths to `Ok(_)` for a write use case are:
 
 - `unit_of_work.commit(aggregate, repo, event, command)` — write + emit event + audit.
 - `unit_of_work.commit_delete(aggregate, repo, event, command)` — delete + emit event + audit.
 - `unit_of_work.commit_all(aggregates, repo, event, command)` — batch write.
 - `unit_of_work.emit_event(event, command)` — emit event only (login, sync summary).
-- Any `.map(|_| success_event)` chained onto one of the above.
+- Any `.map(|c| c.map(|_| success_value))` chained onto one of the above.
 
 This is **stronger than the TypeScript runtime token check** — it's compile-time-guaranteed. A use case that "forgets" to call UoW fails to compile, not at test time. The convention test in `tests/uow_convention_test.rs` adds a second guard: it parses every `execute` body and asserts it reaches a `unit_of_work.*` call.
 
@@ -113,14 +113,14 @@ async fn commit<A, E, C>(
     repo: &dyn Persist<A>,
     event: E,
     cmd: &C,
-) -> UseCaseResult<E>
+) -> Result<Committed<E>, UseCaseError>
 where A: HasId, E: DomainEvent, C: Serialize {
     let mut tx = self.pool.begin().await?;
     repo.persist(aggregate, &mut tx).await?;            // INSERT/UPDATE entity row(s)
     self.persist_event(&mut tx, &event).await?;         // INSERT into msg_events
     self.persist_audit(&mut tx, &event, cmd).await?;    // INSERT into aud_logs
     tx.commit().await?;
-    UseCaseResult::success(event)
+    Ok(Committed::new(event))
 }
 ```
 

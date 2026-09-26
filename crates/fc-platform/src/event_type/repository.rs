@@ -149,9 +149,11 @@ impl EventTypeRepository {
                     renamed_names.push(d.name.clone());
                 }
                 None => {
-                    let et = EventType::new(&d.code, &d.name).map_err(|e| {
-                        PlatformError::internal(format!("catalogue event type {}: {e}", d.code))
-                    })?;
+                    let code =
+                        crate::event_type::entity::EventTypeCode::parse(&d.code).map_err(|e| {
+                            PlatformError::internal(format!("catalogue event type {}: {e}", d.code))
+                        })?;
+                    let et = EventType::new(code, &d.name);
                     new_ids.push(et.id.clone());
                     new_codes.push(et.code.clone());
                     new_names.push(et.name.clone());

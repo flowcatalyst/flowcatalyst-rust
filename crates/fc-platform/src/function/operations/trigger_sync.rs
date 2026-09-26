@@ -570,7 +570,7 @@ impl TriggerSync {
                     })
                     .collect(),
             ),
-            _ => None,
+            Wiring::Live { .. } | Wiring::HttpOnly => None,
         }
     }
 
@@ -828,17 +828,21 @@ impl TriggerSync {
                 .await?;
             }
             None => {
-                let mut sub = Subscription::new(key, name.clone(), endpoint.clone());
-                sub.application_code = Some(application_code.to_string());
-                sub.client_id = client_id.clone();
-                sub.event_types = vec![binding];
-                sub.source = SubscriptionSource::Function;
-                sub.dispatch_pool_id = Some(pool.id.clone());
-                sub.dispatch_pool_code = Some(pool.code.clone());
-                sub.mode = dispatch_mode(spec.mode);
-                sub.max_retries = spec.max_retries;
-                sub.timeout_seconds = spec.timeout_seconds;
-                sub.data_only = spec.data_only;
+                let sub = Subscription::builder()
+                    .code(key)
+                    .name(name.clone())
+                    .endpoint(endpoint.clone())
+                    .application_code(application_code.to_string())
+                    .maybe_client_id(client_id.clone())
+                    .event_types(vec![binding])
+                    .source(SubscriptionSource::Function)
+                    .dispatch_pool_id(pool.id.clone())
+                    .dispatch_pool_code(pool.code.clone())
+                    .mode(dispatch_mode(spec.mode))
+                    .max_retries(spec.max_retries)
+                    .timeout_seconds(spec.timeout_seconds)
+                    .data_only(spec.data_only)
+                    .build();
                 let event = SubscriptionCreated::new(ctx, &sub.id, &sub.code, &sub.name);
                 let command = CreateSubscriptionCommand {
                     code: key.to_string(),
@@ -1070,9 +1074,7 @@ impl TriggerSync {
                 let command = PauseScheduledJobCommand {
                     scheduled_job_id: j.id.clone(),
                 };
-                uow.commit(&j, &*self.jobs, event, &command)
-                    .await
-                    .into_result()?;
+                uow.commit(&j, &*self.jobs, event, &command).await?;
             } else if !disable && j.status == ScheduledJobStatus::Paused {
                 j.resume();
                 j.updated_by = Some(ctx.principal_id.clone());
@@ -1080,9 +1082,7 @@ impl TriggerSync {
                 let command = ResumeScheduledJobCommand {
                     scheduled_job_id: j.id.clone(),
                 };
-                uow.commit(&j, &*self.jobs, event, &command)
-                    .await
-                    .into_result()?;
+                uow.commit(&j, &*self.jobs, event, &command).await?;
             }
         }
         for (_, sub) in current.subscriptions.values() {
@@ -1094,8 +1094,7 @@ impl TriggerSync {
                     subscription_id: s.id.clone(),
                 };
                 uow.commit(&s, &*self.subscriptions, event, &command)
-                    .await
-                    .into_result()?;
+                    .await?;
             } else if !disable && s.status == SubscriptionStatus::Paused {
                 s.resume();
                 let event = SubscriptionResumed::new(ctx, &s.id);
@@ -1103,8 +1102,7 @@ impl TriggerSync {
                     subscription_id: s.id.clone(),
                 };
                 uow.commit(&s, &*self.subscriptions, event, &command)
-                    .await
-                    .into_result()?;
+                    .await?;
             }
         }
         Ok(())
@@ -1176,9 +1174,7 @@ impl TriggerSync {
             objects: repository,
             links: &self.trigger_objects,
         };
-        uow.commit(&linked, &links, event, command)
-            .await
-            .into_result()?;
+        uow.commit(&linked, &links, event, command).await?;
         Ok(linked.object)
     }
 
@@ -1206,9 +1202,7 @@ impl TriggerSync {
             objects: repository,
             links: &self.trigger_objects,
         };
-        uow.commit_delete(&linked, &links, event, command)
-            .await
-            .into_result()?;
+        uow.commit_delete(&linked, &links, event, command).await?;
         Ok(())
     }
 

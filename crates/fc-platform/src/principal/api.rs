@@ -1587,9 +1587,10 @@ pub async fn sync_users(
             SyncUsersUseCase::new(principal_repo, role_repo, caller, session)
                 .run(command, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()?;
+        .map(crate::usecase::Committed::into_inner)?;
 
     Ok(Json(SyncUsersResponse {
         created: event.created,

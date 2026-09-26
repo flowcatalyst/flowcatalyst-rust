@@ -36,6 +36,7 @@ pub fn spec_hash(spec: &Value) -> String {
 }
 
 /// Recursively sort object keys so equivalent documents hash identically.
+#[allow(clippy::wildcard_enum_match_arm)] // serde_json::Value is foreign: scalars copy as they are
 fn canonicalize(v: &Value) -> Value {
     match v {
         Value::Object(map) => {
@@ -149,10 +150,7 @@ fn render_summary(notes: &ChangeNotes) -> String {
         parts.push(format!("Added {} schema(s)", notes.added_schemas.len()));
     }
     if !notes.removed_schemas.is_empty() {
-        parts.push(format!(
-            "Removed {} schema(s)",
-            notes.removed_schemas.len()
-        ));
+        parts.push(format!("Removed {} schema(s)", notes.removed_schemas.len()));
     }
 
     let mut summary = parts.join("; ");

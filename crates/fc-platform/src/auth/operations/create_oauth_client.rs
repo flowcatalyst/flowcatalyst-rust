@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::events::OAuthClientCreated;
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,24 +103,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         &self,
         command: CreateOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientCreated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &CreateOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientCreated), UseCaseError> {
+    ) -> Result<Committed<OAuthClientCreated>, UseCaseError> {
         let exists = self
             .oauth_client_repo
             .exists_by_client_id(&command.client_id)
@@ -135,29 +118,37 @@ impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
             ));
         }
 
-        let mut client = OAuthClient::new(&command.client_id, &command.client_name);
-        client.id = command.oauth_client_id.clone();
-        client.client_type = command.client_type;
-        client.client_secret_ref = command.client_secret_ref.clone();
-        client.redirect_uris = command.redirect_uris.clone();
-        client.post_logout_redirect_uris = command.post_logout_redirect_uris.clone();
-        client.grant_types = command.grant_types.clone();
-        if !command.default_scopes.is_empty() {
-            client.default_scopes = command.default_scopes.clone();
-        }
-        client.pkce_required = command.pkce_required;
-        client.application_ids = command.application_ids.clone();
-        client.allowed_origins = command.allowed_origins.clone();
-        client.service_account_principal_id = command.service_account_principal_id.clone();
-        client.created_by = command.created_by.clone();
-        client.portal_client_id =
-            crate::portal::trimmed_or_none(command.portal_client_id.as_deref());
-        client.portal_app_id = crate::portal::trimmed_or_none(command.portal_app_id.as_deref());
-        client.api_access = command.api_access;
+        let client = OAuthClient::builder()
+            .client_id(&command.client_id)
+            .client_name(&command.client_name)
+            .id(command.oauth_client_id.clone())
+            .client_type(command.client_type)
+            .maybe_client_secret_ref(command.client_secret_ref.clone())
+            .redirect_uris(command.redirect_uris.clone())
+            .post_logout_redirect_uris(command.post_logout_redirect_uris.clone())
+            .grant_types(command.grant_types.clone())
+            // An empty list is the default (none).
+            .default_scopes(command.default_scopes.clone())
+            .pkce_required(command.pkce_required)
+            .application_ids(command.application_ids.clone())
+            .allowed_origins(command.allowed_origins.clone())
+            .maybe_service_account_principal_id(command.service_account_principal_id.clone())
+            .maybe_created_by(command.created_by.clone())
+            .maybe_portal_client_id(crate::portal::trimmed_or_none(
+                command.portal_client_id.as_deref(),
+            ))
+            .maybe_portal_app_id(crate::portal::trimmed_or_none(
+                command.portal_app_id.as_deref(),
+            ))
+            .api_access(command.api_access)
+            .build();
         crate::portal::validate_oauth_client_plane(&client)?;
 
         let event =
-            OAuthClientCreated::new(ctx, &client.id, &client.client_id, &client.client_name);
-        Ok((client, event))
+            OAuthClientCreated::new(&ctx, &client.id, &client.client_id, &client.client_name);
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

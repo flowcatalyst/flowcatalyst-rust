@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use crate::impl_domain_event;
+use crate::portal::entity::IdentityStatus;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 
@@ -93,18 +94,23 @@ pub struct IdentityStatusSet {
     pub metadata: EventMetadata,
     pub identity_id: String,
     pub client_id: String,
-    pub status: String,
+    pub status: IdentityStatus,
 }
 
 impl_domain_event!(IdentityStatusSet);
 
 impl IdentityStatusSet {
-    pub fn new(ctx: &ExecutionContext, identity_id: &str, client_id: &str, status: &str) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        identity_id: &str,
+        client_id: &str,
+        status: IdentityStatus,
+    ) -> Self {
         Self {
             metadata: identity_metadata(ctx, IDENTITY_STATUS_SET, identity_id),
             identity_id: identity_id.to_string(),
             client_id: client_id.to_string(),
-            status: status.to_string(),
+            status,
         }
     }
 }
@@ -279,5 +285,20 @@ mod tests {
         let body = serde_json::to_value(&e).unwrap();
         assert_eq!(body["code"], "suppliers");
         assert!(body.get("deletedOauthClientIds").is_none());
+    }
+
+    /// The status is the enum, written as the string it replaced.
+    #[test]
+    fn identity_status_set_writes_the_status_as_its_name() {
+        let ctx = ExecutionContext::create("prn_1");
+        for (status, name) in [
+            (IdentityStatus::Active, "ACTIVE"),
+            (IdentityStatus::Disabled, "DISABLED"),
+        ] {
+            let e = IdentityStatusSet::new(&ctx, "ptu_1", "clt_1", status);
+            let body = serde_json::to_value(&e).unwrap();
+            assert_eq!(body["status"], serde_json::json!(name));
+            assert_eq!(status.as_str(), name);
+        }
     }
 }

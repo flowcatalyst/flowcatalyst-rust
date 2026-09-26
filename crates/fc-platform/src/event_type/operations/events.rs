@@ -7,6 +7,7 @@
 //! carries exactly Go's `ToDataJSON` fields. Go leaves these events' message
 //! group empty (the column is NULL); a schema version is `specVersion`.
 
+use crate::event_type::entity::EventType;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
@@ -51,6 +52,22 @@ impl_domain_event!(EventTypeCreated);
 
 impl EventTypeCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:created";
+
+    /// The event for `event_type`, just created inside `ctx`.
+    pub fn new(ctx: &ExecutionContext, event_type: &EventType) -> Self {
+        Self {
+            metadata: Self::metadata_for(ctx, &event_type.id),
+            event_type_id: event_type.id.clone(),
+            code: event_type.code.clone(),
+            name: event_type.name.clone(),
+            description: event_type.description.clone(),
+            application: event_type.application.clone(),
+            subdomain: event_type.subdomain.clone(),
+            aggregate: event_type.aggregate.clone(),
+            event_name: event_type.event_name.clone(),
+            client_id: event_type.client_id.clone(),
+        }
+    }
 
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(ctx: &ExecutionContext, event_type_id: &str) -> EventMetadata {

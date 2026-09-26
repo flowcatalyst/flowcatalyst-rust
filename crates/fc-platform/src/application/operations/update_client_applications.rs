@@ -13,9 +13,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ClientApplicationsUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -86,29 +84,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
         &self,
         command: UpdateClientApplicationsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientApplicationsUpdated> {
-        let (to_persist, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // No diff → still emit one event so the audit trail records the request.
-        if to_persist.is_empty() {
-            return self.unit_of_work.emit_event(event, &command).await;
-        }
-
-        self.unit_of_work
-            .commit_all(&to_persist, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateClientApplicationsUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateClientApplicationsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<ApplicationClientConfig>, ClientApplicationsUpdated), UseCaseError> {
+    ) -> Result<Committed<ClientApplicationsUpdated>, UseCaseError> {
         // 1. Client must exist.
         self.client_repo
             .find_by_id(&command.client_id)
@@ -178,14 +154,21 @@ impl<U: UnitOfWork> UpdateClientApplicationsUseCase<U> {
         }
 
         let event = ClientApplicationsUpdated::new(
-            ctx,
+            &ctx,
             &command.client_id,
             command.enabled_application_ids.clone(),
             enabled_added,
             disabled_removed,
         );
 
-        Ok((to_persist, event))
+        // No diff → still emit one event so the audit trail records the request.
+        if to_persist.is_empty() {
+            return self.unit_of_work.emit_event(event, &command).await;
+        }
+
+        self.unit_of_work
+            .commit_all(&to_persist, &*self.config_repo, event, &command)
+            .await
     }
 }
 

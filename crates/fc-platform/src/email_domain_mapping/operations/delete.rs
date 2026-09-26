@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EmailDomainMappingDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EmailDomainMappingRepository;
 
 /// Command for deleting an email domain mapping.
@@ -63,24 +61,7 @@ impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
         &self,
         command: DeleteEmailDomainMappingCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EmailDomainMappingDeleted> {
-        let (mapping, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&mapping, &*self.edm_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteEmailDomainMappingCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::EmailDomainMapping, EmailDomainMappingDeleted), UseCaseError> {
+    ) -> Result<Committed<EmailDomainMappingDeleted>, UseCaseError> {
         let mapping = self
             .edm_repo
             .find_by_id(&command.mapping_id)
@@ -93,8 +74,11 @@ impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
                 ),
             )?;
 
-        let event = EmailDomainMappingDeleted::new(ctx, &mapping.id, &mapping.email_domain);
-        Ok((mapping, event))
+        let event = EmailDomainMappingDeleted::new(&ctx, &mapping.id, &mapping.email_domain);
+
+        self.unit_of_work
+            .commit_delete(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 

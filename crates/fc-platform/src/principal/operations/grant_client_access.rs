@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use super::events::ClientAccessGranted;
 use crate::principal::entity::{ClientAccessGrant, PrincipalType, UserScope};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientAccessGrantRepository;
 use crate::ClientRepository;
 use crate::PrincipalRepository;
@@ -80,24 +78,7 @@ impl<U: UnitOfWork> UseCase for GrantClientAccessUseCase<U> {
         &self,
         command: GrantClientAccessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientAccessGranted> {
-        let (grant, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&grant, &*self.grant_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> GrantClientAccessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &GrantClientAccessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ClientAccessGrant, ClientAccessGranted), UseCaseError> {
+    ) -> Result<Committed<ClientAccessGranted>, UseCaseError> {
         let principal = self
             .principal_repo
             .find_by_id(&command.user_id)
@@ -146,8 +127,11 @@ impl<U: UnitOfWork> GrantClientAccessUseCase<U> {
 
         let grant = ClientAccessGrant::new(&command.user_id, &command.client_id, &ctx.principal_id);
 
-        let event = ClientAccessGranted::new(ctx, &principal.id, &command.client_id);
-        Ok((grant, event))
+        let event = ClientAccessGranted::new(&ctx, &principal.id, &command.client_id);
+
+        self.unit_of_work
+            .commit(&grant, &*self.grant_repo, event, &command)
+            .await
     }
 }
 

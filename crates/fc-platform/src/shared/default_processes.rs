@@ -91,8 +91,9 @@ pub async fn seed_default_processes(pool: &PgPool) -> Result<()> {
         return Ok(());
     }
 
-    let mut process = Process::new(EXAMPLE_CODE, EXAMPLE_NAME)
+    let code = crate::process::ProcessCode::parse(EXAMPLE_CODE)
         .map_err(|e| PlatformError::internal(format!("example process code: {}", e)))?;
+    let mut process = Process::new(code, EXAMPLE_NAME);
     process.description = Some(EXAMPLE_DESCRIPTION.to_string());
     process.source = ProcessSource::Code;
     process.body = EXAMPLE_BODY.to_string();

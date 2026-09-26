@@ -20,9 +20,7 @@ use crate::scheduled_job::entity::{
     InstanceStatus, ScheduledJobInstance, ScheduledJobStatus, TriggerKind,
 };
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -76,22 +74,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         &self,
         cmd: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
-        let event = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work.emit_event(event, &cmd).await
-    }
-}
-
-impl<U: UnitOfWork> FireScheduledJobUseCase<U> {
-    async fn prepare(
-        &self,
-        cmd: &FireScheduledJobCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<ScheduledJobFiredManually, UseCaseError> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let job = self
             .repo
             .find_by_id(&cmd.scheduled_job_id)
@@ -137,7 +120,8 @@ impl<U: UnitOfWork> FireScheduledJobUseCase<U> {
             )));
         }
 
-        let event = ScheduledJobFiredManually::new(ctx, &job.id, &job.code, &instance.id);
-        Ok(event)
+        let event = ScheduledJobFiredManually::new(&ctx, &job.id, &job.code, &instance.id);
+
+        self.unit_of_work.emit_event(event, &cmd).await
     }
 }

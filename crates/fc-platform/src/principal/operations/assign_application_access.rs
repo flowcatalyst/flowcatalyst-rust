@@ -8,10 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationAccessAssigned;
-use crate::principal::entity::Principal;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 use crate::PrincipalRepository;
 
@@ -76,24 +73,7 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         &self,
         command: AssignApplicationAccessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationAccessAssigned> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AssignApplicationAccessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, ApplicationAccessAssigned), UseCaseError> {
+    ) -> Result<Committed<ApplicationAccessAssigned>, UseCaseError> {
         // Find the principal
         let mut principal = self
             .principal_repo
@@ -158,13 +138,16 @@ impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
         principal.updated_at = chrono::Utc::now();
 
         let event = ApplicationAccessAssigned::new(
-            ctx,
+            &ctx,
             &principal.id,
             command.application_ids.clone(),
             added,
             removed,
         );
-        Ok((principal, event))
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

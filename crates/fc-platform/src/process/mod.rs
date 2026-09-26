@@ -10,5 +10,5 @@ pub mod operations;
 pub mod repository;
 
 pub use api::processes_router;
-pub use entity::{Process, ProcessSource, ProcessStatus};
+pub use entity::{Process, ProcessCode, ProcessCodeError, ProcessSource, ProcessStatus};
 pub use repository::ProcessRepository;
