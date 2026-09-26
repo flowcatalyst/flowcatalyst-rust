@@ -1,7 +1,7 @@
 //! Shared server setup helpers.
 //!
 //! Extracts duplicated binary startup code (shutdown handling, auth init,
-//! platform route state construction) so fc-server, fc-platform-server,
+//! platform route state construction) so fc-server,
 //! and fc-dev share the same implementation.
 
 pub mod auth_init;

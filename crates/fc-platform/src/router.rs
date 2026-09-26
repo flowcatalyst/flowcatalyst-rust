@@ -1,7 +1,7 @@
 //! Centralized Platform Router Builder
 //!
 //! Eliminates duplicated route wiring across binary crates (fc-server,
-//! fc-platform-server, fc-dev). Each binary still constructs the state
+//! fc-dev). Each binary still constructs the state
 //! objects and adds its own middleware/static-file layers on top.
 
 use axum::{
@@ -816,7 +816,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
 
         // SPA serving (if static_dir is configured). No static_dir: no root
         // handler. The binary can add its own (fc-dev uses embedded assets,
-        // fc-server/fc-platform-server may redirect to Swagger).
+        // fc-server may redirect to Swagger).
         let app = match self.static_dir {
             Some(ref static_dir) => serve_spa(app, static_dir),
             None => app,

@@ -1,6 +1,6 @@
 //! Phase-aware connection timeouts for FlowCatalyst's HTTP listeners (owner
 //! ruling 10, 2026-09-25; Java 3f176222 `KeepAliveIdle`), shared by the
-//! platform listeners (`fc-server`, `fc-platform-server`, `fc-dev`) and the
+//! platform listeners (`fc-server`, `fc-dev`) and the
 //! function host's private and public listeners.
 //!
 //! The rule is phase-aware, with fixed values:

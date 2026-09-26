@@ -45,7 +45,7 @@ pub mod sdk_sync_api;
 pub mod sdk_sync_go_api;
 pub mod well_known_api;
 
-// Server setup helpers (shared across fc-server, fc-platform-server, fc-dev)
+// Server setup helpers (shared across fc-server and fc-dev)
 pub mod server_setup;
 
 // Per-IP rate limit middleware (in-memory, per-instance)

@@ -4,7 +4,7 @@ use tokio::signal;
 use tracing::info;
 
 /// Wait for ctrl_c or SIGTERM, logging which was received.
-/// Shared across fc-server, fc-platform-server, and fc-dev.
+/// Shared across fc-server and fc-dev.
 pub async fn wait_for_shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()

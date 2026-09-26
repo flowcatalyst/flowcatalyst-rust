@@ -17,7 +17,6 @@ members = [
     "bin/fc-dev",
     "bin/fc-mcp-server",
     "bin/fc-router",
-    "bin/fc-platform-server",
     "bin/fc-outbox-processor",
     "bin/fc-stream-processor",
     "bin/fc-server",

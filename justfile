@@ -170,7 +170,7 @@ _fcdev-port-free *ARGS:
 
 # ─── SDKs ─────────────────────────────────────────────────────────────────
 
-# Requires fc-dev (or fc-platform-server) to be serving on FC_API_PORT.
+# Requires fc-dev (or fc-server) to be serving on FC_API_PORT.
 #
 # The SDKs' generated clients (and their vendored openapi.json) are the
 # published ones, generated from the Go platform's spec. This platform's
@@ -251,8 +251,6 @@ build-dev:
 build-router:
     cargo build --bin fc-router-bin
 
-build-platform:
-    cargo build --bin fc-platform-server
 
 build-outbox:
     cargo build --bin fc-outbox-processor

@@ -1,6 +1,6 @@
 # Platform Control Plane
 
-The platform is the brain. It owns every aggregate (clients, principals, roles, event types, subscriptions, connections, dispatch pools, scheduled jobs, applications, identity providers, …), exposes them through two HTTP tiers (`/bff/*` for the UI, `/api/*` for SDKs), and gates every mutation through the same UseCase / UnitOfWork pipeline that emits domain events and audit logs atomically with each write. Source: `crates/fc-platform/`, binaries `bin/fc-platform-server/` (standalone) and `bin/fc-server/` (with `FC_PLATFORM_ENABLED=true`).
+The platform is the brain. It owns every aggregate (clients, principals, roles, event types, subscriptions, connections, dispatch pools, scheduled jobs, applications, identity providers, …), exposes them through two HTTP tiers (`/bff/*` for the UI, `/api/*` for SDKs), and gates every mutation through the same UseCase / UnitOfWork pipeline that emits domain events and audit logs atomically with each write. Source: `crates/fc-platform/`, binary `bin/fc-server/` (`FC_PLATFORM_ENABLED`, on by default).
 
 This document is for engineers working in `fc-platform`. For ops-level concerns (deploy, secrets, IDP setup) see [operations/](../operations/). For developer-facing usage (publishing events, configuring subscriptions) see [developers/](../developers/).
 
@@ -203,7 +203,7 @@ The `can_write_*` form exists for endpoints that accept create/update/delete in 
 2. **Plain routes** — BFF, monitoring, public, dispatch-process.
 3. **Auth middleware layer** — `AuthLayer` extracts bearer tokens or session cookies, populates `AuthContext` for downstream handlers.
 4. **CORS layer** — driven by `cors_origins_cache` populated from `tnt_cors_allowed_origins` (refreshed every 60 s).
-5. **SPA fallback** — `/assets/*` with `Cache-Control: public, max-age=31536000, immutable`; unmatched GET routes fall through to embedded `index.html`. Toggled per binary: `fc-server` embeds via `rust-embed`, `fc-platform-server` uses `FC_STATIC_DIR`, `fc-dev` either.
+5. **SPA fallback** — `/assets/*` with `Cache-Control: public, max-age=31536000, immutable`; unmatched GET routes fall through to embedded `index.html`. Toggled per binary: `fc-server` serves the SPA from `FC_STATIC_DIR` (default `/app/frontend/dist`), `fc-dev` embeds it or uses `FC_STATIC_DIR`.
 
 ---
 

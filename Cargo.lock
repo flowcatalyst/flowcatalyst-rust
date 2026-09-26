@@ -3130,29 +3130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fc-platform-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "fc-common",
- "fc-platform",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tower-http 0.6.8",
- "tracing",
- "tracing-subscriber",
- "utoipa",
- "utoipa-axum",
- "utoipa-swagger-ui",
- "uuid",
-]
-
-[[package]]
 name = "fc-queue"
 version = "0.1.0"
 dependencies = [

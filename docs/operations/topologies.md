@@ -10,8 +10,7 @@ This document supersedes the older `docs/builds.md`.
 
 | Binary | Purpose | Recommended for |
 |---|---|---|
-| `fc-server` | Unified production binary, all subsystems toggleable | Most deployments |
-| `fc-platform-server` | Platform REST API only | Split topologies |
+| `fc-server` | Unified production binary, all subsystems toggleable (the platform API alone is its default role) | Most deployments, and every tier of a split topology |
 | `fc-router` | Standalone SQS consumer + webhook delivery | Split topologies, separate IAM |
 | `fc-stream-processor` | Projections, fan-out, partition manager | Split topologies |
 | `fc-outbox-processor` | Application outbox dispatcher (sidecar for apps) | Always — runs alongside each app |
@@ -129,7 +128,7 @@ Run each subsystem in its own binary, scale independently.
 
 ```
    ┌───────────────────────────┐
-   │  fc-platform-server (n)   │  ← scales horizontally behind LB
+   │  fc-server, platform (n)  │  ← scales horizontally behind LB
    └──────────────┬────────────┘
                   │
    ┌──────────────┼─────────────┬─────────────┬─────────────┐
@@ -147,8 +146,9 @@ fc-router      fc-stream-    fc-outbox-   PostgreSQL    Redis
 Per-binary configuration:
 
 ```sh
-# Platform API tier — N instances, no background work
-fc-platform-server  \
+# Platform API tier — N instances, no background work (fc-server's
+# default role: platform on, every background subsystem off)
+fc-server  \
   FC_API_PORT=3000  \
   FC_DATABASE_URL=postgresql://...
 
@@ -193,7 +193,7 @@ Common compromise — platform API scales horizontally; one node handles all bac
 
 ```
    ┌────────────────────────────┐
-   │  fc-platform-server (n)    │
+   │  fc-server, platform (n)   │
    └──────────────┬─────────────┘
                   │
    ┌──────────────┼─────────────┐
@@ -214,8 +214,8 @@ Common compromise — platform API scales horizontally; one node handles all bac
 Configuration:
 
 ```sh
-# Platform tier
-fc-platform-server  FC_DATABASE_URL=...
+# Platform tier (fc-server's default role)
+fc-server  FC_DATABASE_URL=...
 
 # Background tier
 fc-server  \

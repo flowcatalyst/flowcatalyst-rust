@@ -107,7 +107,6 @@ Organised by audience:
 | Binary | Purpose |
 |---|---|
 | `fc-server` | Unified production server — all subsystems toggleable via env vars |
-| `fc-platform-server` | Platform REST API only (split topologies) |
 | `fc-router` | Standalone SQS consumer + webhook delivery |
 | `fc-stream-processor` | Projections, fan-out, partition manager |
 | `fc-outbox-processor` | Application-side outbox dispatcher (sidecar) |
@@ -131,7 +130,6 @@ just release
 just build-server      # fc-server
 just build-dev         # fc-dev
 just build-router      # fc-router
-just build-platform    # fc-platform-server
 just build-stream      # fc-stream-processor
 just build-outbox      # fc-outbox-processor
 ```

@@ -52,8 +52,8 @@ Top-level system view. For per-component depth see [`docs/architecture/`](docs/a
 
 Standalone alternatives (for separation of scaling concerns):
 
-   fc-router            fc-platform-server     fc-stream-processor
-   fc-outbox-processor  fc-dev (local dev)     fc-mcp-server
+   fc-router            fc-stream-processor    fc-outbox-processor
+   fc-dev (local dev)   fc-mcp-server
 ```
 
 Binary inventory and deployment topologies: [`docs/operations/topologies.md`](docs/operations/topologies.md).
@@ -171,7 +171,7 @@ Infrastructure paths that bypass UoW (ingest, status transitions, OAuth state, s
 ## Crate layout
 
 ```
-fc-server / fc-dev / fc-router / fc-platform-server / fc-stream-processor / fc-outbox-processor
+fc-server / fc-dev / fc-router / fc-stream-processor / fc-outbox-processor
         │
         ▼
 fc-platform   fc-router   fc-stream   fc-outbox   fc-mcp   fc-sdk

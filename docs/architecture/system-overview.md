@@ -86,7 +86,6 @@ Binary inventory:
 | Binary | Subsystems | DB |
 |---|---|---|
 | `fc-server` | Platform + Scheduler + Router + Stream + Outbox (toggleable) | PostgreSQL |
-| `fc-platform-server` | Platform API only | PostgreSQL |
 | `fc-router` | Standalone SQS consumer + HTTP delivery | none (config via HTTP) |
 | `fc-stream-processor` | Projections + fan-out + partition mgr | PostgreSQL (small pool) |
 | `fc-outbox-processor` | Application outbox dispatcher | Application's own DB |

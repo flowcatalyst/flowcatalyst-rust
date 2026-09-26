@@ -105,7 +105,7 @@ run_migrations() {
 start_platform() {
     check_cargo_watch
     echo -e "${BLUE}Starting Platform Server on port $FC_API_PORT...${NC}"
-    cargo watch -w crates -w bin -x 'run -p fc-platform-server'
+    cargo watch -w crates -w bin -x 'run -p fc-server'
 }
 
 # Start stream processor (with watch for auto-rebuild)
@@ -136,7 +136,7 @@ start_all() {
 # Build release binaries
 build_release() {
     echo -e "${BLUE}Building release binaries...${NC}"
-    cargo build --release -p fc-dev -p fc-platform-server -p fc-stream-processor
+    cargo build --release -p fc-dev -p fc-server -p fc-stream-processor
     echo -e "${GREEN}Build complete!${NC}"
     echo "Binaries in target/release/"
 }
