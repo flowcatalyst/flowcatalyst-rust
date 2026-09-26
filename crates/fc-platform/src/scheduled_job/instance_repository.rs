@@ -277,6 +277,52 @@ impl ScheduledJobInstanceRepository {
         Ok(row.0 > 0)
     }
 
+    /// Go's `HasActiveInstance`: a QUEUED or IN_FLIGHT instance, or a
+    /// DELIVERED one still awaiting its completion callback when the job
+    /// tracks completion.
+    pub async fn has_active_instance_for(
+        &self,
+        scheduled_job_id: &str,
+        tracks_completion: bool,
+    ) -> Result<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM msg_scheduled_job_instances \
+             WHERE scheduled_job_id = $1 \
+               AND (status IN ('QUEUED', 'IN_FLIGHT') \
+                    OR (status = 'DELIVERED' AND $2 AND completed_at IS NULL)))",
+        )
+        .bind(scheduled_job_id)
+        .bind(tracks_completion)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// [`Self::has_active_instance_for`] for many jobs at once: the ids of
+    /// `job_ids` with an active instance (`tracking` names the jobs that
+    /// track completion).
+    pub async fn jobs_with_active_instances(
+        &self,
+        job_ids: &[String],
+        tracking: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        if job_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT scheduled_job_id FROM msg_scheduled_job_instances \
+             WHERE scheduled_job_id = ANY($1) \
+               AND (status IN ('QUEUED', 'IN_FLIGHT') \
+                    OR (status = 'DELIVERED' AND completed_at IS NULL \
+                        AND scheduled_job_id = ANY($2)))",
+        )
+        .bind(job_ids)
+        .bind(tracking)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn list(&self, f: &InstanceListFilters<'_>) -> Result<Vec<ScheduledJobInstance>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!(
             "SELECT {INSTANCE_COLS} FROM msg_scheduled_job_instances"

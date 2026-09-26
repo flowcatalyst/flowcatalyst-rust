@@ -528,17 +528,25 @@ pub async fn list_scheduled_jobs(
         )
         .await? as u64;
 
-    // Hydrate has_active_instance per row. Small N (page size) — fine
-    // sequentially; replace with a single GROUP BY query if pages get wide.
-    let mut data = Vec::with_capacity(visible.len());
-    for j in visible {
-        let active = state
-            .instance_repo
-            .has_active_instance(&j.id)
-            .await
-            .unwrap_or(false);
-        data.push(ScheduledJobResponse::from(j, active));
-    }
+    // hasActiveInstance for the whole page in one query.
+    let ids: Vec<String> = visible.iter().map(|j| j.id.clone()).collect();
+    let tracking: Vec<String> = visible
+        .iter()
+        .filter(|j| j.tracks_completion)
+        .map(|j| j.id.clone())
+        .collect();
+    let active = state
+        .instance_repo
+        .jobs_with_active_instances(&ids, &tracking)
+        .await
+        .unwrap_or_default();
+    let data: Vec<ScheduledJobResponse> = visible
+        .into_iter()
+        .map(|j| {
+            let is_active = active.contains(&j.id);
+            ScheduledJobResponse::from(j, is_active)
+        })
+        .collect();
 
     Ok(Json(PaginatedResponse::new(
         data,
@@ -574,7 +582,7 @@ pub async fn get_scheduled_job(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance(&job.id)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -611,7 +619,7 @@ pub async fn get_scheduled_job_by_code(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance(&job.id)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
