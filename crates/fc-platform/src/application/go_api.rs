@@ -136,14 +136,20 @@ pub async fn get_application_client_config(
         .ok_or_else(|| {
             PlatformError::not_found_code("ClientConfig", format!("{id}:{client_id}"))
         })?;
-    Ok(Json(GoClientConfigResponse {
-        id: c.id,
-        application_id: c.application_id,
-        client_id: c.client_id,
-        enabled: c.enabled,
-        created_at: c.created_at.to_rfc3339(),
-        updated_at: c.updated_at.to_rfc3339(),
-    }))
+    Ok(Json(c.into()))
+}
+
+impl From<crate::application::ApplicationClientConfig> for GoClientConfigResponse {
+    fn from(c: crate::application::ApplicationClientConfig) -> Self {
+        Self {
+            id: c.id,
+            application_id: c.application_id,
+            client_id: c.client_id,
+            enabled: c.enabled,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
 }
 
 /// Full-path router; merged at the root.
