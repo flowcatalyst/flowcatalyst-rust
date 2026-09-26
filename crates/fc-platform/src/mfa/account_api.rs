@@ -138,8 +138,11 @@ async fn change_password(
             "Your current password is incorrect.",
         );
     }
-    if let Err(e) = s.password_service.validate_password(&req.new_password) {
-        return coded(StatusCode::BAD_REQUEST, "PASSWORD_POLICY", &e.to_string());
+    // Go's policy (auth/passwordpolicy: length, not common, not the
+    // account's own email or name), with its codes and messages.
+    let email = p.email().unwrap_or_default().to_string();
+    if let Some(v) = crate::portal::policy::validate(&req.new_password, &email, &p.name) {
+        return coded(StatusCode::BAD_REQUEST, v.code, &v.message);
     }
 
     // Any confirmed factor means a current code is needed too. The SPA
@@ -169,7 +172,7 @@ async fn change_password(
         }
     }
 
-    let new_hash = match s.password_service.hash_password(&req.new_password) {
+    let new_hash = match s.password_service.rehash_password(&req.new_password) {
         Ok(h) => h,
         Err(_) => return server_error("HASH_FAILED", "could not set the new password"),
     };
