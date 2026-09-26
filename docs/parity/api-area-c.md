@@ -52,7 +52,7 @@ One commit per change; each message says what is now true.
 | `e2153f4b` | Portal: bodies checked as Go's huma schema (required members, the clientType enum); Go's OIDC-resolve message. |
 | `d3633466` | Passkeys: EMAIL_REQUIRED on an empty email, go-webauthn's parse message, `lastUsedAt` omitted until used. |
 | `e369ce45` | A login with no permissions answers `permissions: null`. |
-| `be97da4d` | Identity providers and email-domain mappings on Go's model: routed domains are the mappings (create/update map, claim and release them in one transaction), delete guards, role sync on the provider (migration 053), mapping writes through the unit of work. |
+| `be97da4d` | Identity providers and email-domain mappings on Go's model: routed domains are the mappings (create/update map, claim and release them in one transaction), delete guards, role sync on the provider (migration 055), mapping writes through the unit of work. |
 | `2f731fbb` | User passwords checked against Go's policy (create, reset, change-password) with Go's codes. |
 | `ac95872e` | Allow-list entries for the differences owner decisions make deliberate. |
 
@@ -63,7 +63,7 @@ One commit per change; each message says what is now true.
   cutover a Rust platform would have shown providers without their domains, refused portal SSO through a
   multi-tenant provider (its "allowed domains" looked empty), ignored a provider's role-sync switch, and compared
   the mapping's role ids against role names (rejecting every role when an allow-list existed). Fixed in `be97da4d`.
-  Migration **053** (`053_identity_provider_role_sync`) adds Go's column and junction to a database Rust created; on a
+  Migration **055** (`055_identity_provider_role_sync`) adds Go's column and junction to a database Rust created; on a
   Go database its probe marks it applied. A Rust-created database keeps the provider domains it stored only in the
   old junction out of view until they are mapped (dev and test only; production is a Go database).
 - **Passwords.** Go's NIST-shaped policy is what production users meet. Rust's composition rules refused passwords

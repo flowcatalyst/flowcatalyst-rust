@@ -10,7 +10,6 @@ use crate::usecase::{
 };
 use crate::Subscription;
 use crate::SubscriptionRepository;
-use crate::SubscriptionStatus;
 
 /// Command for resuming a paused subscription.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,13 +95,8 @@ impl<U: UnitOfWork> ResumeSubscriptionUseCase<U> {
                 ),
             )?;
 
-        // Business rule: can only resume paused subscriptions
-        if subscription.status == SubscriptionStatus::Active {
-            return Err(UseCaseError::business_rule(
-                "ALREADY_ACTIVE",
-                "Subscription is already active",
-            ));
-        }
+        // Unconditional, as Go: a repeat is a no-op write that still
+        // records the event (`subscription/operations/resume.go`).
 
         // Resume the subscription
         subscription.resume();

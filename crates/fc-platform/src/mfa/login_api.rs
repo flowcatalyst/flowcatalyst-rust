@@ -147,7 +147,8 @@ pub struct CompletedLogin {
     pub name: String,
     pub email: String,
     pub roles: Vec<String>,
-    pub permissions: Vec<String>,
+    /// `null` when the roles grant nothing (Go appends to a nil slice).
+    pub permissions: Option<Vec<String>>,
     /// `null` when the user has no home client (Go omits no `omitempty`).
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -330,7 +331,7 @@ impl TwoFactorLogin {
             name: p.name.clone(),
             email,
             roles,
-            permissions,
+            permissions: Some(permissions).filter(|p| !p.is_empty()),
             client_id: p.client_id.clone(),
             recovery_codes,
             sso_managed: self.sso_managed(p, None).await,

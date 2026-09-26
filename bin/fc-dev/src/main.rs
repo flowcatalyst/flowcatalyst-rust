@@ -92,6 +92,10 @@ enum Command {
     /// one (e.g. PostGIS in Docker).
     Outbox(outbox::OutboxArgs),
 
+    /// Stop a running fcdev (Rust, Go or Java) via the shared PID file:
+    /// SIGTERM, so it drains and stops its embedded Postgres.
+    Stop(stop::StopArgs),
+
     /// Download the latest fc-dev release and replace this binary.
     Upgrade(UpgradeArgs),
 
@@ -176,137 +180,84 @@ struct RunArgs {
     )]
     database_url: String,
 
-    /// Start an embedded PostgreSQL instead of connecting to `--database-url`.
-    /// First run downloads a ~80MB pg binary to `~/.cache/flowcatalyst-dev/pgdata/`.
-    /// Set to `false` (or pass `--embedded-db=false`) to connect to an
-    /// existing Postgres (e.g. the one you run in Docker). Only available
-    /// when compiled with the `embedded-db` feature.
+    /// Start the embedded PostgreSQL 18 cluster shared with Go's and Java's
+    /// fcdev instead of connecting to `--database-url`. Set to `false`
+    /// (`--embedded-db=false` / `FC_EMBEDDED_DB=false`) to use an existing
+    /// Postgres. Only available when compiled with the `embedded-db` feature.
     #[cfg(feature = "embedded-db")]
-    #[arg(long, env = "FC_EMBEDDED_DB", default_value = "true")]
+    #[arg(
+        long,
+        env = "FC_EMBEDDED_DB",
+        default_value = "true",
+        // Go's `--embedded-db=false` form (and bare `--embedded-db`).
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
     embedded_db: bool,
 
-    /// Wipe the embedded Postgres data directory before starting. Only
-    /// honoured when `--embedded-db` is active.
+    /// Wipe the embedded Postgres directory (`--embedded-db-path`, the whole
+    /// directory, as Go does) before starting. `--reset-db` / `FC_RESET_DB`
+    /// is the older fc-dev spelling. The shared default cluster also needs
+    /// `--confirm-shared-db-reset`.
     #[cfg(feature = "embedded-db")]
-    #[arg(long, env = "FC_RESET_DB", default_value = "false")]
-    reset_db: bool,
+    #[arg(
+        long = "embedded-db-reset",
+        alias = "reset-db",
+        env = "FC_EMBEDDED_DB_RESET",
+        default_value = "false",
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    embedded_db_reset: bool,
+
+    /// Confirm that `--embedded-db-reset` may delete the shared default
+    /// cluster (the one Go's and Java's fcdev use too).
+    #[cfg(feature = "embedded-db")]
+    #[arg(
+        long,
+        env = "FC_CONFIRM_SHARED_DB_RESET",
+        default_value = "false",
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    confirm_shared_db_reset: bool,
+
+    /// Embedded cluster location, port and PostGIS source.
+    #[cfg(feature = "embedded-db")]
+    #[command(flatten)]
+    embedded: embedded_pg::EmbeddedDbArgs,
+
+    /// PID file written while running, shared with Go's and Java's fcdev;
+    /// used by `fc-dev stop` and to refuse a second instance.
+    /// [default: <userDataDir>/flowcatalyst/fcdev.pid]
+    #[arg(long, env = "FC_DEV_PID_FILE", value_name = "FILE")]
+    pid_file: Option<std::path::PathBuf>,
 
     /// The in-process function host (on by default).
     #[command(flatten)]
     functions: functions::FunctionArgs,
 }
 
-#[cfg(feature = "embedded-db")]
-mod embedded_pg {
-    //! Bundles a PostgreSQL binary into fc-dev so a fresh clone can
-    //! `./fc-dev` without running any database separately.
-    //!
-    //! The `bundled` feature on `postgresql_embedded` pulls the pg binary
-    //! at **build** time and embeds it into the fc-dev executable. First
-    //! run extracts from the exe itself — no runtime network call, no
-    //! second binary for EDR or corporate allowlisting to review.
-
-    use anyhow::{Context, Result};
-    use postgresql_embedded::{PostgreSQL, Settings};
-    use std::path::PathBuf;
-    use tracing::info;
-
-    pub struct EmbeddedDb {
-        pub postgresql: PostgreSQL,
-        pub url: String,
-    }
-
-    pub fn data_dir() -> PathBuf {
-        dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("flowcatalyst-dev")
-            .join("pgdata")
-    }
-
-    pub async fn start(reset: bool) -> Result<EmbeddedDb> {
-        let data_dir = data_dir();
-
-        if reset && data_dir.exists() {
-            info!(path = %data_dir.display(), "Resetting embedded Postgres data dir");
-            std::fs::remove_dir_all(&data_dir)
-                .context("Failed to remove embedded Postgres data dir")?;
-        }
-
-        // Pin the password so the data dir and the connection URL stay
-        // consistent across restarts. `Settings::default()` generates a
-        // *fresh* random password every process start and does NOT
-        // persist it — initdb'd data from a previous run then no longer
-        // matches, and connections fail.
-        //
-        // Username is pinned to "postgres" because postgresql_embedded
-        // hardcodes that as the initdb bootstrap superuser regardless of
-        // what we pass. Setting it to anything else only changes what
-        // appears in `settings().url()`, not the actual role pg creates —
-        // and we want the URL to match an existing role.
-        //
-        // Changing these later after a data dir exists requires
-        // `--reset-db` (initdb only runs once).
-        let settings = Settings {
-            data_dir: data_dir.clone(),
-            // Deterministic port so the connection string is stable across
-            // restarts. 15432 avoids colliding with a native-installed Postgres.
-            port: 15432,
-            username: "postgres".to_string(),
-            password: "flowcatalyst".to_string(),
-            temporary: false,
-            ..Settings::default()
-        };
-
-        info!(
-            data_dir = %data_dir.display(),
-            port = settings.port,
-            "Starting embedded Postgres (binary is bundled into fc-dev)"
-        );
-
-        let mut postgresql = PostgreSQL::new(settings);
-        postgresql
-            .setup()
-            .await
-            .context("embedded Postgres setup failed")?;
-        postgresql
-            .start()
-            .await
-            .context("embedded Postgres start failed")?;
-
-        let database_name = "flowcatalyst";
-        // create_database is not idempotent across restarts; the second run
-        // returns an "already exists" error that we can safely ignore.
-        if let Err(e) = postgresql.create_database(database_name).await {
-            let msg = e.to_string();
-            if !msg.contains("already exists") {
-                return Err(anyhow::anyhow!(
-                    "failed to create flowcatalyst database: {}",
-                    e
-                ));
-            }
-        }
-
-        let url = postgresql.settings().url(database_name);
-        info!("Embedded Postgres ready at {}", url);
-
-        Ok(EmbeddedDb { postgresql, url })
-    }
-
-    pub async fn stop(db: &mut EmbeddedDb) {
-        info!("Stopping embedded Postgres");
-        if let Err(e) = db.postgresql.stop().await {
-            tracing::warn!(error = %e, "Failed to stop embedded Postgres cleanly");
-        }
-    }
-}
-
 mod banner;
+mod dev_paths;
+#[cfg(feature = "embedded-db")]
+mod embedded_pg;
 mod fn_cli;
 mod fresh;
 mod functions;
 mod init;
+mod instance_guard;
 mod mcp_bootstrap;
 mod outbox;
+#[cfg(feature = "embedded-db")]
+mod pg_extensions;
+mod stop;
 mod upgrade;
 mod version_check;
 
@@ -323,18 +274,15 @@ async fn main() -> Result<()> {
         let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
     }
 
-    // The dev app key, before the subcommands: `fc-dev init` seals the
-    // secrets it mints with it, and they must open under the server's.
-    if std::env::var("FLOWCATALYST_APP_KEY").is_err() {
-        std::env::set_var(
-            "FLOWCATALYST_APP_KEY",
-            "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
-        );
-    }
-
     // Subcommand fast path — handle the ones that don't need a database,
     // env vars, or anything else expensive before booting the dev server.
     let cli = Cli::parse();
+
+    // The dev app key, before the subcommands: `fc-dev init` seals the
+    // secrets it mints with it, and they must open under the server's.
+    let state_dir = shared_state_dir(&cli);
+    apply_dev_app_key(state_dir.as_deref());
+
     match cli.command {
         Some(Command::Upgrade(opts)) => {
             fc_common::logging::init_logging("fc-dev");
@@ -373,6 +321,9 @@ async fn main() -> Result<()> {
         Some(Command::Fn(args)) => {
             std::process::exit(fn_cli::run(args).await);
         }
+        Some(Command::Stop(args)) => {
+            return stop::run(args);
+        }
         _ => {}
     }
 
@@ -406,9 +357,26 @@ async fn main() -> Result<()> {
     // so `cargo run -p fc-dev` vs `./target/release/fc-dev` generate
     // separate keys, and any existing `fc_session` cookie signed with
     // the other set fails validation and kicks the user back to login.
-    if std::env::var("FC_JWT_PRIVATE_KEY_PATH").is_err()
-        && std::env::var("FC_JWT_PUBLIC_KEY_PATH").is_err()
-    {
+    //
+    // On the shared cluster, Go's and Java's signing key
+    // (`<userDataDir>/flowcatalyst/jwt-signing-key.pem`) is used when it
+    // exists, so a session survives switching binaries.
+    let go_signing_key = state_dir
+        .as_ref()
+        .map(|d| d.join("jwt-signing-key.pem"))
+        .filter(|p| p.is_file());
+    let jwt_configured = [
+        "FC_JWT_PRIVATE_KEY_PATH",
+        "FC_JWT_PUBLIC_KEY_PATH",
+        "FC_JWT_SIGNING_KEY_PATH",
+    ]
+    .iter()
+    .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+    if !jwt_configured && go_signing_key.is_some() {
+        if let Some(key) = &go_signing_key {
+            std::env::set_var("FC_JWT_SIGNING_KEY_PATH", key);
+        }
+    } else if !jwt_configured {
         let keys_dir = dirs::cache_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("flowcatalyst-dev")
@@ -446,11 +414,34 @@ async fn main() -> Result<()> {
     // so it never delays boot; result is logged + exposed via /health.
     version_check::spawn();
 
-    // 0. If embedded-pg is enabled, start it before anything else touches
+    // 0. One fcdev at a time (Rust, Go or Java): the shared PID file.
+    let pid_file = args
+        .pid_file
+        .clone()
+        .unwrap_or_else(dev_paths::default_pid_file);
+    let _pid_file_guard = instance_guard::claim_pid_file(&pid_file)?;
+
+    //    If embedded-pg is enabled, start it before anything else touches
     //    the database and override the URL that downstream code will use.
     #[cfg(feature = "embedded-db")]
     let mut embedded_db = if args.embedded_db {
-        let db = embedded_pg::start(args.reset_db).await?;
+        if std::env::var_os("FC_DATABASE_URL").is_some() {
+            info!(
+                "Using the embedded Postgres; FC_DATABASE_URL / --database-url is ignored \
+                 (pass --embedded-db=false to connect to it instead)"
+            );
+        }
+        let reset = embedded_pg::Reset {
+            requested: args.embedded_db_reset || env_flag("FC_RESET_DB"),
+            confirmed: args.confirm_shared_db_reset,
+        };
+        let db = embedded_pg::start(
+            &args.embedded,
+            reset,
+            embedded_pg::Mode::Exclusive,
+            &pid_file,
+        )
+        .await?;
         args.database_url = db.url.clone();
         std::env::set_var("FC_DATABASE_URL", &db.url);
         Some(db)
@@ -958,6 +949,7 @@ async fn main() -> Result<()> {
     // this itself as compatibility for the generated frontend client).
     let dispatch_jobs_state = fc_platform::api::DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
             repos.subscription_repo.clone(),
             repos.connection_repo.clone(),
@@ -1214,6 +1206,66 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// A boolean environment flag (`true`/`1`/`yes`).
+#[allow(dead_code)]
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false)
+}
+
+/// The directory holding the state shared with Go's and Java's fcdev
+/// (`<userDataDir>/flowcatalyst`, beside the embedded cluster), when the
+/// command uses the embedded cluster.
+fn shared_state_dir(cli: &Cli) -> Option<std::path::PathBuf> {
+    #[cfg(feature = "embedded-db")]
+    {
+        let embedded = match &cli.command {
+            None => cli.run.embedded_db.then_some(&cli.run.embedded),
+            Some(Command::Start(a)) => a.embedded_db.then_some(&a.embedded),
+            Some(Command::Init(a)) => a.embedded_db.then_some(&a.embedded),
+            Some(Command::Fresh(a)) => a.embedded_db.then_some(&a.embedded),
+            _ => None,
+        }?;
+        Some(dev_paths::state_dir_for(&embedded.path()))
+    }
+    #[cfg(not(feature = "embedded-db"))]
+    {
+        let _ = cli;
+        None
+    }
+}
+
+/// `FLOWCATALYST_APP_KEY` when the environment doesn't set it. On the
+/// shared cluster: Go's and Java's key file (`<state>/app-key`, created as
+/// Go creates it), so secrets any of the three binaries stored stay
+/// readable by the others. Otherwise (an external database, or a command
+/// without one): the fixed dev key fc-dev has always used, so secrets in an
+/// existing external dev database stay readable.
+fn apply_dev_app_key(state_dir: Option<&std::path::Path>) {
+    if std::env::var_os("FLOWCATALYST_APP_KEY").is_some_and(|v| !v.is_empty()) {
+        return;
+    }
+    if let Some(dir) = state_dir {
+        let path = dir.join("app-key");
+        match dev_paths::ensure_app_key_file(&path) {
+            Ok(key) => {
+                std::env::set_var("FLOWCATALYST_APP_KEY", key);
+                return;
+            }
+            Err(e) => eprintln!(
+                "fc-dev: could not read or create {} ({e}); using the fixed dev key — \
+                 secrets Go/Java fcdev stored will not decrypt",
+                path.display()
+            ),
+        }
+    }
+    std::env::set_var(
+        "FLOWCATALYST_APP_KEY",
+        "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
+    );
+}
+
 async fn metrics_handler() -> &'static str {
     // In a real implementation, you'd use metrics-exporter-prometheus
     // For now, return basic Prometheus format
@@ -1348,27 +1400,53 @@ async fn auto_sync_developer_portal(
     let ctx = ExecutionContext::create(principal_id);
 
     // ── Event types + schemas for the `platform` application ──────────
-    let definitions = fc_platform::seed::platform_event_types::definitions();
-    let event_types_total = definitions.len();
+    // Only definitions that are new or differ from what is stored go to the
+    // sync: the sync (like Go's) records an "updated" event and audit row for
+    // every listed type that exists, changed or not, and this runs on every
+    // start — on a shared developer cluster that was 131 events per start.
+    let all_definitions = fc_platform::seed::platform_event_types::definitions();
+    let event_types_total = all_definitions.len();
+    let stored = match event_type_repo.find_by_application("platform").await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(error = %e, "Developer-portal auto-sync: reading platform event types failed");
+            Vec::new()
+        }
+    };
+    let definitions = changed_event_type_definitions(all_definitions, &stored);
+    if definitions.is_empty() {
+        info!(
+            total = event_types_total,
+            "Developer-portal auto-sync: platform event types up to date"
+        );
+    }
     let cmd = SyncEventTypesCommand {
         application_code: "platform".to_string(),
         event_types: definitions,
         remove_unlisted: false,
     };
     let sync_event_types = SyncEventTypesUseCase::new(event_type_repo, unit_of_work.clone());
-    match sync_event_types.run(cmd, ctx.clone()).await.into_result() {
-        Ok(event) => {
-            info!(
-                total = event_types_total,
-                created = event.created,
-                updated = event.updated,
-                deleted = event.deleted,
-                "Developer-portal auto-sync: platform event types"
-            );
-        }
-        Err(err) => {
-            warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
-        }
+    let sync_result = if cmd.event_types.is_empty() {
+        None
+    } else {
+        Some(sync_event_types.run(cmd, ctx.clone()).await.into_result())
+    };
+    match sync_result {
+        None => {}
+        Some(result) => match result {
+            Ok(event) => {
+                info!(
+                    total = event_types_total,
+                    created = event.created,
+                    updated = event.updated,
+                    deleted = event.deleted,
+                    "Developer-portal auto-sync: platform event types"
+                );
+            }
+            Err(err) => {
+                warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
+            }
+        },
     }
 
     // ── Platform's own OpenAPI document into the developer portal ─────
@@ -1398,6 +1476,31 @@ async fn auto_sync_developer_portal(
     }
 
     Ok(())
+}
+
+/// The platform event-type definitions worth syncing: those not stored yet,
+/// or whose name, description or 1.0 schema differs from the stored row.
+fn changed_event_type_definitions(
+    definitions: Vec<fc_platform::event_type::operations::SyncEventTypeInput>,
+    stored: &[fc_platform::EventType],
+) -> Vec<fc_platform::event_type::operations::SyncEventTypeInput> {
+    definitions
+        .into_iter()
+        .filter(|def| match stored.iter().find(|et| et.code == def.code) {
+            None => true,
+            Some(et) => {
+                et.name != def.name
+                    || et.description != def.description
+                    || def.schema.as_ref().is_some_and(|schema| {
+                        et.spec_versions
+                            .iter()
+                            .find(|sv| sv.version == "1.0")
+                            .and_then(|sv| sv.schema_content.as_ref())
+                            != Some(schema)
+                    })
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1446,5 +1549,64 @@ mod spa_cache_tests {
                 "{path}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_sync_tests {
+    use super::changed_event_type_definitions;
+    use fc_platform::event_type::operations::SyncEventTypeInput;
+    use fc_platform::{EventType, SpecVersion};
+    use serde_json::json;
+
+    fn def(code: &str, name: &str, schema: Option<serde_json::Value>) -> SyncEventTypeInput {
+        SyncEventTypeInput {
+            code: code.into(),
+            name: name.into(),
+            description: None,
+            schema,
+        }
+    }
+
+    fn stored(code: &str, name: &str, schema: Option<serde_json::Value>) -> EventType {
+        let mut et = EventType::new(code, name).expect("valid code");
+        if schema.is_some() {
+            et.spec_versions = vec![SpecVersion::new(&et.id, "1.0", schema)];
+        }
+        et
+    }
+
+    /// Only new or changed definitions are synced, so an unchanged start
+    /// records no events (it recorded one per platform type before).
+    #[test]
+    fn only_new_or_changed_definitions_are_synced() {
+        let schema = json!({ "type": "object" });
+        let rows = vec![
+            stored("platform:a:b:same", "Same", Some(schema.clone())),
+            stored("platform:a:b:renamed", "Old name", None),
+            stored(
+                "platform:a:b:schema",
+                "Schema",
+                Some(json!({ "type": "string" })),
+            ),
+        ];
+        let defs = vec![
+            def("platform:a:b:same", "Same", Some(schema.clone())),
+            def("platform:a:b:renamed", "New name", None),
+            def("platform:a:b:schema", "Schema", Some(schema.clone())),
+            def("platform:a:b:new", "New", None),
+        ];
+        let codes: Vec<String> = changed_event_type_definitions(defs, &rows)
+            .into_iter()
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                "platform:a:b:renamed",
+                "platform:a:b:schema",
+                "platform:a:b:new"
+            ]
+        );
     }
 }

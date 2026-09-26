@@ -362,7 +362,14 @@ async fn suspend_and_activate_dispatch_pool_emit_go_events() {
             json!({}),
         )
         .await;
-    let body = assert_status(resp, StatusCode::OK).await;
+    // Go: 204, the pool re-read to see its status.
+    assert_status(resp, StatusCode::NO_CONTENT).await;
+    let body = assert_status(
+        app.get(&format!("/api/dispatch-pools/{pool_id}"), &token)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
     assert_eq!(body["status"], "SUSPENDED", "{body}");
     assert_eq!(
         app.event_count_by_type("platform:admin:dispatch-pool:suspended")
@@ -377,7 +384,13 @@ async fn suspend_and_activate_dispatch_pool_emit_go_events() {
             json!({}),
         )
         .await;
-    let body = assert_status(resp, StatusCode::OK).await;
+    assert_status(resp, StatusCode::NO_CONTENT).await;
+    let body = assert_status(
+        app.get(&format!("/api/dispatch-pools/{pool_id}"), &token)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
     assert_eq!(body["status"], "ACTIVE", "{body}");
     assert_eq!(
         app.event_count_by_type("platform:admin:dispatch-pool:activated")

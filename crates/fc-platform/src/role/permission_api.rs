@@ -67,11 +67,12 @@ impl RolePermissionsState {
     }
 }
 
-/// Go `RolePermissionListResponse`.
+/// Go `RolePermissionListResponse`. `permissions` is `null` for a role
+/// that grants nothing: Go copies the role's permissions into a nil slice.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RolePermissionListResponse {
-    pub permissions: Vec<String>,
+    pub permissions: Option<Vec<String>>,
 }
 
 /// Go `bffCreatePermissionRequest`.
@@ -141,7 +142,9 @@ pub async fn list_role_permissions(
         .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
     let mut permissions: Vec<String> = role.permissions.into_iter().collect();
     permissions.sort();
-    Ok(Json(RolePermissionListResponse { permissions }))
+    Ok(Json(RolePermissionListResponse {
+        permissions: Some(permissions).filter(|p| !p.is_empty()),
+    }))
 }
 
 async fn grant(
@@ -193,7 +196,7 @@ pub async fn grant_role_permission(
     auth: Authenticated,
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_administer_roles(&auth.0, crate::permissions::iam::ROLE_UPDATE)?;
+    checks::can_write_roles(&auth.0)?;
     grant(&state, &auth, role_name, permission).await
 }
 
@@ -218,7 +221,7 @@ pub async fn grant_role_permission_by_body(
     Path(role_name): Path<String>,
     Json(req): Json<GrantPermissionRequest>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_administer_roles(&auth.0, crate::permissions::iam::ROLE_UPDATE)?;
+    checks::can_write_roles(&auth.0)?;
     grant(&state, &auth, role_name, req.permission).await
 }
 
@@ -244,7 +247,7 @@ pub async fn revoke_role_permission(
     auth: Authenticated,
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    checks::can_administer_roles(&auth.0, crate::permissions::iam::ROLE_UPDATE)?;
+    checks::can_write_roles(&auth.0)?;
     let held = state
         .role_repo
         .find_by_name(&role_name)

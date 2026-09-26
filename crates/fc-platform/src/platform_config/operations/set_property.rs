@@ -178,9 +178,9 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
             }
             ConfigValueType::Plain => command.value.clone(),
         };
-        if let Some(ref desc) = command.description {
-            config.description = Some(desc.clone());
-        }
+        // Go set_property.go: the description is the command's, so a set
+        // without one clears it.
+        config.description = command.description.clone();
         config.updated_at = chrono::Utc::now();
 
         let event = PlatformConfigPropertySet {

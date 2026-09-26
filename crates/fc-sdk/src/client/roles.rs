@@ -62,6 +62,9 @@ pub struct GrantPermissionRequest {
 pub struct RoleResponse {
     pub id: String,
     pub name: String,
+    /// Absent on `/api/roles` (the platform serves it on `/bff/roles`
+    /// only, as Go does); empty then.
+    #[serde(default)]
     pub short_name: String,
     pub display_name: String,
     #[serde(default)]

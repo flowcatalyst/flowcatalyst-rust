@@ -20,6 +20,9 @@ pub struct CreateScheduledJobCommand {
     /// None = platform-scoped (anchor only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// The owning application (Go `applicationId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
     pub crons: Vec<String>,
     #[serde(default = "default_timezone")]
     pub timezone: String,
@@ -63,22 +66,31 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
     type Event = ScheduledJobCreated;
 
     async fn validate(&self, cmd: &Self::Command) -> Result<(), UseCaseError> {
-        if cmd.code.trim().is_empty() {
+        // Go `CreateScheduledJob.Validate` (scheduledjob/operations/ops.go),
+        // on the trimmed, lower-cased code.
+        let code = normalize_code(&cmd.code);
+        if code.is_empty() {
             return Err(UseCaseError::validation(
                 "CODE_REQUIRED",
-                "Code is required",
+                "code is required",
+            ));
+        }
+        if !is_valid_code(&code) {
+            return Err(UseCaseError::validation(
+                "INVALID_CODE_FORMAT",
+                "code must start with a lowercase letter and contain only lowercase alphanumeric and hyphens",
             ));
         }
         if cmd.name.trim().is_empty() {
             return Err(UseCaseError::validation(
                 "NAME_REQUIRED",
-                "Name is required",
+                "name is required",
             ));
         }
         if cmd.crons.is_empty() {
             return Err(UseCaseError::validation(
                 "CRONS_REQUIRED",
-                "At least one cron expression is required",
+                "at least one cron expression is required",
             ));
         }
         for c in &cmd.crons {
@@ -112,9 +124,10 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
+        let code = normalize_code(&cmd.code);
         let existing = match self
             .repo
-            .find_by_code(cmd.client_id.as_deref(), &cmd.code)
+            .find_by_code(cmd.client_id.as_deref(), &code)
             .await
         {
             Ok(found) => found,
@@ -123,11 +136,11 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "CODE_EXISTS",
-                format!("ScheduledJob '{}' already exists in this scope", cmd.code),
+                format!("Scheduled job with code '{code}' already exists"),
             ));
         }
 
-        let mut job = ScheduledJob::new(&cmd.code, &cmd.name, cmd.crons.clone())
+        let mut job = ScheduledJob::new(&code, cmd.name.trim(), cmd.crons.clone())
             .with_timezone(cmd.timezone.clone())
             .with_concurrent(cmd.concurrent)
             .with_tracks_completion(cmd.tracks_completion)
@@ -137,6 +150,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         if let Some(c) = &cmd.client_id {
             job = job.with_client_id(c);
         }
+        job.application_id = cmd.application_id.clone();
         if let Some(d) = &cmd.description {
             job = job.with_description(d);
         }
@@ -158,14 +172,27 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
     }
 }
 
-/// Lightweight cron shape check. Full cron parsing happens in the poller;
-/// we just want to fail obviously broken input early at the API boundary.
-fn validate_cron_shape(expr: &str) -> Result<(), UseCaseError> {
+/// Go's code rule (`validate.CodePattern`, `^[a-z][a-z0-9-]*$`), applied
+/// to the trimmed, lower-cased code.
+pub(crate) fn normalize_code(code: &str) -> String {
+    code.trim().to_lowercase()
+}
+
+pub(crate) fn is_valid_code(code: &str) -> bool {
+    let mut chars = code.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Go's cron checks (`CreateScheduledJob.Validate` and
+/// `scheduledjob.ValidateCronShape`). Full parsing happens in the poller;
+/// this fails obviously broken input at the API boundary.
+pub(crate) fn validate_cron_shape(expr: &str) -> Result<(), UseCaseError> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
         return Err(UseCaseError::validation(
-            "CRON_EMPTY",
-            "Cron expression cannot be empty",
+            "INVALID_CRON",
+            "cron expressions cannot be empty",
         ));
     }
     let fields = trimmed.split_whitespace().count();
@@ -173,8 +200,8 @@ fn validate_cron_shape(expr: &str) -> Result<(), UseCaseError> {
         return Err(UseCaseError::validation(
             "CRON_INVALID_SHAPE",
             format!(
-                "Cron expression must have 5-7 whitespace-separated fields, got {}: '{}'",
-                fields, trimmed
+                "cron expression must have 5-7 whitespace-separated fields, got {}: '{}'",
+                fields, expr
             ),
         ));
     }

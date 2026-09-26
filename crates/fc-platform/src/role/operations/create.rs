@@ -131,9 +131,10 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
             Err(e) => return UseCaseResult::failure(e.into()),
         };
         if existing.is_some() {
+            // Go create.go: 409 `ROLE_EXISTS`.
             return UseCaseResult::failure(UseCaseError::business_rule(
-                "ROLE_CODE_EXISTS",
-                format!("A role with code '{}' already exists", code),
+                "ROLE_EXISTS",
+                format!("Role '{}' already exists", code),
             ));
         }
 

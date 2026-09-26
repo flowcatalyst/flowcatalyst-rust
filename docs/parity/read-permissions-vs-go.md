@@ -56,15 +56,15 @@ and no permission gets 403 `NO_PLATFORM_ROLE` everywhere except `/auth/*`, `/por
 | `GET /api/principals/{id}/available-applications` | `CanReadPrincipals`, client reach | login, client reach | **changed**: `can_read_principals`, client reach |
 | `GET /api/principals/{id}/client-access` | `RequireAnchor` | login, client reach | **changed**: anchor (`ANCHOR_REQUIRED`) |
 | `GET /api/principals/check-email-domain` | `CanReadPrincipals` | anchor | **changed**: `can_read_principals` (a client administrator's create form uses it) |
-| `GET /api/audit-logs` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/recent` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/entity-types` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/operations` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/application-ids` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/client-ids` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/{id}` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/entity/{entityType}/{entityId}` | `admin:audit-log:view` | anchor | **changed**: anchor and `can_read_audit_logs` |
-| `GET /api/audit-logs/principal/{principalId}` | `admin:audit-log:view` | anchor, or the principal itself | **changed**: `can_read_audit_logs`, and anchor unless reading one's own trail |
+| `GET /api/audit-logs` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/recent` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/entity-types` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/operations` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/application-ids` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/client-ids` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/{id}` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/entity/{entityType}/{entityId}` | `admin:audit-log:view` | anchor | **changed**: `can_read_audit_logs` (anchor dropped, as Go; api-area-a) |
+| `GET /api/audit-logs/principal/{principalId}` | `admin:audit-log:view` | anchor, or the principal itself | **changed**: `can_read_audit_logs` alone, as Go (api-area-a) |
 | `GET /bff/dashboard/stats` | `RequireAnchor`, then `CanViewDashboardStats` (`admin:client:view` or `admin:application:view`) | anchor or `platform:*:*:*` | **changed**: `can_view_dashboard_stats` |
 
 Deliberate deviation in this table: the audit-log reads keep anchor reach on top of Go's permission, because
@@ -88,7 +88,7 @@ takes its parent's gate.
 | `GET /bff/debug/events*`, `/bff/debug/dispatch-jobs*` | `:view-raw` | `can_read_events_raw` / `can_read_dispatch_jobs_raw` |
 | `GET /api/event-types`, `/{id}`, `/by-code/{code}` | `CanReadEventTypes`, `FilterClientScoped` | `can_read_event_types`, rows confined |
 | `GET /api/processes*`, `/bff/processes*` | `CanReadProcesses` (`messaging:process:view`) | `can_read_processes` (also admits `application-service:process:view`) |
-| `GET /api/scheduled-jobs*`, `/bff/scheduled-jobs*` | `CanReadScheduledJobs`, rows confined | `can_read_scheduled_jobs` (instances: `scheduled-job-instance:view` also admitted), rows confined |
+| `GET /api/scheduled-jobs*`, `/bff/scheduled-jobs*` | `CanReadScheduledJobs`, rows confined | `can_read_scheduled_jobs` (API instances: `scheduled-job-instance:view` also admitted; the `/bff` instance routes ask `scheduled-job:view` alone, as Go), rows confined; an unreachable row is 404 |
 | `GET /api/service-accounts`, `/{id}`, `/code/{code}`, `/{id}/roles` | `CanReadServiceAccounts` | `can_read_service_accounts` |
 | `GET /api/subscriptions`, `/{id}` | `CanReadSubscriptions`, `FilterClientScoped` | `can_read_subscriptions`, rows confined |
 | `GET /api/applications/{appCode}/roles` | (Rust-only SDK route) | `can_read_roles` + application scope |
@@ -114,9 +114,10 @@ Go checks no permission on these (the profile-only gate still applies). Each is 
 
 - `GET /bff/event-types`, `GET /bff/event-types/{id}`: Go checks nothing; Rust keeps `can_read_event_types`
   and client confinement. Only the SPA calls `/bff`, and its event-type pages already need that permission.
-- `GET /bff/developer/*`: Go asks `anchorWith(developer:application-openapi:view)`; Rust asks the view or
-  manage permission without anchor, and confines each application to the caller's application access. Rust's
-  developer portal is designed for application-scoped developers; flagged for an owner ruling.
+- `GET /bff/developer/*`: now as Go (api-area-a): `anchorWith(developer:application-openapi:view)`, every
+  active application visible; `POST /bff/developer/sync-platform-openapi` asks
+  `anchorWith(developer:application-openapi:sync)`. Rust used to admit application-scoped developers (view or
+  manage, no anchor, confined to their application access); restoring that needs an owner ruling.
 - `GET /api/processes*` and scheduled-job instances admit one extra permission each (above); a superset of Go.
 - Go answers an unauthenticated call to its ungated routes (for example `/bff/roles`); Rust requires a login on
   every `/api` and `/bff` route except the public ones in the convention test's `PUBLIC_ROUTES`.

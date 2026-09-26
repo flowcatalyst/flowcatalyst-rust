@@ -21,7 +21,7 @@ struct IdentityProviderRow {
     oidc_client_secret_ref: Option<String>,
     oidc_multi_tenant: bool,
     oidc_issuer_pattern: Option<String>,
-    /// Go's 040 (this platform's 053).
+    /// Go's 040 (this platform's 055).
     #[sqlx(default)]
     sync_roles_from_idp: bool,
     created_at: DateTime<Utc>,

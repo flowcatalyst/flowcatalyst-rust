@@ -888,11 +888,37 @@ pub mod checks {
         require_permission(context, permissions::admin::APPLICATION_DELETE)
     }
 
-    /// Role administration through `/api/roles` and `/bff/roles`: anchor
-    /// reach and the role permission (owner decision #25, stricter than Go,
-    /// which asks the permission only).
+    /// Role administration through `/api/roles` and `/bff/roles`: the role
+    /// permission, as Go asks (`CanDeleteRoles`), then anchor reach (owner
+    /// decision #25, stricter than Go). The permission is checked first, so
+    /// a caller lacking it is refused exactly as Go refuses it; only a
+    /// non-anchor holder of the permission meets the extra anchor rule.
     pub fn can_administer_roles(context: &AuthContext, permission: &str) -> Result<()> {
+        require_permission(context, permission)?;
+        require_anchor_scope(context)
+    }
+
+    /// Role administration through `/bff/roles`: anchor scope, as Go's BFF
+    /// asks (`RequireAnchor`, shared/bff/roles.go), then the role
+    /// permission (owner decision #25).
+    pub fn can_administer_bff_roles(context: &AuthContext, permission: &str) -> Result<()> {
         anchor_with(context, permission)
+    }
+
+    /// Role create and update through `/api/roles`: any role write
+    /// permission, as Go's `CanWriteRoles` (`one of: …`), then anchor reach
+    /// (owner decision #25), in that order for the reason given on
+    /// [`can_administer_roles`].
+    pub fn can_write_roles(context: &AuthContext) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::ROLE_CREATE,
+                permissions::iam::ROLE_UPDATE,
+                permissions::iam::ROLE_DELETE,
+            ],
+        )?;
+        require_anchor_scope(context)
     }
 
     /// Re-running the built-in role sync: anchor and any role write
@@ -1003,6 +1029,20 @@ pub mod checks {
                 "Cannot update platform config access",
             ))
         }
+    }
+
+    /// The `/bff/developer` reads: anchor scope, then
+    /// `platform:developer:application-openapi:view` (Go
+    /// `CanReadDeveloperPortal`, shared/auth/auth.go:796).
+    pub fn can_read_developer_portal(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::developer::APPLICATION_OPENAPI_VIEW)
+    }
+
+    /// `POST /bff/developer/sync-platform-openapi`: anchor scope, then
+    /// `platform:developer:application-openapi:sync` (Go
+    /// `CanSyncPlatformOpenAPI`, shared/auth/auth.go:797).
+    pub fn can_sync_platform_openapi(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::developer::APPLICATION_OPENAPI_SYNC)
     }
 
     /// Developer portal: read an application's OpenAPI document.
@@ -1175,15 +1215,15 @@ pub mod checks {
 
     /// Check write access to event types (create, update, or delete)
     pub fn can_write_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::admin::EVENT_TYPE_CREATE,
-            permissions::admin::EVENT_TYPE_UPDATE,
-            permissions::admin::EVENT_TYPE_DELETE,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot write event types"))
-        }
+        // Go `CanWriteEventTypes`: 403 `PERMISSION_REQUIRED`, `one of: …`.
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::EVENT_TYPE_CREATE,
+                permissions::admin::EVENT_TYPE_UPDATE,
+                permissions::admin::EVENT_TYPE_DELETE,
+            ],
+        )
     }
 
     // ── Process documentation ────────────────────────────────────────────
@@ -1343,21 +1383,26 @@ pub mod checks {
         }
     }
 
-    /// Umbrella check: any write permission on scheduled jobs.
+    /// Go's `CanWriteScheduledJobs` (shared/auth/auth.go:881): any of
+    /// scheduled-job create, update or delete. Go gates update, pause,
+    /// resume, archive and the instance log/complete callbacks with it.
     pub fn can_write_scheduled_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::admin::SCHEDULED_JOB_CREATE,
-            permissions::admin::SCHEDULED_JOB_UPDATE,
-            permissions::admin::SCHEDULED_JOB_DELETE,
-            permissions::admin::SCHEDULED_JOB_PAUSE,
-            permissions::admin::SCHEDULED_JOB_FIRE,
-            permissions::admin::SCHEDULED_JOB_MANAGE,
-            permissions::admin::SCHEDULED_JOB_SYNC,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot write scheduled jobs"))
-        }
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::SCHEDULED_JOB_CREATE,
+                permissions::admin::SCHEDULED_JOB_UPDATE,
+                permissions::admin::SCHEDULED_JOB_DELETE,
+            ],
+        )
+    }
+
+    /// Go's `CheckScopeAccess` (shared/auth/auth.go:433-444): a
+    /// client-scoped resource needs that client, a platform one (no client)
+    /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`. One rule,
+    /// kept in [`crate::shared::caller_reach::check_scope_access`].
+    pub fn check_scope_access(context: &AuthContext, client_id: Option<&str>) -> Result<()> {
+        crate::shared::caller_reach::require_scope_access(context, client_id)
     }
 
     /// Sync endpoints: admin path. Application-scoped sync uses the
@@ -1390,10 +1435,15 @@ pub mod checks {
     /// Granted to application service accounts via
     /// `application_service::SCHEDULED_JOB_INSTANCE_WRITE`. Anchor /
     /// `ADMIN_ALL` also work.
+    /// Go gates these with `CanWriteScheduledJobs` (scheduled-job create,
+    /// update or delete), so those grant it too.
     pub fn can_write_scheduled_job_instance(context: &AuthContext) -> Result<()> {
         if context.has_any_permission(&[
             permissions::application_service::SCHEDULED_JOB_INSTANCE_WRITE,
             permissions::admin::SCHEDULED_JOB_MANAGE,
+            permissions::admin::SCHEDULED_JOB_CREATE,
+            permissions::admin::SCHEDULED_JOB_UPDATE,
+            permissions::admin::SCHEDULED_JOB_DELETE,
         ]) {
             Ok(())
         } else {

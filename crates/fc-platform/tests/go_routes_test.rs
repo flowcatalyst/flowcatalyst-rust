@@ -1373,13 +1373,25 @@ async fn event_type_schemas_and_read_aliases_answer_as_go() {
             StatusCode::CONFLICT,
             "VERSION_EXISTS",
         ),
+        // Both members are required (huma's VALIDATION when absent, as Go);
+        // a blank version or a null schema is the handler's refusal.
         (
             json!({ "schema": {} }),
+            StatusCode::BAD_REQUEST,
+            "VALIDATION",
+        ),
+        (
+            json!({ "version": "3.0" }),
+            StatusCode::BAD_REQUEST,
+            "VALIDATION",
+        ),
+        (
+            json!({ "version": " ", "schema": {} }),
             StatusCode::BAD_REQUEST,
             "VERSION_REQUIRED",
         ),
         (
-            json!({ "version": "3.0" }),
+            json!({ "version": "3.0", "schema": null }),
             StatusCode::BAD_REQUEST,
             "SCHEMA_REQUIRED",
         ),

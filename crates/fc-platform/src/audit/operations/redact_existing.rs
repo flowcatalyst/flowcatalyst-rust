@@ -161,14 +161,13 @@ mod tests {
         );
     }
 
-    /// The stored operation is the command's type name; a rename would
-    /// silently stop the sweep masking set-property values.
+    /// The operation a set-property command is stored under is one the
+    /// sweep knows; a rename would silently stop it masking the values.
     #[test]
-    fn the_set_property_operation_is_the_commands_type_name() {
-        let name = std::any::type_name::<SetPlatformConfigPropertyCommand>()
-            .rsplit("::")
-            .next()
-            .unwrap();
-        assert_eq!(name, SET_PROPERTY_OPERATIONS[0]);
+    fn the_set_property_operation_is_one_the_sweep_masks() {
+        let name = crate::usecase::audit_operation::audit_operation_name::<
+            SetPlatformConfigPropertyCommand,
+        >();
+        assert!(SET_PROPERTY_OPERATIONS.contains(&name), "{name}");
     }
 }

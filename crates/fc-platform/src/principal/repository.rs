@@ -714,7 +714,7 @@ impl PrincipalRepository {
         // Load roles
         let role_rows = sqlx::query_as::<_, PrincipalRoleRow>(
             "SELECT principal_id, role_name, assignment_source, assigned_at
-             FROM iam_principal_roles WHERE principal_id = $1",
+             FROM iam_principal_roles WHERE principal_id = $1 ORDER BY assigned_at",
         )
         .bind(&id)
         .fetch_all(&self.pool)
@@ -794,7 +794,7 @@ impl PrincipalRepository {
         // Batch-load roles
         let all_roles = sqlx::query_as::<_, PrincipalRoleRow>(
             "SELECT principal_id, role_name, assignment_source, assigned_at
-             FROM iam_principal_roles WHERE principal_id = ANY($1)",
+             FROM iam_principal_roles WHERE principal_id = ANY($1) ORDER BY assigned_at",
         )
         .bind(&principal_ids)
         .fetch_all(&self.pool)

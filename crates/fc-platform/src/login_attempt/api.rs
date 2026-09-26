@@ -108,13 +108,12 @@ async fn list_login_attempts(
 
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
-    // Go: a size outside 1..=200 (or none) reads 50.
+    // Go (loginattempt/api/api.go `list`): a page size outside 1..=200 is
+    // the default 50, and a cursor that does not decode is ignored.
     let size = match query.page_size {
-        Some(n @ 1..=200) => n as usize,
+        Some(s) if (1..=200).contains(&s) => s as usize,
         _ => 50,
     };
-    // Go (loginattempt/api): a cursor that does not decode is ignored, so
-    // the read starts from the newest attempt.
     let cursor = query.after.as_deref().and_then(|c| decode_cursor(c).ok());
 
     let mut items = state

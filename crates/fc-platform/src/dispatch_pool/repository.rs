@@ -158,6 +158,26 @@ impl DispatchPoolRepository {
         rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
+    /// Go `FindWithFilters`: every pool matching the given filters (none =
+    /// all, any status), by code.
+    pub async fn find_with_filters(
+        &self,
+        status: Option<DispatchPoolStatus>,
+        client_id: Option<&str>,
+    ) -> Result<Vec<DispatchPool>> {
+        let rows = sqlx::query_as::<_, DispatchPoolRow>(
+            "SELECT * FROM msg_dispatch_pools \
+             WHERE ($1::text IS NULL OR status = $1) \
+               AND ($2::text IS NULL OR client_id = $2) \
+             ORDER BY code",
+        )
+        .bind(status.map(|s| s.as_str()))
+        .bind(client_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(DispatchPool::try_from).collect()
+    }
+
     /// Search dispatch pools by code or name (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<DispatchPool>> {
         let pattern = format!("%{}%", term);

@@ -217,6 +217,18 @@ so creating an event via UoW would mean emitting an event about the event):
   logged; the authentication already succeeded) and conditional on the row
   still holding the verified ref, so a concurrent rotation, which *is* a use
   case, is never overwritten.
+- **Second-factor (2FA) rows and self-service password change** (owner,
+  2026-09-26): enrolled methods, recovery codes, email PINs and trusted
+  devices (`mfa/repository.rs`, written from `mfa/login_api.rs`,
+  `mfa/self_service_api.rs`, `mfa/admin_api.rs`), and the signed-in user's
+  own `POST /auth/change-password` (`mfa/account_api.rs`), are written
+  directly, as Go does. They are per-login plumbing: an event per PIN, code
+  use or trusted-device stamp would swamp the event log. Go's audit rows are
+  still written for the security-relevant steps (`mfa/audit.rs`, e.g. a
+  method enrolled or removed, recovery codes regenerated, an admin 2FA reset).
+  Codes are spent by one guarded UPDATE/DELETE so each signs in once.
+  Administrative user changes (create, update, activate, admin password
+  reset) stay use cases.
 
 These go directly to the repository. They are the platform's internal plumbing.
 

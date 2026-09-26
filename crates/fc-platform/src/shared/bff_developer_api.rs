@@ -4,10 +4,9 @@
 //! event types, plus a write endpoint that re-syncs the platform's own
 //! OpenAPI document (the dynamic utoipa-generated spec captured at boot).
 //!
-//! Visibility is scoped per principal: non-anchor users only see applications
-//! their `iam_principal_application_access` grants include. The 'platform'
-//! application is always visible to every developer-role holder — that's the
-//! whole point of seeding it.
+//! As Go's (shared/bff/developer.go): anchor callers holding
+//! `platform:developer:application-openapi:view` see every active
+//! application; the platform sync needs anchor and `…:sync`.
 
 use std::sync::Arc;
 
@@ -53,10 +52,15 @@ pub struct DeveloperApplicationSummary {
     pub id: String,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_spec_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub current_synced_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -74,7 +78,9 @@ pub struct OpenApiSpecResponse {
     pub version: String,
     pub status: String,
     pub spec: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub change_notes_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub change_notes: Option<crate::application_openapi_spec::entity::ChangeNotes>,
     pub synced_at: chrono::DateTime<chrono::Utc>,
 }
@@ -85,6 +91,7 @@ pub struct OpenApiVersionSummary {
     pub id: String,
     pub version: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub change_notes_text: Option<String>,
     pub has_breaking: bool,
     pub synced_at: chrono::DateTime<chrono::Utc>,
@@ -104,6 +111,7 @@ pub struct DeveloperSpecVersionSummary {
     pub id: String,
     pub version: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 }
 
@@ -113,13 +121,16 @@ pub struct DeveloperEventTypeSummary {
     pub id: String,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub status: String,
     pub application: String,
     pub subdomain: String,
     pub aggregate: String,
     pub event_name: String,
-    pub spec_versions: Vec<DeveloperSpecVersionSummary>,
+    /// `null` for an event type with no versions (Go appends to a nil
+    /// slice).
+    pub spec_versions: Option<Vec<DeveloperSpecVersionSummary>>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -135,6 +146,7 @@ pub struct SyncPlatformOpenApiResponse {
     pub spec_id: String,
     pub version: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_prior_version: Option<String>,
     pub has_breaking: bool,
     pub unchanged: bool,
@@ -142,113 +154,18 @@ pub struct SyncPlatformOpenApiResponse {
 
 // -- Helpers ------------------------------------------------------------------
 
-/// Resolve the set of application ids the caller may see. Anchor users see
-/// all active applications; everyone else is restricted to their explicit
-/// access grants (`iam_principal_application_access`) — but the 'platform'
-/// row is always granted so the developer portal works without per-user
-/// grants for the platform itself.
-async fn accessible_application_ids(
-    state: &BffDeveloperState,
-    auth: &AuthContext,
-) -> Result<Vec<String>, PlatformError> {
-    if auth.is_anchor() || auth.has_permission(crate::permissions::ADMIN_ALL) {
-        let apps = state.application_repo.find_active().await?;
-        return Ok(apps.into_iter().map(|a| a.id).collect());
-    }
-
-    let principal = state
-        .principal_repo
-        .find_by_id(&auth.principal_id)
-        .await?
-        .ok_or_else(|| {
-            PlatformError::forbidden(format!("Principal {} not found", auth.principal_id))
-        })?;
-    let mut ids = principal.accessible_application_ids;
-    if !ids.contains(&state.platform_application_id) {
-        ids.push(state.platform_application_id.clone());
-    }
-    Ok(ids)
+/// Go `CanReadDeveloperPortal` (shared/auth/auth.go): anchor scope, then
+/// `platform:developer:application-openapi:view`. Every application is
+/// visible to such a caller; there is no per-application narrowing.
+fn can_read(auth: &AuthContext) -> Result<(), PlatformError> {
+    crate::shared::authorization_service::checks::can_read_developer_portal(auth)
 }
 
-async fn require_app_access(
-    state: &BffDeveloperState,
-    auth: &AuthContext,
-    application_id: &str,
-) -> Result<(), PlatformError> {
-    let ids = accessible_application_ids(state, auth).await?;
-    if ids.iter().any(|id| id == application_id) {
-        Ok(())
-    } else {
-        Err(PlatformError::forbidden(format!(
-            "No access to application {}",
-            application_id
-        )))
-    }
-}
-
-// -- Handlers -----------------------------------------------------------------
-
-/// List the applications the current principal may browse in the developer
-/// portal. Each entry carries a snapshot of its CURRENT OpenAPI version (if
-/// any) so the list view can show "v2.1.0 · 3 days ago" inline.
-pub async fn list_applications(
-    State(state): State<BffDeveloperState>,
-    auth: Authenticated,
-) -> Result<Json<DeveloperApplicationsResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-
-    let ids = accessible_application_ids(&state, &auth.0).await?;
-    if ids.is_empty() {
-        return Ok(Json(DeveloperApplicationsResponse { items: vec![] }));
-    }
-
-    let all_apps = state.application_repo.find_active().await?;
-    let mut items = Vec::new();
-    for app in all_apps {
-        if !ids.contains(&app.id) {
-            continue;
-        }
-        let current = state
-            .openapi_spec_repo
-            .find_current_by_application(&app.id)
-            .await
-            .ok()
-            .flatten();
-        items.push(DeveloperApplicationSummary {
-            id: app.id,
-            code: app.code,
-            name: app.name,
-            description: app.description,
-            icon_url: app.icon_url,
-            current_version: current.as_ref().map(|s| s.version.clone()),
-            current_spec_id: current.as_ref().map(|s| s.id.clone()),
-            current_synced_at: current.as_ref().map(|s| s.synced_at),
-        });
-    }
-    items.sort_by_key(|a| a.name.to_lowercase());
-    Ok(Json(DeveloperApplicationsResponse { items }))
-}
-
-pub async fn get_application(
-    State(state): State<BffDeveloperState>,
-    auth: Authenticated,
-    Path(app_id): Path<String>,
-) -> Result<Json<DeveloperApplicationSummary>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-    require_app_access(&state, &auth.0, &app_id).await?;
-
-    let app = state
-        .application_repo
-        .find_by_id(&app_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &app_id))?;
-    let current = state
-        .openapi_spec_repo
-        .find_current_by_application(&app_id)
-        .await
-        .ok()
-        .flatten();
-    Ok(Json(DeveloperApplicationSummary {
+fn summary(
+    app: crate::application::entity::Application,
+    current: Option<crate::application_openapi_spec::repository::CurrentSpecRef>,
+) -> DeveloperApplicationSummary {
+    DeveloperApplicationSummary {
         id: app.id,
         code: app.code,
         name: app.name,
@@ -257,25 +174,13 @@ pub async fn get_application(
         current_version: current.as_ref().map(|s| s.version.clone()),
         current_spec_id: current.as_ref().map(|s| s.id.clone()),
         current_synced_at: current.as_ref().map(|s| s.synced_at),
-    }))
+    }
 }
 
-pub async fn get_current_openapi(
-    State(state): State<BffDeveloperState>,
-    auth: Authenticated,
-    Path(app_id): Path<String>,
-) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-    require_app_access(&state, &auth.0, &app_id).await?;
-
-    let spec = state
-        .openapi_spec_repo
-        .find_current_by_application(&app_id)
-        .await?
-        .ok_or_else(|| {
-            PlatformError::not_found("OpenApiSpec(current)", format!("application_id={}", app_id))
-        })?;
-    Ok(Json(OpenApiSpecResponse {
+fn spec_response(
+    spec: crate::application_openapi_spec::entity::OpenApiSpec,
+) -> OpenApiSpecResponse {
+    OpenApiSpecResponse {
         id: spec.id,
         application_id: spec.application_id,
         version: spec.version,
@@ -284,7 +189,69 @@ pub async fn get_current_openapi(
         change_notes_text: spec.change_notes_text,
         change_notes: spec.change_notes,
         synced_at: spec.synced_at,
-    }))
+    }
+}
+
+// -- Handlers -----------------------------------------------------------------
+
+/// Every active application, ordered by code, each with a snapshot of its
+/// CURRENT OpenAPI version if any (Go `listApplications`).
+pub async fn list_applications(
+    State(state): State<BffDeveloperState>,
+    auth: Authenticated,
+) -> Result<Json<DeveloperApplicationsResponse>, PlatformError> {
+    can_read(&auth.0)?;
+
+    let mut apps = state.application_repo.find_active().await?;
+    apps.sort_by(|a, b| a.code.cmp(&b.code));
+    let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
+    let mut current = state
+        .openapi_spec_repo
+        .find_current_refs_by_applications(&ids)
+        .await?;
+    let items = apps
+        .into_iter()
+        .map(|app| {
+            let spec = current.remove(&app.id);
+            summary(app, spec)
+        })
+        .collect();
+    Ok(Json(DeveloperApplicationsResponse { items }))
+}
+
+pub async fn get_application(
+    State(state): State<BffDeveloperState>,
+    auth: Authenticated,
+    Path(app_id): Path<String>,
+) -> Result<Json<DeveloperApplicationSummary>, PlatformError> {
+    can_read(&auth.0)?;
+
+    let app = state
+        .application_repo
+        .find_by_id(&app_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &app_id))?;
+    let current = state
+        .openapi_spec_repo
+        .find_current_refs_by_applications(std::slice::from_ref(&app.id))
+        .await?
+        .remove(&app.id);
+    Ok(Json(summary(app, current)))
+}
+
+pub async fn get_current_openapi(
+    State(state): State<BffDeveloperState>,
+    auth: Authenticated,
+    Path(app_id): Path<String>,
+) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
+    can_read(&auth.0)?;
+
+    let spec = state
+        .openapi_spec_repo
+        .find_current_by_application(&app_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("OpenApiSpec", &app_id))?;
+    Ok(Json(spec_response(spec)))
 }
 
 pub async fn list_versions(
@@ -292,8 +259,7 @@ pub async fn list_versions(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<OpenApiVersionsResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-    require_app_access(&state, &auth.0, &app_id).await?;
+    can_read(&auth.0)?;
 
     let rows = state
         .openapi_spec_repo
@@ -322,27 +288,15 @@ pub async fn get_version(
     auth: Authenticated,
     Path((app_id, spec_id)): Path<(String, String)>,
 ) -> Result<Json<OpenApiSpecResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-    require_app_access(&state, &auth.0, &app_id).await?;
+    can_read(&auth.0)?;
 
     let spec = state
         .openapi_spec_repo
         .find_by_id(&spec_id)
         .await?
+        .filter(|s| s.application_id == app_id)
         .ok_or_else(|| PlatformError::not_found("OpenApiSpec", &spec_id))?;
-    if spec.application_id != app_id {
-        return Err(PlatformError::not_found("OpenApiSpec", &spec_id));
-    }
-    Ok(Json(OpenApiSpecResponse {
-        id: spec.id,
-        application_id: spec.application_id,
-        version: spec.version,
-        status: spec.status.as_str().to_string(),
-        spec: spec.spec,
-        change_notes_text: spec.change_notes_text,
-        change_notes: spec.change_notes,
-        synced_at: spec.synced_at,
-    }))
+    Ok(Json(spec_response(spec)))
 }
 
 pub async fn list_event_types(
@@ -350,28 +304,19 @@ pub async fn list_event_types(
     auth: Authenticated,
     Path(app_id): Path<String>,
 ) -> Result<Json<DeveloperEventTypesResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
-    require_app_access(&state, &auth.0, &app_id).await?;
+    can_read(&auth.0)?;
 
     let app = state
         .application_repo
         .find_by_id(&app_id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Application", &app_id))?;
-    let event_types = state.event_type_repo.find_by_application(&app.code).await?;
+    let mut event_types = state.event_type_repo.find_by_application(&app.code).await?;
+    event_types.sort_by(|a, b| a.code.cmp(&b.code));
     let items = event_types
         .into_iter()
-        .map(|et| DeveloperEventTypeSummary {
-            id: et.id,
-            code: et.code,
-            name: et.name,
-            description: et.description,
-            status: et.status.as_str().to_string(),
-            application: et.application,
-            subdomain: et.subdomain,
-            aggregate: et.aggregate,
-            event_name: et.event_name,
-            spec_versions: et
+        .map(|et| {
+            let spec_versions: Vec<DeveloperSpecVersionSummary> = et
                 .spec_versions
                 .into_iter()
                 .map(|sv| DeveloperSpecVersionSummary {
@@ -383,9 +328,22 @@ pub async fn list_event_types(
                     // `JSON.parse` on a string field).
                     schema: sv
                         .schema_content
-                        .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+                        .as_ref()
+                        .map(crate::shared::jsonb_text::jsonb_text),
                 })
-                .collect(),
+                .collect();
+            DeveloperEventTypeSummary {
+                id: et.id,
+                code: et.code,
+                name: et.name,
+                description: et.description,
+                status: et.status.as_str().to_string(),
+                application: et.application,
+                subdomain: et.subdomain,
+                aggregate: et.aggregate,
+                event_name: et.event_name,
+                spec_versions: Some(spec_versions).filter(|v| !v.is_empty()),
+            }
         })
         .collect();
     Ok(Json(DeveloperEventTypesResponse { items }))
@@ -399,7 +357,7 @@ pub async fn sync_platform_openapi(
     State(state): State<BffDeveloperState>,
     auth: Authenticated,
 ) -> Result<Json<SyncPlatformOpenApiResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_application_openapi(&auth.0)?;
+    crate::shared::authorization_service::checks::can_sync_platform_openapi(&auth.0)?;
 
     let command = SyncOpenApiSpecCommand {
         application_id: state.platform_application_id.clone(),

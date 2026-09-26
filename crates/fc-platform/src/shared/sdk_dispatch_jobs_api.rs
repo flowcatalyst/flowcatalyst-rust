@@ -181,6 +181,7 @@ async fn sdk_batch_create_dispatch_jobs(
         .map(|job| BatchResultItem {
             id: job.id.clone(),
             status: "SUCCESS".to_string(),
+            error: None,
         })
         .collect();
 

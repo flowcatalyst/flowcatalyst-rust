@@ -195,7 +195,7 @@ async fn integral_syncs_a_user_with_its_password_hash() {
     );
     // The hash never reaches the audit log.
     let (audit,): (Value,) = sqlx::query_as(
-        "SELECT operation_json FROM aud_logs WHERE operation = 'SyncUsersCommand' LIMIT 1",
+        "SELECT operation_json FROM aud_logs WHERE operation = 'SyncPrincipalsCommand' LIMIT 1",
     )
     .fetch_one(&app.pool)
     .await
@@ -560,7 +560,7 @@ async fn logout_with_client_id_and_no_id_token_hint() {
 }
 
 /// `/auth/me` carries the effective permissions the SPA gates pages on:
-/// the principal's roles flattened, sorted, plus `"*"` for the super-admin
+/// the principal's roles flattened in Go's order, plus `"*"` for the super-admin
 /// wildcard (Go handleMe / buildPermissionList,
 /// auth/login/endpoint.go:437-450, 656-694), and `ssoManaged`.
 #[tokio::test]
@@ -596,16 +596,34 @@ async fn auth_me_lists_the_effective_permissions() {
     assert_eq!(body["clientId"], client_id.as_str());
     assert_eq!(body["status"], "");
     assert_eq!(body["email"], "me@inhance.test");
-    assert_eq!(body["roles"], json!(["hr:editor", "hr:viewer"]));
+    // Roles in assignment order (Go: `ORDER BY assigned_at`); the two were
+    // assigned within the same instant, so either may come first.
+    let roles: Vec<&str> = body["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    let mut sorted_roles = roles.clone();
+    sorted_roles.sort();
+    assert_eq!(sorted_roles, ["hr:editor", "hr:viewer"]);
     assert_eq!(body["scope"], "CLIENT");
-    assert_eq!(
-        body["permissions"],
+    // Go's order: role by role, each role's permissions sorted, a
+    // permission kept where it first appears.
+    let expected = if roles[0] == "hr:editor" {
+        json!([
+            "hr:staff:record:update",
+            "hr:staff:record:view",
+            "hr:grading:record:view"
+        ])
+    } else {
         json!([
             "hr:grading:record:view",
-            "hr:staff:record:update",
-            "hr:staff:record:view"
+            "hr:staff:record:view",
+            "hr:staff:record:update"
         ])
-    );
+    };
+    assert_eq!(body["permissions"], expected);
     assert_eq!(body["ssoManaged"], false);
 
     // The super-admin wildcard adds the "*" sentinel.

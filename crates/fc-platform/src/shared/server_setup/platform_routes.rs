@@ -107,6 +107,7 @@ pub fn build_platform_routes(
     };
     let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         signing: signing_guard.clone(),
     };
     let filter_options_state = FilterOptionsState {
@@ -409,6 +410,9 @@ pub fn build_platform_routes(
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
+        permission_repo: Arc::new(
+            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
+        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
@@ -808,6 +812,7 @@ pub fn build_platform_routes(
         ));
     let connections_state = ConnectionsState {
         connection_repo: repos.connection_repo.clone(),
+        app_access: app_access.clone(),
         create_use_case: create_conn_use_case,
         update_use_case: update_conn_use_case,
         delete_use_case: delete_conn_use_case,
@@ -896,6 +901,7 @@ pub fn build_platform_routes(
     };
     let public_api_state = PublicApiState {
         config_repo: repos.platform_config_repo.clone(),
+        client_repo: repos.client_repo.clone(),
     };
     let set_platform_config_property_use_case = Arc::new(
         crate::platform_config::operations::SetPlatformConfigPropertyUseCase::new(
@@ -936,6 +942,7 @@ pub fn build_platform_routes(
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         auth_service: auth.auth.clone(),
     };
     let well_known_state = WellKnownState {
@@ -1073,6 +1080,7 @@ pub fn build_platform_routes(
         trigger_objects: repos.function_trigger_object_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         application_repo: repos.application_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         unit_of_work: unit_of_work.clone(),
     };
 
@@ -1103,6 +1111,9 @@ pub fn build_platform_routes(
         role_sync_service: Arc::new(crate::shared::role_sync_service::RoleSyncService::new(
             repos.role_repo.clone(),
         )),
+        permission_repo: Arc::new(
+            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
+        ),
     };
     // Temporary (docs/spec/audit-redaction.md, Java repo).
     let bff_audit_logs_state = crate::shared::bff_audit_logs_api::BffAuditLogsState {
@@ -1212,6 +1223,7 @@ pub fn build_platform_routes(
         repo: repos.scheduled_job_repo.clone(),
         instance_repo: repos.scheduled_job_instance_repo.clone(),
         client_repo: repos.client_repo.clone(),
+        application_repo: repos.application_repo.clone(),
     };
 
     let bff_event_types_state = BffEventTypesState {

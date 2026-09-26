@@ -771,10 +771,8 @@ fn platform_config_secret_persists_no_plaintext_value() {
         let rows = persisted(&e, &cmd(value_type));
         assert_no_plaintext(&rows, SECRET);
         let json: serde_json::Value = serde_json::from_str(&rows).unwrap();
-        assert_eq!(
-            json["aud_logs"]["operation"],
-            "SetPlatformConfigPropertyCommand"
-        );
+        // Recorded under Go's name (`usecase::audit_operation`).
+        assert_eq!(json["aud_logs"]["operation"], "SetPropertyCommand");
         assert_eq!(json["aud_logs"]["operation_json"]["value"], "***");
     }
 

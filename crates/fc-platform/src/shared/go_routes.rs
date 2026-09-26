@@ -147,6 +147,7 @@ impl GoRoutesState {
                 },
                 dispatch_jobs: crate::dispatch_job::api::DispatchJobsState {
                     dispatch_job_repo: repos.dispatch_job_repo.clone(),
+                    client_repo: repos.client_repo.clone(),
                     signing,
                 },
             },

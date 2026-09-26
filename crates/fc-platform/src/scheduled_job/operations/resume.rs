@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobResumed;
-use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
+use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
@@ -78,19 +78,7 @@ impl<U: UnitOfWork> ResumeScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        if job.status == ScheduledJobStatus::Active {
-            return Err(UseCaseError::business_rule(
-                "ALREADY_ACTIVE",
-                "ScheduledJob is already active",
-            ));
-        }
-        if job.status == ScheduledJobStatus::Archived {
-            return Err(UseCaseError::business_rule(
-                "ARCHIVED",
-                "Cannot resume an archived ScheduledJob",
-            ));
-        }
-
+        // Go's `ResumeScheduledJob` flips the status unconditionally.
         job.resume();
         let event = ScheduledJobResumed::new(ctx, &job.id, &job.code);
         Ok((job, event))

@@ -77,10 +77,6 @@ pub struct TokenRequest {
     /// Requested scope: permission codes to narrow the granted set to (OIDC
     /// scopes such as `openid` are ignored for that purpose)
     pub scope: Option<String>,
-    /// The caller's address, for the login-attempt record (never read from
-    /// the form).
-    #[serde(skip)]
-    pub caller_ip: Option<String>,
 }
 
 /// Go `basicAuthCreds` (auth/oauthapi/token.go): the `client_id` and
@@ -893,10 +889,9 @@ async fn authenticate_client_or_bearer(
 pub async fn token(
     State(state): State<OAuthState>,
     headers: HeaderMap,
-    crate::shared::middleware::ClientIp(caller_ip): crate::shared::middleware::ClientIp,
+    crate::shared::middleware::ClientIp(client_ip): crate::shared::middleware::ClientIp,
     Form(mut req): Form<TokenRequest>,
 ) -> Response {
-    req.caller_ip = caller_ip;
     // Go `Token`: client_secret_basic is resolved into the request up front,
     // so every grant honours it (client_credentials included) and the
     // per-client throttle sees the caller. A body client_id naming another
@@ -993,7 +988,9 @@ pub async fn token(
         Some(GrantType::RefreshToken) => {
             handle_refresh_token_grant(state, req, authenticated_client).await
         }
-        Some(GrantType::ClientCredentials) => handle_client_credentials_grant(state, req).await,
+        Some(GrantType::ClientCredentials) => {
+            handle_client_credentials_grant(state, req, client_ip).await
+        }
         Some(GrantType::Password) | None => (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -1670,8 +1667,12 @@ async fn handle_refresh_token_grant(
         .into_response()
 }
 
-async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -> Response {
-    let caller_ip = req.caller_ip.clone();
+/// `ip` is the caller's address, recorded on every login attempt as Go does.
+async fn handle_client_credentials_grant(
+    state: OAuthState,
+    req: TokenRequest,
+    ip: Option<String>,
+) -> Response {
     let client_id = match req.client_id {
         Some(id) => id,
         None => {
@@ -1712,7 +1713,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
                 client_id,
                 client_secret,
                 req.scope.as_deref(),
-                caller_ip,
+                ip,
             )
             .await;
         }
@@ -1772,8 +1773,8 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         warn!(client_id = %client_id, "Client secret verification failed");
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
+            ip_address: ip.clone(),
             failure_reason: Some("Invalid client secret".to_string()),
-            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1796,8 +1797,8 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     let misconfigured = |reason: &'static str| {
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
+            ip_address: ip.clone(),
             failure_reason: Some(reason.to_string()),
-            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         let repo = state.login_attempt_repo.clone();
@@ -1828,12 +1829,12 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
             warn!(client_id = %client_id, principal_id = %principal_id, "client_credentials refused: linked principal is not a service account");
             let attempt = LoginAttempt {
                 identifier: Some(client_id.clone()),
+                ip_address: ip.clone(),
                 principal_id: Some(p.id.clone()),
                 failure_reason: Some(
                     "Client not properly configured (linked principal is not a service account)"
                         .to_string(),
                 ),
-                ip_address: caller_ip.clone(),
                 ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
             };
             if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1891,9 +1892,9 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     if explicit && granted.is_empty() {
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
+            ip_address: ip.clone(),
             principal_id: Some(principal.id.clone()),
             failure_reason: Some("requested scope exceeds granted permissions".to_string()),
-            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1933,8 +1934,8 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     // Log successful service account login attempt
     let attempt = LoginAttempt {
         identifier: Some(client_id.clone()),
+        ip_address: ip.clone(),
         principal_id: Some(principal.id.clone()),
-        ip_address: caller_ip.clone(),
         ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Success)
     };
     if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1972,7 +1973,7 @@ async fn handle_developer_credential_grant(
     client_id: String,
     client_secret: String,
     scope: Option<&str>,
-    caller_ip: Option<String>,
+    ip: Option<String>,
 ) -> Response {
     let invalid = || {
         (
@@ -2015,7 +2016,7 @@ async fn handle_developer_credential_grant(
         identifier: Some(client_id.clone()),
         principal_id: Some(principal.id.clone()),
         failure_reason: reason.map(String::from),
-        ip_address: caller_ip.clone(),
+        ip_address: ip.clone(),
         ..LoginAttempt::new(AttemptType::DeveloperToken, outcome)
     };
     let (ok, rehash) = check_secret_ref(&state, Some(&stored), &client_secret);

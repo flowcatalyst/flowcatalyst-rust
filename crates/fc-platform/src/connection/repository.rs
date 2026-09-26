@@ -23,15 +23,26 @@ struct ConnectionRow {
     client_identifier: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    application_code: Option<String>,
+    source: String,
 }
 
 impl TryFrom<ConnectionRow> for Connection {
     type Error = PlatformError;
     fn try_from(r: ConnectionRow) -> Result<Self> {
         let status = decode(&r.status, "msg_connections", "status", &r.id)?;
+        // X-06: a source outside the known set is a loud read error (the
+        // column's CHECK allows only these).
+        if !matches!(r.source.as_str(), "CODE" | "API" | "UI") {
+            return Err(PlatformError::internal(format!(
+                "connection {} has an unrecognised source",
+                r.id
+            )));
+        }
         Ok(Self {
             id: r.id,
             code: r.code,
+            application_code: r.application_code,
             name: r.name,
             description: r.description,
             external_id: r.external_id,
@@ -39,6 +50,7 @@ impl TryFrom<ConnectionRow> for Connection {
             service_account_id: r.service_account_id,
             client_id: r.client_id,
             client_identifier: r.client_identifier,
+            source: r.source,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -57,8 +69,8 @@ impl ConnectionRepository {
     pub async fn insert(&self, conn: &Connection) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+            "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
         )
         .bind(&conn.id)
         .bind(&conn.code)
@@ -71,6 +83,8 @@ impl ConnectionRepository {
         .bind(&conn.client_identifier)
         .bind(now)
         .bind(now)
+        .bind(&conn.application_code)
+        .bind(&conn.source)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -242,8 +256,8 @@ impl crate::usecase::Persist<Connection> for ConnectionRepository {
     async fn persist(&self, c: &Connection, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO UPDATE SET
                 code = EXCLUDED.code,
                 name = EXCLUDED.name,
@@ -253,7 +267,9 @@ impl crate::usecase::Persist<Connection> for ConnectionRepository {
                 service_account_id = EXCLUDED.service_account_id,
                 client_id = EXCLUDED.client_id,
                 client_identifier = EXCLUDED.client_identifier,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at,
+                application_code = EXCLUDED.application_code,
+                source = EXCLUDED.source"
         )
         .bind(&c.id)
         .bind(&c.code)
@@ -266,6 +282,8 @@ impl crate::usecase::Persist<Connection> for ConnectionRepository {
         .bind(&c.client_identifier)
         .bind(now)
         .bind(now)
+        .bind(&c.application_code)
+        .bind(&c.source)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
@@ -282,13 +300,6 @@ impl crate::usecase::Persist<Connection> for ConnectionRepository {
 
 // ── Application-scoped connections (Go 056 / SyncConnections) ────────────
 
-#[derive(sqlx::FromRow)]
-struct ScopedConnectionRow {
-    #[sqlx(flatten)]
-    row: ConnectionRow,
-    source: String,
-}
-
 impl ConnectionRepository {
     /// An application's connections in one client scope, with their source
     /// (Go `FindByApplicationAndClient`).
@@ -297,10 +308,8 @@ impl ConnectionRepository {
         application_code: &str,
         client_id: Option<&str>,
     ) -> Result<Vec<(Connection, String)>> {
-        let rows = sqlx::query_as::<_, ScopedConnectionRow>(
-            "SELECT id, code, name, description, external_id, status, service_account_id, \
-                    client_id, client_identifier, created_at, updated_at, source \
-             FROM msg_connections \
+        let rows = sqlx::query_as::<_, ConnectionRow>(
+            "SELECT * FROM msg_connections \
              WHERE application_code = $1 AND client_id IS NOT DISTINCT FROM $2 ORDER BY code",
         )
         .bind(application_code)
@@ -308,8 +317,56 @@ impl ConnectionRepository {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|r| Ok((Connection::try_from(r.row)?, r.source)))
+            .map(|r| {
+                let c = Connection::try_from(r)?;
+                let source = c.source.clone();
+                Ok((c, source))
+            })
             .collect()
+    }
+
+    /// Every connection with one of `codes` that is `application_code`'s or
+    /// shared (application-less), any client: what a subscription sync
+    /// resolves its `connectionCode`s among, in one query.
+    pub async fn find_by_codes_for_application(
+        &self,
+        codes: &[String],
+        application_code: &str,
+    ) -> Result<Vec<Connection>> {
+        if codes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, ConnectionRow>(
+            "SELECT * FROM msg_connections WHERE code = ANY($1) \
+             AND (application_code = $2 OR application_code IS NULL)",
+        )
+        .bind(codes)
+        .bind(application_code)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(Connection::try_from).collect()
+    }
+
+    /// The connection keyed by (code, application, client), where `None`
+    /// is a real value of the key, never a wildcard (Go `FindByCode`: the
+    /// `(application_code, client_id, code)` uniqueness of migration 050).
+    pub async fn find_by_code_in_scope(
+        &self,
+        code: &str,
+        application_code: Option<&str>,
+        client_id: Option<&str>,
+    ) -> Result<Option<Connection>> {
+        let row = sqlx::query_as::<_, ConnectionRow>(
+            "SELECT * FROM msg_connections WHERE code = $1 \
+             AND application_code IS NOT DISTINCT FROM $2 \
+             AND client_id IS NOT DISTINCT FROM $3",
+        )
+        .bind(code)
+        .bind(application_code)
+        .bind(client_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(Connection::try_from).transpose()
     }
 }
 

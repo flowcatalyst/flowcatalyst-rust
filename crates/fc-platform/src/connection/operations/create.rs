@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionCreated;
+use crate::shared::caller_reach::check_scope_access;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -31,8 +32,12 @@ pub struct CreateConnectionCommand {
     pub external_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    /// Who is creating it, for the signing-reach check (never serialised,
-    /// so never in the audit log).
+    /// The owning application (`None`: shared). The handler has already
+    /// resolved it within the caller's application scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_code: Option<String>,
+    /// Who is creating it, for the scope check and the signing-reach check
+    /// (never serialised, so never in the audit log).
     #[serde(skip)]
     pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
@@ -88,20 +93,25 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
 
         if command.service_account_id.trim().is_empty() {
             return Err(UseCaseError::validation(
-                "SERVICE_ACCOUNT_ID_REQUIRED",
-                "Service account ID is required",
+                "SERVICE_ACCOUNT_REQUIRED",
+                "serviceAccountId is required",
             ));
         }
 
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the requested client: a client's
+    /// connection needs that client, a platform-wide one anchor scope.
     async fn authorize(
         &self,
-        _command: &CreateConnectionCommand,
+        command: &CreateConnectionCommand,
         _ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        match command.caller {
+            Some(ref caller) => check_scope_access(caller, command.client_id.as_deref()),
+            None => Ok(()),
+        }
     }
 
     async fn execute(
@@ -153,22 +163,24 @@ impl<U: UnitOfWork> CreateConnectionUseCase<U> {
         )
         .await?;
 
-        // Uniqueness check (code + client_id scope)
+        // Unique per (application, client, code) (Go FindByCode).
         let existing = self
             .connection_repo
-            .find_by_code_and_client(&code, command.client_id.as_deref())
+            .find_by_code_in_scope(
+                &code,
+                command.application_code.as_deref(),
+                command.client_id.as_deref(),
+            )
             .await?;
         if existing.is_some() {
             return Err(UseCaseError::business_rule(
-                "CONNECTION_CODE_EXISTS",
-                format!(
-                    "A connection with code '{}' already exists in this scope",
-                    code
-                ),
+                "CODE_EXISTS",
+                format!("Connection with code '{}' already exists", code),
             ));
         }
 
         let mut connection = Connection::new(&code, name, &command.service_account_id);
+        connection.application_code = command.application_code.clone();
         connection.description = command.description.clone();
         connection.client_id = command.client_id.clone();
         if let Some(ref ext_id) = command.external_id {
@@ -193,6 +205,7 @@ mod tests {
             service_account_id: "sa-123".to_string(),
             external_id: None,
             client_id: None,
+            application_code: None,
             caller: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();

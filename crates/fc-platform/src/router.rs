@@ -52,7 +52,6 @@ use crate::api::{
     oauth_router,
     oidc_login_router,
     password_reset_router,
-    platform_config_router,
     principals_router,
     processes_router,
     public_router,
@@ -754,7 +753,11 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_API_AUDIT_LOGS,
                 sdk_audit_batch_router(self.sdk_audit_batch),
             )
-            .nest(PATH_API_CONFIG, platform_config_router())
+            // Go's SPA-bootstrap alias of `/api/public/platform`.
+            .nest(
+                PATH_API_CONFIG,
+                crate::shared::public_api::platform_info_router(self.public.clone()),
+            )
             // Public
             .nest(PATH_API_PUBLIC, public_router(self.public))
             // The function host control plane (desired state, heartbeat,

@@ -706,7 +706,8 @@ impl TriggerSync {
                     name: None,
                     description: None,
                     rate_limit: None,
-                    concurrency: Some(desired as u32),
+                    concurrency: Some(desired),
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -732,7 +733,8 @@ impl TriggerSync {
                     description: None,
                     client_id: None,
                     rate_limit: None,
-                    concurrency: Some(desired as u32),
+                    concurrency: Some(desired),
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -772,6 +774,8 @@ impl TriggerSync {
         let binding_input = vec![EventTypeBindingInput {
             event_type_code: spec.event_type.clone(),
             filter: None,
+            event_type_id: None,
+            spec_version: None,
         }];
 
         match current.subscriptions.get(key).and_then(|(_, s)| s.clone()) {
@@ -802,6 +806,10 @@ impl TriggerSync {
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: Some(spec.data_only),
+                    queue: None,
+                    delay_seconds: None,
+                    max_age_seconds: None,
+                    custom_config: None,
                     // Platform-authored: a function subscription names no
                     // account or connection, so no signer is checked.
                     caller: None,
@@ -846,6 +854,10 @@ impl TriggerSync {
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: spec.data_only,
+                    queue: None,
+                    delay_seconds: None,
+                    max_age_seconds: None,
+                    custom_config: None,
                     caller: None,
                 };
                 self.commit_linked(
@@ -929,6 +941,7 @@ impl TriggerSync {
                     name: d.name.clone(),
                     description: None,
                     client_id,
+                    application_id: Some(f.application_id.clone()),
                     crons: d.crons.clone(),
                     timezone: d.timezone.clone(),
                     payload: d.payload.clone(),

@@ -200,43 +200,43 @@ const ROWS: &[(&str, &str, bool)] = &[
         permissions::iam::USER_READ,
         false,
     ),
-    // Audit logs (Go: the audit-log view permission; Rust keeps anchor
-    // reach, the rows are not client-scoped)
-    ("/api/audit-logs", permissions::admin::AUDIT_LOG_READ, true),
+    // Audit logs (Go: the audit-log view permission alone; the rows are
+    // not client-scoped, and a CLIENT holder reads them too)
+    ("/api/audit-logs", permissions::admin::AUDIT_LOG_READ, false),
     (
         "/api/audit-logs/recent",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/entity-types",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/operations",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/application-ids",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/client-ids",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/aud_nope",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     (
         "/api/audit-logs/entity/Client/clt_nope",
         permissions::admin::AUDIT_LOG_READ,
-        true,
+        false,
     ),
     // Dashboard (Go: anchor, then client or application view)
     (

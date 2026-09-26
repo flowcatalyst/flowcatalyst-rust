@@ -119,12 +119,27 @@ pub struct InitArgs {
     )]
     pub database_url: String,
 
-    /// Use the embedded PostgreSQL instance (the one fc-dev starts at
-    /// :15432 in `~/.cache/flowcatalyst-dev/pgdata/`). Default true so
+    /// Use the embedded PostgreSQL cluster shared with Go's and Java's
+    /// fcdev (`--embedded-db-path`, port 15432): the running server when
+    /// one is up, else one started for this command. Default true so
     /// running `fc-dev init` immediately after `fc-dev` Just Works.
     #[cfg(feature = "embedded-db")]
-    #[arg(long, env = "FC_EMBEDDED_DB", default_value = "true")]
+    #[arg(
+        long,
+        env = "FC_EMBEDDED_DB",
+        default_value = "true",
+        // Go's `--embedded-db=false` form (and bare `--embedded-db`).
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
     pub embedded_db: bool,
+
+    /// Embedded cluster location, port and PostGIS source.
+    #[cfg(feature = "embedded-db")]
+    #[command(flatten)]
+    pub embedded: crate::embedded_pg::EmbeddedDbArgs,
 
     /// API base URL written into FLOWCATALYST_BASE_URL.
     #[arg(long, default_value = "http://localhost:8080")]
@@ -135,7 +150,13 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // Embedded PG (if enabled) — same data dir as the start path.
     #[cfg(feature = "embedded-db")]
     let (db_url, mut _embedded) = if args.embedded_db {
-        let emb = crate::embedded_pg::start(false).await?;
+        let emb = crate::embedded_pg::start(
+            &args.embedded,
+            crate::embedded_pg::Reset::default(),
+            crate::embedded_pg::Mode::AttachOrStart,
+            &crate::dev_paths::default_pid_file(),
+        )
+        .await?;
         let url = emb.url.clone();
         (url, Some(emb))
     } else {

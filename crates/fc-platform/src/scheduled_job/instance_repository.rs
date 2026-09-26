@@ -226,13 +226,12 @@ impl ScheduledJobInstanceRepository {
         &self,
         id: &str,
         created_at: DateTime<Utc>,
-        status: CompletionStatus,
+        status: InstanceStatus,
+        completion_status: Option<CompletionStatus>,
         result: Option<&serde_json::Value>,
     ) -> Result<()> {
-        let new_status = match status {
-            CompletionStatus::Success => InstanceStatus::Completed,
-            CompletionStatus::Failure => InstanceStatus::Failed,
-        };
+        // Go's `MarkComplete`: the caller has resolved the instance status
+        // and the completion outcome (see the complete handler).
         sqlx::query(
             "UPDATE msg_scheduled_job_instances \
              SET status = $3, completion_status = $4, completion_result = $5, \
@@ -241,8 +240,8 @@ impl ScheduledJobInstanceRepository {
         )
         .bind(id)
         .bind(created_at)
-        .bind(new_status.as_str())
         .bind(status.as_str())
+        .bind(completion_status.map(|c| c.as_str()))
         .bind(result)
         .execute(&self.pool)
         .await?;
@@ -266,6 +265,33 @@ impl ScheduledJobInstanceRepository {
 
     /// True if the job has any non-terminal instance — used by the UI as the
     /// "overlap detected" badge for `concurrent: false` jobs.
+    /// Which of `jobs` (id, tracks-completion) have an active instance, in
+    /// one query: QUEUED or IN_FLIGHT, or DELIVERED and not yet completed
+    /// for a job that tracks completion (Go `HasActiveInstance`).
+    pub async fn active_job_ids(
+        &self,
+        jobs: &[(String, bool)],
+    ) -> Result<std::collections::HashSet<String>> {
+        if jobs.is_empty() {
+            return Ok(Default::default());
+        }
+        let ids: Vec<&str> = jobs.iter().map(|(id, _)| id.as_str()).collect();
+        let tracks: Vec<bool> = jobs.iter().map(|(_, t)| *t).collect();
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT j.id FROM UNNEST($1::text[], $2::bool[]) AS j(id, tracks) \
+             WHERE EXISTS ( \
+                 SELECT 1 FROM msg_scheduled_job_instances i \
+                 WHERE i.scheduled_job_id = j.id \
+                   AND (i.status IN ('QUEUED', 'IN_FLIGHT') \
+                        OR (i.status = 'DELIVERED' AND j.tracks AND i.completed_at IS NULL)))",
+        )
+        .bind(&ids)
+        .bind(&tracks)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn has_active_instance(&self, scheduled_job_id: &str) -> Result<bool> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM msg_scheduled_job_instances \
@@ -276,6 +302,52 @@ impl ScheduledJobInstanceRepository {
         .fetch_one(&self.pool)
         .await?;
         Ok(row.0 > 0)
+    }
+
+    /// Go's `HasActiveInstance`: a QUEUED or IN_FLIGHT instance, or a
+    /// DELIVERED one still awaiting its completion callback when the job
+    /// tracks completion.
+    pub async fn has_active_instance_for(
+        &self,
+        scheduled_job_id: &str,
+        tracks_completion: bool,
+    ) -> Result<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM msg_scheduled_job_instances \
+             WHERE scheduled_job_id = $1 \
+               AND (status IN ('QUEUED', 'IN_FLIGHT') \
+                    OR (status = 'DELIVERED' AND $2 AND completed_at IS NULL)))",
+        )
+        .bind(scheduled_job_id)
+        .bind(tracks_completion)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// [`Self::has_active_instance_for`] for many jobs at once: the ids of
+    /// `job_ids` with an active instance (`tracking` names the jobs that
+    /// track completion).
+    pub async fn jobs_with_active_instances(
+        &self,
+        job_ids: &[String],
+        tracking: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        if job_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT scheduled_job_id FROM msg_scheduled_job_instances \
+             WHERE scheduled_job_id = ANY($1) \
+               AND (status IN ('QUEUED', 'IN_FLIGHT') \
+                    OR (status = 'DELIVERED' AND completed_at IS NULL \
+                        AND scheduled_job_id = ANY($2)))",
+        )
+        .bind(job_ids)
+        .bind(tracking)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     pub async fn list(&self, f: &InstanceListFilters<'_>) -> Result<Vec<ScheduledJobInstance>> {

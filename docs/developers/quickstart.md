@@ -40,7 +40,7 @@ fc-dev
 
 That's it. On first run, fc-dev:
 
-1. Downloads an embedded Postgres binary to `~/.cache/flowcatalyst-dev/pgdata/` (~80 MB, one-time).
+1. Starts the embedded PostgreSQL 18 cluster it shares with Go's and Java's `fcdev` (`~/Library/Application Support/flowcatalyst/embedded-pg` on macOS, port 15432), creating it on a machine that has none. Only one of the three runs at a time: `fc-dev stop` (or `fcdev stop`) stops whichever is running.
 2. Runs all migrations.
 3. Seeds default data: an `admin@flowcatalyst.local` user, built-in roles, the platform application.
 4. Starts the API server on `http://localhost:8080`.
@@ -195,8 +195,11 @@ fc-dev init
 # TRUNCATE every FC table (keeps schema; built-in roles re-seed on next start)
 fc-dev fresh
 
-# Wipe the entire embedded PG data dir and start over
-fc-dev --reset-db
+# Stop the running fcdev (Rust, Go or Java — they share one PID file)
+fc-dev stop
+
+# Wipe the entire shared embedded cluster (every database in it) and start over
+fc-dev --embedded-db-reset --confirm-shared-db-reset
 
 # Connect to an existing Postgres instead of the embedded one
 fc-dev --embedded-db=false --database-url postgresql://localhost:5432/flowcatalyst

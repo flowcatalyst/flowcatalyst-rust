@@ -809,7 +809,9 @@ fn require_user_resource_access(
             "Client administrators can only manage client-scope users",
         ));
     }
-    if !crate::shared::caller_reach::reaches_scope(ctx, target.client_id.as_deref()) {
+    // Go `auth.CanAccessScope`, the rule `check_scope_access` applies; out
+    // of reach answers the not-found a missing id would (PR-3(b)).
+    if !crate::shared::caller_reach::can_access_scope(ctx, target.client_id.as_deref()) {
         return Err(PlatformError::not_found(resource, &target.id));
     }
     Ok(())

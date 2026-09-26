@@ -145,7 +145,10 @@ impl<U: UnitOfWork> AddSchemaUseCase<U> {
         {
             return Err(UseCaseError::business_rule(
                 "VERSION_EXISTS",
-                format!("Schema version '{}' already exists", version),
+                format!(
+                    "Schema version '{}' already exists for this event type",
+                    version
+                ),
             ));
         }
 
