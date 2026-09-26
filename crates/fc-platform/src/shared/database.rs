@@ -633,6 +633,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "053_subscription_created_by",
             include_str!("../../../../migrations/053_subscription_created_by.sql"),
         ),
+        // Go's 035 (part): the event type's creator.
+        (
+            "054_event_type_created_by",
+            include_str!("../../../../migrations/054_event_type_created_by.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -874,6 +879,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "053_subscription_created_by",
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'msg_subscriptions' \
+               AND column_name = 'created_by')",
+        ),
+        (
+            "054_event_type_created_by",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_event_types' \
                AND column_name = 'created_by')",
         ),
     ];

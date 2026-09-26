@@ -32,14 +32,15 @@ pub struct EventTypeGoState {
     pub bff: BffEventTypesState,
 }
 
-/// Go `AddSchemaRequest`.
+/// Go `AddSchemaRequest`: both members required (huma's 400 `VALIDATION`
+/// when absent); a blank version or a `null` schema is refused by the
+/// handler.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AddEventTypeSchemaRequest {
-    #[serde(default)]
     pub version: String,
-    #[serde(default)]
-    pub schema: Option<serde_json::Value>,
+    #[schema(value_type = Object)]
+    pub schema: serde_json::Value,
 }
 
 /// Add a schema version named in the body (Go `addEventTypeSchema`).
@@ -65,34 +66,41 @@ pub async fn add_event_type_schema(
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
     checks::can_write_event_types(&auth.0)?;
+    add_schema(
+        &state.event_type_repo,
+        &state.add_schema_use_case,
+        &auth,
+        id,
+        req,
+    )
+    .await
+}
+
+/// Go's `addSchema` (eventtype/api/api.go), shared by `/schemas` and
+/// `/versions` once the permission is checked: validate, load (404), scope
+/// (`CheckScopeAccess`), add the caller's version, answer the event type.
+pub(crate) async fn add_schema(
+    repo: &EventTypeRepository,
+    use_case: &AddSchemaUseCase<PgUnitOfWork>,
+    auth: &Authenticated,
+    id: String,
+    req: AddEventTypeSchemaRequest,
+) -> Result<Json<EventTypeResponse>, PlatformError> {
     if req.version.trim().is_empty() {
         return Err(PlatformError::bad_request_code(
             "VERSION_REQUIRED",
             "version is required",
         ));
     }
-    let schema = req.schema.filter(|s| !s.is_null()).ok_or_else(|| {
+    let schema = Some(req.schema).filter(|s| !s.is_null()).ok_or_else(|| {
         PlatformError::bad_request_code("SCHEMA_REQUIRED", "schema payload is required")
     })?;
-    let event_type = state
-        .event_type_repo
+    let event_type = repo
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found_code("EventType", &id))?;
-    // Go `CheckScopeAccess`: a client's event type needs that client, a
-    // platform one anchor (or super-admin).
-    let reach = match event_type.client_id.as_deref() {
-        Some(cid) => auth.0.can_access_client(cid),
-        None => auth.0.is_anchor() || auth.0.has_permission(crate::permissions::ADMIN_ALL),
-    };
-    if !reach {
-        return Err(PlatformError::forbidden_code(
-            "SCOPE_FORBIDDEN",
-            "no access to this resource's client",
-        ));
-    }
-    state
-        .add_schema_use_case
+    checks::check_scope_access(&auth.0, event_type.client_id.as_deref())?;
+    use_case
         .run(
             AddSchemaCommand {
                 event_type_id: id.clone(),
@@ -105,8 +113,7 @@ pub async fn add_event_type_schema(
         )
         .await
         .into_result()?;
-    let refreshed = state
-        .event_type_repo
+    let refreshed = repo
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found_code("EventType", &id))?;

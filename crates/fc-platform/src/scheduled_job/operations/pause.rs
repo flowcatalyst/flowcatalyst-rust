@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobPaused;
-use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
+use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
@@ -79,19 +79,8 @@ impl<U: UnitOfWork> PauseScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        if job.status == ScheduledJobStatus::Paused {
-            return Err(UseCaseError::business_rule(
-                "ALREADY_PAUSED",
-                "ScheduledJob is already paused",
-            ));
-        }
-        if job.status == ScheduledJobStatus::Archived {
-            return Err(UseCaseError::business_rule(
-                "ARCHIVED",
-                "Cannot pause an archived ScheduledJob",
-            ));
-        }
-
+        // Go's `PauseScheduledJob` flips the status unconditionally: a
+        // repeat is a 204 no-op, not a conflict.
         job.pause();
         let event = ScheduledJobPaused::new(ctx, &job.id, &job.code);
         Ok((job, event))

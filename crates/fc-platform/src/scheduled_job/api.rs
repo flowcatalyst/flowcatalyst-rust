@@ -69,6 +69,9 @@ pub struct CreateScheduledJobRequest {
     /// None = platform-scoped (anchor only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// The application the job belongs to (Go `applicationId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
     pub crons: Vec<String>,
     #[serde(default = "default_tz")]
     pub timezone: String,
@@ -138,18 +141,17 @@ pub struct FireRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceLogRequest {
-    pub message: String,
-    #[serde(default)]
+    /// Required, as Go's `WriteInstanceLogRequest` (huma: no `omitempty`).
     pub level: LogLevelDto,
+    pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Default, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum LogLevelDto {
     Debug,
-    #[default]
     Info,
     Warn,
     Error,
@@ -166,27 +168,43 @@ impl From<LogLevelDto> for LogLevel {
     }
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+/// Go's `CompleteInstanceRequest`: two dialects, every member optional.
+/// The SDK sends `{status: SUCCESS|FAILURE, result}`; the SPA sends
+/// `{status: <instance status>, completionStatus, completionResult}`.
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceCompleteRequest {
-    pub status: CompletionStatusDto,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub completion_status: Option<String>,
+    #[serde(default)]
+    pub completion_result: Option<serde_json::Value>,
+    /// SDK alias for `completionResult`.
+    #[serde(default)]
     pub result: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum CompletionStatusDto {
-    Success,
-    Failure,
-}
-
-impl From<CompletionStatusDto> for CompletionStatus {
-    fn from(v: CompletionStatusDto) -> Self {
-        match v {
-            CompletionStatusDto::Success => CompletionStatus::Success,
-            CompletionStatusDto::Failure => CompletionStatus::Failure,
-        }
+/// Go's `resolveInstanceCompletion`: `SUCCESS`/`FAILURE` (or none) complete
+/// the instance with that outcome; any other value is the instance status
+/// itself. An explicit `completionStatus` wins. `None` for a status that is
+/// neither.
+fn resolve_instance_completion(
+    status: Option<&str>,
+    completion_status: Option<&str>,
+) -> Option<(InstanceStatus, Option<CompletionStatus>)> {
+    let explicit = match completion_status.filter(|c| !c.is_empty()) {
+        Some(c) => Some(c.to_ascii_uppercase().parse::<CompletionStatus>().ok()?),
+        None => None,
+    };
+    let status = status.unwrap_or("").to_ascii_uppercase();
+    match status.as_str() {
+        "" => Some((InstanceStatus::Completed, explicit)),
+        "SUCCESS" | "FAILURE" => Some((
+            InstanceStatus::Completed,
+            explicit.or_else(|| status.parse::<CompletionStatus>().ok()),
+        )),
+        other => Some((other.parse::<InstanceStatus>().ok()?, explicit)),
     }
 }
 
@@ -227,25 +245,36 @@ pub struct ByCodeQuery {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+/// Go's `ScheduledJobResponse`: absent members stay absent (`omitempty`).
 pub struct ScheduledJobResponse {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub status: String,
     pub crons: Vec<String>,
     pub timezone: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     pub concurrent: bool,
     pub tracks_completion: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<i32>,
     pub delivery_max_attempts: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_fired_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_by: Option<String>,
     pub version: i32,
     /// Computed: true if any non-terminal instance currently exists.
@@ -257,6 +286,7 @@ impl ScheduledJobResponse {
         Self {
             id: job.id,
             client_id: job.client_id,
+            application_id: job.application_id,
             code: job.code,
             name: job.name,
             description: job.description,
@@ -282,21 +312,30 @@ impl ScheduledJobResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+/// Go's `ScheduledJobInstanceResponse`: absent members stay absent.
 pub struct ScheduledJobInstanceResponse {
     pub id: String,
     pub scheduled_job_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub job_code: String,
     pub trigger_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_for: Option<DateTime<Utc>>,
     pub fired_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub delivered_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
     pub status: String,
     pub delivery_attempts: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub delivery_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -326,11 +365,17 @@ impl From<ScheduledJobInstance> for ScheduledJobInstanceResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+/// Go's `ScheduledJobInstanceLogResponse`.
 pub struct InstanceLogResponse {
     pub id: String,
     pub instance_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     pub level: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
@@ -340,6 +385,8 @@ impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
         Self {
             id: l.id,
             instance_id: l.instance_id,
+            scheduled_job_id: l.scheduled_job_id,
+            client_id: l.client_id,
             level: l.level.as_str().into(),
             message: l.message,
             metadata: l.metadata,
@@ -350,29 +397,38 @@ impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
 
 // ── Authorization helpers ───────────────────────────────────────────────────
 
-/// Returns Ok if the caller can act on a scheduled-job whose `client_id` is
-/// `Some(c)` (member of c) or `None` (caller is anchor or has ADMIN_ALL).
+/// Go's by-id write rule (`auth.CheckScopeAccess` in each use case): 403
+/// `SCOPE_FORBIDDEN`.
 fn check_scope_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
+    crate::shared::authorization_service::checks::check_scope_access(&auth.0, client_id)
+}
+
+/// Go's read rule (`getByID`, `getByCode`, `getInstance`): a client's job
+/// needs that client (403 `FORBIDDEN` with `message`); a platform job is
+/// readable by any holder of the read permission.
+fn check_read_access(
+    auth: &Authenticated,
+    client_id: Option<&str>,
+    message: &str,
+) -> Result<(), PlatformError> {
     match client_id {
-        Some(cid) => {
-            if auth.0.can_access_client(cid) {
-                Ok(())
-            } else {
-                Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )))
-            }
-        }
-        None => {
-            if auth.0.is_anchor() || auth.0.has_permission(crate::permissions::ADMIN_ALL) {
-                Ok(())
-            } else {
-                Err(PlatformError::forbidden(
-                    "Only anchor users can manage platform-scoped scheduled jobs",
-                ))
-            }
-        }
+        Some(cid) if !auth.0.can_access_client(cid) => Err(PlatformError::forbidden(message)),
+        _ => Ok(()),
+    }
+}
+
+/// Go's `CreateScheduledJob` authorize phase: a client's job needs that
+/// client, a platform job an anchor.
+fn check_create_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
+    match client_id {
+        Some(cid) if !auth.0.can_access_client(cid) => Err(PlatformError::forbidden(format!(
+            "No access to client: {cid}"
+        ))),
+        Some(_) => Ok(()),
+        None if auth.0.is_anchor() => Ok(()),
+        None => Err(PlatformError::forbidden(
+            "Only anchor users can create platform-scoped jobs",
+        )),
     }
 }
 
@@ -391,13 +447,13 @@ pub async fn create_scheduled_job(
     Json(req): Json<CreateScheduledJobRequest>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     crate::shared::authorization_service::checks::can_create_scheduled_jobs(&auth.0)?;
-    check_scope_access(&auth, req.client_id.as_deref())?;
 
     let cmd = CreateScheduledJobCommand {
         code: req.code,
         name: req.name,
         description: req.description,
         client_id: req.client_id,
+        application_id: req.application_id,
         crons: req.crons,
         timezone: req.timezone,
         payload: req.payload,
@@ -407,6 +463,13 @@ pub async fn create_scheduled_job(
         delivery_max_attempts: req.delivery_max_attempts,
         target_url: req.target_url,
     };
+    // Go validates the command before its authorize phase checks the scope.
+    state
+        .create_use_case
+        .validate(&cmd)
+        .await
+        .map_err(PlatformError::from)?;
+    check_create_access(&auth, cmd.client_id.as_deref())?;
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
@@ -437,41 +500,53 @@ pub async fn list_scheduled_jobs(
     let status_filter =
         crate::shared::enum_str::parse_opt::<ScheduledJobStatus>(q.status.as_deref())?;
 
-    let jobs = state
+    // Scoped in SQL, as Go: a non-anchor sees platform jobs and its own
+    // clients' jobs, and COUNT agrees with the page.
+    let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
+        None
+    } else {
+        Some(crate::shared::caller_reach::client_ids(&auth.0))
+    };
+    let visible: Vec<ScheduledJob> = state
         .repo
-        .find_with_filters(
+        .find_with_filters_scoped(
             client_filter,
             status_filter,
             q.search.as_deref(),
+            accessible.as_deref(),
             Some(q.pagination.limit()),
             Some(q.pagination.offset() as i64),
         )
         .await?;
     let total = state
         .repo
-        .count_with_filters(client_filter, status_filter, q.search.as_deref())
+        .count_with_filters_scoped(
+            client_filter,
+            status_filter,
+            q.search.as_deref(),
+            accessible.as_deref(),
+        )
         .await? as u64;
 
-    // Filter by client access. Platform-scoped jobs visible only to anchor.
-    let visible: Vec<ScheduledJob> = jobs
+    // hasActiveInstance for the whole page in one query.
+    let ids: Vec<String> = visible.iter().map(|j| j.id.clone()).collect();
+    let tracking: Vec<String> = visible
+        .iter()
+        .filter(|j| j.tracks_completion)
+        .map(|j| j.id.clone())
+        .collect();
+    let active = state
+        .instance_repo
+        .jobs_with_active_instances(&ids, &tracking)
+        .await
+        .unwrap_or_default();
+    let data: Vec<ScheduledJobResponse> = visible
         .into_iter()
-        .filter(|j| match &j.client_id {
-            Some(cid) => auth.0.can_access_client(cid),
-            None => auth.0.is_anchor(),
+        .map(|j| {
+            let is_active = active.contains(&j.id);
+            ScheduledJobResponse::from(j, is_active)
         })
         .collect();
-
-    // Hydrate has_active_instance per row. Small N (page size) — fine
-    // sequentially; replace with a single GROUP BY query if pages get wide.
-    let mut data = Vec::with_capacity(visible.len());
-    for j in visible {
-        let active = state
-            .instance_repo
-            .has_active_instance(&j.id)
-            .await
-            .unwrap_or(false);
-        data.push(ScheduledJobResponse::from(j, active));
-    }
 
     Ok(Json(PaginatedResponse::new(
         data,
@@ -500,10 +575,14 @@ pub async fn get_scheduled_job(
         .find_by_id(&id)
         .await?
         .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, job.client_id.as_deref())?;
+    check_read_access(
+        &auth,
+        job.client_id.as_deref(),
+        "No access to this scheduled job",
+    )?;
     let active = state
         .instance_repo
-        .has_active_instance(&job.id)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -533,10 +612,14 @@ pub async fn get_scheduled_job_by_code(
         .find_by_code(cid, &code)
         .await?
         .or_not_found("ScheduledJob", &code)?;
-    check_scope_access(&auth, job.client_id.as_deref())?;
+    check_read_access(
+        &auth,
+        job.client_id.as_deref(),
+        "No access to this scheduled job",
+    )?;
     let active = state
         .instance_repo
-        .has_active_instance(&job.id)
+        .has_active_instance_for(&job.id, job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -556,7 +639,7 @@ pub async fn update_scheduled_job(
     Path(id): Path<String>,
     Json(req): Json<UpdateScheduledJobRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_update_scheduled_jobs(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
 
     let existing = state
         .repo
@@ -595,7 +678,7 @@ pub async fn pause_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_pause_scheduled_jobs(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
     let existing = state
         .repo
         .find_by_id(&id)
@@ -623,7 +706,7 @@ pub async fn resume_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_pause_scheduled_jobs(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
     let existing = state
         .repo
         .find_by_id(&id)
@@ -651,7 +734,7 @@ pub async fn archive_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::can_update_scheduled_jobs(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
     let existing = state
         .repo
         .find_by_id(&id)
@@ -752,12 +835,15 @@ pub async fn list_instances_for_job(
     Query(q): Query<ListInstancesQuery>,
 ) -> Result<Json<PaginatedResponse<ScheduledJobInstanceResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_scheduled_job_instances(&auth.0)?;
-    let job = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, job.client_id.as_deref())?;
+    // Go lists by job id without loading the job (an unknown id is an empty
+    // page); a job the caller cannot read stays refused.
+    if let Some(job) = state.repo.find_by_id(&id).await? {
+        check_read_access(
+            &auth,
+            job.client_id.as_deref(),
+            "No access to this scheduled job",
+        )?;
+    }
 
     let status = crate::shared::enum_str::parse_opt::<InstanceStatus>(q.status.as_deref())?;
     let trigger = crate::shared::enum_str::parse_opt::<TriggerKind>(q.trigger_kind.as_deref())?;
@@ -805,7 +891,11 @@ pub async fn get_instance(
         .find_by_id(&instance_id)
         .await?
         .or_not_found("ScheduledJobInstance", &instance_id)?;
-    check_scope_access(&auth, inst.client_id.as_deref())?;
+    check_read_access(
+        &auth,
+        inst.client_id.as_deref(),
+        "No access to this instance",
+    )?;
     Ok(Json(inst.into()))
 }
 
@@ -822,12 +912,15 @@ pub async fn list_instance_logs(
     Path(instance_id): Path<String>,
 ) -> Result<Json<Vec<InstanceLogResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_scheduled_job_instances(&auth.0)?;
-    let inst = state
-        .instance_repo
-        .find_by_id(&instance_id)
-        .await?
-        .or_not_found("ScheduledJobInstance", &instance_id)?;
-    check_scope_access(&auth, inst.client_id.as_deref())?;
+    // Go answers an unknown instance's logs with an empty array, not 404.
+    let Some(inst) = state.instance_repo.find_by_id(&instance_id).await? else {
+        return Ok(Json(Vec::new()));
+    };
+    check_read_access(
+        &auth,
+        inst.client_id.as_deref(),
+        "No access to this instance",
+    )?;
     let logs = state
         .instance_repo
         .list_logs_for_instance(&instance_id, None)
@@ -842,7 +935,7 @@ pub async fn list_instance_logs(
     operation_id = "postApiScheduledJobsInstancesByIdLog",
     params(("instanceId" = String, Path, description = "Instance ID")),
     request_body = InstanceLogRequest,
-    responses((status = 202), (status = 403), (status = 404)),
+    responses((status = 204), (status = 400), (status = 403), (status = 404)),
     security(("bearer_auth" = []))
 )]
 pub async fn post_instance_log(
@@ -870,7 +963,7 @@ pub async fn post_instance_log(
         created_at: Utc::now(),
     };
     state.instance_repo.insert_log(&log).await?;
-    Ok(StatusCode::ACCEPTED)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(
@@ -895,13 +988,24 @@ pub async fn post_instance_complete(
         .or_not_found("ScheduledJobInstance", &instance_id)?;
     check_scope_access(&auth, inst.client_id.as_deref())?;
 
+    let (status, completion) =
+        resolve_instance_completion(req.status.as_deref(), req.completion_status.as_deref())
+            .ok_or_else(|| {
+                PlatformError::bad_request_code(
+                    "INVALID_STATUS",
+                    "status must be SUCCESS, FAILURE, or a known instance status",
+                )
+            })?;
+    // The SPA sends `completionResult`, the SDK `result`.
+    let result = req.completion_result.or(req.result);
     state
         .instance_repo
         .record_completion(
             &inst.id,
             inst.created_at,
-            req.status.into(),
-            req.result.as_ref(),
+            status,
+            completion,
+            result.as_ref(),
         )
         .await?;
     Ok(StatusCode::NO_CONTENT)

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessArchived;
-use crate::process::entity::{Process, ProcessStatus};
+use crate::process::entity::Process;
 use crate::process::repository::ProcessRepository;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
@@ -87,13 +87,7 @@ impl<U: UnitOfWork> ArchiveProcessUseCase<U> {
                 format!("Process with ID '{}' not found", command.process_id),
             )?;
 
-        if process.status == ProcessStatus::Archived {
-            return Err(UseCaseError::business_rule(
-                "ALREADY_ARCHIVED",
-                "Process is already archived",
-            ));
-        }
-
+        // Go's `ArchiveProcess` archives unconditionally: a repeat is a 204.
         process.archive();
 
         let event = ProcessArchived::new(ctx, &process.id, &process.code);

@@ -94,6 +94,53 @@ impl From<EventReadRow> for EventRead {
     }
 }
 
+/// One `msg_events_read` row in full: Go's `FindByID` reads every column
+/// (event/repository.go), for `GET /api/events/{id}`.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct EventReadDetail {
+    pub id: String,
+    pub spec_version: Option<String>,
+    #[sqlx(rename = "type")]
+    pub event_type: String,
+    pub source: String,
+    pub subject: Option<String>,
+    pub time: DateTime<Utc>,
+    pub data: Option<String>,
+    pub deduplication_id: Option<String>,
+    pub client_id: Option<String>,
+    pub message_group: Option<String>,
+    pub correlation_id: Option<String>,
+    pub causation_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub application: Option<String>,
+    pub subdomain: Option<String>,
+    pub aggregate: Option<String>,
+    pub projected_at: Option<DateTime<Utc>>,
+}
+
+/// Go's event list filters (`event.FilterParams`): singular equality
+/// filters for SDK callers, CSV multi-filters for the SPA, and
+/// `accessible` scoping a non-anchor caller to platform events plus its
+/// clients' events.
+#[derive(Debug, Default)]
+pub struct EventReadFilter<'a> {
+    pub event_type: Option<&'a str>,
+    pub types: &'a [String],
+    pub source: Option<&'a str>,
+    pub subject: Option<&'a str>,
+    pub client_id: Option<&'a str>,
+    pub client_ids: &'a [String],
+    pub accessible: Option<&'a [String]>,
+    pub applications: &'a [String],
+    pub subdomains: &'a [String],
+    pub aggregates: &'a [String],
+    pub correlation_id: Option<&'a str>,
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 pub struct EventRepository {
     pool: PgPool,
 }
@@ -392,6 +439,83 @@ impl EventRepository {
         .await?;
 
         Ok(row.map(EventRead::from))
+    }
+
+    /// One read-projection row in full (Go `FindByID`).
+    pub async fn find_read_detail_by_id(&self, id: &str) -> Result<Option<EventReadDetail>> {
+        Ok(sqlx::query_as::<_, EventReadDetail>(
+            "SELECT id, spec_version, type, source, subject, time, data, deduplication_id, \
+             client_id, message_group, correlation_id, causation_id, created_at, application, \
+             subdomain, aggregate, projected_at FROM msg_events_read WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// The read projection filtered as Go's `FindWithFilters`, newest first.
+    pub async fn find_read_filtered(&self, f: &EventReadFilter<'_>) -> Result<Vec<EventRead>> {
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            "SELECT id, type, source, subject, time, application, subdomain, \
+             aggregate, message_group, correlation_id, client_id, projected_at \
+             FROM msg_events_read WHERE TRUE",
+        );
+        let eq = |qb: &mut QueryBuilder<Postgres>, col: &str, v: Option<&str>| {
+            if let Some(v) = v {
+                qb.push(format!(" AND {col} = ")).push_bind(v.to_string());
+            }
+        };
+        let any = |qb: &mut QueryBuilder<Postgres>, col: &str, v: &[String]| {
+            if !v.is_empty() {
+                qb.push(format!(" AND {col} = ANY("))
+                    .push_bind(v.to_vec())
+                    .push(")");
+            }
+        };
+        eq(&mut qb, "type", f.event_type);
+        any(&mut qb, "type", f.types);
+        eq(&mut qb, "source", f.source);
+        eq(&mut qb, "subject", f.subject);
+        eq(&mut qb, "client_id", f.client_id);
+        any(&mut qb, "client_id", f.client_ids);
+        if let Some(ids) = f.accessible {
+            qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+                .push_bind(ids.to_vec())
+                .push("))");
+        }
+        any(&mut qb, "application", f.applications);
+        any(&mut qb, "subdomain", f.subdomains);
+        any(&mut qb, "aggregate", f.aggregates);
+        eq(&mut qb, "correlation_id", f.correlation_id);
+        if let Some(t) = f.since {
+            qb.push(" AND created_at >= ").push_bind(t);
+        }
+        if let Some(t) = f.until {
+            qb.push(" AND created_at <= ").push_bind(t);
+        }
+        qb.push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(f.limit);
+        if f.offset > 0 {
+            qb.push(" OFFSET ").push_bind(f.offset);
+        }
+        let rows: Vec<EventReadRow> = qb.build_query_as().fetch_all(&self.pool).await?;
+        Ok(rows.into_iter().map(EventRead::from).collect())
+    }
+
+    /// Distinct non-null values of one read-projection column, sorted, at
+    /// most 200 (Go `DistinctValues`).
+    pub async fn distinct_read_values(&self, column: &str) -> Result<Vec<String>> {
+        if !["application", "subdomain", "type"].contains(&column) {
+            return Err(crate::shared::error::PlatformError::internal(format!(
+                "event repo: column {column:?} not allowed"
+            )));
+        }
+        Ok(sqlx::query_scalar::<_, String>(&format!(
+            "SELECT DISTINCT {column} FROM msg_events_read WHERE {column} IS NOT NULL \
+             ORDER BY 1 LIMIT 200"
+        ))
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     /// Cursor-paginated read of `msg_events_read`. Drops the

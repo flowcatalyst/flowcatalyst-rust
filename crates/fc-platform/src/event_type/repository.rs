@@ -22,6 +22,7 @@ struct EventTypeRow {
     application: String,
     subdomain: String,
     aggregate: String,
+    created_by: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -45,8 +46,8 @@ impl TryFrom<EventTypeRow> for EventType {
             subdomain: r.subdomain,
             aggregate: r.aggregate,
             event_name,
-            client_id: None,  // not stored in DB; derived from context
-            created_by: None, // not stored in msg_event_types
+            client_id: None, // not stored in DB; derived from context
+            created_by: r.created_by,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -297,8 +298,8 @@ impl EventTypeRepository {
     pub async fn insert(&self, et: &EventType) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+            "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
         )
         .bind(&et.id)
         .bind(&et.code)
@@ -312,6 +313,7 @@ impl EventTypeRepository {
         .bind(&et.aggregate)
         .bind(now)
         .bind(now)
+        .bind(&et.created_by)
         .execute(&self.pool)
         .await?;
 
@@ -593,8 +595,8 @@ impl crate::usecase::Persist<EventType> for EventTypeRepository {
         let now = Utc::now();
 
         sqlx::query(
-            "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "INSERT INTO msg_event_types (id, code, name, description, status, source, client_scoped, application, subdomain, aggregate, created_at, updated_at, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,
@@ -615,6 +617,7 @@ impl crate::usecase::Persist<EventType> for EventTypeRepository {
         .bind(&et.aggregate)
         .bind(now)
         .bind(now)
+        .bind(&et.created_by)
         .execute(&mut **tx.inner).await?;
 
         sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")

@@ -941,6 +941,7 @@ impl TriggerSync {
                     name: d.name.clone(),
                     description: None,
                     client_id,
+                    application_id: Some(f.application_id.clone()),
                     crons: d.crons.clone(),
                     timezone: d.timezone.clone(),
                     payload: d.payload.clone(),

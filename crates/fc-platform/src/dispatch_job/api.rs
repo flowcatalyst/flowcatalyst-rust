@@ -11,53 +11,81 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
+use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::DispatchJobRepository;
 use crate::{
-    DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, DispatchStatus,
-    RetryStrategy,
+    DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, RetryStrategy,
 };
 
-/// Dispatch job response DTO
+/// Dispatch job response DTO: Go's `DispatchJobResponse`
+/// (dispatchjob/api/dto.go). Absent members stay absent (`omitempty`); the
+/// job row carries no attempts, so `attempts` is only ever absent here (the
+/// attempts route lists them).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobResponse {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
-    pub source: Option<String>,
     pub kind: String,
     pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    pub event_id: Option<String>,
-    pub correlation_id: Option<String>,
     pub target_url: String,
     pub protocol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
+    pub payload_content_type: String,
+    pub data_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message_group: Option<String>,
     pub mode: String,
     pub sequence: i32,
+    pub timeout_seconds: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_id: Option<String>,
+    pub max_retries: u32,
+    pub retry_strategy: String,
     pub status: String,
     pub attempt_count: u32,
-    pub max_retries: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
-    pub timeout_seconds: u32,
-    pub retry_strategy: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attempts: Vec<DispatchAttemptResponse>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<Object>)]
+    pub metadata: Vec<DispatchMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_for: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
-    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempt_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
-    pub idempotency_key: Option<String>,
-    pub is_completed: bool,
-    pub is_terminal: bool,
 }
 
 impl From<DispatchJob> for DispatchJobResponse {
@@ -65,14 +93,17 @@ impl From<DispatchJob> for DispatchJobResponse {
         Self {
             id: job.id,
             external_id: job.external_id,
-            source: job.source,
             kind: job.kind.as_str().to_string(),
             code: job.code,
+            source: job.source,
             subject: job.subject,
-            event_id: job.event_id,
-            correlation_id: job.correlation_id,
             target_url: job.target_url,
             protocol: job.protocol.as_str().to_string(),
+            payload: job.payload,
+            payload_content_type: job.payload_content_type,
+            data_only: job.data_only,
+            event_id: job.event_id,
+            correlation_id: job.correlation_id,
             client_id: job.client_id,
             subscription_id: job.subscription_id,
             service_account_id: job.service_account_id,
@@ -80,154 +111,163 @@ impl From<DispatchJob> for DispatchJobResponse {
             message_group: job.message_group,
             mode: job.mode.as_str().to_string(),
             sequence: job.sequence,
+            timeout_seconds: job.timeout_seconds,
+            schema_id: job.schema_id,
+            max_retries: job.max_retries,
+            retry_strategy: job.retry_strategy.as_str().to_string(),
             status: job.status.as_str().to_string(),
             attempt_count: job.attempt_count,
-            max_retries: job.max_retries,
             last_error: job.last_error,
-            timeout_seconds: job.timeout_seconds,
-            retry_strategy: job.retry_strategy.as_str().to_string(),
+            attempts: job.attempts.into_iter().map(Into::into).collect(),
+            metadata: job.metadata,
+            idempotency_key: job.idempotency_key,
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
             scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
             expires_at: job.expires_at.map(|t| t.to_rfc3339()),
-            completed_at: job.completed_at.map(|t| t.to_rfc3339()),
             last_attempt_at: job.last_attempt_at.map(|t| t.to_rfc3339()),
+            completed_at: job.completed_at.map(|t| t.to_rfc3339()),
             duration_millis: job.duration_millis,
-            idempotency_key: job.idempotency_key,
-            is_completed: job.status == DispatchStatus::Completed,
-            is_terminal: job.status.is_terminal(),
         }
     }
 }
 
-/// Dispatch job read projection response
+/// Dispatch job read-projection row: Go's slim `DispatchJobRead`
+/// (dispatchjob/api/dto.go), the list, list-raw and by-event shape the SPA
+/// binds.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobReadResponse {
     pub id: String,
-    pub external_id: Option<String>,
-    pub source: Option<String>,
-    pub kind: String,
-    pub code: String,
-    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
-    pub correlation_id: Option<String>,
-    pub target_url: String,
-    pub protocol: String,
-    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_id: Option<String>,
-    pub service_account_id: Option<String>,
-    pub dispatch_pool_id: Option<String>,
-    pub message_group: Option<String>,
-    pub mode: String,
-    pub sequence: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subdomain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<String>,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     pub status: String,
-    pub attempt_count: u32,
-    pub max_retries: u32,
-    pub last_error: Option<String>,
-    pub timeout_seconds: u32,
-    pub retry_strategy: String,
+    pub kind: String,
+    pub target_url: String,
+    pub mode: String,
+    pub dispatch_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_for: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    pub scheduled_for: Option<String>,
-    pub expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempt_at: Option<String>,
-    pub duration_millis: Option<i64>,
-    pub idempotency_key: Option<String>,
-    pub is_completed: bool,
-    pub is_terminal: bool,
-    pub projected_at: Option<String>,
-    pub application: Option<String>,
-    pub subdomain: Option<String>,
-    pub aggregate: Option<String>,
+    pub attempt_count: u32,
+}
+
+/// Go's `splitCode`: application, subdomain and aggregate from the
+/// colon-delimited code, each absent when blank.
+fn split_code(code: &str) -> [Option<String>; 3] {
+    let mut parts = code
+        .split(':')
+        .map(|p| (!p.is_empty()).then(|| p.to_string()));
+    [
+        parts.next().flatten(),
+        parts.next().flatten(),
+        parts.next().flatten(),
+    ]
 }
 
 impl From<DispatchJobRead> for DispatchJobReadResponse {
     fn from(job: DispatchJobRead) -> Self {
+        let [application, subdomain, aggregate] = split_code(&job.code);
+        let mode = job.mode.as_str().to_string();
         Self {
             id: job.id,
-            external_id: job.external_id,
-            source: job.source,
-            kind: job.kind.as_str().to_string(),
-            code: job.code,
-            subject: job.subject,
             event_id: job.event_id,
-            correlation_id: job.correlation_id,
-            target_url: job.target_url,
-            protocol: job.protocol.as_str().to_string(),
-            client_id: job.client_id,
             subscription_id: job.subscription_id,
-            service_account_id: job.service_account_id,
-            dispatch_pool_id: job.dispatch_pool_id,
-            message_group: job.message_group,
-            mode: job.mode.as_str().to_string(),
-            sequence: job.sequence,
+            client_id: job.client_id,
+            client_identifier: None,
+            application,
+            subdomain,
+            aggregate,
+            code: job.code,
+            source: job.source,
+            subject: job.subject,
             status: job.status.as_str().to_string(),
-            attempt_count: job.attempt_count,
-            max_retries: job.max_retries,
-            last_error: job.last_error,
-            timeout_seconds: job.timeout_seconds,
-            retry_strategy: job.retry_strategy.as_str().to_string(),
+            kind: job.kind.as_str().to_string(),
+            target_url: job.target_url,
+            dispatch_mode: mode.clone(),
+            mode,
+            correlation_id: job.correlation_id,
+            message_group: job.message_group,
+            scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
-            scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
-            expires_at: job.expires_at.map(|t| t.to_rfc3339()),
             completed_at: job.completed_at.map(|t| t.to_rfc3339()),
             last_attempt_at: job.last_attempt_at.map(|t| t.to_rfc3339()),
-            duration_millis: job.duration_millis,
-            idempotency_key: job.idempotency_key,
-            is_completed: job.is_completed,
-            is_terminal: job.is_terminal,
-            projected_at: job.projected_at.map(|t| t.to_rfc3339()),
-            application: job.application,
-            subdomain: job.subdomain,
-            aggregate: job.aggregate,
+            attempt_count: job.attempt_count,
         }
     }
 }
 
-/// Query parameters for dispatch jobs list.
-///
-/// `msg_dispatch_jobs_read` is an append-only firehose, so this endpoint
-/// returns the most recent N rows only — no pagination. Sort order is
-/// fixed to most-recent-first (`created_at DESC, id DESC`); narrow filters
-/// or look up by id if you need older rows.
+/// Query parameters for the dispatch-job list: Go's `listInput`
+/// (dispatchjob/api/api.go). The most recent rows matching the filters, no
+/// page count: `msg_dispatch_jobs_read` is an append-only firehose.
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct DispatchJobsQuery {
-    /// Result size. Default 50, capped at 1000.
-    pub size: Option<u32>,
-
-    /// Filter by event ID
-    pub event_id: Option<String>,
-
-    /// Filter by correlation ID
-    pub correlation_id: Option<String>,
-
-    /// Filter by subscription ID
+    /// Max rows (the SPA's; wins over `limit`). Default 100, max 1000.
+    pub size: Option<i64>,
+    /// Max rows (the SDK's).
+    pub limit: Option<i64>,
+    /// Rows to skip.
+    pub offset: Option<i64>,
+    /// Exact status
+    pub status: Option<String>,
+    /// Exact client id
+    pub client_id: Option<String>,
+    /// Exact dispatch pool id
+    pub dispatch_pool_id: Option<String>,
+    /// Exact subscription id
     pub subscription_id: Option<String>,
-
-    /// Filter by client IDs (comma-separated)
+    /// Exact code
+    pub code: Option<String>,
+    /// Exact message group
+    pub message_group: Option<String>,
+    /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
+    pub since: Option<String>,
+    /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
+    pub until: Option<String>,
+    /// `createdAt.asc` or `createdAt.desc` (the default)
+    pub sort: Option<String>,
+    /// Client ids (comma-separated)
     pub client_ids: Option<String>,
-
-    /// Filter by statuses (comma-separated)
+    /// Statuses (comma-separated)
     pub statuses: Option<String>,
-
-    /// Filter by application codes (comma-separated)
+    /// Application codes (comma-separated)
     pub applications: Option<String>,
-
-    /// Filter by subdomains (comma-separated)
+    /// Subdomains (comma-separated)
     pub subdomains: Option<String>,
-
-    /// Filter by aggregates (comma-separated)
+    /// Aggregates (comma-separated)
     pub aggregates: Option<String>,
-
-    /// Filter by codes (comma-separated)
+    /// Codes (comma-separated)
     pub codes: Option<String>,
-
-    /// Free-text search across code, subject, source
+    /// Exact source
     pub source: Option<String>,
 }
 
@@ -247,6 +287,8 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 #[derive(Clone)]
 pub struct DispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
+    /// Resolves each list row's `clientIdentifier`.
+    pub client_repo: Arc<crate::ClientRepository>,
     /// Refuses a job signed by an identity the caller may not use (S5).
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
@@ -365,19 +407,29 @@ pub struct BatchCreateDispatchJobsResponse {
     pub count: usize,
 }
 
-/// Dispatch attempt response DTO
+/// Dispatch attempt response DTO: Go's `AttemptDTO`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchAttemptResponse {
     pub attempt_number: u32,
     pub attempted_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub response_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
     pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
+    /// What the platform sent on this attempt (Go's `RequestSummary`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub request: Option<serde_json::Value>,
 }
 
 impl From<DispatchAttempt> for DispatchAttemptResponse {
@@ -392,8 +444,22 @@ impl From<DispatchAttempt> for DispatchAttemptResponse {
             success: a.success,
             error_message: a.error_message,
             error_type: a.error_type.map(|t| t.as_str().to_string()),
+            request: None,
         }
     }
+}
+
+impl From<crate::dispatch_job::repository::RecordedAttempt> for DispatchAttemptResponse {
+    fn from(r: crate::dispatch_job::repository::RecordedAttempt) -> Self {
+        let mut out = Self::from(r.attempt);
+        out.request = r.request_info.filter(|v| !v.is_null());
+        out
+    }
+}
+
+/// Go's `CheckScopeAccess` on a job read by id: 403 `SCOPE_FORBIDDEN`.
+fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
+    crate::shared::authorization_service::checks::check_scope_access(&auth.0, client_id)
 }
 
 /// Get dispatch job by ID
@@ -423,13 +489,7 @@ pub async fn get_dispatch_job(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
-
-    // Check client access
-    crate::shared::caller_reach::ensure_row_visible(
-        &auth.0,
-        job.client_id.as_deref(),
-        "dispatch job",
-    )?;
+    check_job_scope(&auth, job.client_id.as_deref())?;
 
     Ok(Json(job.into()))
 }
@@ -453,49 +513,96 @@ pub async fn list_dispatch_jobs(
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    list_dispatch_jobs_unchecked(&state, &auth, query).await
+}
 
+/// Go's `list` / `listRaw` body once the permission is checked: the read
+/// projection filtered, scoped in SQL for a non-anchor caller (platform jobs
+/// plus its clients'), each row with its client's identifier.
+pub(crate) async fn list_dispatch_jobs_unchecked(
+    state: &DispatchJobsState,
+    auth: &Authenticated,
+    query: DispatchJobsQuery,
+) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     let statuses = split_csv(query.statuses.as_deref());
+    let client_ids = split_csv(query.client_ids.as_deref());
     let applications = split_csv(query.applications.as_deref());
     let subdomains = split_csv(query.subdomains.as_deref());
     let aggregates = split_csv(query.aggregates.as_deref());
     let codes = split_csv(query.codes.as_deref());
-
-    let Some(client_ids) = crate::shared::caller_reach::read_client_filter(
-        &auth.0,
-        split_csv(query.client_ids.as_deref()),
-    )?
-    else {
-        return Ok(Json(vec![]));
+    let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
+        None
+    } else {
+        Some(crate::shared::caller_reach::client_ids(&auth.0))
     };
-
-    // Unknown (or miscased) statuses are a 400, not an empty result.
-    let statuses = statuses
-        .iter()
-        .map(|s| Ok(parse_dispatch_status(s)?.as_str().to_string()))
-        .collect::<Result<Vec<_>, PlatformError>>()?;
-
-    let size = query.size.unwrap_or(50).clamp(1, 1000) as i64;
-
-    let jobs = state
-        .dispatch_job_repo
-        .find_read_with_cursor(
-            &client_ids,
-            &statuses,
-            &applications,
-            &subdomains,
-            &aggregates,
-            &codes,
-            query.source.as_deref(),
-            None,
-            size,
-        )
-        .await?;
-
+    let ts = |v: Option<&str>| {
+        v.filter(|v| !v.is_empty())
+            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+    fn non_empty(v: &Option<String>) -> Option<&str> {
+        v.as_deref().filter(|v| !v.is_empty())
+    }
+    // `size` (SPA) wins over `limit` (SDK); out of range is Go's 100.
+    let limit = match query.size.filter(|s| *s > 0).or(query.limit) {
+        Some(l) if (1..=1000).contains(&l) => l,
+        _ => 100,
+    };
+    let filter = crate::dispatch_job::repository::DispatchJobReadFilter {
+        status: non_empty(&query.status),
+        statuses: &statuses,
+        client_id: non_empty(&query.client_id),
+        client_ids: &client_ids,
+        accessible: accessible.as_deref(),
+        dispatch_pool_id: non_empty(&query.dispatch_pool_id),
+        subscription_id: non_empty(&query.subscription_id),
+        code: non_empty(&query.code),
+        codes: &codes,
+        source: non_empty(&query.source),
+        message_group: non_empty(&query.message_group),
+        applications: &applications,
+        subdomains: &subdomains,
+        aggregates: &aggregates,
+        since: ts(query.since.as_deref()),
+        until: ts(query.until.as_deref()),
+        ascending: query.sort.as_deref() == Some("createdAt.asc"),
+        limit,
+        offset: query.offset.unwrap_or(0).max(0),
+    };
+    let jobs = state.dispatch_job_repo.find_read_filtered(&filter).await?;
     let items = jobs
         .into_iter()
         .map(DispatchJobReadResponse::from)
         .collect();
-    Ok(Json(items))
+    with_client_identifiers(state, items).await.map(Json)
+}
+
+/// Go's `withClientIdentifier`: each row's `clientIdentifier`, looked up in
+/// one query for the page's distinct clients.
+async fn with_client_identifiers(
+    state: &DispatchJobsState,
+    mut rows: Vec<DispatchJobReadResponse>,
+) -> Result<Vec<DispatchJobReadResponse>, PlatformError> {
+    let mut ids: Vec<String> = rows.iter().filter_map(|r| r.client_id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(rows);
+    }
+    let identifiers: std::collections::HashMap<String, String> = state
+        .client_repo
+        .find_by_ids(&ids)
+        .await?
+        .into_iter()
+        .map(|c| (c.id, c.identifier))
+        .collect();
+    for row in &mut rows {
+        row.client_identifier = row
+            .client_id
+            .as_ref()
+            .and_then(|c| identifiers.get(c).cloned());
+    }
+    Ok(rows)
 }
 
 /// Get dispatch jobs for an event
@@ -508,7 +615,7 @@ pub async fn list_dispatch_jobs(
         ("eventId" = String, Path, description = "Event ID")
     ),
     responses(
-        (status = 200, description = "Dispatch jobs for event", body = Vec<DispatchJobResponse>)
+        (status = 200, description = "Dispatch jobs for event", body = Vec<DispatchJobReadResponse>)
     ),
     security(("bearer_auth" = []))
 )]
@@ -516,22 +623,29 @@ pub async fn get_jobs_for_event(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
     Path(event_id): Path<String>,
-) -> Result<Json<Vec<DispatchJobResponse>>, PlatformError> {
+) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
 
-    let jobs = state.dispatch_job_repo.find_by_event_id(&event_id).await?;
-
-    // Filter by client access
-    let filtered: Vec<DispatchJobResponse> = jobs
+    // Go `byEvent`: the read projection, newest first, keeping only the jobs
+    // the caller may reach (`CanAccessScope`: a platform job is an anchor's
+    // or super-admin's).
+    let jobs = state
+        .dispatch_job_repo
+        .find_read_by_event_id(&event_id)
+        .await?;
+    let filtered: Vec<DispatchJobReadResponse> = jobs
         .into_iter()
-        .filter(|j| match &j.client_id {
-            Some(cid) => auth.0.can_access_client(cid),
-            None => auth.0.is_anchor(),
+        .filter(|j| {
+            crate::shared::authorization_service::checks::check_scope_access(
+                &auth.0,
+                j.client_id.as_deref(),
+            )
+            .is_ok()
         })
-        .map(|j| j.into())
+        .map(Into::into)
         .collect();
 
-    Ok(Json(filtered))
+    with_client_identifiers(&state, filtered).await.map(Json)
 }
 
 // ============================================================================
@@ -843,15 +957,16 @@ pub async fn get_dispatch_job_attempts(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
+    check_job_scope(&auth, job.client_id.as_deref())?;
 
-    // Check client access
-    crate::shared::caller_reach::ensure_row_visible(
-        &auth.0,
-        job.client_id.as_deref(),
-        "dispatch job",
-    )?;
-
-    let attempts: Vec<DispatchAttemptResponse> = job.attempts.into_iter().map(Into::into).collect();
+    // The job row carries none: they live in `msg_dispatch_job_attempts`.
+    let attempts: Vec<DispatchAttemptResponse> = state
+        .dispatch_job_repo
+        .find_attempts(&id)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(attempts))
 }
 
@@ -859,38 +974,22 @@ pub async fn get_dispatch_job_attempts(
 // Filter Options Endpoint
 // ============================================================================
 
-/// A filter option with value and label (matches TS FilterOption)
-#[derive(Debug, Serialize, ToSchema)]
-pub struct FilterOption {
-    pub value: String,
-    pub label: String,
-}
-
-impl FilterOption {
-    fn from_value(v: String) -> Self {
-        Self {
-            label: v.clone(),
-            value: v,
-        }
-    }
-}
-
-/// Filter options for dispatch jobs dropdowns — cascading filter support.
-/// Matches the TS version: queries distinct values from the read projection.
+/// Go's `DispatchJobFilterOptionsResponse`: distinct facet values of the
+/// read projection as plain string arrays.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobFilterOptionsResponse {
-    pub clients: Vec<FilterOption>,
-    pub applications: Vec<FilterOption>,
-    pub subdomains: Vec<FilterOption>,
-    pub aggregates: Vec<FilterOption>,
-    pub codes: Vec<FilterOption>,
-    pub statuses: Vec<FilterOption>,
+    pub statuses: Vec<String>,
+    pub codes: Vec<String>,
+    pub client_ids: Vec<String>,
+    pub dispatch_pool_ids: Vec<String>,
+    pub subscription_ids: Vec<String>,
+    pub kinds: Vec<String>,
 }
 
 /// Get filter options for dispatch jobs
 ///
-/// Returns distinct values from the read projection for cascading filter dropdowns.
+/// Returns distinct values from the read projection for the filter dropdowns.
 #[utoipa::path(
     get,
     path = "/filter-options",
@@ -907,32 +1006,23 @@ pub async fn get_filter_options(
 ) -> Result<Json<DispatchJobFilterOptionsResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
 
-    // Query distinct values from the read projection table
-    let (clients, applications, subdomains, aggregates, codes, statuses) = tokio::try_join!(
-        state.dispatch_job_repo.find_distinct_client_ids(),
-        state.dispatch_job_repo.find_distinct_applications(),
-        state.dispatch_job_repo.find_distinct_subdomains(),
-        state.dispatch_job_repo.find_distinct_aggregates(),
-        state.dispatch_job_repo.find_distinct_codes(),
-        state.dispatch_job_repo.find_distinct_statuses(),
+    let repo = &state.dispatch_job_repo;
+    let (statuses, codes, client_ids, dispatch_pool_ids, subscription_ids, kinds) = tokio::try_join!(
+        repo.distinct_read_values("status"),
+        repo.distinct_read_values("code"),
+        repo.distinct_read_values("client_id"),
+        repo.distinct_read_values("dispatch_pool_id"),
+        repo.distinct_read_values("subscription_id"),
+        repo.distinct_read_values("kind"),
     )?;
 
     Ok(Json(DispatchJobFilterOptionsResponse {
-        clients: clients.into_iter().map(FilterOption::from_value).collect(),
-        applications: applications
-            .into_iter()
-            .map(FilterOption::from_value)
-            .collect(),
-        subdomains: subdomains
-            .into_iter()
-            .map(FilterOption::from_value)
-            .collect(),
-        aggregates: aggregates
-            .into_iter()
-            .map(FilterOption::from_value)
-            .collect(),
-        codes: codes.into_iter().map(FilterOption::from_value).collect(),
-        statuses: statuses.into_iter().map(FilterOption::from_value).collect(),
+        statuses,
+        codes,
+        client_ids,
+        dispatch_pool_ids,
+        subscription_ids,
+        kinds,
     }))
 }
 
@@ -952,7 +1042,7 @@ pub async fn get_filter_options(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
     responses(
-        (status = 200, description = "Raw dispatch job data"),
+        (status = 200, description = "Raw dispatch job data", body = DispatchJobResponse),
         (status = 404, description = "Dispatch job not found")
     ),
     security(("bearer_auth" = []))
@@ -961,7 +1051,7 @@ pub async fn get_dispatch_job_raw(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<DispatchJob>, PlatformError> {
+) -> Result<Json<DispatchJobResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
 
     let job = state
@@ -969,15 +1059,10 @@ pub async fn get_dispatch_job_raw(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
+    check_job_scope(&auth, job.client_id.as_deref())?;
 
-    // Check client access
-    crate::shared::caller_reach::ensure_row_visible(
-        &auth.0,
-        job.client_id.as_deref(),
-        "dispatch job",
-    )?;
-
-    Ok(Json(job))
+    // Go's `getRaw` answers the same shape as `getByID`.
+    Ok(Json(job.into()))
 }
 
 /// Paginated dispatch jobs response
@@ -989,43 +1074,26 @@ pub struct PaginatedDispatchJobsResponse {
     pub size: u32,
 }
 
-/// Query for raw dispatch jobs list — `?size=` only.
-#[derive(Debug, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct RawDispatchJobsQuery {
-    /// Result size. Default 50, capped at 1000.
-    pub size: Option<u32>,
-}
-
-/// List raw dispatch jobs (from msg_dispatch_jobs, not the read projection).
-/// Returns the most recent rows; no pagination — msg_dispatch_jobs ingests
-/// at high rates and page navigation is meaningless.
+/// `GET /raw`: Go's SDK alias of `/list-raw` (the filtered list of the read
+/// projection, gated on `dispatch-job:view-raw`).
 #[utoipa::path(
     get,
     path = "/raw",
     tag = "dispatch-jobs",
     operation_id = "getApiDispatchJobsRaw",
-    params(RawDispatchJobsQuery),
+    params(DispatchJobsQuery),
     responses(
-        (status = 200, description = "Raw dispatch jobs", body = Vec<DispatchJobResponse>)
+        (status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_dispatch_jobs_raw(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
-    Query(params): Query<RawDispatchJobsQuery>,
-) -> Result<Json<Vec<DispatchJobResponse>>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
-
-    let size = params.size.unwrap_or(50).clamp(1, 1000) as i64;
-    let jobs = state
-        .dispatch_job_repo
-        .find_recent_with_cursor(None, size)
-        .await?;
-    let items = jobs.into_iter().map(DispatchJobResponse::from).collect();
-    Ok(Json(items))
+    Query(query): Query<DispatchJobsQuery>,
+) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+    crate::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
+    list_dispatch_jobs_unchecked(&state, &auth, query).await
 }
 
 /// Create dispatch jobs router for the BFF tier (`/bff/dispatch-jobs`).

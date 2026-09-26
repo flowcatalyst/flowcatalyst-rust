@@ -65,21 +65,22 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         if cmd.scheduled_job_id.trim().is_empty() {
             return Err(UseCaseError::validation("ID_REQUIRED", "ID is required"));
         }
+        // Go `UpdateScheduledJob.Validate` (scheduledjob/operations/ops.go).
+        if cmd.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
+            return Err(UseCaseError::validation(
+                "NAME_REQUIRED",
+                "name cannot be empty",
+            ));
+        }
         if let Some(crons) = &cmd.crons {
             if crons.is_empty() {
                 return Err(UseCaseError::validation(
-                    "CRONS_EMPTY",
-                    "Crons cannot be an empty array (omit the field to keep existing)",
+                    "CRONS_REQUIRED",
+                    "at least one cron expression is required",
                 ));
             }
             for c in crons {
-                let fields = c.split_whitespace().count();
-                if c.trim().is_empty() || !(5..=7).contains(&fields) {
-                    return Err(UseCaseError::validation(
-                        "CRON_INVALID_SHAPE",
-                        format!("Invalid cron expression: '{}'", c),
-                    ));
-                }
+                super::create::validate_cron_shape(c)?;
             }
         }
         if let Some(d) = cmd.delivery_max_attempts {
@@ -134,8 +135,9 @@ impl<U: UnitOfWork> UpdateScheduledJobUseCase<U> {
 
         let mut changed: Vec<String> = Vec::new();
         if let Some(v) = &cmd.name {
-            if v != &job.name {
-                job.name = v.clone();
+            let v = v.trim();
+            if v != job.name {
+                job.name = v.to_string();
                 changed.push("name".into());
             }
         }

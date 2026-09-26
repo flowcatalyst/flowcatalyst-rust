@@ -104,7 +104,7 @@ impl<U: UnitOfWork> FireScheduledJobUseCase<U> {
         if job.status == ScheduledJobStatus::Archived {
             return Err(UseCaseError::business_rule(
                 "ARCHIVED",
-                "Cannot fire an archived ScheduledJob",
+                "Archived jobs cannot be fired",
             ));
         }
         // PAUSED jobs are still firable manually — that's the whole point of

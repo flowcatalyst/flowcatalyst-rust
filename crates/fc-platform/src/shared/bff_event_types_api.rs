@@ -151,6 +151,10 @@ pub struct BffUpdateEventTypeRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BffAddSchemaRequest {
+    /// The version the user entered (Go requires it: 400
+    /// `VERSION_REQUIRED` when blank).
+    #[serde(default)]
+    pub version: String,
     /// Schema content
     pub schema: serde_json::Value,
     /// MIME type (defaults to "application/schema+json")
@@ -597,13 +601,20 @@ pub async fn add_schema(
 
     crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
 
-    // Calculate next version
-    let next_version = format!("{}.0", event_type.spec_versions.len() + 1);
+    // The version is the one the user entered (Go `addSchema`), not the
+    // next number: a repeat is 409 `VERSION_EXISTS`.
+    let version = req.version.trim().to_string();
+    if version.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "VERSION_REQUIRED",
+            "version is required",
+        ));
+    }
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = AddSchemaCommand {
         event_type_id: id.clone(),
-        version: next_version,
+        version,
         mime_type: req.mime_type,
         schema_content: Some(req.schema),
         schema_type: crate::shared::enum_str::parse_opt(req.schema_type.as_deref())?,

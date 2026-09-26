@@ -949,6 +949,7 @@ async fn main() -> Result<()> {
     // this itself as compatibility for the generated frontend client).
     let dispatch_jobs_state = fc_platform::api::DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
             repos.subscription_repo.clone(),
             repos.connection_repo.clone(),

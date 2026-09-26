@@ -108,11 +108,13 @@ async fn list_login_attempts(
 
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
-    let size = query.page_size.unwrap_or(50).clamp(1, 200) as usize;
-    let cursor = match query.after.as_deref() {
-        Some(c) => Some(decode_cursor(c).map_err(|_| PlatformError::validation("Invalid cursor"))?),
-        None => None,
+    // Go (loginattempt/api/api.go `list`): a page size outside 1..=200 is
+    // the default 50, and a cursor that does not decode is ignored.
+    let size = match query.page_size {
+        Some(s) if (1..=200).contains(&s) => s as usize,
+        _ => 50,
     };
+    let cursor = query.after.as_deref().and_then(|c| decode_cursor(c).ok());
 
     let mut items = state
         .login_attempt_repo

@@ -107,6 +107,7 @@ pub fn build_platform_routes(
     };
     let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         signing: signing_guard.clone(),
     };
     let filter_options_state = FilterOptionsState {

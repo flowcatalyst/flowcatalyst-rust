@@ -1343,21 +1343,39 @@ pub mod checks {
         }
     }
 
-    /// Umbrella check: any write permission on scheduled jobs.
+    /// Go's `CanWriteScheduledJobs` (shared/auth/auth.go:881): any of
+    /// scheduled-job create, update or delete. Go gates update, pause,
+    /// resume, archive and the instance log/complete callbacks with it.
     pub fn can_write_scheduled_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::admin::SCHEDULED_JOB_CREATE,
-            permissions::admin::SCHEDULED_JOB_UPDATE,
-            permissions::admin::SCHEDULED_JOB_DELETE,
-            permissions::admin::SCHEDULED_JOB_PAUSE,
-            permissions::admin::SCHEDULED_JOB_FIRE,
-            permissions::admin::SCHEDULED_JOB_MANAGE,
-            permissions::admin::SCHEDULED_JOB_SYNC,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot write scheduled jobs"))
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::SCHEDULED_JOB_CREATE,
+                permissions::admin::SCHEDULED_JOB_UPDATE,
+                permissions::admin::SCHEDULED_JOB_DELETE,
+            ],
+        )
+    }
+
+    /// Go's `CheckScopeAccess` (shared/auth/auth.go:433-444): a
+    /// client-scoped resource needs that client, a platform one (no client)
+    /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`.
+    pub fn check_scope_access(context: &AuthContext, client_id: Option<&str>) -> Result<()> {
+        let reach = match client_id {
+            Some(c) => context.can_access_client(c),
+            None => context.is_anchor() || context.has_permission(permissions::ADMIN_ALL),
+        };
+        if reach {
+            return Ok(());
         }
+        Err(PlatformError::forbidden_code(
+            "SCOPE_FORBIDDEN",
+            if client_id.is_some() {
+                "no access to this resource's client"
+            } else {
+                "anchor scope required for this resource"
+            },
+        ))
     }
 
     /// Sync endpoints: admin path. Application-scoped sync uses the
@@ -1390,10 +1408,15 @@ pub mod checks {
     /// Granted to application service accounts via
     /// `application_service::SCHEDULED_JOB_INSTANCE_WRITE`. Anchor /
     /// `ADMIN_ALL` also work.
+    /// Go gates these with `CanWriteScheduledJobs` (scheduled-job create,
+    /// update or delete), so those grant it too.
     pub fn can_write_scheduled_job_instance(context: &AuthContext) -> Result<()> {
         if context.has_any_permission(&[
             permissions::application_service::SCHEDULED_JOB_INSTANCE_WRITE,
             permissions::admin::SCHEDULED_JOB_MANAGE,
+            permissions::admin::SCHEDULED_JOB_CREATE,
+            permissions::admin::SCHEDULED_JOB_UPDATE,
+            permissions::admin::SCHEDULED_JOB_DELETE,
         ]) {
             Ok(())
         } else {

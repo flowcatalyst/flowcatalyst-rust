@@ -598,6 +598,7 @@ pub async fn emit_events(
                 .map(|e| BatchResultItem {
                     id: e.id.clone(),
                     status: "SUCCESS".to_string(),
+                    error: None,
                 })
                 .collect(),
         }),

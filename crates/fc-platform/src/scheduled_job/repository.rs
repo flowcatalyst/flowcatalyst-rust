@@ -265,6 +265,47 @@ impl ScheduledJobRepository {
         Ok(row.0)
     }
 
+    /// The list as Go's `FindWithFilters` (scheduledjob/repository.go):
+    /// `accessible = Some(ids)` scopes it to platform jobs plus those
+    /// clients' jobs (a non-anchor caller), ordered by code.
+    pub async fn find_with_filters_scoped(
+        &self,
+        client_id: Option<Option<&str>>,
+        status: Option<ScheduledJobStatus>,
+        search: Option<&str>,
+        accessible: Option<&[String]>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<ScheduledJob>> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new(format!("SELECT {SELECT_COLS} FROM msg_scheduled_jobs"));
+        push_list_filters(&mut qb, client_id, status, search, accessible);
+        qb.push(" ORDER BY code");
+        if let Some(l) = limit {
+            qb.push(" LIMIT ").push_bind(l);
+        }
+        if let Some(o) = offset {
+            qb.push(" OFFSET ").push_bind(o);
+        }
+        let rows: Vec<ScheduledJobRow> = qb.build_query_as().fetch_all(&self.pool).await?;
+        rows.into_iter().map(ScheduledJob::try_from).collect()
+    }
+
+    /// The count for [`Self::find_with_filters_scoped`].
+    pub async fn count_with_filters_scoped(
+        &self,
+        client_id: Option<Option<&str>>,
+        status: Option<ScheduledJobStatus>,
+        search: Option<&str>,
+        accessible: Option<&[String]>,
+    ) -> Result<i64> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT COUNT(*) FROM msg_scheduled_jobs");
+        push_list_filters(&mut qb, client_id, status, search, accessible);
+        let row: (i64,) = qb.build_query_as().fetch_one(&self.pool).await?;
+        Ok(row.0)
+    }
+
     // ── Poller-only writes (infrastructure exemption) ───────────────────────
 
     /// All ACTIVE jobs whose `last_fired_at` is older than the given cutoff
@@ -372,5 +413,50 @@ impl crate::usecase::Persist<ScheduledJob> for ScheduledJobRepository {
             .execute(&mut **tx.inner)
             .await?;
         Ok(())
+    }
+}
+
+/// The WHERE clause shared by the scoped list and its count.
+fn push_list_filters(
+    qb: &mut QueryBuilder<Postgres>,
+    client_id: Option<Option<&str>>,
+    status: Option<ScheduledJobStatus>,
+    search: Option<&str>,
+    accessible: Option<&[String]>,
+) {
+    let mut has_where = false;
+    let mut push_where = |qb: &mut QueryBuilder<Postgres>| {
+        qb.push(if has_where { " AND " } else { " WHERE " });
+        has_where = true;
+    };
+    if let Some(cid) = client_id {
+        push_where(qb);
+        match cid {
+            Some(c) => {
+                qb.push("client_id = ").push_bind(c.to_string());
+            }
+            None => {
+                qb.push("client_id IS NULL");
+            }
+        }
+    }
+    if let Some(s) = status {
+        push_where(qb);
+        qb.push("status = ").push_bind(s.as_str().to_string());
+    }
+    if let Some(term) = search.filter(|t| !t.is_empty()) {
+        push_where(qb);
+        let like = format!("%{term}%");
+        qb.push("(code ILIKE ")
+            .push_bind(like.clone())
+            .push(" OR name ILIKE ")
+            .push_bind(like)
+            .push(")");
+    }
+    if let Some(ids) = accessible {
+        push_where(qb);
+        qb.push("(client_id IS NULL OR client_id = ANY(")
+            .push_bind(ids.to_vec())
+            .push("))");
     }
 }
