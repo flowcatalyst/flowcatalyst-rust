@@ -15,6 +15,11 @@ Go `73a6918`, debug Rust builds). "Before" is `main` built unmodified; "after" i
 | subscriptions | 17 / 0 / 18 / 0 | 33 / 1 / 1 / 0 |
 | **total (146 steps)** | **73 / 0 / 69 / 4** | **124 / 6 / 16 / 0** |
 
+A full run (all 45 files) on this branch: 921 OK / 42 ACCEPTED / 368 DIFF / 32 ERROR of 1363, against run 3's
+871 / 37 / 419 / 36 on `main`. In a full run `dispatch-pools/list-by-status` and router-config's `processingPools`
+also carry the pool `applications/sdk-sync` syncs, which exists only on Rust (Go's sync hits the audit defect
+below); both are ruled with it.
+
 ## What changed
 
 **Subscriptions** (`subscription/api.rs`, `operations/*`, `repository.rs`):
@@ -73,8 +78,10 @@ EXISTS`; a Go-migrated database already has it, and its probe marks it applied).
   code longer than 17 characters (`aud_logs.entity_id VARCHAR(17)`; the rollup's audit row is keyed by the
   application code, `cfc-app-<run>` is 20). Rust widened the column in migration 038 (Java V18). The three sync
   steps are `!go-expect`; the missing synced rows cascade into `connections/list-by-status` and
-  `subscriptions/list-by-status`, which accept their list and total. In production this bites any application
-  whose code exceeds 17 characters.
+  `subscriptions/list-by-status`, which accept their list and total; in full runs `applications/sdk-sync`'s
+  failed pool sync cascades the same way into `dispatch-pools/list-by-status` and router-config's
+  `processingPools`. In production this bites any application whose code exceeds 17 characters. (The sdk-sync
+  steps themselves are area c's.)
 - `router-config`: Rust lists every queue the scheduler can publish to (both priorities, every client's tenant),
   decision #31's router-config case; the entry also covers `queueUri`, which names each side's own database.
 
@@ -103,3 +110,9 @@ either; the router-config pool code composes with it).
 - Laravel SDK apps (integral, hr, rfp): code-first subscription syncs by `connectionCode`/`clientId` now resolve as
   on Go; pause/resume and pool status flips answer 204 as Go.
 - Delivery: `fc-delivery-harness --only plain-events,next-on-error-group,burst-pool-capacity` passes on both sides.
+
+## Gates
+
+`cargo check --workspace --all-targets` per commit; `cargo test -p fc-platform -p fc-router` green; clippy at the
+baseline 4 warnings (none new); Docker suite 260/260; `cargo check -p fc-dev --features web` (the Topcoat trial)
+green. The frontend is untouched.
