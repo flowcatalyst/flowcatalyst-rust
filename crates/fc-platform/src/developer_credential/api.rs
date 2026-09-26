@@ -148,9 +148,7 @@ pub async fn set_developer_credential(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SetDeveloperCredentialResponse>, PlatformError> {
-    // The coarse gate before any load (Go `requireDeveloperCredentialAccess`):
-    // your own credential needs the self-service permission; someone else's
-    // needs the user-admin write permission.
+    // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
         checks::require_permission(
             &auth.0,
@@ -159,7 +157,33 @@ pub async fn set_developer_credential(
     } else {
         checks::can_write_principals(&auth.0)?;
     }
-    let target = load_target(&state, &auth.0, &id).await?;
+    Ok(Json(set_credential(&state, &auth.0, &id).await?))
+}
+
+/// The coarse gate before any load (Go `requireDeveloperCredentialAccess`):
+/// your own credential needs the self-service permission; someone else's
+/// needs the user-admin write permission.
+fn require_credential_access(ctx: &AuthContext, id: &str) -> Result<(), PlatformError> {
+    if ctx.principal_id == id {
+        checks::require_permission(
+            ctx,
+            crate::role::entity::permissions::developer::API_CREDENTIAL_MANAGE,
+        )
+    } else {
+        checks::can_write_principals(ctx)
+    }
+}
+
+/// The body of `POST /api/principals/{id}/developer-credential`, shared with
+/// the server-rendered `fc-web` UI: mints a secret, stores its hash, and
+/// returns the plaintext once.
+pub async fn set_credential(
+    state: &DeveloperCredentialsState,
+    ctx: &AuthContext,
+    id: &str,
+) -> Result<SetDeveloperCredentialResponse, PlatformError> {
+    require_credential_access(ctx, id)?;
+    let target = load_target(state, ctx, id).await?;
     let enc = state.encryption.as_ref().ok_or_else(|| {
         PlatformError::internal(
             "FLOWCATALYST_APP_KEY not configured; cannot hash developer client secret",
@@ -174,13 +198,13 @@ pub async fn set_developer_credential(
     };
     let event = state
         .set_use_case
-        .run(command, ExecutionContext::from_auth(&auth.0))
+        .run(command, ExecutionContext::from_auth(ctx))
         .await
         .into_result()?;
-    Ok(Json(SetDeveloperCredentialResponse {
+    Ok(SetDeveloperCredentialResponse {
         id: event.user_id,
         client_secret: plaintext,
-    }))
+    })
 }
 
 /// Revoke a developer credential
@@ -198,9 +222,7 @@ pub async fn revoke_developer_credential(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    // The coarse gate before any load (Go `requireDeveloperCredentialAccess`):
-    // your own credential needs the self-service permission; someone else's
-    // needs the user-admin write permission.
+    // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
         checks::require_permission(
             &auth.0,
@@ -209,18 +231,30 @@ pub async fn revoke_developer_credential(
     } else {
         checks::can_write_principals(&auth.0)?;
     }
-    let target = load_target(&state, &auth.0, &id).await?;
+    revoke_credential(&state, &auth.0, &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The body of `DELETE /api/principals/{id}/developer-credential`, shared
+/// with the server-rendered `fc-web` UI.
+pub async fn revoke_credential(
+    state: &DeveloperCredentialsState,
+    ctx: &AuthContext,
+    id: &str,
+) -> Result<(), PlatformError> {
+    require_credential_access(ctx, id)?;
+    let target = load_target(state, ctx, id).await?;
     state
         .revoke_use_case
         .run(
             RevokeDeveloperCredentialCommand {
                 principal_id: target.id,
             },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_auth(ctx),
         )
         .await
         .into_result()?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }
 
 /// Nested at `/api/principals` beside the principal routes.
