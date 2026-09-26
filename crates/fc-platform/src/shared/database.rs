@@ -638,6 +638,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "054_event_type_created_by",
             include_str!("../../../../migrations/054_event_type_created_by.sql"),
         ),
+        // Go's 040: role sync configured on the identity provider (the
+        // flag and the allowed-roles junction).
+        (
+            "055_identity_provider_role_sync",
+            include_str!("../../../../migrations/055_identity_provider_role_sync.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -886,6 +892,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'msg_event_types' \
                AND column_name = 'created_by')",
+        ),
+        // A database Go migrated to 040 has the flag and the junction.
+        (
+            "055_identity_provider_role_sync",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'oauth_identity_providers' \
+               AND column_name = 'sync_roles_from_idp') \
+             AND EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' \
+               AND table_name = 'oauth_identity_provider_allowed_roles')",
         ),
     ];
 

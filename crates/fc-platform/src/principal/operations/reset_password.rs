@@ -72,6 +72,20 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
                 "New password is required",
             ));
         }
+        // Go ResetPassword: the relaxed SDK path only needs 2 characters;
+        // otherwise Go's minimum length, the rest of its policy once the
+        // principal is loaded.
+        let min = if command.enforce_password_complexity == Some(false) {
+            2
+        } else {
+            crate::portal::policy::MIN_LENGTH
+        };
+        if command.new_password.len() < min {
+            return Err(UseCaseError::validation(
+                "PASSWORD_TOO_SHORT",
+                format!("newPassword must be at least {min} characters"),
+            ));
+        }
         Ok(())
     }
 
@@ -132,12 +146,20 @@ impl<U: UnitOfWork> ResetPasswordUseCase<U> {
             ));
         }
 
-        // Hash the new password, honouring the complexity flag.
-        let enforce = command.enforce_password_complexity.unwrap_or(true);
+        // Go's policy on the strict path, with the principal's email and
+        // name; the relaxed SDK path skips it (the caller owns its policy).
+        if command.enforce_password_complexity != Some(false) {
+            let email = principal.email().unwrap_or_default().to_string();
+            if let Some(v) =
+                crate::portal::policy::validate(&command.new_password, &email, &principal.name)
+            {
+                return Err(UseCaseError::validation(v.code, v.message));
+            }
+        }
         let hash = self
             .password_service
-            .hash_password_with_complexity(&command.new_password, enforce)
-            .map_err(|e| UseCaseError::validation("INVALID_PASSWORD", e.to_string()))?;
+            .rehash_password(&command.new_password)
+            .map_err(UseCaseError::from)?;
 
         if let Some(identity) = principal.user_identity.as_mut() {
             identity.password_hash = Some(hash);

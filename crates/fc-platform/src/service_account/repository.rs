@@ -193,11 +193,15 @@ impl ServiceAccountRepository {
     }
 
     /// Find by principal ID (the ID returned in API responses).
+    /// Find by id: the SERVICE principal's id, or the account's own
+    /// (`iam_service_accounts.id`, the id the API answers with, as Go's).
     pub async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccount>> {
         let principal = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
              service_account_id, all_applications, created_at, updated_at \
-             FROM iam_principals WHERE id = $1",
+             FROM iam_principals WHERE id = $1 \
+             OR (type = 'SERVICE' AND service_account_id = $1) \
+             ORDER BY (id = $1) DESC, created_at LIMIT 1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -242,6 +246,30 @@ impl ServiceAccountRepository {
     }
 
     /// Find all active service account principals.
+    /// Every service account, active or not (Go `FindAll`).
+    pub async fn find_all(&self) -> Result<Vec<ServiceAccount>> {
+        let principals = sqlx::query_as::<_, PrincipalRow>(
+            "SELECT id, type, scope, client_id, application_id, name, active, \
+             service_account_id, all_applications, created_at, updated_at \
+             FROM iam_principals WHERE type = 'SERVICE'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate_many(principals).await
+    }
+
+    /// Stamp the account's `last_used_at` when its credentials authenticate
+    /// (Go `TouchLastUsed`): bookkeeping on the token path, best-effort, no
+    /// event (the token endpoint is infrastructure, like the login-attempt
+    /// record beside it).
+    pub async fn touch_last_used(&self, service_account_id: &str) -> Result<()> {
+        sqlx::query("UPDATE iam_service_accounts SET last_used_at = NOW() WHERE id = $1")
+            .bind(service_account_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn find_active(&self) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
@@ -760,7 +788,8 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(&sa.application_id)
         .bind(&sa.name)
         .bind(sa.active)
-        .bind(Some(&sa.id))
+        // The principal links to the account row (Go `service_account_id`).
+        .bind(Some(&sa_table_id))
         .bind(sa.created_at)
         .bind(now)
         .bind(sa.all_applications)

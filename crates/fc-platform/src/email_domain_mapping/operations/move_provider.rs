@@ -108,41 +108,56 @@ impl<U: UnitOfWork> MoveMappingToProviderUseCase<U> {
                     command.identity_provider_id
                 ),
             )?;
-        // Rust's rule (not Go's): a multi-tenant OIDC provider needs the
-        // mapping pinned to a tenant.
-        super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
-
-        let reset_user_ids = if idp.r#type == IdentityProviderType::Internal {
-            self.principal_repo
-                .find_oidc_user_ids_by_email_domain(&mapping.email_domain)
-                .await?
-        } else {
-            Vec::new()
-        };
-        let event = EmailDomainMappingProviderChanged {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                EmailDomainMappingProviderChanged::EVENT_TYPE,
-                "1.0",
-                "platform:admin",
-                format!("platform.emaildomainmapping.{}", mapping.id),
-                format!("platform:emaildomainmapping:{}", mapping.id),
-            ),
-            mapping_id: mapping.id.clone(),
-            email_domain: mapping.email_domain.clone(),
-            from_identity_provider_id: mapping.identity_provider_id.clone(),
-            to_identity_provider_id: command.identity_provider_id.clone(),
-            users_reset: reset_user_ids.len(),
-        };
-        Ok((
-            ProviderMove {
-                mapping_id: mapping.id,
-                identity_provider_id: command.identity_provider_id.clone(),
-                reset_user_ids,
-            },
-            event,
-        ))
+        plan_move(&self.principal_repo, &mapping, &idp, None, ctx).await
     }
+}
+
+/// Go `MoveMappingTx`'s plan: the mapping re-pointed to `target`, the
+/// domain's federated users handed back when `target` is INTERNAL, and the
+/// provider-changed event. `link_client` also sets the mapping's primary
+/// client (an identity-provider claim of an unlinked mapping). Rust's rule
+/// (not Go's, owner ruling 3): a multi-tenant OIDC provider needs the
+/// mapping pinned to a tenant.
+pub(crate) async fn plan_move(
+    principal_repo: &PrincipalRepository,
+    mapping: &crate::EmailDomainMapping,
+    target: &crate::IdentityProvider,
+    link_client: Option<String>,
+    ctx: &ExecutionContext,
+) -> Result<(ProviderMove, EmailDomainMappingProviderChanged), UseCaseError> {
+    super::require_tenant_pin(target.oidc_multi_tenant, mapping)?;
+
+    let reset_user_ids = if target.r#type == IdentityProviderType::Internal {
+        principal_repo
+            .find_oidc_user_ids_by_email_domain(&mapping.email_domain)
+            .await?
+    } else {
+        Vec::new()
+    };
+    let event = EmailDomainMappingProviderChanged {
+        metadata: EventMetadata::from_ctx(
+            ctx,
+            EmailDomainMappingProviderChanged::EVENT_TYPE,
+            "1.0",
+            "platform:admin",
+            format!("platform.emaildomainmapping.{}", mapping.id),
+            format!("platform:emaildomainmapping:{}", mapping.id),
+        ),
+        mapping_id: mapping.id.clone(),
+        email_domain: mapping.email_domain.clone(),
+        from_identity_provider_id: mapping.identity_provider_id.clone(),
+        to_identity_provider_id: target.id.clone(),
+        users_reset: reset_user_ids.len(),
+    };
+    Ok((
+        ProviderMove {
+            mapping_id: mapping.id.clone(),
+            identity_provider_id: target.id.clone(),
+            primary_client_id: link_client,
+            reset_user_ids,
+        },
+        event,
+    ))
 }
 
 #[async_trait]

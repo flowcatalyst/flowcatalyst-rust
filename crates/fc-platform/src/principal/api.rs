@@ -132,7 +132,8 @@ pub struct BatchAssignRolesResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckEmailDomainQuery {
-    /// Email address to check
+    /// Email address to check (absent is Go's 400 `EMAIL_REQUIRED`)
+    #[serde(default)]
     pub email: String,
 }
 
@@ -140,31 +141,34 @@ pub struct CheckEmailDomainQuery {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckEmailDomainResponse {
+    /// `internal`, or `external` for an OIDC domain
+    pub auth_method: String,
+    /// Where an external user signs in (external only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_url: Option<String>,
+    /// The external provider's issuer (external only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idp_issuer: Option<String>,
     /// The domain that was checked
     pub domain: String,
-    /// Auth provider if configured (INTERNAL, OIDC)
-    pub auth_provider: Option<String>,
+    /// The domain's IdP type (INTERNAL, OIDC)
+    pub auth_provider: String,
     /// Whether this is an anchor domain
     pub is_anchor_domain: bool,
-    /// Whether this domain has auth configuration
-    pub has_auth_config: bool,
+    /// Whether the domain signs in through an external IdP
+    pub has_idp_config: bool,
     /// Whether the email already exists
     pub email_exists: bool,
-    /// Informational message
+    /// Display hint (none today: `null`, as Go)
     pub info: Option<String>,
     /// Warning message
     pub warning: Option<String>,
     /// Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
-    /// Derived from anchor domains + email_domain_mappings; unmapped domains
-    /// default to CLIENT.
     pub derived_scope: String,
-    /// True when the create-user form must supply a `clientId`. False for
-    /// anchor domains and for mappings that already pin a primary client.
+    /// True unless the derived scope is ANCHOR.
     pub requires_client_id: bool,
-    /// When the user must pick a client, this is the allow-list to choose
-    /// from. Empty when `requiresClientId` is false (no input needed) OR
-    /// when there is no per-domain restriction (any active client is valid —
-    /// the UI shows the full list it already fetches).
+    /// The client ids the create form is confined to; empty when the domain
+    /// imposes no restriction.
     pub allowed_client_ids: Vec<String>,
 }
 
@@ -221,10 +225,6 @@ pub struct AvailableApplicationResponse {
     pub id: String,
     pub code: String,
     pub name: String,
-    pub description: Option<String>,
-    #[serde(rename = "type")]
-    pub application_type: String,
-    pub active: bool,
 }
 
 impl From<Application> for AvailableApplicationResponse {
@@ -233,9 +233,6 @@ impl From<Application> for AvailableApplicationResponse {
             id: a.id,
             code: a.code,
             name: a.name,
-            description: a.description,
-            application_type: a.application_type.as_str().to_string(),
-            active: a.active,
         }
     }
 }
@@ -245,7 +242,6 @@ impl From<Application> for AvailableApplicationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AvailableApplicationsResponse {
     pub applications: Vec<AvailableApplicationResponse>,
-    pub total: usize,
 }
 
 /// Grant client access request
@@ -263,6 +259,7 @@ pub struct ClientAccessGrantResponse {
     pub id: String,
     pub client_id: String,
     pub granted_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
 }
 
@@ -372,10 +369,15 @@ pub struct PrincipalResponse {
     #[serde(rename = "type")]
     pub principal_type: String,
     pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     pub name: String,
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The stored provider (`INTERNAL`, `OIDC`), `INTERNAL` when unset; a
+    /// user only.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub idp_type: Option<String>,
     /// Role names
     pub roles: Vec<String>,
@@ -385,16 +387,40 @@ pub struct PrincipalResponse {
     pub granted_client_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Whether a self-service developer credential is set (never the
+    /// secret itself).
+    pub has_developer_credential: bool,
+    /// When the developer credential was last set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer_credential_updated_at: Option<String>,
+    /// The user's confirmed second factors (`TOTP`, `EMAIL_PIN`); only on
+    /// the single-principal read, absent when none is enrolled (Go
+    /// `twoFactorMethods,omitempty`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub two_factor_methods: Option<Vec<String>>,
     /// Only on a create-user answer that asked for `returnInviteLink`: the
     /// live 72-hour set-password link (Go `InviteLink`). Never logged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invite_link: Option<String>,
+    /// The linked service account of a SERVICE principal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_id: Option<String>,
 }
 
 impl From<Principal> for PrincipalResponse {
     fn from(p: Principal) -> Self {
+        // Go fromEntity (principal/api/dto.go): the stored provider, or
+        // INTERNAL when none is recorded.
         let (email, idp_type) = match &p.user_identity {
-            Some(i) => (Some(i.email.clone()), Some("INTERNAL".to_string())),
+            Some(i) => (
+                Some(i.email.clone()),
+                Some(
+                    i.provider
+                        .clone()
+                        .filter(|v| !v.is_empty())
+                        .unwrap_or_else(|| "INTERNAL".to_string()),
+                ),
+            ),
             None => (None, None),
         };
 
@@ -412,7 +438,13 @@ impl From<Principal> for PrincipalResponse {
             granted_client_ids: p.assigned_clients,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
+            has_developer_credential: p.has_developer_credential,
+            developer_credential_updated_at: p
+                .developer_credential_updated_at
+                .map(|t| t.to_rfc3339()),
+            two_factor_methods: None,
             invite_link: None,
+            service_account_id: p.service_account_id,
         }
     }
 }
@@ -521,6 +553,8 @@ pub struct PrincipalsState {
     pub identity_provider_repo: Arc<crate::IdentityProviderRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub app_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    /// A user's confirmed second factors, for the detail read.
+    pub mfa_repo: Arc<crate::mfa::MfaRepository>,
     /// Backs `POST /api/principals/{id}/send-password-reset`, which emails the
     /// user a single-use reset link (same flow as user-initiated
     /// `/auth/password-reset/request`), and the magic link sent on create.
@@ -768,20 +802,24 @@ async fn notify_new_user(
 fn require_user_resource_access(
     ctx: &crate::AuthContext,
     target: &crate::Principal,
+    resource: &str,
 ) -> Result<(), PlatformError> {
     if !ctx.is_anchor() && target.scope != UserScope::Client {
         return Err(PlatformError::forbidden(
             "Client administrators can only manage client-scope users",
         ));
     }
-    if !crate::shared::caller_reach::reaches_scope(ctx, target.client_id.as_deref()) {
-        return Err(PlatformError::not_found("Principal", &target.id));
+    // Go `auth.CanAccessScope`, the rule `check_scope_access` applies; out
+    // of reach answers the not-found a missing id would (PR-3(b)).
+    if !crate::shared::caller_reach::can_access_scope(ctx, target.client_id.as_deref()) {
+        return Err(PlatformError::not_found(resource, &target.id));
     }
     Ok(())
 }
 
 /// Load a principal a user-administration write targets, gated by
-/// [`require_user_resource_access`].
+/// [`require_user_resource_access`] (Go `requireUserResourceAccess`: out of
+/// reach is `Principal_NOT_FOUND`).
 async fn load_administered_user(
     state: &PrincipalsState,
     ctx: &crate::AuthContext,
@@ -792,7 +830,24 @@ async fn load_administered_user(
         .find_by_id(id)
         .await?
         .or_not_found("Principal", id)?;
-    require_user_resource_access(ctx, &target)?;
+    require_user_resource_access(ctx, &target, "Principal")?;
+    Ok(target)
+}
+
+/// [`load_administered_user`] for the role and application-access writes,
+/// which Go gates with `requireUserAdmin`: out of reach is `User_NOT_FOUND`
+/// (principal/operations/authz.go).
+async fn load_role_administered_user(
+    state: &PrincipalsState,
+    ctx: &crate::AuthContext,
+    id: &str,
+) -> Result<crate::Principal, PlatformError> {
+    let target = state
+        .principal_repo
+        .find_by_id(id)
+        .await?
+        .or_not_found("Principal", id)?;
+    require_user_resource_access(ctx, &target, "User")?;
     Ok(target)
 }
 
@@ -1277,7 +1332,19 @@ pub async fn get_principal(
         }
     }
 
-    Ok(Json(principal.into()))
+    // Go enriches the detail read with the confirmed second factors,
+    // best-effort: a lookup failure leaves them out.
+    let methods: Vec<String> = match state.mfa_repo.find_methods(&principal.id).await {
+        Ok(methods) => methods
+            .into_iter()
+            .filter(crate::mfa::entity::Method::is_confirmed)
+            .map(|m| m.method.as_str().to_string())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let mut response = PrincipalResponse::from(principal);
+    response.two_factor_methods = (!methods.is_empty()).then_some(methods);
+    Ok(Json(response))
 }
 
 /// List principals
@@ -1478,11 +1545,12 @@ pub async fn get_roles(
         .await?
         .or_not_found("Principal", &id)?;
 
-    // Check access
+    // Go (principal/api/api.go, PR-4): a principal of a client the caller
+    // does not reach answers the same 404 as a missing one.
     if !auth.0.is_anchor() {
         if let Some(ref cid) = principal.client_id {
             if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
+                return Err(PlatformError::not_found("Principal", &id));
             }
         }
     }
@@ -1531,7 +1599,7 @@ pub async fn assign_role(
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
     // Additive assign: take existing roles + new role, run through UoW.
-    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
     if !auth.0.is_anchor() {
         let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
         assert_assignable_roles(&state, std::slice::from_ref(&req.role), &allowed).await?;
@@ -1589,7 +1657,7 @@ pub async fn batch_assign_roles(
 
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
-    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
     let desired = bounded_role_set(&state, &auth.0, &principal, req.roles).await?;
 
     let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
@@ -1662,7 +1730,7 @@ pub async fn remove_role(
 
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
-    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
     // A client administrator removes only roles it could assign (Go
     // `removeRole`).
     if !auth.0.is_anchor() {
@@ -1818,14 +1886,14 @@ pub async fn revoke_client_access(
     State(state): State<PrincipalsState>,
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
-) -> Result<Json<PrincipalResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::principal::operations::RevokeClientAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_revoke_client_access(&auth.0)?;
 
     let cmd = RevokeClientAccessCommand {
-        user_id: id.clone(),
+        user_id: id,
         client_id,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1835,12 +1903,8 @@ pub async fn revoke_client_access(
         .await
         .into_result()?;
 
-    let refreshed = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-    Ok(Json(refreshed.into()))
+    // 204, as Go answers (principal/api/api.go:114).
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete principal (deactivate)
@@ -2240,118 +2304,96 @@ pub async fn check_email_domain(
     // client administrator's create form calls it).
     crate::checks::can_read_principals(&auth.0)?;
 
-    // Extract domain from email
-    let email = &query.email;
-    let domain = email
-        .split('@')
-        .nth(1)
-        .ok_or_else(|| PlatformError::validation("Invalid email format"))?
-        .to_lowercase();
+    // Go checkEmailDomain (principal/api/api.go).
+    let email = query.email.trim().to_lowercase();
+    if email.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "EMAIL_REQUIRED",
+            "email query param is required",
+        ));
+    }
+    let domain = match email.find('@') {
+        Some(at) if at + 1 < email.len() => email[at + 1..].to_string(),
+        _ => {
+            return Err(PlatformError::bad_request_code(
+                "INVALID_EMAIL",
+                "Invalid email format",
+            ))
+        }
+    };
 
-    // Check if email already exists
-    let email_exists = state.principal_repo.find_by_email(email).await?.is_some();
-
-    // Check if it's an anchor domain
+    let email_exists = state.principal_repo.find_by_email(&email).await?.is_some();
     let is_anchor_domain = state.anchor_domain_repo.is_anchor_domain(&domain).await?;
-
-    // Resolve auth provider + scope derivation. The scope/client_id logic
-    // here MUST stay in sync with `create_user` above — the form uses
-    // `requires_client_id` to decide whether to show a client picker, and the
-    // backend would otherwise reject the submission with CLIENT_ID_REQUIRED.
     let mapping = state
         .email_domain_mapping_repo
         .find_by_email_domain(&domain)
         .await?;
 
-    let (has_auth_config, auth_provider, info, warning) = if is_anchor_domain {
-        (
-            true,
-            Some("INTERNAL".to_string()),
-            Some("This is an anchor domain. User will have access to all clients.".to_string()),
-            None,
-        )
-    } else if let Some(ref m) = mapping {
-        match state
+    // The IdP type; an unmapped domain or a missing IdP is INTERNAL.
+    let mut idp_type = "INTERNAL".to_string();
+    let mut idp_issuer = None;
+    if let Some(ref m) = mapping {
+        if let Some(idp) = state
             .identity_provider_repo
             .find_by_id(&m.identity_provider_id)
             .await?
         {
-            Some(idp) => {
-                let provider = match idp.r#type {
-                    crate::IdentityProviderType::Oidc => "OIDC",
-                    crate::IdentityProviderType::Internal => "INTERNAL",
-                };
-                let info_msg = if provider == "OIDC" {
-                    Some("This domain uses external OIDC authentication.".to_string())
-                } else {
-                    Some("This domain uses internal authentication.".to_string())
-                };
-                (true, Some(provider.to_string()), info_msg, None)
-            }
-            None => (
-                false,
-                Some("INTERNAL".to_string()),
-                Some("Default: user will sign in with an internal password.".to_string()),
-                None,
-            ),
+            idp_type = idp.r#type.as_str().to_string();
+            idp_issuer = idp.oidc_issuer_url.clone();
         }
-    } else {
-        (
-            false,
-            Some("INTERNAL".to_string()),
-            Some("Default: user will sign in with an internal password.".to_string()),
-            None,
-        )
-    };
+    }
+    let external = idp_type == "OIDC";
 
-    // Derive scope + whether the form needs to pick a client.
-    let (derived_scope, requires_client_id, allowed_client_ids) = if is_anchor_domain {
-        ("ANCHOR".to_string(), false, Vec::new())
-    } else if let Some(ref m) = mapping {
+    use crate::email_domain_mapping::entity::ScopeType;
+    let derived_scope = if is_anchor_domain {
+        "ANCHOR"
+    } else {
+        match mapping.as_ref().map(|m| m.scope_type) {
+            None => "CLIENT",
+            Some(ScopeType::Anchor) => "ANCHOR",
+            Some(ScopeType::Partner) => "PARTNER",
+            Some(ScopeType::Client) => "CLIENT",
+        }
+    };
+    // Go allowedClientIDsForDomain: PARTNER allows the primary and the
+    // granted clients; CLIENT just the primary.
+    let mut allowed_client_ids: Vec<String> = Vec::new();
+    if let Some(ref m) = mapping {
         match m.scope_type {
-            crate::email_domain_mapping::entity::ScopeType::Anchor => {
-                ("ANCHOR".to_string(), false, Vec::new())
-            }
-            crate::email_domain_mapping::entity::ScopeType::Partner => {
-                // Partner: client must be picked from the granted set
-                // (primary_client_id is also valid; see create_user).
-                let mut allowed = m.granted_client_ids.clone();
-                if let Some(ref p) = m.primary_client_id {
-                    if !allowed.iter().any(|c| c == p) {
-                        allowed.push(p.clone());
+            ScopeType::Partner => {
+                for id in m
+                    .primary_client_id
+                    .iter()
+                    .chain(m.granted_client_ids.iter())
+                {
+                    if !id.is_empty() && !allowed_client_ids.contains(id) {
+                        allowed_client_ids.push(id.clone());
                     }
                 }
-                ("PARTNER".to_string(), true, allowed)
             }
-            crate::email_domain_mapping::entity::ScopeType::Client => {
-                // Client mapping with a primary client pins the choice;
-                // without one, the form must collect it.
-                let requires = m.primary_client_id.is_none();
-                ("CLIENT".to_string(), requires, Vec::new())
+            ScopeType::Client => {
+                if let Some(p) = m.primary_client_id.as_ref().filter(|p| !p.is_empty()) {
+                    allowed_client_ids.push(p.clone());
+                }
             }
+            ScopeType::Anchor => {}
         }
-    } else {
-        // Unmapped domain → client-scoped, any active client is acceptable.
-        ("CLIENT".to_string(), true, Vec::new())
-    };
-
-    // Add warning if email already exists
-    let warning = if email_exists {
-        Some("A user with this email address already exists.".to_string())
-    } else {
-        warning
-    };
+    }
 
     Ok(Json(CheckEmailDomainResponse {
+        auth_method: if external { "external" } else { "internal" }.to_string(),
+        login_url: external
+            .then(|| format!("/auth/oidc/login?domain={}", urlencoding::encode(&domain))),
+        idp_issuer: if external { idp_issuer } else { None },
         domain,
-        auth_provider,
+        auth_provider: idp_type,
         is_anchor_domain,
-        has_auth_config,
+        has_idp_config: external,
         email_exists,
-        info,
-        warning,
-        derived_scope,
-        requires_client_id,
+        info: None,
+        warning: email_exists.then(|| "A user with this email address already exists.".to_string()),
+        derived_scope: derived_scope.to_string(),
+        requires_client_id: derived_scope != "ANCHOR",
         allowed_client_ids,
     }))
 }
@@ -2390,11 +2432,12 @@ pub async fn get_application_access(
         .await?
         .or_not_found("Principal", &id)?;
 
-    // Check access
+    // Go (principal/api/api.go, PR-4): a principal of a client the caller
+    // does not reach answers the same 404 as a missing one.
     if !auth.0.is_anchor() {
         if let Some(ref cid) = principal.client_id {
             if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
+                return Err(PlatformError::not_found("Principal", &id));
             }
         }
     }
@@ -2450,7 +2493,7 @@ pub async fn set_application_access(
 
     crate::checks::can_write_principals(&auth.0)?;
 
-    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    let principal = load_role_administered_user(&state, &auth.0, &id).await?;
 
     if req.all_applications == Some(true) {
         // Granting every application exceeds what the caller may itself
@@ -2582,60 +2625,36 @@ pub async fn get_available_applications(
         .await?
         .or_not_found("Principal", &id)?;
 
-    // Check access
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
-            }
+    // Go listAvailableApplications (principal/api/api.go): a principal of a
+    // client the caller does not reach answers the same 404 as a missing
+    // one.
+    if let Some(ref cid) = principal.client_id {
+        if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
+            return Err(PlatformError::not_found("Principal", &id));
         }
     }
 
-    let app_repo = &state.application_repo;
+    // Every active application, ordered by code; a non-anchor caller's menu
+    // is bounded to the applications the target's client has enabled.
+    let mut apps = state.application_repo.find_active().await?;
+    if !auth.0.is_anchor() {
+        let allowed: std::collections::HashSet<String> = match principal.client_id.as_deref() {
+            Some(cid) => state
+                .app_client_config_repo
+                .find_by_client(cid)
+                .await?
+                .into_iter()
+                .filter(|c| c.enabled)
+                .map(|c| c.application_id)
+                .collect(),
+            None => Default::default(),
+        };
+        apps.retain(|a| allowed.contains(&a.id));
+    }
+    apps.sort_by(|a, b| a.code.cmp(&b.code));
 
-    let applications: Vec<AvailableApplicationResponse> = if principal.scope == UserScope::Anchor {
-        // Anchor users see all active applications
-        let apps = app_repo.find_active().await?;
-        apps.into_iter()
-            .map(AvailableApplicationResponse::from)
-            .collect()
-    } else {
-        // Client users see only apps enabled for their accessible clients
-        let config_repo = &state.app_client_config_repo;
-
-        // Gather all client IDs this principal can access
-        let mut client_ids: Vec<String> = principal.assigned_clients.clone();
-        if let Some(ref home_client) = principal.client_id {
-            if !client_ids.contains(home_client) {
-                client_ids.push(home_client.clone());
-            }
-        }
-
-        // Collect unique application IDs from enabled client configs
-        let mut app_ids = std::collections::HashSet::new();
-        for client_id in &client_ids {
-            let configs = config_repo.find_enabled_for_client(client_id).await?;
-            for config in configs {
-                app_ids.insert(config.application_id);
-            }
-        }
-
-        // Resolve application details
-        let mut apps = Vec::new();
-        for app_id in app_ids {
-            if let Some(app) = app_repo.find_by_id(&app_id).await? {
-                if app.active {
-                    apps.push(AvailableApplicationResponse::from(app));
-                }
-            }
-        }
-        apps
-    };
-
-    let total = applications.len();
     Ok(Json(AvailableApplicationsResponse {
-        applications,
-        total,
+        applications: apps.into_iter().map(Into::into).collect(),
     }))
 }
 
@@ -2874,6 +2893,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             external_identity: None,
+            has_developer_credential: false,
+            developer_credential_updated_at: None,
         }
     }
 
@@ -2930,6 +2951,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             external_identity: None,
+            has_developer_credential: false,
+            developer_credential_updated_at: None,
         };
 
         let response = PrincipalResponse::from(principal);

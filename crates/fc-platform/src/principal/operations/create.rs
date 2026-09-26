@@ -184,22 +184,25 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         let is_oidc = command.idp_type == Some(IdentityProviderType::Oidc);
 
         if !is_oidc {
-            let enforce = command.enforce_password_complexity.unwrap_or(true);
-            let (password, enforce_for_hash) = match command.password.as_ref() {
-                Some(p) if !p.is_empty() => (p.clone(), enforce),
-                _ => (self.password_service.generate_password(), true),
-            };
-            let hash = match self
-                .password_service
-                .hash_password_with_complexity(&password, enforce_for_hash)
-            {
-                Ok(h) => h,
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::validation(
-                        "INVALID_PASSWORD",
-                        e.to_string(),
-                    ));
+            // Go CreateUser: a supplied password must pass Go's policy
+            // (NIST shape: length, not common, not the account's own email
+            // or name), whatever `enforcePasswordComplexity` says (Go accepts
+            // the flag on create and does not apply it).
+            let hashed = match command.password.as_deref().filter(|p| !p.is_empty()) {
+                Some(password) => {
+                    let name = command.name.as_deref().unwrap_or_default();
+                    if let Some(v) = crate::portal::policy::validate(password, &email, name) {
+                        return UseCaseResult::failure(UseCaseError::validation(v.code, v.message));
+                    }
+                    self.password_service.rehash_password(password)
                 }
+                None => self
+                    .password_service
+                    .rehash_password(&self.password_service.generate_password()),
+            };
+            let hash = match hashed {
+                Ok(h) => h,
+                Err(e) => return UseCaseResult::failure(e.into()),
             };
             if let Some(identity) = principal.user_identity.as_mut() {
                 identity.password_hash = Some(hash);

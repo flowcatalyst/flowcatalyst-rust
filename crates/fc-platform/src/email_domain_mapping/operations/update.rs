@@ -115,12 +115,14 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         command: UpdateEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingUpdated> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (mapping, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 
@@ -129,7 +131,7 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
         &self,
         command: &UpdateEmailDomainMappingCommand,
         ctx: &ExecutionContext,
-    ) -> Result<EmailDomainMappingUpdated, UseCaseError> {
+    ) -> Result<(crate::EmailDomainMapping, EmailDomainMappingUpdated), UseCaseError> {
         let mut mapping = self
             .edm_repo
             .find_by_id(&command.mapping_id)
@@ -149,8 +151,11 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
         if let Some(scope_type) = command.scope_type {
             mapping.scope_type = scope_type;
         }
+        // A blank value clears the link (the SPA sends `null` for an ANCHOR
+        // mapping, which the handler passes as blank).
         if let Some(ref primary_client_id) = command.primary_client_id {
-            mapping.primary_client_id = Some(primary_client_id.clone());
+            mapping.primary_client_id =
+                Some(primary_client_id.clone()).filter(|c| !c.trim().is_empty());
         }
         if let Some(sync_roles) = command.sync_roles_from_idp {
             mapping.sync_roles_from_idp = sync_roles;
@@ -162,7 +167,7 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
             mapping.granted_client_ids = granted.clone();
         }
         if let Some(ref tenant) = command.required_oidc_tenant_id {
-            mapping.required_oidc_tenant_id = Some(tenant.clone());
+            mapping.required_oidc_tenant_id = Some(tenant.clone()).filter(|t| !t.trim().is_empty());
         }
         if let Some(ref roles) = command.allowed_role_ids {
             mapping.allowed_role_ids = roles.clone();
@@ -189,32 +194,17 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
 
         // The mapping as saved, on the provider it now routes to (a move
         // included), must pin the tenant when that provider is multi-tenant.
-        let idp = self
+        // Go does not require the provider to exist (a mapping may name one
+        // not created yet); an unknown provider pins nothing.
+        let multi_tenant = self
             .idp_repo
             .find_by_id(&mapping.identity_provider_id)
-            .await
-            .or_not_found(
-                "IDENTITY_PROVIDER_NOT_FOUND",
-                format!(
-                    "Identity provider '{}' not found",
-                    mapping.identity_provider_id
-                ),
-            )?;
-        super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
-
-        // Persist the updated entity (including junction-table re-writes)
-        // before emitting the event/audit. TODO: add `impl Persist<EmailDomainMapping>
-        // for EmailDomainMappingRepository` and migrate to
-        // `unit_of_work.commit(...)` for a single atomic transaction.
-        if let Err(e) = self.edm_repo.update(&mapping).await {
-            return Err(UseCaseError::commit(format!(
-                "Failed to update email domain mapping: {}",
-                e
-            )));
-        }
+            .await?
+            .is_some_and(|idp| idp.oidc_multi_tenant);
+        super::require_tenant_pin(multi_tenant, &mapping)?;
 
         let event = EmailDomainMappingUpdated::new(ctx, &mapping.id, &mapping.email_domain);
-        Ok(event)
+        Ok((mapping, event))
     }
 }
 

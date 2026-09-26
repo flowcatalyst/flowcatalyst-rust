@@ -27,7 +27,7 @@ pub struct LoginAttemptsQuery {
     /// Opaque cursor returned by a previous page's `nextCursor`. Omit for
     /// the first page.
     pub after: Option<String>,
-    pub page_size: Option<u64>,
+    pub page_size: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -90,7 +90,7 @@ pub struct LoginAttemptsState {
         ("date_from" = Option<String>, Query, description = "Filter from date"),
         ("date_to" = Option<String>, Query, description = "Filter to date"),
         ("page" = Option<u64>, Query, description = "Page number"),
-        ("page_size" = Option<u64>, Query, description = "Page size"),
+        ("page_size" = Option<i64>, Query, description = "Page size"),
         ("sortField" = Option<String>, Query, description = "Sort field (attempted_at, identifier, outcome, attempt_type)"),
         ("sortOrder" = Option<String>, Query, description = "Sort order (asc or desc, default: desc)"),
     ),

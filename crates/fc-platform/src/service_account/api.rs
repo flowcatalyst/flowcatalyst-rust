@@ -70,6 +70,20 @@ pub struct CreateServiceAccountRequest {
     /// `ALL_APPLICATIONS_WITH_APPLICATION_ID`.
     #[serde(default)]
     pub all_applications: Option<bool>,
+
+    /// Go's `webhookCredentials`: its `authType` must be a known type (400
+    /// `INVALID_AUTH_TYPE` otherwise); the account is still created with
+    /// generated bearer credentials, as Go creates it.
+    #[serde(default)]
+    pub webhook_credentials: Option<WebhookCredentialsRequest>,
+}
+
+/// Go `WebhookCredentialsDTO`: only `authType` is read.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookCredentialsRequest {
+    #[serde(default)]
+    pub auth_type: String,
 }
 
 /// Update service account request
@@ -128,19 +142,33 @@ pub struct ServiceAccountListResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountResponse {
+    /// The account's own id (`iam_service_accounts.id`, Go's `id`); an
+    /// account written before the two ids were split answers with its
+    /// principal's, which is the same value there.
     pub id: String,
     pub code: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    pub active: bool,
+    pub client_ids: Vec<String>,
     /// The requested scope as stored (Go's shape: omitted when none was
     /// requested). The token tier follows `clientIds`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-    pub client_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
-    pub active: bool,
     pub auth_type: String,
     pub roles: Vec<String>,
+    /// The linked SERVICE principal (roles, application access): on the
+    /// single-account read only, as Go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal_id: Option<String>,
+    /// The public client_id of the account's earliest OAuth client: on the
+    /// single-account read only, as Go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -149,16 +177,18 @@ pub struct ServiceAccountResponse {
 impl From<ServiceAccount> for ServiceAccountResponse {
     fn from(sa: ServiceAccount) -> Self {
         Self {
-            id: sa.id,
+            id: sa.service_account_table_id.unwrap_or(sa.id),
             code: sa.code,
             name: sa.name,
             description: sa.description,
-            scope: sa.requested_scope,
-            client_ids: sa.client_ids,
-            application_id: sa.application_id,
             active: sa.active,
+            client_ids: sa.client_ids,
+            scope: sa.requested_scope,
+            application_id: sa.application_id,
             auth_type: sa.webhook_credentials.auth_type.as_str().to_string(),
             roles: sa.roles.iter().map(|r| r.role.clone()).collect(),
+            principal_id: None,
+            oauth_client_id: None,
             last_used_at: sa.last_used_at.map(|t| t.to_rfc3339()),
             created_at: sa.created_at.to_rfc3339(),
             updated_at: sa.updated_at.to_rfc3339(),
@@ -257,6 +287,8 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub regenerate_token_use_case: Arc<RegenerateAuthTokenUseCase<U>>,
     pub regenerate_secret_use_case: Arc<RegenerateSigningSecretUseCase<U>>,
     pub create_oauth_client_use_case: Arc<crate::auth::operations::CreateOAuthClientUseCase<U>>,
+    /// The account's OAuth client, for `oauthClientId` on the detail read.
+    pub oauth_client_repo: Arc<crate::OAuthClientRepository>,
     /// The caller's application scope, for the `allApplications` opt-in.
     pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
 }
@@ -287,26 +319,30 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     Query(query): Query<ServiceAccountsQuery>,
 ) -> Result<Json<ServiceAccountListResponse>, PlatformError> {
     crate::checks::can_read_service_accounts(&auth.0)?;
-    // `find_active()` is the default regardless of the requested `active`
-    // filter — inactive lookups are then handled by the `.retain()` below.
-    // (Worth revisiting: inactive accounts are currently unreachable via
-    // the unfiltered list.)
+    // Go lists every account, active or not, ordered by code; the filters
+    // are Rust's own narrowing of that list.
     let mut accounts = if let Some(client_id) = query.client_id {
         state.repo.find_by_client(&client_id).await?
     } else if let Some(app_id) = query.application_id {
         state.repo.find_by_application(&app_id).await?
     } else {
-        state.repo.find_active().await?
+        state.repo.find_all().await?
     };
 
     if let Some(is_active) = query.active {
         accounts.retain(|a| a.active == is_active);
     }
+    accounts.sort_by(|a, b| a.code.cmp(&b.code));
 
     let total = accounts.len();
+    // Go's list rows carry no roles (its list read does not hydrate them);
+    // the single-account read does.
     let service_accounts: Vec<ServiceAccountResponse> = accounts
         .into_iter()
-        .map(ServiceAccountResponse::from)
+        .map(|mut a| {
+            a.roles.clear();
+            ServiceAccountResponse::from(a)
+        })
         .collect();
 
     Ok(Json(ServiceAccountListResponse {
@@ -342,7 +378,18 @@ pub async fn get_service_account<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::ServiceAccountNotFound { id: id.clone() })?;
 
-    Ok(Json(ServiceAccountResponse::from(account)))
+    // Go getByID: the linked principal, and the public client_id of its
+    // earliest OAuth client (by created_at, then id).
+    let principal_id = account.id.clone();
+    let mut clients = state
+        .oauth_client_repo
+        .find_by_service_account_principal_id(&principal_id)
+        .await?;
+    clients.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+    let mut response = ServiceAccountResponse::from(account);
+    response.principal_id = Some(principal_id);
+    response.oauth_client_id = clients.into_iter().next().map(|c| c.client_id);
+    Ok(Json(response))
 }
 
 /// Get service account by code
@@ -395,6 +442,24 @@ pub async fn create_service_account<U: UnitOfWork>(
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
     crate::checks::can_write_service_accounts(&auth.0)?;
+    // Go `WebhookCredentialsDTO.toEntity`: an unknown type is refused, never
+    // coerced (empty means none).
+    if let Some(creds) = &req.webhook_credentials {
+        const KNOWN: [&str; 6] = [
+            "",
+            "NONE",
+            "BEARER_TOKEN",
+            "BASIC_AUTH",
+            "API_KEY",
+            "HMAC_SIGNATURE",
+        ];
+        if !KNOWN.contains(&creds.auth_type.as_str()) {
+            return Err(PlatformError::bad_request_code(
+                "INVALID_AUTH_TYPE",
+                format!("unknown webhook auth type {:?}", creds.auth_type),
+            ));
+        }
+    }
     let all_applications = req.all_applications == Some(true);
     // Go serviceaccount/api/api.go:155-159: the rule for granting
     // application access, only a caller that itself holds all-applications
@@ -473,13 +538,15 @@ pub async fn create_service_account<U: UnitOfWork>(
                     crate::auth::oauth_entity::GrantType::RefreshToken,
                 ],
                 default_scopes: vec!["openid".to_string()],
-                pkce_required: false,
+                // Go's entity default (auth.NewOAuthClient).
+                pkce_required: true,
                 application_ids: vec![],
                 allowed_origins: vec![],
                 service_account_principal_id: Some(result.event.service_account_id.clone()),
                 created_by: Some(auth.0.principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,
+                api_access: false,
             };
             let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
             state

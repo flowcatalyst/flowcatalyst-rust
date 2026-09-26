@@ -38,10 +38,19 @@ impl<U: UnitOfWork> UseCase for CreateAnchorDomainUseCase<U> {
 
     async fn validate(&self, command: &CreateAnchorDomainCommand) -> Result<(), UseCaseError> {
         let domain = command.domain.trim().to_lowercase();
+        // Go CreateAnchorDomain (auth/operations/anchor_domain.go): blank is
+        // DOMAIN_REQUIRED; a name without a dot, or with a space, `/` or `@`,
+        // is INVALID_DOMAIN.
         if domain.is_empty() {
             return Err(UseCaseError::validation(
                 "DOMAIN_REQUIRED",
-                "Anchor domain is required",
+                "domain is required",
+            ));
+        }
+        if !is_dns_name(&domain) {
+            return Err(UseCaseError::validation(
+                "INVALID_DOMAIN",
+                "domain must be a valid DNS name (e.g. example.com)",
             ));
         }
         Ok(())
@@ -82,4 +91,10 @@ impl<U: UnitOfWork> UseCase for CreateAnchorDomainUseCase<U> {
             .commit(&anchor_domain, &*self.anchor_domain_repo, event, &command)
             .await
     }
+}
+
+/// Go's anchor-domain shape check: at least one dot, and no space, `/` or
+/// `@` (auth/operations/anchor_domain.go).
+pub(crate) fn is_dns_name(domain: &str) -> bool {
+    domain.contains('.') && !domain.contains([' ', '/', '@'])
 }

@@ -985,14 +985,15 @@ async fn test_service_account_crud() {
     let (pool, _container) = setup_test_db().await;
     let repo = ServiceAccountRepository::new(&pool);
 
-    // Create. An account is read through its SERVICE principal, which
-    // shares its id (`find_by_id` is by principal id), so both rows exist,
-    // as the account's persist writes them.
+    // Create. An account is read through its SERVICE principal (its `id`),
+    // which links to the account row (`service_account_table_id`), so both
+    // rows exist, as the account's persist writes them.
     let svc = ServiceAccount::new("test-svc", "Test Service", UserScope::Anchor);
     repo.insert(&svc)
         .await
         .expect("Failed to insert service account");
-    let mut principal = Principal::new_service(&svc.id, &svc.name, UserScope::Anchor);
+    let account_id = svc.service_account_table_id.clone().expect("account id");
+    let mut principal = Principal::new_service(&account_id, &svc.name, UserScope::Anchor);
     principal.id = svc.id.clone();
     PrincipalRepository::new(&pool)
         .insert(&principal)
@@ -1362,15 +1363,16 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
             .find(|(c, _)| *c == "oauth_identity_providers.oidc_client_secret_ref"),
         Some(("oauth_identity_providers.oidc_client_secret_ref", 1))
     );
+    let sa_row_id = sa.service_account_table_id.clone().expect("account id");
     let token = stored(
         "SELECT wh_auth_token_ref FROM iam_service_accounts WHERE id = $1",
-        sa.id.clone(),
+        sa_row_id.clone(),
     )
     .await;
     assert_eq!(enc.decrypt_ref(&token).unwrap(), "fc_plaintoken");
     let signing = stored(
         "SELECT wh_signing_secret_ref FROM iam_service_accounts WHERE id = $1",
-        sa.id.clone(),
+        sa_row_id,
     )
     .await;
     assert_eq!(enc.decrypt_ref(&signing).unwrap(), "plain-signing");

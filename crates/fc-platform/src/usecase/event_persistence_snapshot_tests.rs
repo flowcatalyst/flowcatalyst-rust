@@ -612,6 +612,10 @@ fn identity_provider_create_persists_no_plaintext_secret() {
         oidc_multi_tenant: false,
         oidc_issuer_pattern: None,
         allowed_email_domains: vec![],
+        mapping_scope: None,
+        primary_client_id: None,
+        sync_roles_from_idp: false,
+        allowed_role_ids: vec![],
     };
     let stored = cmd.oidc_client_secret_ref.as_deref().unwrap();
     assert_eq!(enc.decrypt_ref(stored).unwrap(), IDP_SECRET);
@@ -641,6 +645,10 @@ fn identity_provider_update_persists_no_plaintext_secret() {
         oidc_multi_tenant: None,
         oidc_issuer_pattern: None,
         allowed_email_domains: None,
+        mapping_scope: None,
+        primary_client_id: None,
+        sync_roles_from_idp: None,
+        allowed_role_ids: None,
     };
     let e = fixed!(IdentityProviderUpdated::new(&ctx(), "idp_1", "okta"));
     let rows = persisted(&e, &cmd);

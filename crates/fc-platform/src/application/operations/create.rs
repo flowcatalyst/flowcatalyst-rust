@@ -35,6 +35,26 @@ pub struct CreateApplicationCommand {
     /// Icon URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+
+    /// Website URL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+
+    /// Inline SVG logo
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+
+    /// Logo MIME type
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_mime_type: Option<String>,
+}
+
+/// Go's application-code rule (`validate.CodeUnderscorePattern`,
+/// `^[a-z][a-z0-9_-]*$`), applied to the lower-cased code.
+fn is_valid_code(code: &str) -> bool {
+    let mut chars = code.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 impl crate::usecase::AuditMasked for CreateApplicationCommand {}
@@ -60,19 +80,25 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
     type Event = ApplicationCreated;
 
     async fn validate(&self, command: &CreateApplicationCommand) -> Result<(), UseCaseError> {
-        // Validation: code is required
-        if command.code.trim().is_empty() {
+        // Go CreateApplication (application/operations/create.go): the code
+        // is lower-cased before it is checked and stored.
+        let code = command.code.trim().to_lowercase();
+        if code.is_empty() {
             return Err(UseCaseError::validation(
                 "CODE_REQUIRED",
-                "Application code is required",
+                "code is required",
             ));
         }
-
-        // Validation: name is required
+        if !is_valid_code(&code) {
+            return Err(UseCaseError::validation(
+                "INVALID_CODE_FORMAT",
+                "code must start with a lowercase letter and contain only lowercase alphanumerics, hyphens, and underscores",
+            ));
+        }
         if command.name.trim().is_empty() {
             return Err(UseCaseError::validation(
                 "NAME_REQUIRED",
-                "Application name is required",
+                "name is required",
             ));
         }
 
@@ -92,7 +118,8 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         command: CreateApplicationCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationCreated> {
-        let code = command.code.trim();
+        let code_lower = command.code.trim().to_lowercase();
+        let code = code_lower.as_str();
         let name = command.name.trim();
 
         // Business rule: code must be unique
@@ -102,8 +129,8 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         };
         if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
-                "APPLICATION_CODE_EXISTS",
-                format!("An application with code '{}' already exists", code),
+                "CODE_EXISTS",
+                format!("Application with code '{}' already exists", code),
             ));
         }
 
@@ -125,6 +152,9 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         if let Some(ref url) = command.icon_url {
             application = application.with_icon_url(url);
         }
+        application.website = command.website.clone();
+        application.logo = command.logo.clone();
+        application.logo_mime_type = command.logo_mime_type.clone();
 
         // Create domain event
         let event =
@@ -151,6 +181,9 @@ mod tests {
             application_type: Some(ApplicationType::Application),
             default_base_url: Some("https://orders.example.com".to_string()),
             icon_url: None,
+            website: None,
+            logo: None,
+            logo_mime_type: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

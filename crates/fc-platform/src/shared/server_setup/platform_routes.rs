@@ -362,6 +362,7 @@ pub fn build_platform_routes(
         repos.application_repo.clone(),
     ));
     let principals_state = PrincipalsState {
+        mfa_repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
         principal_repo: repos.principal_repo.clone(),
         role_repo: repos.role_repo.clone(),
         client_repo: repos.client_repo.clone(),
@@ -503,6 +504,7 @@ pub fn build_platform_routes(
         ),
     );
     let oauth_clients_state = OAuthClientsState {
+        application_repo: repos.application_repo.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
         portal_apps: Arc::new(crate::portal::repository::PortalAppRepository::new(
             &repos.pool,
@@ -562,6 +564,7 @@ pub fn build_platform_routes(
         role_repo: repos.role_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         unit_of_work: unit_of_work.clone(),
+        encryption_service: EncryptionService::from_env().map(Arc::new),
         create_anchor_domain_use_case,
         update_anchor_domain_use_case,
         delete_anchor_domain_use_case,
@@ -675,6 +678,7 @@ pub fn build_platform_routes(
         external_base_url: config.password_reset_external_base_url.clone(),
     });
     let oauth_state = OAuthState {
+        service_account_repo: repos.service_account_repo.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         role_repo: repos.role_repo.clone(),
@@ -826,27 +830,42 @@ pub fn build_platform_routes(
         add_use_case: add_cors_use_case,
         delete_use_case: delete_cors_use_case,
     };
+    let idp_domains = crate::identity_provider::operations::DomainDeps {
+        edm_repo: repos.edm_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        move_repo: Arc::new(
+            crate::email_domain_mapping::provider_move_repository::ProviderMoveRepository::new(
+                &repos.pool,
+                repos.principal_repo.clone(),
+            ),
+        ),
+    };
     let create_idp_use_case = Arc::new(
         crate::identity_provider::operations::CreateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
+            idp_domains.clone(),
             unit_of_work.clone(),
         ),
     );
     let update_idp_use_case = Arc::new(
         crate::identity_provider::operations::UpdateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
-            repos.edm_repo.clone(),
+            idp_domains.clone(),
             unit_of_work.clone(),
         ),
     );
     let delete_idp_use_case = Arc::new(
         crate::identity_provider::operations::DeleteIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
+            repos.edm_repo.clone(),
             unit_of_work.clone(),
         ),
     );
     let idp_state = IdentityProvidersState {
         idp_repo: repos.idp_repo.clone(),
+        domains: idp_domains,
+        role_repo: repos.role_repo.clone(),
+        pg_unit_of_work: unit_of_work.clone(),
         create_use_case: create_idp_use_case,
         update_use_case: update_idp_use_case,
         delete_use_case: delete_idp_use_case,
@@ -999,6 +1018,7 @@ pub fn build_platform_routes(
         regenerate_token_use_case,
         regenerate_secret_use_case,
         create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
+        oauth_client_repo: repos.oauth_client_repo.clone(),
         app_access: app_access.clone(),
     };
 

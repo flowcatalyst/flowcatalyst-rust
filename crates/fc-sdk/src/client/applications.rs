@@ -117,6 +117,13 @@ pub struct ApplicationRoleResponse {
     pub client_managed: bool,
 }
 
+/// The role names registered against an application.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationRolesResponse {
+    pub roles: Vec<String>,
+}
+
 /// Client config for an application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -138,11 +145,13 @@ pub struct ClientConfigResponse {
     pub config: Option<serde_json::Value>,
 }
 
-/// Client configs list response.
+/// Client configs list response: the platform's `{items}` (Go's shape;
+/// the older `clientConfigs` is still read).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigsResponse {
-    pub client_configs: Vec<ClientConfigResponse>,
+    #[serde(alias = "clientConfigs")]
+    pub items: Vec<ClientConfigResponse>,
     #[serde(default)]
     pub total: Option<u64>,
 }
@@ -274,17 +283,17 @@ impl Applications<'_> {
             .await
     }
 
-    /// List roles for an application (by TSID).
+    /// List the names of the roles registered against an application (by
+    /// TSID): the platform's `{roles: [name…]}`, Go's shape.
     ///
     /// Mounted under `/by-id` server-side so the admin TSID lookup doesn't
     /// collide with the SDK's `/{appCode}/roles/sync` route.
-    pub async fn list_roles(
-        &self,
-        id: &str,
-    ) -> Result<Vec<ApplicationRoleResponse>, ClientError> {
-        self.client
+    pub async fn list_roles(&self, id: &str) -> Result<Vec<String>, ClientError> {
+        let resp: ApplicationRolesResponse = self
+            .client
             .get(&format!("/api/applications/by-id/{}/roles", id))
-            .await
+            .await?;
+        Ok(resp.roles)
     }
 
     /// List per-client configs for an application.
@@ -309,28 +318,20 @@ impl Applications<'_> {
             .await
     }
 
-    /// Enable an application for a specific client.
-    pub async fn enable_for_client(
-        &self,
-        id: &str,
-        client_id: &str,
-    ) -> Result<ClientConfigResponse, ClientError> {
+    /// Enable an application for a specific client (204, as Go answers).
+    pub async fn enable_for_client(&self, id: &str, client_id: &str) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!(
+            .post_empty(&format!(
                 "/api/applications/{}/clients/{}/enable",
                 id, client_id
             ))
             .await
     }
 
-    /// Disable an application for a specific client.
-    pub async fn disable_for_client(
-        &self,
-        id: &str,
-        client_id: &str,
-    ) -> Result<ClientConfigResponse, ClientError> {
+    /// Disable an application for a specific client (204, as Go answers).
+    pub async fn disable_for_client(&self, id: &str, client_id: &str) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!(
+            .post_empty(&format!(
                 "/api/applications/{}/clients/{}/disable",
                 id, client_id
             ))

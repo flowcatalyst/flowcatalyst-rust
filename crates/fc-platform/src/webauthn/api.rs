@@ -136,6 +136,8 @@ pub struct CredentialSummary {
     pub id: String,
     pub name: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Absent until the credential is first used (Go `omitempty`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -270,8 +272,12 @@ pub async fn register_complete(
                 "registration ceremony state not found or expired",
             )
         })?;
-    let credential: RegisterPublicKeyCredential = serde_json::from_value(req.credential)
-        .map_err(|e| PlatformError::bad_request_code("INVALID_CREDENTIAL", e.to_string()))?;
+    // Go answers an unparseable credential with go-webauthn's parse error
+    // text ("Parse error for Registration"), whatever serde would say.
+    let credential: RegisterPublicKeyCredential =
+        serde_json::from_value(req.credential).map_err(|_| {
+            PlatformError::bad_request_code("INVALID_CREDENTIAL", "Parse error for Registration")
+        })?;
 
     if consumed.principal_id != auth.0.principal_id {
         return Err(PlatformError::Forbidden {
@@ -325,6 +331,13 @@ pub async fn authenticate_begin(
     // deterministic fake `allowCredentials` list seeded by an HMAC of the
     // email — so requests for the same email return the same shape, but an
     // attacker can't distinguish real vs. fake without the secret key.
+    // An empty email is refused outright, as Go does (webauthn/api/api.go).
+    if req.email.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "EMAIL_REQUIRED",
+            "email is required",
+        ));
+    }
     let real_credentials_opt = resolve_real_credentials(&state, &req.email).await;
 
     match real_credentials_opt {

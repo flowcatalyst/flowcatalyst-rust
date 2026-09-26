@@ -41,6 +41,12 @@ pub struct UpdateOAuthClientCommand {
     /// Empty unlinks the portal app; a value links it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portal_app_id: Option<String>,
+    /// Replaces the scope list when `Some` (Go `Scopes`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_scopes: Option<Vec<String>>,
+    /// Authority-bearing interactive tokens (Go `APIAccess`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_access: Option<bool>,
 }
 
 impl crate::usecase::AuditMasked for UpdateOAuthClientCommand {}
@@ -69,6 +75,16 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
             return Err(UseCaseError::validation(
                 "OAUTH_CLIENT_ID_REQUIRED",
                 "OAuth client id is required",
+            ));
+        }
+        if command
+            .client_name
+            .as_deref()
+            .is_some_and(|n| n.trim().is_empty())
+        {
+            return Err(UseCaseError::validation(
+                "CLIENT_NAME_REQUIRED",
+                "clientName cannot be empty",
             ));
         }
         Ok(())
@@ -145,6 +161,12 @@ impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
         }
         if let Some(portal_app_id) = &command.portal_app_id {
             client.portal_app_id = crate::portal::trimmed_or_none(Some(portal_app_id));
+        }
+        if let Some(ref scopes) = command.default_scopes {
+            client.default_scopes = scopes.clone();
+        }
+        if let Some(api_access) = command.api_access {
+            client.api_access = api_access;
         }
         crate::portal::validate_oauth_client_plane(&client)?;
         client.updated_at = chrono::Utc::now();

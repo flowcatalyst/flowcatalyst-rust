@@ -506,7 +506,9 @@ async fn created_service_account_reaches_only_granted_applications() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
+    // The account's SERVICE principal carries its roles and application
+    // access.
+    let id = body["principalId"].as_str().unwrap().to_string();
 
     // Binding an application on create isn't accepted.
     let (status, _) = read_json(

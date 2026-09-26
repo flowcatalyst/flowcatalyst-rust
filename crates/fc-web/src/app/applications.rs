@@ -719,6 +719,9 @@ async fn create_application(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<i
                         application_type: Some(application_type),
                         default_base_url: non_empty(&form.default_base_url),
                         icon_url: non_empty(&form.icon_url),
+                        website: None,
+                        logo: None,
+                        logo_mime_type: None,
                     },
                     ExecutionContext::from_auth(auth),
                 )
@@ -874,6 +877,9 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
                     description: non_empty(&form.description),
                     default_base_url: non_empty(&form.default_base_url),
                     icon_url: non_empty(&form.icon_url),
+                    website: None,
+                    logo: None,
+                    logo_mime_type: None,
                 },
                 ExecutionContext::from_auth(auth),
             )

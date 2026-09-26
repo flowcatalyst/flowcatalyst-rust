@@ -31,9 +31,9 @@ pub struct CreateOAuthClientRequest {
     /// Human-readable name
     pub client_name: String,
 
-    /// Client type (PUBLIC or CONFIDENTIAL). Required; absent is a 400.
-    #[serde(default)]
-    pub client_type: Option<String>,
+    /// Client type (PUBLIC or CONFIDENTIAL). Required, as in Go's huma
+    /// schema: absent is a 400 `VALIDATION`.
+    pub client_type: String,
 
     /// Allowed redirect URIs
     #[serde(default)]
@@ -47,13 +47,26 @@ pub struct CreateOAuthClientRequest {
     #[serde(default)]
     pub grant_types: Vec<String>,
 
-    /// Whether PKCE is required
+    /// The client's scope list
+    #[serde(default)]
+    pub default_scopes: Vec<String>,
+
+    /// Whether PKCE is required (absent keeps Go's default, `true`)
     #[serde(default)]
     pub pkce_required: Option<bool>,
+
+    /// Allowed CORS origins
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 
     /// Application IDs this client can access
     #[serde(default)]
     pub application_ids: Vec<String>,
+
+    /// Authority-bearing interactive access tokens (`token_use=api`),
+    /// narrowed to the client's applications. Not for a portal client.
+    #[serde(default)]
+    pub api_access: Option<bool>,
 
     /// Marks this client as a portal entry point owned by that tenant client
     /// (Go `portalClientId`).
@@ -82,6 +95,9 @@ pub struct UpdateOAuthClientRequest {
     /// Allowed grant types
     pub grant_types: Option<Vec<String>>,
 
+    /// The client's scope list
+    pub default_scopes: Option<Vec<String>>,
+
     /// Whether PKCE is required
     pub pkce_required: Option<bool>,
 
@@ -101,6 +117,19 @@ pub struct UpdateOAuthClientRequest {
     /// Portal app link: empty unlinks.
     #[serde(default)]
     pub portal_app_id: Option<String>,
+
+    /// Authority-bearing interactive access tokens
+    #[serde(default)]
+    pub api_access: Option<bool>,
+}
+
+/// Go's `OAuthClientApplicationRef`: an application id with its name (the
+/// id when the application no longer exists).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientApplicationRef {
+    pub id: String,
+    pub name: String,
 }
 
 /// OAuth client response DTO
@@ -118,6 +147,9 @@ pub struct OAuthClientResponse {
     pub default_scopes: Vec<String>,
     pub pkce_required: bool,
     pub application_ids: Vec<String>,
+    /// `{id, name}` of each application id (Go `applications`; the SPA's
+    /// list page reads its length unconditionally).
+    pub applications: Vec<OAuthClientApplicationRef>,
     #[serde(default)]
     pub allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,10 +161,10 @@ pub struct OAuthClientResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub portal_app_id: Option<String>,
     pub active: bool,
+    /// Authority-bearing interactive access tokens (Go `apiAccess`).
+    pub api_access: bool,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<String>,
     /// When a secret-rotation overlap lapses. Absent when none is in flight
     /// (Go's shape, auth/api/dto.go:157-166).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,14 +193,15 @@ impl From<OAuthClient> for OAuthClientResponse {
             default_scopes: c.default_scopes,
             pkce_required: c.pkce_required,
             application_ids: c.application_ids,
+            applications: Vec::new(),
             allowed_origins: c.allowed_origins,
             service_account_principal_id: c.service_account_principal_id,
             portal_client_id: c.portal_client_id,
             portal_app_id: c.portal_app_id,
             active: c.active,
+            api_access: c.api_access,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
-            created_by: c.created_by,
             previous_secret_expires_at: overlap_open
                 .then(|| c.previous_secret_expires_at.map(|t| t.to_rfc3339()))
                 .flatten(),
@@ -177,6 +210,49 @@ impl From<OAuthClient> for OAuthClientResponse {
                 .flatten(),
         }
     }
+}
+
+/// Go `State.fillApplicationRefs`: each response's `applications` from its
+/// application ids, names resolved in one query; an id whose application is
+/// gone keeps the id as its name.
+async fn fill_application_refs(
+    apps: &crate::ApplicationRepository,
+    responses: &mut [OAuthClientResponse],
+) -> Result<(), PlatformError> {
+    let mut ids: Vec<String> = responses
+        .iter()
+        .flat_map(|r| {
+            r.application_ids
+                .iter()
+                .filter(|id| !id.is_empty())
+                .cloned()
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let names = apps.find_names_by_ids(&ids).await?;
+    for r in responses.iter_mut() {
+        r.applications = r
+            .application_ids
+            .iter()
+            .map(|id| OAuthClientApplicationRef {
+                id: id.clone(),
+                name: names.get(id).cloned().unwrap_or_else(|| id.clone()),
+            })
+            .collect();
+    }
+    Ok(())
+}
+
+/// One client's response, application refs filled.
+async fn client_response(
+    state: &OAuthClientsState,
+    client: OAuthClient,
+) -> Result<OAuthClientResponse, PlatformError> {
+    let mut responses = [OAuthClientResponse::from(client)];
+    fill_application_refs(&state.application_repo, &mut responses).await?;
+    let [response] = responses;
+    Ok(response)
 }
 
 /// Wrapper response from `POST /api/oauth-clients`. Includes the freshly
@@ -216,6 +292,8 @@ pub struct OAuthClientsQuery {
 #[derive(Clone)]
 pub struct OAuthClientsState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
+    /// Resolves application ids to names for the `applications` refs.
+    pub application_repo: Arc<crate::ApplicationRepository>,
     /// Resolves `portalAppId` to its owning client (Go `State.PortalApps`).
     pub portal_apps: Arc<crate::portal::repository::PortalAppRepository>,
     pub create_oauth_client_use_case:
@@ -280,13 +358,24 @@ pub async fn create_oauth_client(
     let client_id = req
         .client_id
         .unwrap_or_else(|| crate::shared::tsid::generate(crate::EntityType::OAuthClient));
-    // Absent means PUBLIC; anything present must be an exact client type.
-    // Required, as in Go (auth/operations/oauth_client.go:50): an absent or
-    // empty type is a 400, never a silent PUBLIC.
-    let client_type: OAuthClientType = crate::shared::enum_str::parse_opt(
-        crate::shared::enum_str::non_empty(req.client_type.as_deref()),
-    )?
-    .ok_or_else(|| PlatformError::validation("clientType is required: PUBLIC or CONFIDENTIAL"))?;
+    // Go CreateOAuthClient (auth/operations/oauth_client.go): the name is
+    // checked first, then the exact client type.
+    if req.client_name.trim().is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "CLIENT_NAME_REQUIRED",
+            "clientName is required",
+        ));
+    }
+    let client_type = match req.client_type.as_str() {
+        "PUBLIC" => OAuthClientType::Public,
+        "CONFIDENTIAL" => OAuthClientType::Confidential,
+        _ => {
+            return Err(PlatformError::bad_request_code(
+                "INVALID_CLIENT_TYPE",
+                "clientType must be PUBLIC or CONFIDENTIAL",
+            ))
+        }
+    };
 
     // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
     // is returned once; only its keyed hash (`hashed:v1:`) is passed into the
@@ -309,13 +398,8 @@ pub async fn create_oauth_client(
         (None, None)
     };
 
-    // Default grant_types = ["authorization_code"] when not specified, matching the
-    // OAuthClient::new default.
-    let grant_types = if req.grant_types.is_empty() {
-        vec![GrantType::AuthorizationCode]
-    } else {
-        parse_grant_types(&req.grant_types)?
-    };
+    // Go stores the grant types as sent: none sent is none stored.
+    let grant_types = parse_grant_types(&req.grant_types)?;
 
     let oauth_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
 
@@ -328,16 +412,16 @@ pub async fn create_oauth_client(
         redirect_uris: req.redirect_uris,
         post_logout_redirect_uris: req.post_logout_redirect_uris,
         grant_types,
-        default_scopes: vec![],
-        pkce_required: req
-            .pkce_required
-            .unwrap_or(client_type == OAuthClientType::Public),
+        default_scopes: req.default_scopes,
+        // Go's entity default is `true` for both types.
+        pkce_required: req.pkce_required.unwrap_or(true),
         application_ids: req.application_ids,
-        allowed_origins: vec![],
+        allowed_origins: req.allowed_origins,
         service_account_principal_id: None,
         created_by: Some(auth.0.principal_id.clone()),
         portal_client_id,
         portal_app_id: req.portal_app_id,
+        api_access: req.api_access.unwrap_or(false),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -353,7 +437,7 @@ pub async fn create_oauth_client(
         .ok_or_else(|| PlatformError::internal("OAuth client created but row not found"))?;
 
     let response = CreateOAuthClientResponse {
-        client: OAuthClientResponse::from(client),
+        client: client_response(&state, client).await?,
         client_secret: generated_secret,
     };
 
@@ -388,7 +472,7 @@ pub async fn get_oauth_client(
         .await?
         .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
 
-    Ok(Json(client.into()))
+    Ok(Json(client_response(&state, client).await?))
 }
 
 /// List OAuth clients
@@ -425,9 +509,9 @@ pub async fn list_oauth_clients(
     // Go orders by client_name (sqlc queries/auth.sql:30-37).
     clients.sort_by(|a, b| a.client_name.cmp(&b.client_name));
 
-    Ok(Json(OAuthClientListResponse {
-        clients: clients.into_iter().map(|c| c.into()).collect(),
-    }))
+    let mut clients: Vec<OAuthClientResponse> = clients.into_iter().map(Into::into).collect();
+    fill_application_refs(&state.application_repo, &mut clients).await?;
+    Ok(Json(OAuthClientListResponse { clients }))
 }
 
 /// Update OAuth client
@@ -480,6 +564,8 @@ pub async fn update_oauth_client(
         active: req.active,
         portal_client_id,
         portal_app_id: req.portal_app_id,
+        default_scopes: req.default_scopes,
+        api_access: req.api_access,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -583,7 +669,7 @@ pub async fn get_oauth_client_by_client_id(
         .await?
         .ok_or_else(|| PlatformError::not_found("OAuthClient", &client_id))?;
 
-    Ok(Json(client.into()))
+    Ok(Json(client_response(&state, client).await?))
 }
 
 /// Activate OAuth client

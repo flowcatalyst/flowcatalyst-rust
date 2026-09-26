@@ -79,6 +79,30 @@ pub struct TokenRequest {
     pub scope: Option<String>,
 }
 
+/// Go `basicAuthCreds` (auth/oauthapi/token.go): the `client_id` and
+/// `client_secret` of an HTTP Basic `Authorization` header, each
+/// form-urlencoded before joining (RFC 6749 §2.3.1), so each is decoded. The
+/// scheme is matched case-insensitively (RFC 7617).
+fn basic_auth_creds(headers: &HeaderMap) -> Option<(String, String)> {
+    use base64::Engine;
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, encoded) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Basic") {
+        return None;
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (id, secret) = decoded.split_once(':')?;
+    let unescape = |s: &str| {
+        urlencoding::decode(&s.replace('+', " "))
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|_| s.to_string())
+    };
+    Some((unescape(id), unescape(secret)))
+}
+
 /// Token response
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TokenResponse {
@@ -170,6 +194,8 @@ pub struct UserInfoResponse {
 #[derive(Clone)]
 pub struct OAuthState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
+    /// Stamps a service account's `last_used_at` when it authenticates.
+    pub service_account_repo: Arc<crate::ServiceAccountRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
     /// Role → permission / application resolution for the minted claims
     pub role_repo: Arc<crate::RoleRepository>,
@@ -864,8 +890,36 @@ pub async fn token(
     State(state): State<OAuthState>,
     headers: HeaderMap,
     crate::shared::middleware::ClientIp(client_ip): crate::shared::middleware::ClientIp,
-    Form(req): Form<TokenRequest>,
+    Form(mut req): Form<TokenRequest>,
 ) -> Response {
+    // Go `Token`: client_secret_basic is resolved into the request up front,
+    // so every grant honours it (client_credentials included) and the
+    // per-client throttle sees the caller. A body client_id naming another
+    // client than the Basic header is refused (RFC 6749 §3.2.1).
+    if let Some((basic_id, basic_secret)) = basic_auth_creds(&headers) {
+        if req
+            .client_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty() && id != basic_id)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                [
+                    (header::CACHE_CONTROL, "no-store"),
+                    (header::PRAGMA, "no-cache"),
+                ],
+                Json(ErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: Some(
+                        "client_id does not match the authenticated client".to_string(),
+                    ),
+                }),
+            )
+                .into_response();
+        }
+        req.client_id = Some(basic_id);
+        req.client_secret = Some(basic_secret);
+    }
     // Per-client_id rate limit. Composes with the per-IP layer that already
     // wraps `/oauth/*` — this catches a single client running away with
     // refresh-token churn from many IPs (which the per-IP layer wouldn't
@@ -1659,6 +1713,7 @@ async fn handle_client_credentials_grant(
                 client_id,
                 client_secret,
                 req.scope.as_deref(),
+                ip,
             )
             .await;
         }
@@ -1868,6 +1923,14 @@ async fn handle_client_credentials_grant(
         }
     };
 
+    // Go `TouchServiceAccountUsed`: authenticating is the account's
+    // day-to-day use. Best-effort; a bookkeeping failure never fails a token.
+    if let Some(sa_id) = principal.service_account_id.as_deref() {
+        if let Err(e) = state.service_account_repo.touch_last_used(sa_id).await {
+            warn!(error = %e, "Failed to stamp service account last_used_at");
+        }
+    }
+
     // Log successful service account login attempt
     let attempt = LoginAttempt {
         identifier: Some(client_id.clone()),
@@ -1910,6 +1973,7 @@ async fn handle_developer_credential_grant(
     client_id: String,
     client_secret: String,
     scope: Option<&str>,
+    ip: Option<String>,
 ) -> Response {
     let invalid = || {
         (
@@ -1952,6 +2016,7 @@ async fn handle_developer_credential_grant(
         identifier: Some(client_id.clone()),
         principal_id: Some(principal.id.clone()),
         failure_reason: reason.map(String::from),
+        ip_address: ip.clone(),
         ..LoginAttempt::new(AttemptType::DeveloperToken, outcome)
     };
     let (ok, rehash) = check_secret_ref(&state, Some(&stored), &client_secret);

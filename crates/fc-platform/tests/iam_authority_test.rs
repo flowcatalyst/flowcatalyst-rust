@@ -885,7 +885,8 @@ async fn sync_mappings_and_role_edits_are_bounded() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
 
-    // Email-domain allowedRoleIds naming a role above, by id.
+    // An identity provider's allowedRoleIds naming a role above, by id (role
+    // sync is the provider's, Go's 040).
     let super_admin_id = app
         .repos
         .role_repo
@@ -896,11 +897,11 @@ async fn sync_mappings_and_role_edits_are_bounded() {
         .id;
     let (status, resp) = read_json(
         app.post(
-            "/api/email-domain-mappings",
+            "/api/identity-providers",
             &admin,
             json!({
-                "emailDomain": "ceiling.test", "identityProviderId": "idp_x",
-                "scopeType": "ANCHOR", "allowedRoleIds": [super_admin_id]
+                "code": "ceiling-idp", "name": "Ceiling", "type": "INTERNAL",
+                "allowedRoleIds": [super_admin_id]
             }),
         )
         .await,

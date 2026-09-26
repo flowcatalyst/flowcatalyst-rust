@@ -31,11 +31,16 @@ use crate::usecase::{ExecutionContext, UseCase};
 const STATE_TTL_SECONDS: i64 = 600;
 
 fn resolve_failed() -> Response {
-    coded(
+    // Go's `usecase.Internal` sends its fixed message (the cause is only
+    // logged); the platform envelope would replace it with the generic one.
+    (
         StatusCode::INTERNAL_SERVER_ERROR,
-        "OIDC_RESOLVE_FAILED",
-        "OIDC could not be initialised for this provider",
+        axum::Json(serde_json::json!({
+            "error": "OIDC_RESOLVE_FAILED",
+            "message": "OIDC could not be initialised for this provider",
+        })),
     )
+        .into_response()
 }
 
 /// Go `Bridge.ResolveByProviderID`'s guards, all fail-closed: the IdP must

@@ -123,9 +123,10 @@ pub async fn mint_service_account_token(
             "the service account is deactivated — reactivate it before minting a token",
         ));
     }
+    // The account's `id` is its SERVICE principal's.
     let principal = state
         .principal_repo
-        .find_by_service_account(&sa.id)
+        .find_by_id(&sa.id)
         .await?
         .ok_or_else(|| PlatformError::Coded {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -143,6 +144,12 @@ pub async fn mint_service_account_token(
     let access_token = state
         .auth_service
         .generate_access_token_with_scope(&principal, &granted, None)?;
+    // Go stamps the account's last_used_at on a mint too ("handing out a
+    // bearer is a use"); best-effort bookkeeping.
+    let account_row = sa.service_account_table_id.as_deref().unwrap_or(&sa.id);
+    if let Err(e) = state.repo.touch_last_used(account_row).await {
+        tracing::warn!(error = %e, "Failed to stamp service account last_used_at");
+    }
 
     state
         .record_mint_use_case

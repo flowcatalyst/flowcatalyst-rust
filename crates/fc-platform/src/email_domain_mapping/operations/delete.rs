@@ -64,12 +64,14 @@ impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
         command: DeleteEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingDeleted> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (mapping, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        self.unit_of_work
+            .commit_delete(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 
@@ -78,7 +80,7 @@ impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
         &self,
         command: &DeleteEmailDomainMappingCommand,
         ctx: &ExecutionContext,
-    ) -> Result<EmailDomainMappingDeleted, UseCaseError> {
+    ) -> Result<(crate::EmailDomainMapping, EmailDomainMappingDeleted), UseCaseError> {
         let mapping = self
             .edm_repo
             .find_by_id(&command.mapping_id)
@@ -91,15 +93,8 @@ impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
                 ),
             )?;
 
-        if let Err(e) = self.edm_repo.delete(&mapping.id).await {
-            return Err(UseCaseError::commit(format!(
-                "Failed to delete email domain mapping: {}",
-                e
-            )));
-        }
-
         let event = EmailDomainMappingDeleted::new(ctx, &mapping.id, &mapping.email_domain);
-        Ok(event)
+        Ok((mapping, event))
     }
 }
 

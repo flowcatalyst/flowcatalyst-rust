@@ -32,6 +32,9 @@ pub struct UpdateAuthConfigCommand {
     /// Replaces the full list when `Some`; None leaves existing IDs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_client_ids: Option<Vec<String>>,
+    /// Replaces the PARTNER grant list when `Some`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_client_ids: Option<Vec<String>>,
     /// `ANCHOR` / `PARTNER` / `CLIENT`. Used by the /config-type endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_type: Option<AuthConfigType>,
@@ -130,6 +133,9 @@ impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
         }
         if let Some(ref ids) = command.additional_client_ids {
             config.additional_client_ids = ids.clone();
+        }
+        if let Some(ref ids) = command.granted_client_ids {
+            config.granted_client_ids = ids.clone();
         }
         if let Some(ct) = command.config_type {
             config.config_type = ct;

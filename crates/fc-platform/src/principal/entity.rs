@@ -219,6 +219,16 @@ pub struct Principal {
     /// External identity for OIDC-authenticated users
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_identity: Option<ExternalIdentity>,
+
+    /// Whether a self-service developer credential is set (Go
+    /// `hasDeveloperCredential`). Read from `dev_client_secret_ref`, never
+    /// written through the principal: the credential has its own write path.
+    #[serde(skip)]
+    pub has_developer_credential: bool,
+
+    /// When the developer credential was last set.
+    #[serde(skip)]
+    pub developer_credential_updated_at: Option<DateTime<Utc>>,
 }
 
 /// The users one platform-level sync writes, persisted together
@@ -268,6 +278,8 @@ impl Principal {
             created_at: now,
             updated_at: now,
             external_identity: None,
+            has_developer_credential: false,
+            developer_credential_updated_at: None,
         }
     }
 
@@ -301,6 +313,8 @@ impl Principal {
             created_at: now,
             updated_at: now,
             external_identity: None,
+            has_developer_credential: false,
+            developer_credential_updated_at: None,
         }
     }
 

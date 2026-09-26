@@ -77,6 +77,51 @@ fn body<T: DeserializeOwned + Default>(bytes: &Bytes) -> ApiResult<T> {
     })
 }
 
+/// Go's huma request validation for a JSON object body: each member the
+/// Go struct declares without `omitempty` must be present (`expected
+/// required property <name> to be present` at `body`, with the body as the
+/// value), and an enum member must hold one of its values. Answered as
+/// huma's 400 `VALIDATION` (`validation failed`, `details.errors`). A body
+/// that is not a JSON object is left to [`body`].
+fn huma_check(bytes: &Bytes, required: &[&str], enums: &[(&str, &[&str])]) -> ApiResult<()> {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_slice::<serde_json::Value>(bytes)
+    else {
+        return Ok(());
+    };
+    let mut errors = Vec::new();
+    for name in required {
+        if !map.contains_key(*name) {
+            errors.push(serde_json::json!({
+                "location": "body",
+                "message": format!("expected required property {name} to be present"),
+                "value": serde_json::Value::Object(map.clone()),
+            }));
+        }
+    }
+    for (name, allowed) in enums {
+        if let Some(value) = map.get(*name).filter(|v| !v.is_null()) {
+            if !value.as_str().is_some_and(|v| allowed.contains(&v)) {
+                errors.push(serde_json::json!({
+                    "location": format!("body.{name}"),
+                    "message": format!("expected value to be one of \"{}\"", allowed.join(", ")),
+                    "value": value,
+                }));
+            }
+        }
+    }
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let mut details = std::collections::HashMap::new();
+    details.insert("errors".to_string(), serde_json::Value::Array(errors));
+    Err(PlatformError::Coded {
+        status: StatusCode::BAD_REQUEST,
+        code: "VALIDATION".to_string(),
+        message: "validation failed".to_string(),
+        details,
+    })
+}
+
 /// `{message}` (Go `apicommon.StatusChangeResponse`).
 #[derive(Debug, Serialize)]
 pub struct MessageResponse {
@@ -157,6 +202,7 @@ pub async fn ensure_portal_user(
     auth: Authenticated,
     RawBody(raw): RawBody,
 ) -> ApiResult<Json<PortalUserResponse>> {
+    huma_check(&raw, &["clientId", "email"], &[])?;
     let req: PortalUserRequest = body(&raw)?;
     let client_id = req.client_id.trim().to_string();
     if client_id.is_empty() {
@@ -535,6 +581,7 @@ async fn set_status(
     raw: &Bytes,
     status: &str,
 ) -> ApiResult<Json<MessageResponse>> {
+    huma_check(raw, &["clientId"], &[])?;
     let req: ClientBody = body(raw)?;
     let client_id = req.client_id.trim().to_string();
     if client_id.is_empty() {
@@ -873,6 +920,11 @@ pub async fn create_portal_app(
     auth: Authenticated,
     RawBody(raw): RawBody,
 ) -> ApiResult<(StatusCode, Json<CreatePortalAppResponse>)> {
+    huma_check(
+        &raw,
+        &["clientId", "code", "name"],
+        &[("clientType", &["CONFIDENTIAL", "PUBLIC"])],
+    )?;
     let req: CreatePortalAppRequest = body(&raw)?;
     let client_id = req.client_id.trim().to_string();
     require_client_id(&client_id)?;

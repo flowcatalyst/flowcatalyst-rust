@@ -54,19 +54,16 @@ pub struct PrincipalGoState {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkImportRequest {
-    #[serde(default)]
+    /// Required, as in Go's huma schema (absent is a 400 `VALIDATION`).
     pub client_id: String,
-    #[serde(default)]
     pub users: Vec<BulkImportUser>,
 }
 
-/// Go `BulkImportUser`.
+/// Go `BulkImportUser`: `name` and `email` are required members.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkImportUser {
-    #[serde(default)]
     pub name: String,
-    #[serde(default)]
     pub email: String,
     #[serde(default)]
     pub roles: Vec<String>,

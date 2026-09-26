@@ -165,6 +165,14 @@ pub fn validate_oauth_client_plane(
         .portal_client_id
         .as_deref()
         .is_some_and(|p| !p.is_empty());
+    // Go validatePlaneFlags: portal identities never carry platform
+    // authority, so a portal client cannot be an API-access client.
+    if client.api_access && is_portal {
+        return Err(crate::usecase::UseCaseError::validation(
+            "PORTAL_API_ACCESS_CONFLICT",
+            "a portal client cannot have apiAccess — portal identities never carry platform authority",
+        ));
+    }
     if client
         .portal_app_id
         .as_deref()

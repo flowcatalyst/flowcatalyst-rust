@@ -121,17 +121,14 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         command: CreateEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingCreated> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (mapping, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        // Emit the event + audit log via UoW. The entity itself was written
-        // in prepare() via a direct repo call (pre-existing pattern with junction
-        // tables). TODO: migrate to `impl Persist<EmailDomainMapping> for
-        // EmailDomainMappingRepository` and `unit_of_work.commit(...)` to
-        // match the rest of the codebase.
-        self.unit_of_work.emit_event(event, &command).await
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 
@@ -140,7 +137,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         &self,
         command: &CreateEmailDomainMappingCommand,
         ctx: &ExecutionContext,
-    ) -> Result<EmailDomainMappingCreated, UseCaseError> {
+    ) -> Result<(EmailDomainMapping, EmailDomainMappingCreated), UseCaseError> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Go does not require the identity provider to exist yet
@@ -182,16 +179,9 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         mapping.allowed_2fa_methods = command.two_factor.allowed_2fa_methods.clone();
         super::require_tenant_pin(idp.is_some_and(|i| i.oidc_multi_tenant), &mapping)?;
 
-        if let Err(e) = self.edm_repo.insert(&mapping).await {
-            return Err(UseCaseError::commit(format!(
-                "Failed to insert email domain mapping: {}",
-                e
-            )));
-        }
-
         let event = EmailDomainMappingCreated::new(ctx, &mapping.id, &mapping.email_domain);
 
-        Ok(event)
+        Ok((mapping, event))
     }
 }
 

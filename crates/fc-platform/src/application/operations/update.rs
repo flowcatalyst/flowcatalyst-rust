@@ -33,6 +33,15 @@ pub struct UpdateApplicationCommand {
     /// Updated icon URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logo_mime_type: Option<String>,
 }
 
 impl crate::usecase::AuditMasked for UpdateApplicationCommand {}
@@ -62,8 +71,8 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationUseCase<U> {
         if let Some(ref name) = command.name {
             if name.trim().is_empty() {
                 return Err(UseCaseError::validation(
-                    "INVALID_NAME",
-                    "Name cannot be empty",
+                    "NAME_REQUIRED",
+                    "name cannot be empty",
                 ));
             }
         }
@@ -142,6 +151,17 @@ impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
             };
         }
 
+        // Go UpdateApplication: a supplied value replaces the stored one.
+        if let Some(ref website) = command.website {
+            application.website = Some(website.clone());
+        }
+        if let Some(ref logo) = command.logo {
+            application.logo = Some(logo.clone());
+        }
+        if let Some(ref mime) = command.logo_mime_type {
+            application.logo_mime_type = Some(mime.clone());
+        }
+
         application.updated_at = Utc::now();
 
         // Create domain event
@@ -162,6 +182,9 @@ mod tests {
             description: None,
             default_base_url: Some("https://new-url.example.com".to_string()),
             icon_url: None,
+            website: None,
+            logo: None,
+            logo_mime_type: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

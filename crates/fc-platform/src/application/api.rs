@@ -52,6 +52,15 @@ pub struct CreateApplicationRequest {
 
     /// Icon URL
     pub icon_url: Option<String>,
+
+    /// Website URL
+    pub website: Option<String>,
+
+    /// Inline SVG logo content
+    pub logo: Option<String>,
+
+    /// Logo MIME type
+    pub logo_mime_type: Option<String>,
 }
 
 /// Update application request
@@ -69,47 +78,69 @@ pub struct UpdateApplicationRequest {
 
     /// Icon URL
     pub icon_url: Option<String>,
+
+    /// Website URL
+    pub website: Option<String>,
+
+    /// Inline SVG logo content
+    pub logo: Option<String>,
+
+    /// Logo MIME type
+    pub logo_mime_type: Option<String>,
 }
 
-/// Application response DTO
+/// Application response DTO: Go's `ApplicationResponse`
+/// (application/api/dto.go), optional members absent when unset.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationResponse {
     pub id: String,
-    pub code: String,
-    pub name: String,
-    pub description: Option<String>,
     #[serde(rename = "type")]
     pub application_type: String,
-    pub default_base_url: Option<String>,
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_id: Option<String>,
     pub active: bool,
+    /// True iff this application has a login OAuth client provisioned (used
+    /// to gate the "Provision Login Client" button in the UI). Computed by
+    /// the detail endpoint only; every other response carries `false`, as
+    /// Go's does (no N+1 lookup across list rows).
+    pub has_login_client: bool,
     pub created_at: String,
     pub updated_at: String,
-    /// True iff this application has a login OAuth client provisioned (used
-    /// to gate the "Provision Login Client" button in the UI). Populated by
-    /// the detail endpoint only; list responses leave it `None` to avoid an
-    /// N+1 lookup across rows.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub has_login_client: Option<bool>,
 }
 
 impl From<Application> for ApplicationResponse {
     fn from(a: Application) -> Self {
         Self {
             id: a.id,
+            application_type: a.application_type.as_str().to_string(),
             code: a.code,
             name: a.name,
             description: a.description,
-            application_type: a.application_type.as_str().to_string(),
-            default_base_url: a.default_base_url,
             icon_url: a.icon_url,
+            website: a.website,
+            logo: a.logo,
+            logo_mime_type: a.logo_mime_type,
+            default_base_url: a.default_base_url,
             service_account_id: a.service_account_id,
             active: a.active,
+            has_login_client: false,
             created_at: a.created_at.to_rfc3339(),
             updated_at: a.updated_at.to_rfc3339(),
-            has_login_client: None,
         }
     }
 }
@@ -310,9 +341,10 @@ pub async fn create_application<U: UnitOfWork>(
     auth: Authenticated,
     Json(req): Json<CreateApplicationRequest>,
 ) -> Result<(StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
-    // Only anchor users can manage applications
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    // Go's permission check first (PERMISSION_REQUIRED), then Rust's anchor
+    // gate: only anchor users manage applications.
     crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = CreateApplicationCommand {
         code: req.code,
@@ -321,6 +353,9 @@ pub async fn create_application<U: UnitOfWork>(
         application_type: crate::shared::enum_str::parse_opt(req.application_type.as_deref())?,
         default_base_url: req.default_base_url,
         icon_url: req.icon_url,
+        website: req.website,
+        logo: req.logo,
+        logo_mime_type: req.logo_mime_type,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -369,7 +404,7 @@ pub async fn get_application<U: UnitOfWork>(
     // detail endpoint — list responses leave it absent.
     let has_login_client = app_has_login_client(&state.oauth_client_repo, &app.id).await?;
     let mut response: ApplicationResponse = app.into();
-    response.has_login_client = Some(has_login_client);
+    response.has_login_client = has_login_client;
     Ok(Json(response))
 }
 
@@ -449,8 +484,8 @@ pub async fn update_application<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateApplicationRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = UpdateApplicationCommand {
         id: id.clone(),
@@ -458,6 +493,9 @@ pub async fn update_application<U: UnitOfWork>(
         description: req.description,
         default_base_url: req.default_base_url,
         icon_url: req.icon_url,
+        website: req.website,
+        logo: req.logo,
+        logo_mime_type: req.logo_mime_type,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -488,8 +526,8 @@ pub async fn delete_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     delete_application_cascade(
         &state.pg_unit_of_work,
@@ -585,8 +623,8 @@ pub async fn activate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = ActivateApplicationCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -629,8 +667,8 @@ pub async fn deactivate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     deactivate_application_cascade(
         &state.pg_unit_of_work,
@@ -869,7 +907,8 @@ pub async fn provision_application_service_account(
         .await?
         .ok_or_else(|| PlatformError::not_found("Application", id))?;
     if app.service_account_id.is_some() {
-        return Err(PlatformError::conflict(
+        return Err(PlatformError::business_rule(
+            "ALREADY_PROVISIONED",
             "Application already has a service account provisioned",
         ));
     }
@@ -960,13 +999,16 @@ pub async fn provision_application_service_account(
                 // provision_service_account.go:124-125
                 grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
                 default_scopes: vec!["openid".to_string()],
-                pkce_required: false,
+                // Go's entity default (auth.NewOAuthClient); PKCE only
+                // applies at /oauth/authorize, which this client never uses.
+                pkce_required: true,
                 application_ids: vec![app_id],
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,
+                api_access: false,
             };
             create_oauth_uc
                 .run(oauth_cmd, ctx)
@@ -1033,7 +1075,7 @@ pub async fn provision_login_client<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<ProvisionLoginClientRequest>,
-) -> Result<Json<ProvisionLoginClientResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<ProvisionLoginClientResponse>), PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints an OAuth client for the application.
     crate::shared::authorization_service::checks::require_permission(
@@ -1055,10 +1097,14 @@ pub async fn provision_login_client<U: UnitOfWork>(
     )
     .await?;
 
-    Ok(Json(ProvisionLoginClientResponse {
-        message: "Login client provisioned".to_string(),
-        login_client,
-    }))
+    // 201, as Go answers (application/api/api.go:58).
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionLoginClientResponse {
+            message: "Login client provisioned".to_string(),
+            login_client,
+        }),
+    ))
 }
 
 /// Provision an application's login OAuth client (`authorization_code`).
@@ -1076,29 +1122,30 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
 ) -> Result<LoginClientCredentialsResponse, PlatformError> {
     use crate::auth::operations::CreateOAuthClientCommand;
 
-    // Validate the request body before we touch the DB.
+    // Go provisionLoginClient (application/api/api.go): the redirect URIs
+    // are checked before the application is looked up.
     if req.redirect_uris.is_empty() {
-        return Err(PlatformError::validation(
+        return Err(PlatformError::bad_request_code(
+            "REDIRECT_URIS_REQUIRED",
             "At least one redirect URI is required",
         ));
     }
 
-    // Absent means PUBLIC; anything present must be an exact client type.
-    let client_type: OAuthClientType =
-        crate::shared::enum_str::parse_opt(req.client_type.as_deref())?.unwrap_or_default();
+    // Go: `CONFIDENTIAL` asks for a confidential client, anything else is
+    // PUBLIC.
+    let client_type = if req.client_type.as_deref() == Some("CONFIDENTIAL") {
+        OAuthClientType::Confidential
+    } else {
+        OAuthClientType::Public
+    };
 
-    // Pre-validate: app must exist; reject if a login client already exists
-    // (one per app — rotate or delete the existing one if you need fresh
-    // credentials).
+    // An application may carry more than one login client, as in Go (each
+    // provision mints a new one).
     let app = application_repo
         .find_by_id(id)
         .await?
         .ok_or_else(|| PlatformError::not_found("Application", id))?;
-    if app_has_login_client(oauth_client_repo, &app.id).await? {
-        return Err(PlatformError::conflict(
-            "Application already has a login OAuth client provisioned",
-        ));
-    }
+    let _ = oauth_client_repo;
 
     let oauth_row_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
     let oauth_public_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
@@ -1122,19 +1169,21 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         client_secret_ref,
         redirect_uris: req.redirect_uris.clone(),
         post_logout_redirect_uris: Vec::new(),
-        grant_types: vec![GrantType::AuthorizationCode],
+        grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
         default_scopes: vec![
             "openid".to_string(),
             "profile".to_string(),
             "email".to_string(),
         ],
-        pkce_required: client_type == OAuthClientType::Public,
+        // Go's entity default (auth.NewOAuthClient), for both types.
+        pkce_required: true,
         application_ids: vec![app.id.clone()],
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
         created_by: Some(principal_id.to_owned()),
         portal_client_id: None,
         portal_app_id: None,
+        api_access: false,
     };
     let ctx = ExecutionContext::create(principal_id);
     create_oauth_client_use_case
@@ -1245,8 +1294,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
         ("id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 200, description = "Application roles", body = Vec<ApplicationRoleResponse>),
-        (status = 404, description = "Application not found")
+        (status = 200, description = "Application role names", body = ApplicationRolesResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -1254,22 +1302,28 @@ pub async fn list_application_roles<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<Vec<ApplicationRoleResponse>>, PlatformError> {
+) -> Result<Json<ApplicationRolesResponse>, PlatformError> {
     crate::checks::can_read_applications(&auth.0)?;
 
-    // Get the application
-    let app = state
-        .application_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+    // Go lists the role names registered against the application id; an
+    // unknown application simply has none.
+    let roles = match state.application_repo.find_by_id(&id).await? {
+        Some(app) => state
+            .role_repo
+            .find_by_application(&app.code)
+            .await?
+            .into_iter()
+            .map(|r| r.name)
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(Json(ApplicationRolesResponse { roles }))
+}
 
-    // Find roles by application code
-    let roles = state.role_repo.find_by_application(&app.code).await?;
-
-    let response: Vec<ApplicationRoleResponse> = roles.into_iter().map(|r| r.into()).collect();
-
-    Ok(Json(response))
+/// Go's `ApplicationRolesResponse`: the role names.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationRolesResponse {
+    pub roles: Vec<String>,
 }
 
 /// Client config response DTO
@@ -1287,12 +1341,11 @@ pub struct ClientConfigResponse {
     pub config: Option<serde_json::Value>,
 }
 
-/// Client configs list response
+/// Client configs list response: Go's `{items}` of `ClientConfigResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigsResponse {
-    pub client_configs: Vec<ClientConfigResponse>,
-    pub total: usize,
+    pub items: Vec<crate::application::go_api::GoClientConfigResponse>,
 }
 
 /// Client config request
@@ -1314,8 +1367,7 @@ pub struct ClientConfigRequest {
         ("id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 200, description = "Client configurations", body = ClientConfigsResponse),
-        (status = 404, description = "Application not found")
+        (status = 200, description = "Client configurations", body = ClientConfigsResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -1326,38 +1378,16 @@ pub async fn list_client_configs<U: UnitOfWork>(
 ) -> Result<Json<ClientConfigsResponse>, PlatformError> {
     crate::checks::can_read_applications(&auth.0)?;
 
-    // Verify application exists
-    let app = state
-        .application_repo
-        .find_by_id(&id)
+    // Go lists the application's configs as stored; an unknown application
+    // has none (200 `{items: []}`).
+    let items = state
+        .client_config_repo
+        .find_by_application(&id)
         .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-
-    let configs = state.client_config_repo.find_by_application(&id).await?;
-
-    let mut client_configs = Vec::new();
-    for config in configs {
-        // Get client details
-        if let Some(client) = state.client_repo.find_by_id(&config.client_id).await? {
-            client_configs.push(ClientConfigResponse {
-                id: config.id,
-                application_id: config.application_id,
-                client_id: config.client_id,
-                client_name: client.name,
-                client_identifier: client.identifier,
-                enabled: config.enabled,
-                base_url_override: config.base_url_override.clone(),
-                effective_base_url: config.base_url_override.or(app.default_base_url.clone()),
-                config: config.config_json,
-            });
-        }
-    }
-
-    let total = client_configs.len();
-    Ok(Json(ClientConfigsResponse {
-        client_configs,
-        total,
-    }))
+        .into_iter()
+        .map(crate::application::go_api::GoClientConfigResponse::from)
+        .collect();
+    Ok(Json(ClientConfigsResponse { items }))
 }
 
 /// Update client config for an application.
@@ -1449,7 +1479,7 @@ pub async fn update_client_config<U: UnitOfWork>(
         ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
-        (status = 200, description = "Application enabled for client", body = ClientConfigResponse),
+        (status = 204, description = "Application enabled for client"),
         (status = 404, description = "Application or client not found")
     ),
     security(("bearer_auth" = []))
@@ -1458,7 +1488,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
-) -> Result<Json<ClientConfigResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::require_permission(
         &auth.0,
@@ -1476,7 +1506,8 @@ pub async fn enable_for_client<U: UnitOfWork>(
         .await
         .into_result()?;
 
-    build_client_config_response(&state, &id, &client_id).await
+    // 204, as Go answers (application/api/api.go:55).
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Disable application for a client.
@@ -1491,7 +1522,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
         ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
-        (status = 200, description = "Application disabled for client", body = ClientConfigResponse),
+        (status = 204, description = "Application disabled for client"),
         (status = 404, description = "Application or client not found")
     ),
     security(("bearer_auth" = []))
@@ -1500,7 +1531,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
-) -> Result<Json<ClientConfigResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     crate::shared::authorization_service::checks::require_permission(
         &auth.0,
@@ -1518,44 +1549,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
         .await
         .into_result()?;
 
-    build_client_config_response(&state, &id, &client_id).await
-}
-
-/// Build the `ClientConfigResponse` by re-loading the app, client, and
-/// config after a use case has mutated the config. Shared by
-/// `enable_for_client` / `disable_for_client` / `update_client_config`.
-async fn build_client_config_response<U: UnitOfWork>(
-    state: &ApplicationsState<U>,
-    app_id: &str,
-    client_id: &str,
-) -> Result<Json<ClientConfigResponse>, PlatformError> {
-    let app = state
-        .application_repo
-        .find_by_id(app_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", app_id))?;
-    let client = state
-        .client_repo
-        .find_by_id(client_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Client", client_id))?;
-    let config = state
-        .client_config_repo
-        .find_by_application_and_client(app_id, client_id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("ApplicationClientConfig", "for (app, client)"))?;
-
-    Ok(Json(ClientConfigResponse {
-        id: config.id,
-        application_id: config.application_id,
-        client_id: config.client_id,
-        client_name: client.name,
-        client_identifier: client.identifier,
-        enabled: config.enabled,
-        base_url_override: config.base_url_override.clone(),
-        effective_base_url: config.base_url_override.or(app.default_base_url),
-        config: config.config_json,
-    }))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Create applications router
