@@ -77,6 +77,34 @@ pub struct TokenRequest {
     /// Requested scope: permission codes to narrow the granted set to (OIDC
     /// scopes such as `openid` are ignored for that purpose)
     pub scope: Option<String>,
+    /// The caller's address, for the login-attempt record (never read from
+    /// the form).
+    #[serde(skip)]
+    pub caller_ip: Option<String>,
+}
+
+/// Go `basicAuthCreds` (auth/oauthapi/token.go): the `client_id` and
+/// `client_secret` of an HTTP Basic `Authorization` header, each
+/// form-urlencoded before joining (RFC 6749 §2.3.1), so each is decoded. The
+/// scheme is matched case-insensitively (RFC 7617).
+fn basic_auth_creds(headers: &HeaderMap) -> Option<(String, String)> {
+    use base64::Engine;
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, encoded) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Basic") {
+        return None;
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (id, secret) = decoded.split_once(':')?;
+    let unescape = |s: &str| {
+        urlencoding::decode(&s.replace('+', " "))
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|_| s.to_string())
+    };
+    Some((unescape(id), unescape(secret)))
 }
 
 /// Token response
@@ -865,8 +893,38 @@ async fn authenticate_client_or_bearer(
 pub async fn token(
     State(state): State<OAuthState>,
     headers: HeaderMap,
-    Form(req): Form<TokenRequest>,
+    crate::shared::middleware::ClientIp(caller_ip): crate::shared::middleware::ClientIp,
+    Form(mut req): Form<TokenRequest>,
 ) -> Response {
+    req.caller_ip = caller_ip;
+    // Go `Token`: client_secret_basic is resolved into the request up front,
+    // so every grant honours it (client_credentials included) and the
+    // per-client throttle sees the caller. A body client_id naming another
+    // client than the Basic header is refused (RFC 6749 §3.2.1).
+    if let Some((basic_id, basic_secret)) = basic_auth_creds(&headers) {
+        if req
+            .client_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty() && id != basic_id)
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                [
+                    (header::CACHE_CONTROL, "no-store"),
+                    (header::PRAGMA, "no-cache"),
+                ],
+                Json(ErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: Some(
+                        "client_id does not match the authenticated client".to_string(),
+                    ),
+                }),
+            )
+                .into_response();
+        }
+        req.client_id = Some(basic_id);
+        req.client_secret = Some(basic_secret);
+    }
     // Per-client_id rate limit. Composes with the per-IP layer that already
     // wraps `/oauth/*` — this catches a single client running away with
     // refresh-token churn from many IPs (which the per-IP layer wouldn't
@@ -1613,6 +1671,7 @@ async fn handle_refresh_token_grant(
 }
 
 async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -> Response {
+    let caller_ip = req.caller_ip.clone();
     let client_id = match req.client_id {
         Some(id) => id,
         None => {
@@ -1653,6 +1712,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
                 client_id,
                 client_secret,
                 req.scope.as_deref(),
+                caller_ip,
             )
             .await;
         }
@@ -1713,6 +1773,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
             failure_reason: Some("Invalid client secret".to_string()),
+            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1736,6 +1797,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         let attempt = LoginAttempt {
             identifier: Some(client_id.clone()),
             failure_reason: Some(reason.to_string()),
+            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         let repo = state.login_attempt_repo.clone();
@@ -1771,6 +1833,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
                     "Client not properly configured (linked principal is not a service account)"
                         .to_string(),
                 ),
+                ip_address: caller_ip.clone(),
                 ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
             };
             if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1830,6 +1893,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
             identifier: Some(client_id.clone()),
             principal_id: Some(principal.id.clone()),
             failure_reason: Some("requested scope exceeds granted permissions".to_string()),
+            ip_address: caller_ip.clone(),
             ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
         };
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
@@ -1908,6 +1972,7 @@ async fn handle_developer_credential_grant(
     client_id: String,
     client_secret: String,
     scope: Option<&str>,
+    caller_ip: Option<String>,
 ) -> Response {
     let invalid = || {
         (
@@ -1934,7 +1999,11 @@ async fn handle_developer_credential_grant(
     {
         return invalid();
     }
-    let stored = match state.principal_repo.find_developer_secret(&principal.id).await {
+    let stored = match state
+        .principal_repo
+        .find_developer_secret(&principal.id)
+        .await
+    {
         Ok(Some((Some(stored), _))) => stored,
         Ok(_) => return invalid(),
         Err(e) => {
@@ -1946,11 +2015,15 @@ async fn handle_developer_credential_grant(
         identifier: Some(client_id.clone()),
         principal_id: Some(principal.id.clone()),
         failure_reason: reason.map(String::from),
+        ip_address: caller_ip.clone(),
         ..LoginAttempt::new(AttemptType::DeveloperToken, outcome)
     };
     let (ok, rehash) = check_secret_ref(&state, Some(&stored), &client_secret);
     if !ok {
-        let attempt = record(LoginOutcome::Failure, Some("Invalid developer client secret"));
+        let attempt = record(
+            LoginOutcome::Failure,
+            Some("Invalid developer client secret"),
+        );
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
             warn!(error = %e, "Failed to log developer token attempt");
         }
