@@ -73,8 +73,9 @@ pub async fn api_list_dispatch_jobs_raw(
     auth: Authenticated,
     Query(q): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+    // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    crate::dispatch_job::api::list_dispatch_jobs(State(state.dispatch_jobs), auth, Query(q)).await
+    crate::dispatch_job::api::list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
 }
 
 /// BFF twin of [`api_list_dispatch_jobs_raw`].
@@ -86,8 +87,9 @@ pub async fn bff_list_dispatch_jobs_raw(
     auth: Authenticated,
     Query(q): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
+    // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    crate::dispatch_job::api::list_dispatch_jobs(State(state.dispatch_jobs), auth, Query(q)).await
+    crate::dispatch_job::api::list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
 }
 
 /// An event's dispatch jobs (Go `dispatchJobsByEvent`).

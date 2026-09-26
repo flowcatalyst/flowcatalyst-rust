@@ -11,7 +11,7 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
+use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -146,6 +146,8 @@ pub struct DispatchJobReadResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub application: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subdomain: Option<String>,
@@ -198,6 +200,7 @@ impl From<DispatchJobRead> for DispatchJobReadResponse {
             event_id: job.event_id,
             subscription_id: job.subscription_id,
             client_id: job.client_id,
+            client_identifier: None,
             application,
             subdomain,
             aggregate,
@@ -221,47 +224,50 @@ impl From<DispatchJobRead> for DispatchJobReadResponse {
     }
 }
 
-/// Query parameters for dispatch jobs list.
-///
-/// `msg_dispatch_jobs_read` is an append-only firehose, so this endpoint
-/// returns the most recent N rows only — no pagination. Sort order is
-/// fixed to most-recent-first (`created_at DESC, id DESC`); narrow filters
-/// or look up by id if you need older rows.
+/// Query parameters for the dispatch-job list: Go's `listInput`
+/// (dispatchjob/api/api.go). The most recent rows matching the filters, no
+/// page count: `msg_dispatch_jobs_read` is an append-only firehose.
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct DispatchJobsQuery {
-    /// Result size. Default 50, capped at 1000.
-    pub size: Option<u32>,
-
-    /// Filter by event ID
-    pub event_id: Option<String>,
-
-    /// Filter by correlation ID
-    pub correlation_id: Option<String>,
-
-    /// Filter by subscription ID
+    /// Max rows (the SPA's; wins over `limit`). Default 100, max 1000.
+    pub size: Option<i64>,
+    /// Max rows (the SDK's).
+    pub limit: Option<i64>,
+    /// Rows to skip.
+    pub offset: Option<i64>,
+    /// Exact status
+    pub status: Option<String>,
+    /// Exact client id
+    pub client_id: Option<String>,
+    /// Exact dispatch pool id
+    pub dispatch_pool_id: Option<String>,
+    /// Exact subscription id
     pub subscription_id: Option<String>,
-
-    /// Filter by client IDs (comma-separated)
+    /// Exact code
+    pub code: Option<String>,
+    /// Exact message group
+    pub message_group: Option<String>,
+    /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
+    pub since: Option<String>,
+    /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
+    pub until: Option<String>,
+    /// `createdAt.asc` or `createdAt.desc` (the default)
+    pub sort: Option<String>,
+    /// Client ids (comma-separated)
     pub client_ids: Option<String>,
-
-    /// Filter by statuses (comma-separated)
+    /// Statuses (comma-separated)
     pub statuses: Option<String>,
-
-    /// Filter by application codes (comma-separated)
+    /// Application codes (comma-separated)
     pub applications: Option<String>,
-
-    /// Filter by subdomains (comma-separated)
+    /// Subdomains (comma-separated)
     pub subdomains: Option<String>,
-
-    /// Filter by aggregates (comma-separated)
+    /// Aggregates (comma-separated)
     pub aggregates: Option<String>,
-
-    /// Filter by codes (comma-separated)
+    /// Codes (comma-separated)
     pub codes: Option<String>,
-
-    /// Free-text search across code, subject, source
+    /// Exact source
     pub source: Option<String>,
 }
 
@@ -281,6 +287,8 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 #[derive(Clone)]
 pub struct DispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
+    /// Resolves each list row's `clientIdentifier`.
+    pub client_repo: Arc<crate::ClientRepository>,
     /// Refuses a job signed by an identity the caller may not use (S5).
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
@@ -505,49 +513,96 @@ pub async fn list_dispatch_jobs(
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    list_dispatch_jobs_unchecked(&state, &auth, query).await
+}
 
+/// Go's `list` / `listRaw` body once the permission is checked: the read
+/// projection filtered, scoped in SQL for a non-anchor caller (platform jobs
+/// plus its clients'), each row with its client's identifier.
+pub(crate) async fn list_dispatch_jobs_unchecked(
+    state: &DispatchJobsState,
+    auth: &Authenticated,
+    query: DispatchJobsQuery,
+) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     let statuses = split_csv(query.statuses.as_deref());
+    let client_ids = split_csv(query.client_ids.as_deref());
     let applications = split_csv(query.applications.as_deref());
     let subdomains = split_csv(query.subdomains.as_deref());
     let aggregates = split_csv(query.aggregates.as_deref());
     let codes = split_csv(query.codes.as_deref());
-
-    let Some(client_ids) = crate::shared::caller_reach::read_client_filter(
-        &auth.0,
-        split_csv(query.client_ids.as_deref()),
-    )?
-    else {
-        return Ok(Json(vec![]));
+    let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
+        None
+    } else {
+        Some(crate::shared::caller_reach::client_ids(&auth.0))
     };
-
-    // Unknown (or miscased) statuses are a 400, not an empty result.
-    let statuses = statuses
-        .iter()
-        .map(|s| Ok(parse_dispatch_status(s)?.as_str().to_string()))
-        .collect::<Result<Vec<_>, PlatformError>>()?;
-
-    let size = query.size.unwrap_or(50).clamp(1, 1000) as i64;
-
-    let jobs = state
-        .dispatch_job_repo
-        .find_read_with_cursor(
-            &client_ids,
-            &statuses,
-            &applications,
-            &subdomains,
-            &aggregates,
-            &codes,
-            query.source.as_deref(),
-            None,
-            size,
-        )
-        .await?;
-
+    let ts = |v: Option<&str>| {
+        v.filter(|v| !v.is_empty())
+            .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+    fn non_empty(v: &Option<String>) -> Option<&str> {
+        v.as_deref().filter(|v| !v.is_empty())
+    }
+    // `size` (SPA) wins over `limit` (SDK); out of range is Go's 100.
+    let limit = match query.size.filter(|s| *s > 0).or(query.limit) {
+        Some(l) if (1..=1000).contains(&l) => l,
+        _ => 100,
+    };
+    let filter = crate::dispatch_job::repository::DispatchJobReadFilter {
+        status: non_empty(&query.status),
+        statuses: &statuses,
+        client_id: non_empty(&query.client_id),
+        client_ids: &client_ids,
+        accessible: accessible.as_deref(),
+        dispatch_pool_id: non_empty(&query.dispatch_pool_id),
+        subscription_id: non_empty(&query.subscription_id),
+        code: non_empty(&query.code),
+        codes: &codes,
+        source: non_empty(&query.source),
+        message_group: non_empty(&query.message_group),
+        applications: &applications,
+        subdomains: &subdomains,
+        aggregates: &aggregates,
+        since: ts(query.since.as_deref()),
+        until: ts(query.until.as_deref()),
+        ascending: query.sort.as_deref() == Some("createdAt.asc"),
+        limit,
+        offset: query.offset.unwrap_or(0).max(0),
+    };
+    let jobs = state.dispatch_job_repo.find_read_filtered(&filter).await?;
     let items = jobs
         .into_iter()
         .map(DispatchJobReadResponse::from)
         .collect();
-    Ok(Json(items))
+    with_client_identifiers(state, items).await.map(Json)
+}
+
+/// Go's `withClientIdentifier`: each row's `clientIdentifier`, looked up in
+/// one query for the page's distinct clients.
+async fn with_client_identifiers(
+    state: &DispatchJobsState,
+    mut rows: Vec<DispatchJobReadResponse>,
+) -> Result<Vec<DispatchJobReadResponse>, PlatformError> {
+    let mut ids: Vec<String> = rows.iter().filter_map(|r| r.client_id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(rows);
+    }
+    let identifiers: std::collections::HashMap<String, String> = state
+        .client_repo
+        .find_by_ids(&ids)
+        .await?
+        .into_iter()
+        .map(|c| (c.id, c.identifier))
+        .collect();
+    for row in &mut rows {
+        row.client_identifier = row
+            .client_id
+            .as_ref()
+            .and_then(|c| identifiers.get(c).cloned());
+    }
+    Ok(rows)
 }
 
 /// Get dispatch jobs for an event
@@ -590,7 +645,7 @@ pub async fn get_jobs_for_event(
         .map(Into::into)
         .collect();
 
-    Ok(Json(filtered))
+    with_client_identifiers(&state, filtered).await.map(Json)
 }
 
 // ============================================================================
@@ -1038,7 +1093,7 @@ pub async fn list_dispatch_jobs_raw(
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    list_dispatch_jobs(State(state), auth, Query(query)).await
+    list_dispatch_jobs_unchecked(&state, &auth, query).await
 }
 
 /// Create dispatch jobs router for the BFF tier (`/bff/dispatch-jobs`).

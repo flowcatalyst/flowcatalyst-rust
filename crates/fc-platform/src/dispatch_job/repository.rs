@@ -286,6 +286,33 @@ pub const SETTLED_DEFAULT_REASON: &str =
 pub const REAP_REASON: &str =
     "reaper: sibling of a FAILED BLOCK_ON_ERROR head, stranded QUEUED/PROCESSING";
 
+/// Go's dispatch-job list filters (`dispatchjob.FilterParams`): singular
+/// equality filters for SDK callers, CSV multi-filters for the SPA, and
+/// `accessible` scoping a non-anchor caller to platform jobs plus its
+/// clients' jobs.
+#[derive(Debug, Default)]
+pub struct DispatchJobReadFilter<'a> {
+    pub status: Option<&'a str>,
+    pub statuses: &'a [String],
+    pub client_id: Option<&'a str>,
+    pub client_ids: &'a [String],
+    pub accessible: Option<&'a [String]>,
+    pub dispatch_pool_id: Option<&'a str>,
+    pub subscription_id: Option<&'a str>,
+    pub code: Option<&'a str>,
+    pub codes: &'a [String],
+    pub source: Option<&'a str>,
+    pub message_group: Option<&'a str>,
+    pub applications: &'a [String],
+    pub subdomains: &'a [String],
+    pub aggregates: &'a [String],
+    pub since: Option<DateTime<Utc>>,
+    pub until: Option<DateTime<Utc>>,
+    pub ascending: bool,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 pub struct DispatchJobRepository {
     pool: PgPool,
 }
@@ -869,6 +896,62 @@ impl DispatchJobRepository {
         .await?;
 
         row.map(DispatchJobRead::try_from).transpose()
+    }
+
+    /// The read projection filtered as Go's `FindWithFilters`.
+    pub async fn find_read_filtered(
+        &self,
+        f: &DispatchJobReadFilter<'_>,
+    ) -> Result<Vec<DispatchJobRead>> {
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM msg_dispatch_jobs_read WHERE TRUE");
+        let eq = |qb: &mut QueryBuilder<Postgres>, col: &str, v: Option<&str>| {
+            if let Some(v) = v {
+                qb.push(format!(" AND {col} = ")).push_bind(v.to_string());
+            }
+        };
+        let any = |qb: &mut QueryBuilder<Postgres>, col: &str, v: &[String]| {
+            if !v.is_empty() {
+                qb.push(format!(" AND {col} = ANY("))
+                    .push_bind(v.to_vec())
+                    .push(")");
+            }
+        };
+        eq(&mut qb, "status", f.status);
+        any(&mut qb, "status", f.statuses);
+        eq(&mut qb, "client_id", f.client_id);
+        any(&mut qb, "client_id", f.client_ids);
+        if let Some(ids) = f.accessible {
+            qb.push(" AND (client_id IS NULL OR client_id = ANY(")
+                .push_bind(ids.to_vec())
+                .push("))");
+        }
+        eq(&mut qb, "dispatch_pool_id", f.dispatch_pool_id);
+        eq(&mut qb, "subscription_id", f.subscription_id);
+        eq(&mut qb, "code", f.code);
+        any(&mut qb, "code", f.codes);
+        eq(&mut qb, "source", f.source);
+        eq(&mut qb, "message_group", f.message_group);
+        any(&mut qb, "application", f.applications);
+        any(&mut qb, "subdomain", f.subdomains);
+        any(&mut qb, "aggregate", f.aggregates);
+        if let Some(t) = f.since {
+            qb.push(" AND created_at >= ").push_bind(t);
+        }
+        if let Some(t) = f.until {
+            qb.push(" AND created_at <= ").push_bind(t);
+        }
+        qb.push(if f.ascending {
+            " ORDER BY created_at ASC"
+        } else {
+            " ORDER BY created_at DESC"
+        });
+        qb.push(" LIMIT ").push_bind(f.limit);
+        if f.offset > 0 {
+            qb.push(" OFFSET ").push_bind(f.offset);
+        }
+        let rows: Vec<DispatchJobReadRow> = qb.build_query_as().fetch_all(&self.pool).await?;
+        rows.into_iter().map(DispatchJobRead::try_from).collect()
     }
 
     /// An event's jobs from the read projection, newest first (Go
