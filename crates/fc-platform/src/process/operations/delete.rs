@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessDeleted;
-use crate::process::entity::{Process, ProcessStatus};
+use crate::process::entity::ProcessStatus;
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,24 +58,7 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
         &self,
         command: DeleteProcessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ProcessDeleted> {
-        let (process, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&process, &*self.process_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteProcessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteProcessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Process, ProcessDeleted), UseCaseError> {
+    ) -> Result<Committed<ProcessDeleted>, UseCaseError> {
         let process = self
             .process_repo
             .find_by_id(&command.process_id)
@@ -94,7 +75,10 @@ impl<U: UnitOfWork> DeleteProcessUseCase<U> {
             ));
         }
 
-        let event = ProcessDeleted::new(ctx, &process.id, &process.code);
-        Ok((process, event))
+        let event = ProcessDeleted::new(&ctx, &process.id, &process.code);
+
+        self.unit_of_work
+            .commit_delete(&process, &*self.process_repo, event, &command)
+            .await
     }
 }

@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeArchived;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::EventType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EventTypeRepository;
 use crate::EventTypeStatus;
 
@@ -64,25 +61,7 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
         &self,
         command: ArchiveEventTypeCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypeArchived> {
-        let (event_type, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ArchiveEventTypeUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ArchiveEventTypeCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(EventType, EventTypeArchived), UseCaseError> {
+    ) -> Result<Committed<EventTypeArchived>, UseCaseError> {
         // Fetch existing event type
         let mut event_type = self
             .event_type_repo
@@ -105,8 +84,12 @@ impl<U: UnitOfWork> ArchiveEventTypeUseCase<U> {
         event_type.archive();
 
         // Create domain event
-        let event = EventTypeArchived::new(ctx, &event_type.id, &event_type.code);
-        Ok((event_type, event))
+        let event = EventTypeArchived::new(&ctx, &event_type.id, &event_type.code);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
     }
 }
 

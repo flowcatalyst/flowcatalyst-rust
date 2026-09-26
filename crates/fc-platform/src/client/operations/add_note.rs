@@ -5,10 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientNoteAdded;
-use crate::client::entity::{Client, ClientNote};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::client::entity::ClientNote;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientRepository;
 
 /// Command for adding a note to a client.
@@ -79,24 +77,7 @@ impl<U: UnitOfWork> UseCase for AddClientNoteUseCase<U> {
         &self,
         command: AddClientNoteCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientNoteAdded> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AddClientNoteUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AddClientNoteCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Client, ClientNoteAdded), UseCaseError> {
+    ) -> Result<Committed<ClientNoteAdded>, UseCaseError> {
         let category = command.category.trim();
         let text = command.text.trim();
 
@@ -112,8 +93,11 @@ impl<U: UnitOfWork> AddClientNoteUseCase<U> {
         let note = ClientNote::new(category, text).with_author(&ctx.principal_id);
         client.add_note(note);
 
-        let event = ClientNoteAdded::new(ctx, &client.id, category, text);
-        Ok((client, event))
+        let event = ClientNoteAdded::new(&ctx, &client.id, category, text);
+
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
     }
 }
 

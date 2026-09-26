@@ -575,7 +575,7 @@ async fn test_unit_of_work_commit() {
 
     let result = uow.commit(&client, &client_repo, event, &command).await;
     assert!(
-        result.into_result().is_ok(),
+        result.is_ok(),
         "UnitOfWork commit should succeed"
     );
 
@@ -627,9 +627,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };
-            uow.commit(&client, repo, event, &command)
-                .await
-                .into_result()
+            uow.commit(&client, repo, event, &command).await
         }
     };
 
@@ -940,8 +938,7 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     };
     let result = PgUnitOfWork::new(pool.clone())
         .emit_event(event, &command)
-        .await
-        .into_result();
+        .await;
     assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
 
     let (count,): (i64,) = sqlx::query_as(

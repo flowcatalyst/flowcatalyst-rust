@@ -584,9 +584,14 @@ pub async fn publish_version(
     let outcome = state
         .ops
         .unit_of_work
-        .run(move |scoped| async move { ops.publish_in(caller, scoped).run(command, ctx).await })
+        .run(move |scoped| async move {
+            ops.publish_in(caller, scoped)
+                .run(command, ctx)
+                .await
+                .into_committed()
+        })
         .await
-        .into_result();
+        .map(crate::usecase::Committed::into_inner);
     match outcome {
         Ok(event) => Ok((StatusCode::CREATED, Json(PublishResponse::of(&event)))),
         Err(e) if e.is_unchanged() => {
@@ -856,9 +861,14 @@ pub async fn promote(
     let outcome = state
         .ops
         .unit_of_work
-        .run(move |scoped| async move { ops.promote_in(caller, scoped).run(command, ctx).await })
+        .run(move |scoped| async move {
+            ops.promote_in(caller, scoped)
+                .run(command, ctx)
+                .await
+                .into_committed()
+        })
         .await
-        .into_result();
+        .map(crate::usecase::Committed::into_inner);
     let event = match outcome {
         Ok(event) => event,
         // The alias already names this version: nothing written.

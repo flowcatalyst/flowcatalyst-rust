@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolCreated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 
@@ -135,22 +135,18 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         &self,
         command: CreateDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolCreated> {
+    ) -> Result<Committed<DispatchPoolCreated>, UseCaseError> {
         let code = command.code.trim().to_lowercase();
         let code = code.as_str();
         let name = command.name.trim();
 
         // Business rule: code must be unique
-        let existing = match self
+        let existing = self
             .dispatch_pool_repo
             .find_by_code(code, command.client_id.as_deref())
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Dispatch pool with code '{}' already exists", code),
             ));

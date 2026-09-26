@@ -8,10 +8,7 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountRolesAssigned;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
-use crate::service_account::ServiceAccount;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ServiceAccountRepository;
 
 /// Command for assigning roles to a service account (declarative - replaces all).
@@ -63,30 +60,7 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
         &self,
         command: AssignRolesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ServiceAccountRolesAssigned> {
-        let (service_account, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AssignRolesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AssignRolesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ServiceAccount, ServiceAccountRolesAssigned), UseCaseError> {
+    ) -> Result<Committed<ServiceAccountRolesAssigned>, UseCaseError> {
         // Find the service account
         let mut service_account = self
             .service_account_repo
@@ -121,8 +95,17 @@ impl<U: UnitOfWork> AssignRolesUseCase<U> {
 
         // Create domain event
         let event =
-            ServiceAccountRolesAssigned::new(ctx, &service_account.id, roles_added, roles_removed);
-        Ok((service_account, event))
+            ServiceAccountRolesAssigned::new(&ctx, &service_account.id, roles_added, roles_removed);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
     }
 }
 

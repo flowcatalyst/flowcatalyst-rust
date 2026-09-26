@@ -6,10 +6,7 @@ use std::sync::Arc;
 
 use super::events::EventTypeDeleted;
 use crate::event_type::entity::SpecVersionStatus;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::EventType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EventTypeRepository;
 use crate::EventTypeStatus;
 
@@ -69,24 +66,7 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
         &self,
         command: DeleteEventTypeCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypeDeleted> {
-        let (event_type, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&event_type, &*self.event_type_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteEventTypeUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteEventTypeCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(EventType, EventTypeDeleted), UseCaseError> {
+    ) -> Result<Committed<EventTypeDeleted>, UseCaseError> {
         let event_type = self
             .event_type_repo
             .find_by_id(&command.event_type_id)
@@ -109,8 +89,11 @@ impl<U: UnitOfWork> DeleteEventTypeUseCase<U> {
             ));
         }
 
-        let event = EventTypeDeleted::new(ctx, &event_type.id, &event_type.code);
-        Ok((event_type, event))
+        let event = EventTypeDeleted::new(&ctx, &event_type.id, &event_type.code);
+
+        self.unit_of_work
+            .commit_delete(&event_type, &*self.event_type_repo, event, &command)
+            .await
     }
 }
 

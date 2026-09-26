@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingCreated;
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 
@@ -120,24 +120,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         &self,
         command: CreateEmailDomainMappingCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EmailDomainMappingCreated> {
-        let (mapping, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&mapping, &*self.edm_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &CreateEmailDomainMappingCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(EmailDomainMapping, EmailDomainMappingCreated), UseCaseError> {
+    ) -> Result<Committed<EmailDomainMappingCreated>, UseCaseError> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Go does not require the identity provider to exist yet
@@ -179,9 +162,11 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         mapping.allowed_2fa_methods = command.two_factor.allowed_2fa_methods.clone();
         super::require_tenant_pin(idp.is_some_and(|i| i.oidc_multi_tenant), &mapping)?;
 
-        let event = EmailDomainMappingCreated::new(ctx, &mapping.id, &mapping.email_domain);
+        let event = EmailDomainMappingCreated::new(&ctx, &mapping.id, &mapping.email_domain);
 
-        Ok((mapping, event))
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 

@@ -10,7 +10,7 @@ use crate::service_account::signing_reach::require_usable_signers;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::caller_reach::check_scope_access;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
 use crate::{EventTypeBinding, Subscription};
 
@@ -257,23 +257,19 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         &self,
         command: CreateSubscriptionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SubscriptionCreated> {
+    ) -> Result<Committed<SubscriptionCreated>, UseCaseError> {
         let code = command.code.trim().to_lowercase();
         let name = command.name.trim();
 
         // Business rule: the code is unique within (no application, this
         // client), the key a UI/API create writes (Go FindByCode).
-        let existing = match self
+        let existing = self
             .subscription_repo
             .find_by_code_in_scope(&code, None, command.client_id.as_deref())
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
 
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Subscription with code '{}' already exists", code),
             ));

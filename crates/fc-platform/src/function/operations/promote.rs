@@ -49,9 +49,7 @@ use crate::function::route_repository::{
 use crate::function::settings_repository::FunctionSettingsRepository;
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{FunctionAddress, LIVE_ALIAS};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// `PUT /api/functions/{address}/aliases/{alias}`: `alias` from the path,
 /// `version` from the body.
@@ -113,45 +111,7 @@ impl<U: UnitOfWork> UseCase for PromoteVersionUseCase<U> {
         &self,
         command: PromoteCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AliasChanged> {
-        let prepared = match self.prepare(&command, &ctx).await {
-            Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let promotions = PromotedFunctionRepository {
-            functions: &self.functions,
-            routes: &self.routes,
-        };
-        let result = self
-            .unit_of_work
-            .commit(&prepared.promoted, &promotions, prepared.event, &command)
-            .await;
-        if result.as_result().is_err() || command.alias != LIVE_ALIAS {
-            return result;
-        }
-        match self
-            .trigger_sync
-            .apply(
-                &*self.unit_of_work,
-                &prepared.promoted.function,
-                &prepared.version,
-                &ctx,
-                &prepared.plan,
-            )
-            .await
-        {
-            Ok(()) => result,
-            Err(e) => UseCaseResult::failure(e),
-        }
-    }
-}
-
-impl<U: UnitOfWork> PromoteVersionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &PromoteCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<Prepared, UseCaseError> {
+    ) -> Result<Committed<AliasChanged>, UseCaseError> {
         let mut function =
             function_by_address(&self.functions, &command.address, &self.caller).await?;
         if let Some(expected) = command.expected_version {
@@ -231,19 +191,40 @@ impl<U: UnitOfWork> PromoteVersionUseCase<U> {
         if let Some(conflict) = plan.conflicts.first() {
             return Err(conflict.to_error());
         }
-        let event = AliasChanged::new(ctx, &function, &command.alias, &version, previous);
+        let event = AliasChanged::new(&ctx, &function, &command.alias, &version, previous);
         let routes = if command.alias == LIVE_ALIAS {
             self.trigger_sync
                 .routes_for(&function, &version.manifest, &plan, now)
         } else {
             None
         };
-        Ok(Prepared {
+        let prepared = Prepared {
             promoted: PromotedFunction { function, routes },
             version,
             plan,
             event,
-        })
+        };
+        let promotions = PromotedFunctionRepository {
+            functions: &self.functions,
+            routes: &self.routes,
+        };
+        let committed = self
+            .unit_of_work
+            .commit(&prepared.promoted, &promotions, prepared.event, &command)
+            .await?;
+        if command.alias != LIVE_ALIAS {
+            return Ok(committed);
+        }
+        self.trigger_sync
+            .apply(
+                &*self.unit_of_work,
+                &prepared.promoted.function,
+                &prepared.version,
+                &ctx,
+                &prepared.plan,
+            )
+            .await?;
+        Ok(committed)
     }
 }
 
@@ -287,24 +268,16 @@ impl<U: UnitOfWork> UseCase for RemoveAliasUseCase<U> {
         &self,
         command: RemoveAliasCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AliasRemoved> {
+    ) -> Result<Committed<AliasRemoved>, UseCaseError> {
         let mut function =
-            match function_by_address(&self.functions, &command.address, &self.caller).await {
-                Ok(f) => f,
-                Err(e) => return UseCaseResult::failure(e),
-            };
-        let version_id = match function.remove_alias(&command.alias, Utc::now()) {
-            Ok(id) => id,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+            function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let version_id = function.remove_alias(&command.alias, Utc::now())?;
         // An alias never outlives its version (the FK cascades), so the
         // version it named still exists.
         let version = match self.versions.find_by_id(&version_id).await {
             Ok(Some(v)) => v,
-            Ok(None) => {
-                return UseCaseResult::failure(resource_not_found("FunctionVersion", &version_id))
-            }
-            Err(e) => return UseCaseResult::failure(e.into()),
+            Ok(None) => return Err(resource_not_found("FunctionVersion", &version_id)),
+            Err(e) => return Err(e.into()),
         };
         let event = AliasRemoved::new(&ctx, &function, &command.alias, &version);
         self.unit_of_work

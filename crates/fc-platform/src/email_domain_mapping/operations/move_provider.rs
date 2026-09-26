@@ -14,9 +14,7 @@ use crate::identity_provider::entity::IdentityProviderType;
 use crate::identity_provider::repository::IdentityProviderRepository;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::PrincipalRepository;
 
 /// Go `MappingProviderChanged`.
@@ -190,11 +188,8 @@ impl<U: UnitOfWork> UseCase for MoveMappingToProviderUseCase<U> {
         &self,
         command: MoveMappingToProviderCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EmailDomainMappingProviderChanged> {
-        let (mv, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<EmailDomainMappingProviderChanged>, UseCaseError> {
+        let (mv, event) = self.prepare(&command, &ctx).await?;
         self.unit_of_work
             .commit(&mv, &*self.move_repo, event, &command)
             .await

@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::IdpRoleMappingDeleted;
-use crate::auth::config_entity::IdpRoleMapping;
 use crate::auth::config_repository::IdpRoleMappingRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,24 +57,7 @@ impl<U: UnitOfWork> UseCase for DeleteIdpRoleMappingUseCase<U> {
         &self,
         command: DeleteIdpRoleMappingCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdpRoleMappingDeleted> {
-        let (mapping, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&mapping, &*self.idp_role_mapping_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteIdpRoleMappingUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteIdpRoleMappingCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(IdpRoleMapping, IdpRoleMappingDeleted), UseCaseError> {
+    ) -> Result<Committed<IdpRoleMappingDeleted>, UseCaseError> {
         let mapping = self
             .idp_role_mapping_repo
             .find_by_id(&command.mapping_id)
@@ -87,7 +67,10 @@ impl<U: UnitOfWork> DeleteIdpRoleMappingUseCase<U> {
                 format!("Mapping '{}' not found", command.mapping_id),
             )?;
 
-        let event = IdpRoleMappingDeleted::new(ctx, &mapping.id, &mapping.idp_role_name);
-        Ok((mapping, event))
+        let event = IdpRoleMappingDeleted::new(&ctx, &mapping.id, &mapping.idp_role_name);
+
+        self.unit_of_work
+            .commit_delete(&mapping, &*self.idp_role_mapping_repo, event, &command)
+            .await
     }
 }

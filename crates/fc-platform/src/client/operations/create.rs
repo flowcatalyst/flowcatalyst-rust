@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::events::ClientCreated;
 use crate::client::entity::Client;
 use crate::client::repository::ClientRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Identifier format: lowercase alphanumeric with hyphens, 2-50 chars
 fn identifier_pattern() -> &'static Regex {
@@ -109,16 +109,13 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         &self,
         command: CreateClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientCreated> {
+    ) -> Result<Committed<ClientCreated>, UseCaseError> {
         let identifier = command.identifier.trim().to_lowercase();
 
         // Business rule: identifier must be unique
-        let existing = match self.client_repo.find_by_identifier(&identifier).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.client_repo.find_by_identifier(&identifier).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "IDENTIFIER_EXISTS",
                 format!("Client with identifier '{}' already exists", identifier),
             ));

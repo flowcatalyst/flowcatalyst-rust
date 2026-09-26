@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::events::CorsOriginAdded;
 use crate::cors::entity::CorsAllowedOrigin;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::CorsOriginRepository;
 
 fn origin_pattern() -> &'static Regex {
@@ -78,24 +78,7 @@ impl<U: UnitOfWork> UseCase for AddCorsOriginUseCase<U> {
         &self,
         command: AddCorsOriginCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<CorsOriginAdded> {
-        let (entity, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&entity, &*self.cors_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> AddCorsOriginUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &AddCorsOriginCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(CorsAllowedOrigin, CorsOriginAdded), UseCaseError> {
+    ) -> Result<Committed<CorsOriginAdded>, UseCaseError> {
         let origin = command.origin.trim();
 
         // Check for duplicate origin: 409, as Go's `usecase.Conflict`.
@@ -112,8 +95,11 @@ impl<U: UnitOfWork> AddCorsOriginUseCase<U> {
             Some(ctx.principal_id.clone()),
         );
 
-        let event = CorsOriginAdded::new(ctx, &entity.id, &entity.origin);
-        Ok((entity, event))
+        let event = CorsOriginAdded::new(&ctx, &entity.id, &entity.origin);
+
+        self.unit_of_work
+            .commit(&entity, &*self.cors_repo, event, &command)
+            .await
     }
 }
 

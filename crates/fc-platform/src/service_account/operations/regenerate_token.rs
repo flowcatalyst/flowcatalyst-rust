@@ -7,11 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountTokenRegenerated;
-use crate::service_account::ServiceAccount;
 use crate::shared::encryption_service::{require_configured, EncryptionService};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ServiceAccountRepository;
 use crate::WebhookAuthType;
 
@@ -97,39 +94,7 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
         &self,
         command: RegenerateAuthTokenCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RegenerateAuthTokenResult> {
-        let (service_account, event, result) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit through UnitOfWork, then map the event onto our
-        // wrapper (carrying the one-time token).
-        self.unit_of_work
-            .commit(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
-            .map(|_| result)
-    }
-}
-
-impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RegenerateAuthTokenCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<
-        (
-            ServiceAccount,
-            ServiceAccountTokenRegenerated,
-            RegenerateAuthTokenResult,
-        ),
-        UseCaseError,
-    > {
+    ) -> Result<Committed<RegenerateAuthTokenResult>, UseCaseError> {
         // Find the service account
         let mut service_account = self
             .service_account_repo
@@ -154,7 +119,7 @@ impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
 
         // Create domain event
         let event =
-            ServiceAccountTokenRegenerated::new(ctx, &service_account.id, &service_account.code);
+            ServiceAccountTokenRegenerated::new(&ctx, &service_account.id, &service_account.code);
 
         // Create result with one-time token
         let result = RegenerateAuthTokenResult {
@@ -162,7 +127,17 @@ impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
             auth_token,
         };
 
-        Ok((service_account, event, result))
+        // Atomic commit through UnitOfWork, then map the event onto our
+        // wrapper (carrying the one-time token).
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
+            .map(|committed| committed.map(|_| result))
     }
 }
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::events::AuthConfigCreated;
 use crate::auth::config_entity::{AuthConfigType, AuthProvider, ClientAuthConfig};
 use crate::auth::config_repository::ClientAuthConfigRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,20 +95,16 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         &self,
         command: CreateAuthConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AuthConfigCreated> {
+    ) -> Result<Committed<AuthConfigCreated>, UseCaseError> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Business rule: email domain must be unique
-        let existing = match self
+        let existing = self
             .auth_config_repo
             .find_by_email_domain(&email_domain)
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "DOMAIN_ALREADY_CONFIGURED",
                 format!("Auth config for '{}' already exists", email_domain),
             ));

@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingUpdated;
 use crate::email_domain_mapping::entity::ScopeType;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 
@@ -114,24 +112,7 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         &self,
         command: UpdateEmailDomainMappingCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EmailDomainMappingUpdated> {
-        let (mapping, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&mapping, &*self.edm_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateEmailDomainMappingCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::EmailDomainMapping, EmailDomainMappingUpdated), UseCaseError> {
+    ) -> Result<Committed<EmailDomainMappingUpdated>, UseCaseError> {
         let mut mapping = self
             .edm_repo
             .find_by_id(&command.mapping_id)
@@ -203,8 +184,11 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
             .is_some_and(|idp| idp.oidc_multi_tenant);
         super::require_tenant_pin(multi_tenant, &mapping)?;
 
-        let event = EmailDomainMappingUpdated::new(ctx, &mapping.id, &mapping.email_domain);
-        Ok((mapping, event))
+        let event = EmailDomainMappingUpdated::new(&ctx, &mapping.id, &mapping.email_domain);
+
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
     }
 }
 

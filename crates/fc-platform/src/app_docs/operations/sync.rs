@@ -16,7 +16,7 @@ use crate::app_docs::entity::{doc_title, AppDoc, AppDocsReplacement};
 use crate::app_docs::repository::AppDocsRepository;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 pub const MAX_DOCS: usize = 100;
 pub const MAX_DOC_BYTES: usize = 512 * 1024;
@@ -137,14 +137,14 @@ impl<U: UnitOfWork> UseCase for SyncAppDocsUseCase<U> {
         &self,
         command: SyncAppDocsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AppDocsSynced> {
+    ) -> Result<Committed<AppDocsSynced>, UseCaseError> {
         let existing: HashSet<String> = match self
             .repo
             .slugs_for_application(&command.application_id)
             .await
         {
             Ok(s) => s.into_iter().collect(),
-            Err(e) => return UseCaseResult::failure(e.into()),
+            Err(e) => return Err(e.into()),
         };
         let now = chrono::Utc::now();
         let (mut created, mut updated) = (0u32, 0u32);

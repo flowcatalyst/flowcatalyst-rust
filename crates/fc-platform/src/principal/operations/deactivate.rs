@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserDeactivated;
-use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for deactivating a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,25 +65,7 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         &self,
         command: DeactivateUserCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserDeactivated> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeactivateUserUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeactivateUserCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, UserDeactivated), UseCaseError> {
+    ) -> Result<Committed<UserDeactivated>, UseCaseError> {
         // Fetch existing principal
         let mut principal = self
             .principal_repo
@@ -109,8 +88,12 @@ impl<U: UnitOfWork> DeactivateUserUseCase<U> {
         principal.deactivate();
 
         // Create domain event
-        let event = UserDeactivated::new(ctx, &principal.id);
-        Ok((principal, event))
+        let event = UserDeactivated::new(&ctx, &principal.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

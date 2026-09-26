@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientActivated;
-use crate::auth::oauth_entity::OAuthClient;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,24 +57,7 @@ impl<U: UnitOfWork> UseCase for ActivateOAuthClientUseCase<U> {
         &self,
         command: ActivateOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientActivated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ActivateOAuthClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ActivateOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientActivated), UseCaseError> {
+    ) -> Result<Committed<OAuthClientActivated>, UseCaseError> {
         let mut client = self
             .oauth_client_repo
             .find_by_id(&command.oauth_client_id)
@@ -90,7 +70,10 @@ impl<U: UnitOfWork> ActivateOAuthClientUseCase<U> {
         client.active = true;
         client.updated_at = chrono::Utc::now();
 
-        let event = OAuthClientActivated::new(ctx, &client.id);
-        Ok((client, event))
+        let event = OAuthClientActivated::new(&ctx, &client.id);
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RoleDeleted;
-use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::entity::RoleSource;
 use crate::role::repository::RoleRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for deleting a role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,25 +61,7 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         &self,
         command: DeleteRoleCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RoleDeleted> {
-        let (role, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(&role, &*self.role_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteRoleUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteRoleCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(AuthRole, RoleDeleted), UseCaseError> {
+    ) -> Result<Committed<RoleDeleted>, UseCaseError> {
         // Fetch existing role
         let role = self
             .role_repo
@@ -118,8 +98,12 @@ impl<U: UnitOfWork> DeleteRoleUseCase<U> {
         }
 
         // Create domain event
-        let event = RoleDeleted::new(ctx, &role.id, &role.name);
-        Ok((role, event))
+        let event = RoleDeleted::new(&ctx, &role.id, &role.name);
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(&role, &*self.role_repo, event, &command)
+            .await
     }
 }
 

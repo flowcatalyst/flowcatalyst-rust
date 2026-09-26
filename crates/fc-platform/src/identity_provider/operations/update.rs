@@ -15,9 +15,7 @@ use super::domains::{
     validate_mapping_scope, DomainDeps, INTERNAL_IDP_CODE,
 };
 use super::events::IdentityProviderUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::IdentityProviderRepository;
 
 /// Command for updating an existing identity provider.
@@ -110,32 +108,7 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         &self,
         command: UpdateIdentityProviderCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityProviderUpdated> {
-        let (idp, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        let updated = self
-            .unit_of_work
-            .commit(&idp, &*self.idp_repo, event, &command)
-            .await;
-        if updated.as_result().is_err() {
-            return updated;
-        }
-        if let Err(e) = self.reconcile_domains(&idp, &command, &ctx).await {
-            return UseCaseResult::failure(e);
-        }
-        updated
-    }
-}
-
-impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateIdentityProviderCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::IdentityProvider, IdentityProviderUpdated), UseCaseError> {
+    ) -> Result<Committed<IdentityProviderUpdated>, UseCaseError> {
         let mut idp = self
             .idp_repo
             .find_by_id(&command.idp_id)
@@ -212,10 +185,18 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
             }
         }
 
-        let event = IdentityProviderUpdated::new(ctx, &idp.id, &idp.code);
-        Ok((idp, event))
-    }
+        let event = IdentityProviderUpdated::new(&ctx, &idp.id, &idp.code);
 
+        let updated = self
+            .unit_of_work
+            .commit(&idp, &*self.idp_repo, event, &command)
+            .await?;
+        self.reconcile_domains(&idp, &command, &ctx).await?;
+        Ok(updated)
+    }
+}
+
+impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
     /// Go's domain reconciliation: map (or claim) every desired domain, then
     /// fall every other domain routed here back to the internal provider.
     async fn reconcile_domains(

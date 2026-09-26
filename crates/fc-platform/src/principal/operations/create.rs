@@ -11,7 +11,7 @@ use crate::details;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Email validation pattern
 fn email_pattern() -> &'static Regex {
@@ -134,16 +134,13 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         &self,
         command: CreateUserCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserCreated> {
+    ) -> Result<Committed<UserCreated>, UseCaseError> {
         let email = command.email.trim().to_lowercase();
 
         // Business rule: email must be unique
-        let existing = match self.principal_repo.find_by_email(&email).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.principal_repo.find_by_email(&email).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule_with_details(
+            return Err(UseCaseError::business_rule_with_details(
                 "EMAIL_EXISTS",
                 format!("A user with email '{}' already exists", email),
                 details! { "email" => &email },
@@ -192,12 +189,9 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             if let Some(password) = command.password.as_deref().filter(|p| !p.is_empty()) {
                 let name = command.name.as_deref().unwrap_or_default();
                 if let Some(v) = crate::portal::policy::validate(password, &email, name) {
-                    return UseCaseResult::failure(UseCaseError::validation(v.code, v.message));
+                    return Err(UseCaseError::validation(v.code, v.message));
                 }
-                let hash = match self.password_service.rehash_password(password) {
-                    Ok(h) => h,
-                    Err(e) => return UseCaseResult::failure(e.into()),
-                };
+                let hash = self.password_service.rehash_password(password)?;
                 if let Some(identity) = principal.user_identity.as_mut() {
                     identity.password_hash = Some(hash);
                 }

@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationActivated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 
 /// Command for activating an application.
@@ -56,25 +54,7 @@ impl<U: UnitOfWork> UseCase for ActivateApplicationUseCase<U> {
         &self,
         command: ActivateApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationActivated> {
-        let (application, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ActivateApplicationUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ActivateApplicationCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Application, ApplicationActivated), UseCaseError> {
+    ) -> Result<Committed<ApplicationActivated>, UseCaseError> {
         // Find the application
         let mut application = self
             .application_repo
@@ -97,8 +77,12 @@ impl<U: UnitOfWork> ActivateApplicationUseCase<U> {
         application.activate();
 
         // Create domain event
-        let event = ApplicationActivated::new(ctx, &application.id);
-        Ok((application, event))
+        let event = ApplicationActivated::new(&ctx, &application.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
     }
 }
 

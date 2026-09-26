@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeCreated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::EventType;
 use crate::EventTypeRepository;
 
@@ -133,14 +133,11 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         &self,
         command: CreateEventTypeCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypeCreated> {
+    ) -> Result<Committed<EventTypeCreated>, UseCaseError> {
         // Business rule: code must be unique
-        let existing = match self.event_type_repo.find_by_code(&command.code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.event_type_repo.find_by_code(&command.code).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Event type with code '{}' already exists", command.code),
             ));
@@ -163,7 +160,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
                 et
             }
             Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation(
+                return Err(UseCaseError::validation(
                     "INVALID_CODE_FORMAT",
                     e.to_string(),
                 ));

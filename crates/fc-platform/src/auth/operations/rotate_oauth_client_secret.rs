@@ -11,10 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientSecretRotated;
-use crate::auth::oauth_entity::OAuthClient;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,24 +89,7 @@ impl<U: UnitOfWork> UseCase for RotateOAuthClientSecretUseCase<U> {
         &self,
         command: RotateOAuthClientSecretCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientSecretRotated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RotateOAuthClientSecretUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RotateOAuthClientSecretCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientSecretRotated), UseCaseError> {
+    ) -> Result<Committed<OAuthClientSecretRotated>, UseCaseError> {
         let mut client = self
             .oauth_client_repo
             .find_by_id(&command.oauth_client_id)
@@ -134,8 +114,11 @@ impl<U: UnitOfWork> RotateOAuthClientSecretUseCase<U> {
         let previous_expires_at =
             client.rotate_secret_ref(command.new_client_secret_ref.clone(), grace);
 
-        let mut event = OAuthClientSecretRotated::new(ctx, &client.id);
+        let mut event = OAuthClientSecretRotated::new(&ctx, &client.id);
         event.previous_secret_expires_at = previous_expires_at;
-        Ok((client, event))
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

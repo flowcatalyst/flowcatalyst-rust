@@ -15,9 +15,7 @@ use super::events::PolicyUpdated;
 use crate::function::entity::{ClientPolicy, SignerRule};
 use crate::function::policy_repository::ClientPolicyRepository;
 use crate::function::{java_is_blank, FunctionOwner, Runtime};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientRepository;
 
 /// One signer rule as sent; runtimes still raw.
@@ -124,20 +122,7 @@ impl<U: UnitOfWork> UseCase for PutFunctionPolicyUseCase<U> {
         &self,
         command: PutPolicyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PolicyUpdated> {
-        let policy = match self.prepare(&command).await {
-            Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let event = PolicyUpdated::new(&ctx, &policy);
-        self.unit_of_work
-            .commit(&policy, &*self.policies, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> PutFunctionPolicyUseCase<U> {
-    async fn prepare(&self, command: &PutPolicyCommand) -> Result<ClientPolicy, UseCaseError> {
+    ) -> Result<Committed<PolicyUpdated>, UseCaseError> {
         if let FunctionOwner::Client(client_id) = &command.owner {
             if self.clients.find_by_id(client_id).await?.is_none() {
                 return Err(resource_not_found("Client", client_id));
@@ -163,7 +148,7 @@ impl<U: UnitOfWork> PutFunctionPolicyUseCase<U> {
                 runtimes,
             ));
         }
-        Ok(ClientPolicy {
+        let policy = ClientPolicy {
             owner: command.owner.clone(),
             signers,
             max_duration_ms: command.max_duration_ms,
@@ -172,6 +157,10 @@ impl<U: UnitOfWork> PutFunctionPolicyUseCase<U> {
             max_db_pool_size: command.max_db_pool_size,
             created_at,
             updated_at: now,
-        })
+        };
+        let event = PolicyUpdated::new(&ctx, &policy);
+        self.unit_of_work
+            .commit(&policy, &*self.policies, event, &command)
+            .await
     }
 }

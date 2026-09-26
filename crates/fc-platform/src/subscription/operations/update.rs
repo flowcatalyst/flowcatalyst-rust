@@ -10,10 +10,7 @@ use crate::service_account::signing_reach::require_usable_signers;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::caller_reach::{check_scope_access, non_blank};
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::Subscription;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
 
 /// Command for updating an existing subscription.
@@ -159,25 +156,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         &self,
         command: UpdateSubscriptionCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SubscriptionUpdated> {
-        let (subscription, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&subscription, &*self.subscription_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateSubscriptionCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Subscription, SubscriptionUpdated), UseCaseError> {
+    ) -> Result<Committed<SubscriptionUpdated>, UseCaseError> {
         // Fetch existing subscription
         let mut subscription = self
             .subscription_repo
@@ -301,8 +280,12 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
         subscription.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = SubscriptionUpdated::new(ctx, &subscription.id, &subscription.name);
-        Ok((subscription, event))
+        let event = SubscriptionUpdated::new(&ctx, &subscription.id, &subscription.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&subscription, &*self.subscription_repo, event, &command)
+            .await
     }
 }
 

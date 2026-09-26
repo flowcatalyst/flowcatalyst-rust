@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::events::RoleCreated;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,31 +108,26 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
         &self,
         command: CreateRoleCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<RoleCreated> {
+    ) -> Result<Committed<RoleCreated>, UseCaseError> {
         let app_code = command.application_code.trim().to_lowercase();
         let role_name = command.role_name.trim().to_lowercase();
         let display_name = command.display_name.trim();
 
         // Owner ruling 15: only this application's permissions.
-        if let Err(e) = super::require_confined(
+        super::require_confined(
             &app_code,
             command.permissions.iter().map(String::as_str),
             command.cross_application,
-        ) {
-            return UseCaseResult::failure(e);
-        }
+        )?;
 
         // Build role code
         let code = format!("{}:{}", app_code, role_name);
 
         // Business rule: name must be unique
-        let existing = match self.role_repo.find_by_name(&code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+        let existing = self.role_repo.find_by_name(&code).await?;
         if existing.is_some() {
             // Go create.go: 409 `ROLE_EXISTS`.
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ROLE_EXISTS",
                 format!("Role '{}' already exists", code),
             ));

@@ -22,7 +22,7 @@ use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase};
 use crate::{Application, AuthRole, OAuthClientRepository, ServiceAccount};
 use crate::{
     ApplicationClientConfigRepository, ApplicationRepository, ClientRepository, RoleRepository,
@@ -577,16 +577,13 @@ pub async fn delete_application_cascade(
             let ctx = ExecutionContext::create(&principal_id);
 
             for sa in sas {
-                if let Err(e) = delete_sa_uc
+                delete_sa_uc
                     .run(
                         DeleteServiceAccountCommand { id: sa.id.clone() },
                         ctx.clone(),
                     )
                     .await
-                    .into_result()
-                {
-                    return UseCaseResult::failure(e);
-                }
+                    .into_result()?;
             }
 
             delete_app_uc
@@ -597,10 +594,11 @@ pub async fn delete_application_cascade(
                     ctx,
                 )
                 .await
+                .into_committed()
         })
         .await;
 
-    result.into_result().map(|_| ()).map_err(Into::into)
+    result.map(|_| ()).map_err(Into::into)
 }
 
 /// Activate application
@@ -741,20 +739,17 @@ pub async fn deactivate_application_cascade(
                 if !sa.active {
                     continue;
                 }
-                if let Err(e) = deactivate_sa_uc
+                deactivate_sa_uc
                     .run(
                         DeactivateServiceAccountCommand { id: sa.id.clone() },
                         ctx.clone(),
                     )
                     .await
-                    .into_result()
-                {
-                    return UseCaseResult::failure(e);
-                }
+                    .into_result()?;
             }
 
             for oauth_id in oauth_clients_to_deactivate {
-                if let Err(e) = deactivate_oauth_uc
+                deactivate_oauth_uc
                     .run(
                         DeactivateOAuthClientCommand {
                             oauth_client_id: oauth_id,
@@ -762,10 +757,7 @@ pub async fn deactivate_application_cascade(
                         ctx.clone(),
                     )
                     .await
-                    .into_result()
-                {
-                    return UseCaseResult::failure(e);
-                }
+                    .into_result()?;
             }
 
             deactivate_app_uc
@@ -776,10 +768,11 @@ pub async fn deactivate_application_cascade(
                     ctx,
                 )
                 .await
+                .into_committed()
         })
         .await;
 
-    result.into_result().map(|_| ()).map_err(Into::into)
+    result.map(|_| ()).map_err(Into::into)
 }
 
 /// Get application by code
@@ -971,14 +964,10 @@ pub async fn provision_application_service_account(
                 application_id: Some(app_id.clone()),
                 all_applications: false,
             };
-            let created = match create_sa_uc
+            let created = create_sa_uc
                 .run(create_cmd, ctx.clone())
                 .await
-                .into_result()
-            {
-                Ok(c) => c,
-                Err(err) => return crate::usecase::UseCaseResult::failure(err),
-            };
+                .into_result()?;
             let sa_id = created.event.service_account_id.clone();
 
             // 2. Attach SA to Application — sets `application.service_account_id`.
@@ -987,9 +976,7 @@ pub async fn provision_application_service_account(
                 service_account_id: sa_id.clone(),
                 service_account_code: sa_code,
             };
-            if let Err(err) = attach_uc.run(attach_cmd, ctx.clone()).await.into_result() {
-                return crate::usecase::UseCaseResult::failure(err);
-            }
+            attach_uc.run(attach_cmd, ctx.clone()).await.into_result()?;
 
             // 3. Mint the OAuth client (client_credentials grant) so the
             //    consumer can actually authenticate AS this service account.
@@ -1019,10 +1006,11 @@ pub async fn provision_application_service_account(
                 .run(oauth_cmd, ctx)
                 .await
                 .map(move |_| sa_id)
+                .into_committed()
         })
         .await;
 
-    let sa_id = result.into_result()?;
+    let sa_id = result?.into_inner();
 
     // Fetch the SA for its display name. The OAuth client id + client_id
     // are the ones we minted above, so we don't need to re-read the row.

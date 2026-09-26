@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::repository::{DispatchJobActionsRepository, JobStatusFlip, JobsRequeue};
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 const SOURCE: &str = "platform:messaging";
 
@@ -82,7 +82,7 @@ impl<U: UnitOfWork> UseCase for RequeueDispatchJobsUseCase<U> {
         &self,
         command: ResendCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchJobsResent> {
+    ) -> Result<Committed<DispatchJobsResent>, UseCaseError> {
         let event = DispatchJobsResent {
             metadata: EventMetadata::from_ctx(
                 &ctx,
@@ -152,9 +152,9 @@ impl<U: UnitOfWork> UseCase for SettleDispatchJobUseCase<U> {
         &self,
         command: StatusFlipCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchJobSettled> {
+    ) -> Result<Committed<DispatchJobSettled>, UseCaseError> {
         if command.current_status != "FAILED" {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_FAILED",
                 format!(
                     "dispatch job is not FAILED (current status: {}); only a FAILED job can be overridden",

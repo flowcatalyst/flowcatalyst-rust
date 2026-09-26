@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::AnchorDomainUpdated;
-use crate::auth::config_entity::AnchorDomain;
 use crate::auth::config_repository::AnchorDomainRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,24 +66,7 @@ impl<U: UnitOfWork> UseCase for UpdateAnchorDomainUseCase<U> {
         &self,
         command: UpdateAnchorDomainCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AnchorDomainUpdated> {
-        let (anchor_domain, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&anchor_domain, &*self.anchor_domain_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateAnchorDomainUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateAnchorDomainCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(AnchorDomain, AnchorDomainUpdated), UseCaseError> {
+    ) -> Result<Committed<AnchorDomainUpdated>, UseCaseError> {
         let mut anchor_domain = self
             .anchor_domain_repo
             .find_by_id(&command.anchor_domain_id)
@@ -113,7 +93,10 @@ impl<U: UnitOfWork> UpdateAnchorDomainUseCase<U> {
         anchor_domain.domain = new_domain.clone();
         anchor_domain.updated_at = chrono::Utc::now();
 
-        let event = AnchorDomainUpdated::new(ctx, &anchor_domain.id, &new_domain);
-        Ok((anchor_domain, event))
+        let event = AnchorDomainUpdated::new(&ctx, &anchor_domain.id, &new_domain);
+
+        self.unit_of_work
+            .commit(&anchor_domain, &*self.anchor_domain_repo, event, &command)
+            .await
     }
 }

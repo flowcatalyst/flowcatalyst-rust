@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::events::PlatformConfigAccessGranted;
 use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,24 +77,7 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
         &self,
         command: GrantPlatformConfigAccessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PlatformConfigAccessGranted> {
-        let (access, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&access, &*self.access_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> GrantPlatformConfigAccessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &GrantPlatformConfigAccessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PlatformConfigAccess, PlatformConfigAccessGranted), UseCaseError> {
+    ) -> Result<Committed<PlatformConfigAccessGranted>, UseCaseError> {
         let existing = self
             .access_repo
             .find_by_application_and_role(&command.application_code, &command.role_code)
@@ -116,7 +99,7 @@ impl<U: UnitOfWork> GrantPlatformConfigAccessUseCase<U> {
         }
 
         let event = PlatformConfigAccessGranted {
-            metadata: PlatformConfigAccessGranted::metadata_for(ctx, &access.id),
+            metadata: PlatformConfigAccessGranted::metadata_for(&ctx, &access.id),
             access_id: access.id.clone(),
             application_code: access.application_code.clone(),
             role_code: access.role_code.clone(),
@@ -124,6 +107,9 @@ impl<U: UnitOfWork> GrantPlatformConfigAccessUseCase<U> {
             can_write: access.can_write,
             was_created,
         };
-        Ok((access, event))
+
+        self.unit_of_work
+            .commit(&access, &*self.access_repo, event, &command)
+            .await
     }
 }

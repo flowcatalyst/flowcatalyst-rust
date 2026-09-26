@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountDeactivated;
 use crate::service_account::ServiceAccount;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ServiceAccountRepository;
 
 /// Command for deactivating a service account.
@@ -63,11 +61,8 @@ impl<U: UnitOfWork> UseCase for DeactivateServiceAccountUseCase<U> {
         &self,
         command: DeactivateServiceAccountCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ServiceAccountDeactivated> {
-        let (sa, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<ServiceAccountDeactivated>, UseCaseError> {
+        let (sa, event) = self.prepare(&command, &ctx).await?;
 
         self.unit_of_work
             .commit(&sa, &*self.service_account_repo, event, &command)

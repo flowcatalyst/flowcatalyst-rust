@@ -13,9 +13,7 @@ use std::sync::Arc;
 
 use super::events::UserUpdated;
 use crate::principal::entity::UserScope;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ClientRepository, PrincipalRepository};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,7 +88,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
         &self,
         command: SetClientAssociationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserUpdated> {
+    ) -> Result<Committed<UserUpdated>, UseCaseError> {
         let mut p = match self
             .principal_repo
             .find_by_id(&command.user_id)
@@ -100,10 +98,10 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
                 format!("User not found: {}", command.user_id),
             ) {
             Ok(p) => p,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         if !p.is_user() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_USER",
                 "Client association only applies to USER principals",
             ));
@@ -118,15 +116,11 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
             p.scope = UserScope::Anchor;
             p.client_id = None;
         } else if mode == "CHANGE_CLIENT" {
-            if let Err(e) = self.require_client(target).await {
-                return UseCaseResult::failure(e);
-            }
+            self.require_client(target).await?;
             p.scope = UserScope::Client;
             p.client_id = Some(target.to_string());
         } else if mode == "TO_PARTNER" {
-            if let Err(e) = self.require_client(target).await {
-                return UseCaseResult::failure(e);
-            }
+            self.require_client(target).await?;
             let mut grants = Vec::new();
             if p.scope == UserScope::Client {
                 if let Some(home) = p
@@ -146,7 +140,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
             p.scope = UserScope::Partner;
             p.client_id = None;
         } else {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "MODE_REQUIRED",
                 "mode must be CHANGE_CLIENT or TO_PARTNER for a specific clientId (use \"*\" for anchor)",
             ));

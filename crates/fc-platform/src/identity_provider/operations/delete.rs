@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::IdentityProviderDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{EmailDomainMappingRepository, IdentityProviderRepository};
 
 /// Command for deleting an identity provider.
@@ -64,24 +62,7 @@ impl<U: UnitOfWork> UseCase for DeleteIdentityProviderUseCase<U> {
         &self,
         command: DeleteIdentityProviderCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdentityProviderDeleted> {
-        let (idp, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&idp, &*self.idp_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteIdentityProviderUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteIdentityProviderCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::IdentityProvider, IdentityProviderDeleted), UseCaseError> {
+    ) -> Result<Committed<IdentityProviderDeleted>, UseCaseError> {
         // Fetch existing identity provider
         let idp = self
             .idp_repo
@@ -114,8 +95,11 @@ impl<U: UnitOfWork> DeleteIdentityProviderUseCase<U> {
             ));
         }
 
-        let event = IdentityProviderDeleted::new(ctx, &idp.id, &idp.code);
-        Ok((idp, event))
+        let event = IdentityProviderDeleted::new(&ctx, &idp.id, &idp.code);
+
+        self.unit_of_work
+            .commit_delete(&idp, &*self.idp_repo, event, &command)
+            .await
     }
 }
 

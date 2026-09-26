@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserActivated;
-use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for activating a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,25 +61,7 @@ impl<U: UnitOfWork> UseCase for ActivateUserUseCase<U> {
         &self,
         command: ActivateUserCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<UserActivated> {
-        let (principal, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ActivateUserUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &ActivateUserCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Principal, UserActivated), UseCaseError> {
+    ) -> Result<Committed<UserActivated>, UseCaseError> {
         // Fetch existing principal
         let mut principal = self
             .principal_repo
@@ -105,8 +84,12 @@ impl<U: UnitOfWork> ActivateUserUseCase<U> {
         principal.activate();
 
         // Create domain event
-        let event = UserActivated::new(ctx, &principal.id);
-        Ok((principal, event))
+        let event = UserActivated::new(&ctx, &principal.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
     }
 }
 

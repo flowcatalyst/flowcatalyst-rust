@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::events::ScheduledJobCreated;
 use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,18 +123,14 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         &self,
         cmd: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let code = normalize_code(&cmd.code);
-        let existing = match self
+        let existing = self
             .repo
             .find_by_code(cmd.client_id.as_deref(), &code)
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Scheduled job with code '{code}' already exists"),
             ));

@@ -20,7 +20,7 @@ use super::diff::{compute_change_notes, spec_hash};
 use super::events::ApplicationOpenApiSpecSynced;
 use crate::application_openapi_spec::entity::OpenApiSpec;
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for syncing an application's OpenAPI document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,11 +120,8 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         &self,
         command: SyncOpenApiSpecCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationOpenApiSpecSynced> {
-        let event = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<ApplicationOpenApiSpecSynced>, UseCaseError> {
+        let event = self.prepare(&command, &ctx).await?;
 
         self.unit_of_work.emit_event(event, &command).await
     }

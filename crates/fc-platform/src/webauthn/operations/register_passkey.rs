@@ -12,7 +12,7 @@ use std::sync::Arc;
 use webauthn_rs::prelude::{PasskeyRegistration, RegisterPublicKeyCredential};
 
 use super::events::PasskeyRegistered;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::webauthn::entity::WebauthnCredential;
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
@@ -103,24 +103,7 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
         &self,
         command: RegisterPasskeyCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PasskeyRegistered> {
-        let (credential, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&credential, &*self.credential_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RegisterPasskeyUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RegisterPasskeyCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(WebauthnCredential, PasskeyRegistered), UseCaseError> {
+    ) -> Result<Committed<PasskeyRegistered>, UseCaseError> {
         let RegisterPasskeyCommand {
             principal_id,
             name,
@@ -151,7 +134,10 @@ impl<U: UnitOfWork> RegisterPasskeyUseCase<U> {
         }
 
         let credential = WebauthnCredential::new(&principal_id, passkey, name.clone());
-        let event = PasskeyRegistered::new(ctx, &credential.id, &principal_id, name);
-        Ok((credential, event))
+        let event = PasskeyRegistered::new(&ctx, &credential.id, &principal_id, name);
+
+        self.unit_of_work
+            .commit(&credential, &*self.credential_repo, event, &command)
+            .await
     }
 }

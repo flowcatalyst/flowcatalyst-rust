@@ -6,10 +6,7 @@ use std::sync::Arc;
 
 use super::events::SchemaFinalised;
 use crate::event_type::entity::SpecVersionStatus;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::EventType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::EventTypeRepository;
 
 /// Command for finalising a schema version.
@@ -73,24 +70,7 @@ impl<U: UnitOfWork> UseCase for FinaliseSchemaUseCase<U> {
         &self,
         command: FinaliseSchemaCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SchemaFinalised> {
-        let (event_type, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> FinaliseSchemaUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &FinaliseSchemaCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(EventType, SchemaFinalised), UseCaseError> {
+    ) -> Result<Committed<SchemaFinalised>, UseCaseError> {
         let mut event_type = self
             .event_type_repo
             .find_by_id(&command.event_type_id)
@@ -152,12 +132,15 @@ impl<U: UnitOfWork> FinaliseSchemaUseCase<U> {
         event_type.updated_at = chrono::Utc::now();
 
         let event = SchemaFinalised::new(
-            ctx,
+            &ctx,
             &event_type.id,
             &command.version,
             deprecated_version.as_deref(),
         );
-        Ok((event_type, event))
+
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
     }
 }
 

@@ -879,12 +879,7 @@ pub async fn oidc_callback(
             identity_provider_id: idp.id.clone(),
         };
 
-        if let Err(e) = state
-            .unit_of_work
-            .emit_event(login_event, &command)
-            .await
-            .into_result()
-        {
+        if let Err(e) = state.unit_of_work.emit_event(login_event, &command).await {
             warn!(error = %e, "Failed to emit UserLoggedIn event (login still succeeded)");
         }
     }

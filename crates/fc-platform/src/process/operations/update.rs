@@ -5,11 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessUpdated;
-use crate::process::entity::{Process, ProcessStatus};
+use crate::process::entity::ProcessStatus;
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,24 +79,7 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         &self,
         command: UpdateProcessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ProcessUpdated> {
-        let (process, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&process, &*self.process_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateProcessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateProcessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Process, ProcessUpdated), UseCaseError> {
+    ) -> Result<Committed<ProcessUpdated>, UseCaseError> {
         let mut process = self
             .process_repo
             .find_by_id(&command.process_id)
@@ -159,7 +140,10 @@ impl<U: UnitOfWork> UpdateProcessUseCase<U> {
 
         process.updated_at = chrono::Utc::now();
 
-        let event = ProcessUpdated::new(ctx, &process.id, &process.name);
-        Ok((process, event))
+        let event = ProcessUpdated::new(&ctx, &process.id, &process.name);
+
+        self.unit_of_work
+            .commit(&process, &*self.process_repo, event, &command)
+            .await
     }
 }

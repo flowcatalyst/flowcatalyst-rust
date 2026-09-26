@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// An administrator minted a token for a service account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +92,7 @@ impl<U: UnitOfWork> UseCase for RecordServiceAccountTokenMintUseCase<U> {
         &self,
         command: MintServiceAccountTokenCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ServiceAccountTokenMinted> {
+    ) -> Result<Committed<ServiceAccountTokenMinted>, UseCaseError> {
         let event =
             ServiceAccountTokenMinted::new(&ctx, &command.service_account_id, &command.code);
         self.unit_of_work.emit_event(event, &command).await

@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDeactivated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 
 /// Command for deactivating an application.
@@ -56,25 +54,7 @@ impl<U: UnitOfWork> UseCase for DeactivateApplicationUseCase<U> {
         &self,
         command: DeactivateApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationDeactivated> {
-        let (application, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeactivateApplicationUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeactivateApplicationCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Application, ApplicationDeactivated), UseCaseError> {
+    ) -> Result<Committed<ApplicationDeactivated>, UseCaseError> {
         // Find the application
         let mut application = self
             .application_repo
@@ -97,8 +77,12 @@ impl<U: UnitOfWork> DeactivateApplicationUseCase<U> {
         application.deactivate();
 
         // Create domain event
-        let event = ApplicationDeactivated::new(ctx, &application.id);
-        Ok((application, event))
+        let event = ApplicationDeactivated::new(&ctx, &application.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
     }
 }
 

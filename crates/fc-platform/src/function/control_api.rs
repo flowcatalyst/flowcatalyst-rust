@@ -355,9 +355,10 @@ async fn mark_ready(
                 MarkVersionReadyUseCase::new(functions, versions, scoped)
                     .run(command, ctx)
                     .await
+                    .into_committed()
             })
             .await
-            .into_result();
+            .map(crate::usecase::Committed::into_inner);
         match result {
             Ok(_) => {}
             Err(e) if e.code() == VERSION_NOT_PUBLISHED => {

@@ -37,7 +37,7 @@ use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::authorization_service::AuthContext;
 use crate::usecase::{
-    ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::ApplicationRepository;
 use crate::PrincipalRepository;
@@ -178,70 +178,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         &self,
         command: SyncPrincipalsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PrincipalsSynced> {
-        let (batch, row_events, rollup) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: each row's event and audit row, then the
-        // rollup, atomic with the batch write.
-        self.unit_of_work
-            .commit_all_with_events(
-                std::slice::from_ref(&batch),
-                &*self.principal_repo,
-                row_events,
-                rollup,
-                &command,
-            )
-            .await
-    }
-}
-
-impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
-    /// Decision #23: refuse role names prefixed `platform:` or with another
-    /// application's code. One query for the whole payload.
-    async fn require_syncable_roles(
-        &self,
-        application_code: &str,
-        role_names: &[String],
-    ) -> Result<(), UseCaseError> {
-        let prefixes: Vec<String> = role_names
-            .iter()
-            .filter_map(|r| r.split_once(':').map(|(p, _)| p.to_string()))
-            .filter(|p| p != application_code)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        if prefixes.is_empty() {
-            return Ok(());
-        }
-        let other_apps = self
-            .application_repo
-            .find_ids_by_codes(&prefixes)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("Failed to load applications: {e}")))?;
-        for name in role_names {
-            let Some((prefix, _)) = name.split_once(':') else {
-                continue;
-            };
-            if prefix != application_code
-                && (prefix == "platform" || other_apps.contains_key(prefix))
-            {
-                return Err(UseCaseError::forbidden(
-                    "ROLE_APP_FORBIDDEN",
-                    format!("role '{name}' does not belong to application '{application_code}'"),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    async fn prepare(
-        &self,
-        command: &SyncPrincipalsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PrincipalSyncBatch, Vec<RecordedEvent>, PrincipalsSynced), UseCaseError> {
+    ) -> Result<Committed<PrincipalsSynced>, UseCaseError> {
         let app_code = command.application_code.as_str();
         self.application_repo
             .find_by_code(app_code)
@@ -319,7 +256,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                     updated += 1;
                     p
                 }
@@ -333,7 +270,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RecordedEvent::of(&UserCreated::new(ctx, &p.id, email))?);
+                    row_events.push(RecordedEvent::of(&UserCreated::new(&ctx, &p.id, email))?);
                     created += 1;
                     p
                 }
@@ -369,21 +306,73 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                 }
                 p.roles.retain(|ra| !is_own_sdk_role(ra, app_code));
                 p.updated_at = now;
-                row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
+                row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                 deactivated += 1;
                 principals.push(p);
             }
         }
 
         let rollup = PrincipalsSynced {
-            metadata: PrincipalsSynced::metadata_for(ctx, app_code),
+            metadata: PrincipalsSynced::metadata_for(&ctx, app_code),
             application_code: command.application_code.clone(),
             created,
             updated,
             deactivated,
             synced_emails: emails,
         };
-        Ok((PrincipalSyncBatch { principals }, row_events, rollup))
+        let (batch, row_events, rollup) = (PrincipalSyncBatch { principals }, row_events, rollup);
+
+        // Go's usecaseop.Sync: each row's event and audit row, then the
+        // rollup, atomic with the batch write.
+        self.unit_of_work
+            .commit_all_with_events(
+                std::slice::from_ref(&batch),
+                &*self.principal_repo,
+                row_events,
+                rollup,
+                &command,
+            )
+            .await
+    }
+}
+
+impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
+    /// Decision #23: refuse role names prefixed `platform:` or with another
+    /// application's code. One query for the whole payload.
+    async fn require_syncable_roles(
+        &self,
+        application_code: &str,
+        role_names: &[String],
+    ) -> Result<(), UseCaseError> {
+        let prefixes: Vec<String> = role_names
+            .iter()
+            .filter_map(|r| r.split_once(':').map(|(p, _)| p.to_string()))
+            .filter(|p| p != application_code)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        if prefixes.is_empty() {
+            return Ok(());
+        }
+        let other_apps = self
+            .application_repo
+            .find_ids_by_codes(&prefixes)
+            .await
+            .map_err(|e| UseCaseError::commit(format!("Failed to load applications: {e}")))?;
+        for name in role_names {
+            let Some((prefix, _)) = name.split_once(':') else {
+                continue;
+            };
+            if prefix != application_code
+                && (prefix == "platform" || other_apps.contains_key(prefix))
+            {
+                return Err(UseCaseError::forbidden(
+                    "ROLE_APP_FORBIDDEN",
+                    format!("role '{name}' does not belong to application '{application_code}'"),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

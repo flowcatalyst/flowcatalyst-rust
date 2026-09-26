@@ -5,9 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationRepository;
 
 /// Command for deleting an application.
@@ -61,24 +59,7 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
         &self,
         command: DeleteApplicationCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationDeleted> {
-        let (application, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&application, &*self.application_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteApplicationUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteApplicationCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(crate::Application, ApplicationDeleted), UseCaseError> {
+    ) -> Result<Committed<ApplicationDeleted>, UseCaseError> {
         let application = self
             .application_repo
             .find_by_id(&command.application_id)
@@ -134,8 +115,11 @@ impl<U: UnitOfWork> DeleteApplicationUseCase<U> {
             ));
         }
 
-        let event = ApplicationDeleted::new(ctx, &application.id, &application.code);
-        Ok((application, event))
+        let event = ApplicationDeleted::new(&ctx, &application.id, &application.code);
+
+        self.unit_of_work
+            .commit_delete(&application, &*self.application_repo, event, &command)
+            .await
     }
 }
 

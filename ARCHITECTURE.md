@@ -158,7 +158,7 @@ Failover: ≤ `FC_STANDBY_LOCK_TTL_SECONDS` (default 30 s). Detail: [`docs/opera
 
 ## UseCase + UnitOfWork seal
 
-Every platform write goes through a `UseCase` impl that ends with a `UnitOfWork::commit(...)` call. `UseCaseResult::success` is `pub(in crate::usecase)` — only UoW can construct it. **Compile-time guaranteed** that no use case can return success without going through UoW.
+Every platform write goes through a `UseCase` impl that ends with a `UnitOfWork::commit(...)` call. `execute` returns `Result<Committed<Event>, UseCaseError>` and `Committed::new` is `pub(in crate::usecase)` — only UoW can construct it. **Compile-time guaranteed** that no use case can return success without going through UoW.
 
 UoW writes the aggregate, a domain event into `msg_events`, and an audit log into `aud_logs` — all in one Postgres transaction. The stream processor then fan-outs the event to dispatch jobs.
 

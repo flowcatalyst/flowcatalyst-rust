@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolDeleted;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
-use crate::DispatchPool;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::DispatchPoolRepository;
 
 /// Command for deleting a dispatch pool.
@@ -57,25 +54,7 @@ impl<U: UnitOfWork> UseCase for DeleteDispatchPoolUseCase<U> {
         &self,
         command: DeleteDispatchPoolCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<DispatchPoolDeleted> {
-        let (pool, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(&pool, &*self.dispatch_pool_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteDispatchPoolUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteDispatchPoolCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(DispatchPool, DispatchPoolDeleted), UseCaseError> {
+    ) -> Result<Committed<DispatchPoolDeleted>, UseCaseError> {
         // Find the dispatch pool
         let pool = self
             .dispatch_pool_repo
@@ -87,8 +66,12 @@ impl<U: UnitOfWork> DeleteDispatchPoolUseCase<U> {
             )?;
 
         // Create domain event
-        let event = DispatchPoolDeleted::new(ctx, &pool.id, &pool.code);
-        Ok((pool, event))
+        let event = DispatchPoolDeleted::new(&ctx, &pool.id, &pool.code);
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(&pool, &*self.dispatch_pool_repo, event, &command)
+            .await
     }
 }
 

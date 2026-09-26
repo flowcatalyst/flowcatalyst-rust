@@ -10,7 +10,7 @@ use super::events::{ProcessCreated, ProcessDeleted, ProcessUpdated, ProcessesSyn
 use crate::process::entity::{Process, ProcessSource};
 use crate::process::repository::ProcessRepository;
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,24 +81,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
         &self,
         command: SyncProcessesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ProcessesSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // process, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncProcessesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncProcessesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, ProcessesSynced), UseCaseError> {
+    ) -> Result<Committed<ProcessesSynced>, UseCaseError> {
         let existing = self
             .process_repo
             .find_by_application(&command.application_code)
@@ -135,7 +118,7 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&ProcessUpdated::new(
-                            ctx, &up.id, &up.name,
+                            &ctx, &up.id, &up.name,
                         ))?);
                         updated += 1;
                     }
@@ -160,7 +143,7 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&ProcessCreated::new(
-                        ctx, &p.id, &p.code, &p.name,
+                        &ctx, &p.id, &p.code, &p.name,
                     ))?);
                     created += 1;
                 }
@@ -179,7 +162,7 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&ProcessDeleted::new(
-                        ctx, &p.id, &p.code,
+                        &ctx, &p.id, &p.code,
                     ))?);
                     deleted += 1;
                 }
@@ -187,13 +170,16 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
         }
 
         let event = ProcessesSynced {
-            metadata: ProcessesSynced::metadata_for(ctx, &command.application_code),
+            metadata: ProcessesSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             created,
             updated,
             deleted,
             synced_codes,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // process, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }

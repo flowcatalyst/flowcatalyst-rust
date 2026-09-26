@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientDeleted;
-use crate::auth::oauth_entity::OAuthClient;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,24 +57,7 @@ impl<U: UnitOfWork> UseCase for DeleteOAuthClientUseCase<U> {
         &self,
         command: DeleteOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientDeleted> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteOAuthClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientDeleted), UseCaseError> {
+    ) -> Result<Committed<OAuthClientDeleted>, UseCaseError> {
         let client = self
             .oauth_client_repo
             .find_by_id(&command.oauth_client_id)
@@ -87,7 +67,10 @@ impl<U: UnitOfWork> DeleteOAuthClientUseCase<U> {
                 format!("OAuth client '{}' not found", command.oauth_client_id),
             )?;
 
-        let event = OAuthClientDeleted::new(ctx, &client.id, &client.client_id);
-        Ok((client, event))
+        let event = OAuthClientDeleted::new(&ctx, &client.id, &client.client_id);
+
+        self.unit_of_work
+            .commit_delete(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

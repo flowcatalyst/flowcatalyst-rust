@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::events::ProcessCreated;
 use crate::process::entity::Process;
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,13 +97,10 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         &self,
         command: CreateProcessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ProcessCreated> {
-        let existing = match self.process_repo.find_by_code(&command.code).await {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+    ) -> Result<Committed<ProcessCreated>, UseCaseError> {
+        let existing = self.process_repo.find_by_code(&command.code).await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Process with code '{}' already exists", command.code),
             ));
@@ -123,7 +120,7 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
                 p
             }
             Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation(
+                return Err(UseCaseError::validation(
                     "INVALID_CODE_FORMAT",
                     e.to_string(),
                 ));

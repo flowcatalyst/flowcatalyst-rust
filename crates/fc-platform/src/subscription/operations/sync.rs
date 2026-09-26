@@ -13,7 +13,7 @@ use super::events::{
 };
 use crate::subscription::entity::SubscriptionSource;
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
@@ -161,25 +161,8 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         &self,
         command: SyncSubscriptionsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SubscriptionsSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // subscription, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncSubscriptionsCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, SubscriptionsSynced), UseCaseError> {
-        let connection_ids = self.resolve_connections(command).await?;
+    ) -> Result<Committed<SubscriptionsSynced>, UseCaseError> {
+        let connection_ids = self.resolve_connections(&command).await?;
 
         // Resolve every referenced dispatch pool in one query, before any
         // write. An unknown code is a validation error naming it, rather
@@ -255,7 +238,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
-                            ctx,
+                            &ctx,
                             &updated.id,
                             &updated.name,
                         ))?);
@@ -294,7 +277,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
-                        ctx, &sub.id, &sub.code, &sub.name,
+                        &ctx, &sub.id, &sub.code, &sub.name,
                     ))?);
                     created_count += 1;
                 }
@@ -314,7 +297,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
-                        ctx, &sub.id, &sub.code,
+                        &ctx, &sub.id, &sub.code,
                     ))?);
                     deleted_count += 1;
                 }
@@ -322,7 +305,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         }
 
         let event = SubscriptionsSynced {
-            metadata: SubscriptionsSynced::metadata_for(ctx, &command.application_code),
+            metadata: SubscriptionsSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             client_id: command.client_id.clone(),
             created: created_count,
@@ -330,7 +313,10 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             deleted: deleted_count,
             synced_codes,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // subscription, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

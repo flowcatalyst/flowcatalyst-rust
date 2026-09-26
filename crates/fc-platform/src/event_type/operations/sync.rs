@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::events::{EventTypeCreated, EventTypeDeleted, EventTypeUpdated, EventTypesSynced};
 use crate::event_type::entity::{EventType, EventTypeSource, SpecVersion};
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::EventTypeRepository;
 
@@ -94,24 +94,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         &self,
         command: SyncEventTypesCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<EventTypesSynced> {
-        let (rows, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // event type, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
-    }
-}
-
-impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncEventTypesCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Vec<RecordedEvent>, EventTypesSynced), UseCaseError> {
+    ) -> Result<Committed<EventTypesSynced>, UseCaseError> {
         // Fetch existing event types for this application
         let existing = self
             .event_type_repo
@@ -148,7 +131,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                             )));
                         }
                         rows.push(RecordedEvent::of(&EventTypeUpdated::new(
-                            ctx,
+                            &ctx,
                             &updated.id,
                             &updated.name,
                             updated.description.as_deref(),
@@ -171,7 +154,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&EventTypeCreated {
-                        metadata: EventTypeCreated::metadata_for(ctx, &et.id),
+                        metadata: EventTypeCreated::metadata_for(&ctx, &et.id),
                         event_type_id: et.id.clone(),
                         code: et.code.clone(),
                         name: et.name.clone(),
@@ -243,7 +226,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                         )));
                     }
                     rows.push(RecordedEvent::of(&EventTypeDeleted::new(
-                        ctx, &et.id, &et.code,
+                        &ctx, &et.id, &et.code,
                     ))?);
                     deleted_count += 1;
                 }
@@ -251,7 +234,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
         }
 
         let event = EventTypesSynced {
-            metadata: EventTypesSynced::metadata_for(ctx, &command.application_code),
+            metadata: EventTypesSynced::metadata_for(&ctx, &command.application_code),
             application_code: command.application_code.clone(),
             created: created_count,
             updated: updated_count,
@@ -261,7 +244,10 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
             schemas_updated,
             schemas_unchanged,
         };
-        Ok((rows, event))
+
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // event type, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 

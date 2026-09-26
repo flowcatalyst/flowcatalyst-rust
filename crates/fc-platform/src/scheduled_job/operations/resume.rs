@@ -6,11 +6,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobResumed;
-use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,24 +48,7 @@ impl<U: UnitOfWork> UseCase for ResumeScheduledJobUseCase<U> {
         &self,
         cmd: Self::Command,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<Self::Event> {
-        let (job, event) = match self.prepare(&cmd, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&job, &*self.repo, event, &cmd)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> ResumeScheduledJobUseCase<U> {
-    async fn prepare(
-        &self,
-        cmd: &ResumeScheduledJobCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ScheduledJob, ScheduledJobResumed), UseCaseError> {
+    ) -> Result<Committed<Self::Event>, UseCaseError> {
         let mut job = self
             .repo
             .find_by_id(&cmd.scheduled_job_id)
@@ -80,7 +60,10 @@ impl<U: UnitOfWork> ResumeScheduledJobUseCase<U> {
 
         // Go's `ResumeScheduledJob` flips the status unconditionally.
         job.resume();
-        let event = ScheduledJobResumed::new(ctx, &job.id, &job.code);
-        Ok((job, event))
+        let event = ScheduledJobResumed::new(&ctx, &job.id, &job.code);
+
+        self.unit_of_work
+            .commit(&job, &*self.repo, event, &cmd)
+            .await
     }
 }

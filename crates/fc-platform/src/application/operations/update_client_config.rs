@@ -10,9 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationClientConfigUpdated;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -93,24 +91,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         &self,
         command: UpdateApplicationClientConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ApplicationClientConfigUpdated> {
-        let (config, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateApplicationClientConfigCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ApplicationClientConfig, ApplicationClientConfigUpdated), UseCaseError> {
+    ) -> Result<Committed<ApplicationClientConfigUpdated>, UseCaseError> {
         // Verify application exists
         self.application_repo
             .find_by_id(&command.application_id)
@@ -155,7 +136,7 @@ impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
         config.updated_at = chrono::Utc::now();
 
         let event = ApplicationClientConfigUpdated {
-            metadata: ApplicationClientConfigUpdated::metadata_for(ctx, &command.application_id),
+            metadata: ApplicationClientConfigUpdated::metadata_for(&ctx, &command.application_id),
             application_id: command.application_id.clone(),
             client_id: command.client_id.clone(),
             config_id: config.id.clone(),
@@ -163,6 +144,9 @@ impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
             base_url_override: command.base_url_override.clone(),
             config_changed,
         };
-        Ok((config, event))
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
     }
 }

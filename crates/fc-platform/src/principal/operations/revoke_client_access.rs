@@ -5,10 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientAccessRevoked;
-use crate::principal::entity::{ClientAccessGrant, PrincipalType};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::principal::entity::PrincipalType;
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientAccessGrantRepository;
 use crate::PrincipalRepository;
 
@@ -76,24 +74,7 @@ impl<U: UnitOfWork> UseCase for RevokeClientAccessUseCase<U> {
         &self,
         command: RevokeClientAccessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientAccessRevoked> {
-        let (grant, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&grant, &*self.grant_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RevokeClientAccessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RevokeClientAccessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ClientAccessGrant, ClientAccessRevoked), UseCaseError> {
+    ) -> Result<Committed<ClientAccessRevoked>, UseCaseError> {
         // Validate user exists and is a USER type
         let principal = self
             .principal_repo
@@ -120,8 +101,11 @@ impl<U: UnitOfWork> RevokeClientAccessUseCase<U> {
                 format!("Grant not found: {}:{}", command.user_id, command.client_id),
             )?;
 
-        let event = ClientAccessRevoked::new(ctx, &command.user_id, &command.client_id);
-        Ok((grant, event))
+        let event = ClientAccessRevoked::new(&ctx, &command.user_id, &command.client_id);
+
+        self.unit_of_work
+            .commit_delete(&grant, &*self.grant_repo, event, &command)
+            .await
     }
 }
 

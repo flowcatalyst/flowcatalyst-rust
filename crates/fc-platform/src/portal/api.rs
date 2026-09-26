@@ -967,9 +967,10 @@ pub async fn create_portal_app(
             CreatePortalAppWithOAuthClientUseCase::new(apps, clients, oauth_clients, session)
                 .run(cmd, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()?;
+        .map(crate::usecase::Committed::into_inner)?;
     let portal_app = app_out(&state, &event.portal_app_id).await?;
     Ok((
         StatusCode::CREATED,
@@ -1063,9 +1064,10 @@ pub async fn delete_portal_app(
             DeletePortalAppUseCase::new(apps, portal_oauth, oauth_clients, session)
                 .run(cmd, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result()?;
+        .map(crate::usecase::Committed::into_inner)?;
     let mut msg = "Portal app deleted".to_string();
     match event.deleted_oauth_client_ids.len() {
         0 => {}
@@ -1115,9 +1117,10 @@ pub async fn assign_unassigned_portal_users(
             AssignUnassignedPortalIdentitiesUseCase::new(identities, apps, session)
                 .run(cmd, ctx)
                 .await
+                .into_committed()
         })
         .await
-        .into_result();
+        .map(crate::usecase::Committed::into_inner);
     match outcome {
         Ok(done) => Ok(Json(AssignUnassignedResponse {
             portal_app_code: done.app_code,

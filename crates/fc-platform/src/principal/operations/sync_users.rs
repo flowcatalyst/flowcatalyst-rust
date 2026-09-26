@@ -37,7 +37,7 @@ use crate::role::ceiling;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::authorization_service::AuthContext;
 use crate::usecase::{
-    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
 use crate::{PrincipalRepository, RoleRepository};
 
@@ -129,32 +129,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         &self,
         command: SyncUsersCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PrincipalsSynced> {
-        let (batch, row_events, rollup) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Go's usecaseop.Sync: each row's event and audit row, then the
-        // rollup, atomic with the batch write.
-        self.unit_of_work
-            .commit_all_with_events(
-                std::slice::from_ref(&batch),
-                &*self.principal_repo,
-                row_events,
-                rollup,
-                &command,
-            )
-            .await
-    }
-}
-
-impl<U: UnitOfWork> SyncUsersUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &SyncUsersCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PrincipalSyncBatch, Vec<RecordedEvent>, PrincipalsSynced), UseCaseError> {
+    ) -> Result<Committed<PrincipalsSynced>, UseCaseError> {
         let now = Utc::now();
         let emails: Vec<String> = command
             .principals
@@ -229,7 +204,7 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RecordedEvent::of(&UserUpdated::new(ctx, &p.id, &p.name))?);
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
                     updated += 1;
                     p
                 }
@@ -241,7 +216,7 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RecordedEvent::of(&UserCreated::new(ctx, &p.id, email))?);
+                    row_events.push(RecordedEvent::of(&UserCreated::new(&ctx, &p.id, email))?);
                     created += 1;
                     p
                 }
@@ -271,14 +246,25 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
             principals: order.iter().filter_map(|e| saved.remove(e)).collect(),
         };
         let rollup = PrincipalsSynced {
-            metadata: PrincipalsSynced::metadata_for_platform(ctx),
+            metadata: PrincipalsSynced::metadata_for_platform(&ctx),
             application_code: String::new(),
             created,
             updated,
             deactivated: 0,
             synced_emails: emails,
         };
-        Ok((batch, row_events, rollup))
+
+        // Go's usecaseop.Sync: each row's event and audit row, then the
+        // rollup, atomic with the batch write.
+        self.unit_of_work
+            .commit_all_with_events(
+                std::slice::from_ref(&batch),
+                &*self.principal_repo,
+                row_events,
+                rollup,
+                &command,
+            )
+            .await
     }
 }
 

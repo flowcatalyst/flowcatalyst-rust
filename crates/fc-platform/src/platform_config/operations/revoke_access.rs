@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PlatformConfigAccessRevoked;
-use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,24 +67,7 @@ impl<U: UnitOfWork> UseCase for RevokePlatformConfigAccessUseCase<U> {
         &self,
         command: RevokePlatformConfigAccessCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<PlatformConfigAccessRevoked> {
-        let (access, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&access, &*self.access_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> RevokePlatformConfigAccessUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &RevokePlatformConfigAccessCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(PlatformConfigAccess, PlatformConfigAccessRevoked), UseCaseError> {
+    ) -> Result<Committed<PlatformConfigAccessRevoked>, UseCaseError> {
         let access = self
             .access_repo
             .find_by_application_and_role(&command.application_code, &command.role_code)
@@ -101,11 +81,14 @@ impl<U: UnitOfWork> RevokePlatformConfigAccessUseCase<U> {
             )?;
 
         let event = PlatformConfigAccessRevoked::new(
-            ctx,
+            &ctx,
             &access.id,
             &access.application_code,
             &access.role_code,
         );
-        Ok((access, event))
+
+        self.unit_of_work
+            .commit_delete(&access, &*self.access_repo, event, &command)
+            .await
     }
 }

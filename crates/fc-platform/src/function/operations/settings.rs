@@ -22,9 +22,7 @@ use crate::function::entity::{FunctionConfig, FunctionSecret, SecretValue};
 use crate::function::repository::FunctionRepository;
 use crate::function::settings_repository::FunctionSettingsRepository;
 use crate::function::{FunctionAddress, SettingKey};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// At most this many config keys (`SETTING_TOO_LARGE`).
 pub const MAX_CONFIG_KEYS: usize = 100;
@@ -94,12 +92,8 @@ impl<U: UnitOfWork> UseCase for SetFunctionConfigUseCase<U> {
         &self,
         command: SetConfigCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ConfigUpdated> {
-        let function =
-            match function_by_address(&self.functions, &command.address, &self.caller).await {
-                Ok(f) => f,
-                Err(e) => return UseCaseResult::failure(e),
-            };
+    ) -> Result<Committed<ConfigUpdated>, UseCaseError> {
+        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
         let config = FunctionConfig {
             function_id: function.id.clone(),
             values: command.values.clone(),
@@ -178,12 +172,8 @@ impl<U: UnitOfWork> UseCase for SetFunctionSecretUseCase<U> {
         &self,
         command: SetSecretCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SecretSet> {
-        let function =
-            match function_by_address(&self.functions, &command.address, &self.caller).await {
-                Ok(f) => f,
-                Err(e) => return UseCaseResult::failure(e),
-            };
+    ) -> Result<Committed<SecretSet>, UseCaseError> {
+        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
         let secret = FunctionSecret {
             function_id: function.id.clone(),
             key: command.key.clone(),
@@ -241,24 +231,8 @@ impl<U: UnitOfWork> UseCase for DeleteFunctionSecretUseCase<U> {
         &self,
         command: DeleteSecretCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<SecretDeleted> {
-        let (secret, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        self.unit_of_work
-            .commit_delete(&secret, &*self.settings, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteFunctionSecretUseCase<U> {
-    /// 404 `FUNCTION_SECRET_NOT_FOUND` when the key was never set.
-    async fn prepare(
-        &self,
-        command: &DeleteSecretCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(FunctionSecret, SecretDeleted), UseCaseError> {
+    ) -> Result<Committed<SecretDeleted>, UseCaseError> {
+        // 404 `FUNCTION_SECRET_NOT_FOUND` when the key was never set.
         let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
         if !self.settings.has_secret(&function.id, &command.key).await? {
             return Err(resource_not_found("FunctionSecret", &command.key));
@@ -270,7 +244,9 @@ impl<U: UnitOfWork> DeleteFunctionSecretUseCase<U> {
             updated_by: ctx.principal_id.clone(),
             updated_at: Utc::now(),
         };
-        let event = SecretDeleted::new(ctx, &function, &command.key);
-        Ok((secret, event))
+        let event = SecretDeleted::new(&ctx, &function, &command.key);
+        self.unit_of_work
+            .commit_delete(&secret, &*self.settings, event, &command)
+            .await
     }
 }

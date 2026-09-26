@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientDeleted;
-use crate::client::entity::Client;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::ClientRepository;
 
 /// Command for deleting a client.
@@ -62,24 +59,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         &self,
         command: DeleteClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientDeleted> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit_delete(&client, &*self.client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> DeleteClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &DeleteClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Client, ClientDeleted), UseCaseError> {
+    ) -> Result<Committed<ClientDeleted>, UseCaseError> {
         let client = self
             .client_repo
             .find_by_id(&command.client_id)
@@ -129,8 +109,11 @@ impl<U: UnitOfWork> DeleteClientUseCase<U> {
             ));
         }
 
-        let event = ClientDeleted::new(ctx, &client.id, &client.identifier);
-        Ok((client, event))
+        let event = ClientDeleted::new(&ctx, &client.id, &client.identifier);
+
+        self.unit_of_work
+            .commit_delete(&client, &*self.client_repo, event, &command)
+            .await
     }
 }
 

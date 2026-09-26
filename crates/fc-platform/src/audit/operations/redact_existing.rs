@@ -24,9 +24,7 @@ use std::sync::Arc;
 use super::events::AuditLogsRedacted;
 use crate::audit::repository::AuditLogRepository;
 pub use crate::audit::stored_redaction::{redact_stored_document, SET_PROPERTY_OPERATIONS};
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Rows read per candidate query.
 pub const BATCH_SIZE: i64 = 500;
@@ -119,11 +117,8 @@ impl<U: UnitOfWork> UseCase for RedactExistingAuditLogsUseCase<U> {
         &self,
         _command: RedactExistingAuditLogsCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<AuditLogsRedacted> {
-        let (scanned, redacted) = match self.sweep().await {
-            Ok(counts) => counts,
-            Err(e) => return UseCaseResult::failure(e),
-        };
+    ) -> Result<Committed<AuditLogsRedacted>, UseCaseError> {
+        let (scanned, redacted) = self.sweep().await?;
         let event = AuditLogsRedacted::new(&ctx, scanned, redacted);
         self.unit_of_work
             .emit_event(event, &RedactExistingAuditLogs { scanned, redacted })

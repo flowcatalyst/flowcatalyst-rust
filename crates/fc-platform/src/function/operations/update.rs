@@ -24,12 +24,9 @@ use serde::Serialize;
 use super::access::{function_by_address, Caller};
 use super::events::FunctionUpdated;
 use super::trigger_sync::TriggerSync;
-use crate::function::entity::Function;
 use crate::function::repository::FunctionRepository;
 use crate::function::FunctionAddress;
-use crate::usecase::{
-    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// `PUT /api/functions/{address}`. `status`, when given, is `ACTIVE` or
 /// `DISABLED`.
@@ -75,34 +72,9 @@ impl<U: UnitOfWork> UseCase for UpdateFunctionUseCase<U> {
         &self,
         command: UpdateCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<FunctionUpdated> {
-        let (function, status_changed) = match self.prepare(&command).await {
-            Ok(prepared) => prepared,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-        let event = FunctionUpdated::new(&ctx, &function);
-        let result = self
-            .unit_of_work
-            .commit(&function, &*self.functions, event, &command)
-            .await;
-        if result.as_result().is_err() || !status_changed {
-            return result;
-        }
-        match self
-            .trigger_sync
-            .on_status_change(&*self.unit_of_work, &function, &ctx)
-            .await
-        {
-            Ok(()) => result,
-            Err(e) => UseCaseResult::failure(e),
-        }
-    }
-}
-
-impl<U: UnitOfWork> UpdateFunctionUseCase<U> {
-    /// The updated function and whether its status changed; a request
-    /// that changes nothing is [`UseCaseError::unchanged`].
-    async fn prepare(&self, command: &UpdateCommand) -> Result<(Function, bool), UseCaseError> {
+    ) -> Result<Committed<FunctionUpdated>, UseCaseError> {
+        // The updated function and whether its status changed; a request
+        // that changes nothing is [`UseCaseError::unchanged`].
         let mut function =
             function_by_address(&self.functions, &command.address, &self.caller).await?;
         let now = Utc::now();
@@ -140,6 +112,17 @@ impl<U: UnitOfWork> UpdateFunctionUseCase<U> {
                 ),
             });
         }
-        Ok((function, status_changed))
+        let event = FunctionUpdated::new(&ctx, &function);
+        let committed = self
+            .unit_of_work
+            .commit(&function, &*self.functions, event, &command)
+            .await?;
+        if !status_changed {
+            return Ok(committed);
+        }
+        self.trigger_sync
+            .on_status_change(&*self.unit_of_work, &function, &ctx)
+            .await?;
+        Ok(committed)
     }
 }

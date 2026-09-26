@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::events::OAuthClientCreated;
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,24 +103,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         &self,
         command: CreateOAuthClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientCreated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &CreateOAuthClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(OAuthClient, OAuthClientCreated), UseCaseError> {
+    ) -> Result<Committed<OAuthClientCreated>, UseCaseError> {
         let exists = self
             .oauth_client_repo
             .exists_by_client_id(&command.client_id)
@@ -157,7 +140,10 @@ impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
         crate::portal::validate_oauth_client_plane(&client)?;
 
         let event =
-            OAuthClientCreated::new(ctx, &client.id, &client.client_id, &client.client_name);
-        Ok((client, event))
+            OAuthClientCreated::new(&ctx, &client.id, &client.client_id, &client.client_name);
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
     }
 }

@@ -596,9 +596,14 @@ pub async fn update_function(
     match state
         .ops
         .unit_of_work
-        .run(move |scoped| async move { ops.update_in(caller, scoped).run(command, ctx).await })
+        .run(move |scoped| async move {
+            ops.update_in(caller, scoped)
+                .run(command, ctx)
+                .await
+                .into_committed()
+        })
         .await
-        .into_result()
+        .map(crate::usecase::Committed::into_inner)
     {
         // A no-op (already that status, same description): nothing written.
         Ok(_) => Ok(StatusCode::NO_CONTENT),
@@ -634,9 +639,10 @@ pub async fn delete_function(
             ops.delete_in(caller, scoped)
                 .run(DeleteCommand { address }, ctx)
                 .await
+                .into_committed()
         })
-        .await
-        .into_result()?;
+        .await?
+        .into_inner();
     // After the commit, best-effort (Java FunctionApi.java:639-648): the
     // function's uploaded blobs are garbage now, and a store failure is a
     // WARN, never a failed delete.

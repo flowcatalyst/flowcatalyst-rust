@@ -5,11 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientUpdated;
-use crate::client::entity::Client;
 use crate::client::repository::ClientRepository;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for updating an existing client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,25 +92,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
         &self,
         command: UpdateClientCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ClientUpdated> {
-        let (client, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateClientUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateClientCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(Client, ClientUpdated), UseCaseError> {
+    ) -> Result<Committed<ClientUpdated>, UseCaseError> {
         // Fetch existing client
         let mut client = self
             .client_repo
@@ -146,8 +125,12 @@ impl<U: UnitOfWork> UpdateClientUseCase<U> {
         client.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = ClientUpdated::new(ctx, &client.id, &client.name);
-        Ok((client, event))
+        let event = ClientUpdated::new(&ctx, &client.id, &client.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
     }
 }
 

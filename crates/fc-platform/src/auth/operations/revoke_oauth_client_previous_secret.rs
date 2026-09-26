@@ -11,9 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientPreviousSecretRevoked;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +66,7 @@ impl<U: UnitOfWork> UseCase for RevokeOAuthClientPreviousSecretUseCase<U> {
         &self,
         command: RevokeOAuthClientPreviousSecretCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<OAuthClientPreviousSecretRevoked> {
+    ) -> Result<Committed<OAuthClientPreviousSecretRevoked>, UseCaseError> {
         let mut client = match self
             .oauth_client_repo
             .find_by_id(&command.oauth_client_id)
@@ -78,7 +76,7 @@ impl<U: UnitOfWork> UseCase for RevokeOAuthClientPreviousSecretUseCase<U> {
                 format!("OAuth client '{}' not found", command.oauth_client_id),
             ) {
             Ok(c) => c,
-            Err(e) => return UseCaseResult::failure(e),
+            Err(e) => return Err(e),
         };
         client.revoke_previous_secret();
 

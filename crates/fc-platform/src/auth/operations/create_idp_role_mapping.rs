@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::events::IdpRoleMappingCreated;
 use crate::auth::config_entity::IdpRoleMapping;
 use crate::auth::config_repository::IdpRoleMappingRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,17 +66,13 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
         &self,
         command: CreateIdpRoleMappingCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<IdpRoleMappingCreated> {
-        let existing = match self
+    ) -> Result<Committed<IdpRoleMappingCreated>, UseCaseError> {
+        let existing = self
             .idp_role_mapping_repo
             .find_by_idp_role(&command.idp_type, &command.idp_role_name)
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => return UseCaseResult::failure(e.into()),
-        };
+            .await?;
         if existing.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "MAPPING_EXISTS",
                 format!(
                     "Mapping for '{}:{}' already exists",

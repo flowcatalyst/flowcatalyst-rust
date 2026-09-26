@@ -4,7 +4,7 @@
 //!
 //! These tests are the critical end-to-end proof that the UoW machinery
 //! set up in Phase 1+2 actually works under real HTTP traffic. They
-//! complement the compile-time seal (`UseCaseResult::success`) and the
+//! complement the compile-time seal (`Committed`) and the
 //! convention tests (`uow_convention_test`).
 //!
 //! Covers both patterns:

@@ -8,10 +8,7 @@ use std::sync::Arc;
 use super::client_reach::{dedupe_client_ids, require_clients_exist};
 use super::events::ServiceAccountUpdated;
 use crate::principal::entity::UserScope;
-use crate::service_account::ServiceAccount;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ClientRepository, ServiceAccountRepository};
 
 /// Command for updating a service account.
@@ -84,30 +81,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         &self,
         command: UpdateServiceAccountCommand,
         ctx: ExecutionContext,
-    ) -> UseCaseResult<ServiceAccountUpdated> {
-        let (service_account, event) = match self.prepare(&command, &ctx).await {
-            Ok(v) => v,
-            Err(e) => return UseCaseResult::failure(e),
-        };
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
-    }
-}
-
-impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateServiceAccountCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<(ServiceAccount, ServiceAccountUpdated), UseCaseError> {
+    ) -> Result<Committed<ServiceAccountUpdated>, UseCaseError> {
         // Find the service account
         let mut service_account = self
             .service_account_repo
@@ -160,8 +134,17 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
         service_account.updated_at = Utc::now();
 
         // Create domain event
-        let event = ServiceAccountUpdated::new(ctx, &service_account.id, &service_account.name);
-        Ok((service_account, event))
+        let event = ServiceAccountUpdated::new(&ctx, &service_account.id, &service_account.name);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
     }
 }
 
