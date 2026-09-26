@@ -233,6 +233,26 @@ impl EmailDomainMappingRepository {
         self.hydrate_all(edms).await
     }
 
+    /// The mappings routed to `identity_provider_id`, by domain (Go
+    /// `FindByIdentityProvider`).
+    pub async fn find_by_identity_provider(
+        &self,
+        identity_provider_id: &str,
+    ) -> Result<Vec<EmailDomainMapping>> {
+        let rows = sqlx::query_as::<_, EmailDomainMappingRow>(
+            "SELECT * FROM tnt_email_domain_mappings WHERE identity_provider_id = $1 \
+             ORDER BY email_domain",
+        )
+        .bind(identity_provider_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let edms: Vec<EmailDomainMapping> = rows
+            .into_iter()
+            .map(EmailDomainMapping::try_from)
+            .collect::<Result<_>>()?;
+        self.hydrate_all(edms).await
+    }
+
     /// The domains routed to `identity_provider_id` whose mapping pins no
     /// OIDC tenant (a null or blank `required_oidc_tenant_id`), sorted.
     pub async fn find_unpinned_domains_for_identity_provider(
@@ -252,124 +272,155 @@ impl EmailDomainMappingRepository {
     }
 
     pub async fn insert(&self, edm: &EmailDomainMapping) -> Result<()> {
-        sqlx::query(
-            r#"INSERT INTO tnt_email_domain_mappings
-                (id, email_domain, identity_provider_id, scope_type,
-                 primary_client_id, required_oidc_tenant_id, sync_roles_from_idp,
-                 require_2fa, remember_device_enabled, remember_device_days,
-                 created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())"#,
-        )
-        .bind(&edm.id)
-        .bind(&edm.email_domain)
-        .bind(&edm.identity_provider_id)
-        .bind(edm.scope_type.as_str())
-        .bind(&edm.primary_client_id)
-        .bind(&edm.required_oidc_tenant_id)
-        .bind(edm.sync_roles_from_idp)
-        .bind(edm.require_2fa)
-        .bind(edm.remember_device_enabled)
-        .bind(edm.remember_device_days)
-        .execute(&self.pool)
-        .await?;
-        self.save_junctions(&edm.id, edm).await?;
+        let mut tx = self.pool.begin().await?;
+        {
+            let mut db = crate::usecase::DbTx { inner: &mut tx };
+            write_mapping(edm, &mut db).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn update(&self, edm: &EmailDomainMapping) -> Result<()> {
-        sqlx::query(
-            r#"UPDATE tnt_email_domain_mappings SET
-                email_domain = $2, identity_provider_id = $3, scope_type = $4,
-                primary_client_id = $5, required_oidc_tenant_id = $6,
-                sync_roles_from_idp = $7, require_2fa = $8,
-                remember_device_enabled = $9, remember_device_days = $10,
-                updated_at = NOW()
-            WHERE id = $1"#,
-        )
-        .bind(&edm.id)
-        .bind(&edm.email_domain)
-        .bind(&edm.identity_provider_id)
-        .bind(edm.scope_type.as_str())
-        .bind(&edm.primary_client_id)
-        .bind(&edm.required_oidc_tenant_id)
-        .bind(edm.sync_roles_from_idp)
-        .bind(edm.require_2fa)
-        .bind(edm.remember_device_enabled)
-        .bind(edm.remember_device_days)
-        .execute(&self.pool)
-        .await?;
-        self.delete_junctions(&edm.id).await?;
-        self.save_junctions(&edm.id, edm).await?;
-        Ok(())
+        self.insert(edm).await
     }
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
-        self.delete_junctions(id).await?;
-        let result = sqlx::query("DELETE FROM tnt_email_domain_mappings WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
+        let mut tx = self.pool.begin().await?;
+        let deleted = {
+            let mut db = crate::usecase::DbTx { inner: &mut tx };
+            delete_mapping(id, &mut db).await?
+        };
+        tx.commit().await?;
+        Ok(deleted)
+    }
+}
+
+/// Upsert a mapping and replace its junction rows, inside the caller's
+/// transaction: the one write path for `tnt_email_domain_mappings`.
+async fn write_mapping(edm: &EmailDomainMapping, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+    sqlx::query(
+        r#"INSERT INTO tnt_email_domain_mappings
+            (id, email_domain, identity_provider_id, scope_type,
+             primary_client_id, required_oidc_tenant_id, sync_roles_from_idp,
+             require_2fa, remember_device_enabled, remember_device_days,
+             created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        ON CONFLICT (id) DO UPDATE SET
+            email_domain = EXCLUDED.email_domain,
+            identity_provider_id = EXCLUDED.identity_provider_id,
+            scope_type = EXCLUDED.scope_type,
+            primary_client_id = EXCLUDED.primary_client_id,
+            required_oidc_tenant_id = EXCLUDED.required_oidc_tenant_id,
+            sync_roles_from_idp = EXCLUDED.sync_roles_from_idp,
+            require_2fa = EXCLUDED.require_2fa,
+            remember_device_enabled = EXCLUDED.remember_device_enabled,
+            remember_device_days = EXCLUDED.remember_device_days,
+            updated_at = NOW()"#,
+    )
+    .bind(&edm.id)
+    .bind(&edm.email_domain)
+    .bind(&edm.identity_provider_id)
+    .bind(edm.scope_type.as_str())
+    .bind(&edm.primary_client_id)
+    .bind(&edm.required_oidc_tenant_id)
+    .bind(edm.sync_roles_from_idp)
+    .bind(edm.require_2fa)
+    .bind(edm.remember_device_enabled)
+    .bind(edm.remember_device_days)
+    .bind(edm.created_at)
+    .execute(&mut **tx.inner)
+    .await?;
+    delete_junctions(&edm.id, tx).await?;
+    for (table, column, values) in [
+        (
+            "tnt_email_domain_mapping_additional_clients",
+            "client_id",
+            &edm.additional_client_ids,
+        ),
+        (
+            "tnt_email_domain_mapping_granted_clients",
+            "client_id",
+            &edm.granted_client_ids,
+        ),
+        (
+            "tnt_email_domain_mapping_allowed_roles",
+            "role_id",
+            &edm.allowed_role_ids,
+        ),
+    ] {
+        if values.is_empty() {
+            continue;
+        }
+        sqlx::query(&format!(
+            "INSERT INTO {table} (email_domain_mapping_id, {column}) \
+             SELECT $1, v FROM UNNEST($2::varchar[]) AS v"
+        ))
+        .bind(&edm.id)
+        .bind(values)
+        .execute(&mut **tx.inner)
+        .await?;
+    }
+    if !edm.allowed_2fa_methods.is_empty() {
+        sqlx::query(
+            "INSERT INTO tnt_email_domain_mapping_2fa_methods (email_domain_mapping_id, method) \
+             SELECT $1, m FROM UNNEST($2::text[]) WITH ORDINALITY AS t(m, n) ORDER BY n",
+        )
+        .bind(&edm.id)
+        .bind(&edm.allowed_2fa_methods)
+        .execute(&mut **tx.inner)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn delete_junctions(id: &str, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+    for table in [
+        "tnt_email_domain_mapping_additional_clients",
+        "tnt_email_domain_mapping_granted_clients",
+        "tnt_email_domain_mapping_allowed_roles",
+        "tnt_email_domain_mapping_2fa_methods",
+    ] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE email_domain_mapping_id = $1"
+        ))
+        .bind(id)
+        .execute(&mut **tx.inner)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn delete_mapping(id: &str, tx: &mut crate::usecase::DbTx<'_>) -> Result<bool> {
+    delete_junctions(id, tx).await?;
+    let result = sqlx::query("DELETE FROM tnt_email_domain_mappings WHERE id = $1")
+        .bind(id)
+        .execute(&mut **tx.inner)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+impl crate::usecase::unit_of_work::HasId for EmailDomainMapping {
+    fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::usecase::Persist<EmailDomainMapping> for EmailDomainMappingRepository {
+    async fn persist(
+        &self,
+        edm: &EmailDomainMapping,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        write_mapping(edm, tx).await
     }
 
-    async fn save_junctions(&self, id: &str, edm: &EmailDomainMapping) -> Result<()> {
-        for cid in &edm.additional_client_ids {
-            sqlx::query(
-                "INSERT INTO tnt_email_domain_mapping_additional_clients (email_domain_mapping_id, client_id) VALUES ($1, $2)"
-            )
-            .bind(id)
-            .bind(cid)
-            .execute(&self.pool)
-            .await?;
-        }
-        for cid in &edm.granted_client_ids {
-            sqlx::query(
-                "INSERT INTO tnt_email_domain_mapping_granted_clients (email_domain_mapping_id, client_id) VALUES ($1, $2)"
-            )
-            .bind(id)
-            .bind(cid)
-            .execute(&self.pool)
-            .await?;
-        }
-        if !edm.allowed_2fa_methods.is_empty() {
-            sqlx::query(
-                "INSERT INTO tnt_email_domain_mapping_2fa_methods (email_domain_mapping_id, method) \
-                 SELECT $1, m FROM UNNEST($2::text[]) WITH ORDINALITY AS t(m, n) ORDER BY n",
-            )
-            .bind(id)
-            .bind(&edm.allowed_2fa_methods)
-            .execute(&self.pool)
-            .await?;
-        }
-        for rid in &edm.allowed_role_ids {
-            sqlx::query(
-                "INSERT INTO tnt_email_domain_mapping_allowed_roles (email_domain_mapping_id, role_id) VALUES ($1, $2)"
-            )
-            .bind(id)
-            .bind(rid)
-            .execute(&self.pool)
-            .await?;
-        }
-        Ok(())
-    }
-
-    async fn delete_junctions(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1")
-            .bind(id).execute(&self.pool).await?;
-        sqlx::query("DELETE FROM tnt_email_domain_mapping_granted_clients WHERE email_domain_mapping_id = $1")
-            .bind(id).execute(&self.pool).await?;
-        sqlx::query(
-            "DELETE FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = $1",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        sqlx::query(
-            "DELETE FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = $1",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+    async fn delete(
+        &self,
+        edm: &EmailDomainMapping,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        delete_mapping(&edm.id, tx).await.map(|_| ())
     }
 }

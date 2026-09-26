@@ -4,11 +4,13 @@
 
 pub mod create;
 pub mod delete;
+pub mod domains;
 pub mod events;
 pub mod update;
 
 pub use create::{CreateIdentityProviderCommand, CreateIdentityProviderUseCase};
 pub use delete::{DeleteIdentityProviderCommand, DeleteIdentityProviderUseCase};
+pub use domains::DomainDeps;
 pub use events::{IdentityProviderCreated, IdentityProviderDeleted, IdentityProviderUpdated};
 pub use update::{UpdateIdentityProviderCommand, UpdateIdentityProviderUseCase};
 

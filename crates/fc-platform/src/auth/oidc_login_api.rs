@@ -751,12 +751,30 @@ pub async fn oidc_callback(
         ScopeType::Client => UserScope::Client,
     };
 
-    // Sync user and roles (with allowed_role_ids filter from email domain mapping)
-    let allowed_roles = if mapping.allowed_role_ids.is_empty() {
+    // Role sync is the identity provider's (Go's 040): skipped when the
+    // provider has it off; otherwise bounded by its allow-list, whose role
+    // ids are resolved to names here (a role that no longer exists drops
+    // out, and a list that resolves to nothing admits nothing).
+    let allowed_role_names = if idp.allowed_role_ids.is_empty() {
         None
     } else {
-        Some(mapping.allowed_role_ids.as_slice())
+        match state
+            .identity_provider_repo
+            .allowed_role_names(&idp.allowed_role_ids)
+            .await
+        {
+            Ok(names) => Some(names),
+            Err(e) => {
+                error!(error = %e, "Failed to resolve the provider's allowed roles");
+                return error_redirect("Failed to create user session");
+            }
+        }
     };
+    let role_sync = idp
+        .sync_roles_from_idp
+        .then_some(crate::auth::oidc_sync_service::RoleSync {
+            allowed_role_names: allowed_role_names.as_deref(),
+        });
     let principal = match state
         .oidc_sync_service
         .sync_oidc_login(
@@ -769,7 +787,7 @@ pub async fn oidc_callback(
                 scope: user_scope,
             },
             &claims.roles.unwrap_or_default(),
-            allowed_roles,
+            role_sync,
         )
         .await
     {

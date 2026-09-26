@@ -27,7 +27,16 @@ pub struct IdentityProvider {
     pub oidc_client_secret_ref: Option<String>,
     pub oidc_multi_tenant: bool,
     pub oidc_issuer_pattern: Option<String>,
+    /// The email domains routed to this provider: read from the email-domain
+    /// mappings (the one source of domain → provider routing, as Go's), never
+    /// written through the provider.
     pub allowed_email_domains: Vec<String>,
+    /// Whether logins through this provider reconcile the user's IDP_SYNC
+    /// roles from the token's `roles` claim (Go's 040).
+    pub sync_roles_from_idp: bool,
+    /// The platform roles (by id) role sync may confer; empty means no
+    /// restriction.
+    pub allowed_role_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -50,6 +59,8 @@ impl IdentityProvider {
             oidc_multi_tenant: false,
             oidc_issuer_pattern: None,
             allowed_email_domains: Vec::new(),
+            sync_roles_from_idp: false,
+            allowed_role_ids: Vec::new(),
             created_at: now,
             updated_at: now,
         }

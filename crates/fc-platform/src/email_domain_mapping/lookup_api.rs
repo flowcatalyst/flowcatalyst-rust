@@ -54,7 +54,7 @@ pub struct LookupQuery {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveProviderRequest {
-    #[serde(default)]
+    /// Required, as in Go's huma schema (absent is a 400 `VALIDATION`).
     pub identity_provider_id: String,
 }
 

@@ -825,27 +825,42 @@ pub fn build_platform_routes(
         add_use_case: add_cors_use_case,
         delete_use_case: delete_cors_use_case,
     };
+    let idp_domains = crate::identity_provider::operations::DomainDeps {
+        edm_repo: repos.edm_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        move_repo: Arc::new(
+            crate::email_domain_mapping::provider_move_repository::ProviderMoveRepository::new(
+                &repos.pool,
+                repos.principal_repo.clone(),
+            ),
+        ),
+    };
     let create_idp_use_case = Arc::new(
         crate::identity_provider::operations::CreateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
+            idp_domains.clone(),
             unit_of_work.clone(),
         ),
     );
     let update_idp_use_case = Arc::new(
         crate::identity_provider::operations::UpdateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
-            repos.edm_repo.clone(),
+            idp_domains.clone(),
             unit_of_work.clone(),
         ),
     );
     let delete_idp_use_case = Arc::new(
         crate::identity_provider::operations::DeleteIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
+            repos.edm_repo.clone(),
             unit_of_work.clone(),
         ),
     );
     let idp_state = IdentityProvidersState {
         idp_repo: repos.idp_repo.clone(),
+        domains: idp_domains,
+        role_repo: repos.role_repo.clone(),
+        pg_unit_of_work: unit_of_work.clone(),
         create_use_case: create_idp_use_case,
         update_use_case: update_idp_use_case,
         delete_use_case: delete_idp_use_case,

@@ -1201,8 +1201,19 @@ async fn sso_owned_domains_route_to_their_idp() {
     let mut idp = IdentityProvider::new("acme-sso", "Acme SSO", IdentityProviderType::Oidc);
     idp.oidc_issuer_url = Some("https://idp.acme.test".into());
     idp.oidc_client_id = Some("portal-client".into());
-    idp.allowed_email_domains = vec!["acme.test".into()];
     app.repos.idp_repo.insert(&idp).await.expect("insert idp");
+    // The provider's domains are its email-domain mappings (Go's model).
+    let mut mapping = fc_platform::EmailDomainMapping::new(
+        "acme.test",
+        &idp.id,
+        fc_platform::email_domain_mapping::entity::ScopeType::Client,
+    );
+    mapping.primary_client_id = Some(client_id.clone());
+    app.repos
+        .edm_repo
+        .insert(&mapping)
+        .await
+        .expect("insert mapping");
 
     // Ensure: SSO-managed, no set-password invite; the portal origin is mailed.
     let (status, body) = ensure(

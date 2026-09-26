@@ -16,6 +16,9 @@ use crate::PrincipalRepository;
 pub struct ProviderMove {
     pub mapping_id: String,
     pub identity_provider_id: String,
+    /// Also link this primary client (an identity-provider claim of a
+    /// mapping that had none).
+    pub primary_client_id: Option<String>,
     pub reset_user_ids: Vec<String>,
 }
 
@@ -43,11 +46,13 @@ impl ProviderMoveRepository {
 impl crate::usecase::Persist<ProviderMove> for ProviderMoveRepository {
     async fn persist(&self, m: &ProviderMove, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "UPDATE tnt_email_domain_mappings SET identity_provider_id = $2, updated_at = NOW() \
+            "UPDATE tnt_email_domain_mappings SET identity_provider_id = $2, \
+             primary_client_id = COALESCE($3, primary_client_id), updated_at = NOW() \
              WHERE id = $1",
         )
         .bind(&m.mapping_id)
         .bind(&m.identity_provider_id)
+        .bind(&m.primary_client_id)
         .execute(&mut **tx.inner)
         .await?;
         self.principal_repo

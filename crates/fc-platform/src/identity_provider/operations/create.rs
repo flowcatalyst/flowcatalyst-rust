@@ -1,9 +1,17 @@
-//! Create Identity Provider Use Case
+//! Create Identity Provider Use Case (Go
+//! `identityprovider/operations/create.go` `CreateIdentityProvider`): the
+//! provider, and each listed email domain routed to it through the mappings
+//! (created when unknown, claimed when routed elsewhere), in one transaction
+//! when the handler runs it inside `PgUnitOfWork::run`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::domains::{
+    map_domain, normalize_domains, require_scope_for_new_domains, validate_domains,
+    validate_mapping_scope, DomainDeps,
+};
 use super::events::IdentityProviderCreated;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
@@ -26,8 +34,22 @@ pub struct CreateIdentityProviderCommand {
     pub oidc_multi_tenant: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_pattern: Option<String>,
+    /// The domains to route to the provider (mapped or claimed).
     #[serde(default)]
     pub allowed_email_domains: Vec<String>,
+    /// The scope a brand-new mapping gets: `ANCHOR` or `CLIENT`. Required
+    /// when a listed domain has no mapping yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping_scope: Option<String>,
+    /// Linked on mappings that are new (CLIENT) or have no client yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_client_id: Option<String>,
+    /// Reconcile users' IDP_SYNC roles from the token at login.
+    #[serde(default)]
+    pub sync_roles_from_idp: bool,
+    /// Platform roles (by id) role sync may confer; empty = no restriction.
+    #[serde(default)]
+    pub allowed_role_ids: Vec<String>,
 }
 
 impl crate::usecase::AuditMasked for CreateIdentityProviderCommand {}
@@ -35,13 +57,19 @@ impl crate::usecase::AuditMasked for CreateIdentityProviderCommand {}
 /// Use case for creating a new identity provider.
 pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
+    domains: DomainDeps,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
-    pub fn new(idp_repo: Arc<IdentityProviderRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        idp_repo: Arc<IdentityProviderRepository>,
+        domains: DomainDeps,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             idp_repo,
+            domains,
             unit_of_work,
         }
     }
@@ -56,17 +84,35 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         if command.code.trim().is_empty() {
             return Err(UseCaseError::validation(
                 "CODE_REQUIRED",
-                "Identity provider code is required",
+                "code is required",
             ));
         }
-
         if command.name.trim().is_empty() {
             return Err(UseCaseError::validation(
                 "NAME_REQUIRED",
-                "Identity provider name is required",
+                "name is required",
             ));
         }
-
+        if command.idp_type == IdentityProviderType::Oidc {
+            let blank = |v: &Option<String>| v.as_deref().is_none_or(|s| s.trim().is_empty());
+            if blank(&command.oidc_issuer_url) {
+                return Err(UseCaseError::validation(
+                    "OIDC_ISSUER_REQUIRED",
+                    "OIDC IDPs require oidcIssuerUrl",
+                ));
+            }
+            if blank(&command.oidc_client_id) {
+                return Err(UseCaseError::validation(
+                    "OIDC_CLIENT_ID_REQUIRED",
+                    "OIDC IDPs require oidcClientId",
+                ));
+            }
+        }
+        validate_domains(&command.allowed_email_domains)?;
+        validate_mapping_scope(
+            command.mapping_scope.as_deref(),
+            command.primary_client_id.as_deref(),
+        )?;
         super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
 
@@ -83,59 +129,80 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         command: CreateIdentityProviderCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<IdentityProviderCreated> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (idp, event, scope, client, domains) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        let created = self
+            .unit_of_work
+            .commit(&idp, &*self.idp_repo, event, &command)
+            .await;
+        if created.as_result().is_err() {
+            return created;
+        }
+        for domain in &domains {
+            if let Err(e) = map_domain(
+                &*self.unit_of_work,
+                &self.domains,
+                &idp,
+                domain,
+                scope,
+                client.as_deref(),
+                &ctx,
+                &command,
+            )
+            .await
+            {
+                return UseCaseResult::failure(e);
+            }
+        }
+        created
     }
 }
+
+type Prepared = (
+    crate::IdentityProvider,
+    IdentityProviderCreated,
+    Option<crate::email_domain_mapping::entity::ScopeType>,
+    Option<String>,
+    Vec<String>,
+);
 
 impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
     async fn prepare(
         &self,
         command: &CreateIdentityProviderCommand,
         ctx: &ExecutionContext,
-    ) -> Result<IdentityProviderCreated, UseCaseError> {
-        // Business rule: code must be unique
+    ) -> Result<Prepared, UseCaseError> {
         if self.idp_repo.find_by_code(&command.code).await?.is_some() {
             return Err(UseCaseError::business_rule(
-                "IDENTITY_PROVIDER_CODE_EXISTS",
+                "CODE_EXISTS",
                 format!(
                     "Identity provider with code '{}' already exists",
                     command.code
                 ),
             ));
         }
+        let (scope, client) = validate_mapping_scope(
+            command.mapping_scope.as_deref(),
+            command.primary_client_id.as_deref(),
+        )?;
+        let domains = normalize_domains(&command.allowed_email_domains);
+        require_scope_for_new_domains(&self.domains, &domains, scope).await?;
 
-        // Parse the type
-        let idp_type = command.idp_type;
+        // Go stores the OIDC fields whatever the type.
+        let mut idp = crate::IdentityProvider::new(&command.code, &command.name, command.idp_type);
+        idp.oidc_issuer_url = command.oidc_issuer_url.clone();
+        idp.oidc_client_id = command.oidc_client_id.clone();
+        idp.oidc_client_secret_ref = command.oidc_client_secret_ref.clone();
+        idp.oidc_multi_tenant = command.oidc_multi_tenant;
+        idp.oidc_issuer_pattern = command.oidc_issuer_pattern.clone();
+        idp.sync_roles_from_idp = command.sync_roles_from_idp;
+        idp.allowed_role_ids = command.allowed_role_ids.clone();
 
-        // Create entity
-        let mut idp = crate::IdentityProvider::new(&command.code, &command.name, idp_type);
-
-        // Set OIDC fields if type is OIDC
-        if idp_type == IdentityProviderType::Oidc {
-            idp.oidc_issuer_url = command.oidc_issuer_url.clone();
-            idp.oidc_client_id = command.oidc_client_id.clone();
-            idp.oidc_client_secret_ref = command.oidc_client_secret_ref.clone();
-            idp.oidc_multi_tenant = command.oidc_multi_tenant;
-            idp.oidc_issuer_pattern = command.oidc_issuer_pattern.clone();
-        }
-        idp.allowed_email_domains = command.allowed_email_domains.clone();
-
-        // Create domain event
         let event = IdentityProviderCreated::new(ctx, &idp.id, &idp.code);
-
-        // Insert via repo
-        if let Err(e) = self.idp_repo.insert(&idp).await {
-            return Err(UseCaseError::commit(format!(
-                "Failed to insert identity provider: {}",
-                e
-            )));
-        }
-        Ok(event)
+        Ok((idp, event, scope, client, domains))
     }
 }
 
@@ -155,6 +222,10 @@ mod tests {
             oidc_multi_tenant: false,
             oidc_issuer_pattern: None,
             allowed_email_domains: vec![],
+            mapping_scope: None,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            allowed_role_ids: vec![],
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

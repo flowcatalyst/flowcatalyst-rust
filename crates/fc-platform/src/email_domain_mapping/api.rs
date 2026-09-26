@@ -25,8 +25,6 @@ pub struct CreateEmailDomainMappingRequest {
     pub additional_client_ids: Option<Vec<String>>,
     pub granted_client_ids: Option<Vec<String>>,
     pub required_oidc_tenant_id: Option<String>,
-    pub allowed_role_ids: Option<Vec<String>>,
-    pub sync_roles_from_idp: Option<bool>,
     /// Go's per-domain 2FA policy (emaildomainmapping/api/dto.go:20-25).
     #[serde(default, rename = "require2fa")]
     pub require_2fa: Option<bool>,
@@ -41,14 +39,19 @@ pub struct CreateEmailDomainMappingRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEmailDomainMappingRequest {
+    /// Not in Go's update (the provider moves through `move-provider`);
+    /// still honoured here.
     pub identity_provider_id: Option<String>,
+    /// The SPA's edit form sends it; Go ignores it, Rust applies it.
     pub scope_type: Option<String>,
-    pub primary_client_id: Option<String>,
+    /// `null` clears the link (the SPA's ANCHOR edit); absent leaves it.
+    #[serde(default, deserialize_with = "nullable")]
+    pub primary_client_id: Option<Option<String>>,
     pub additional_client_ids: Option<Vec<String>>,
     pub granted_client_ids: Option<Vec<String>>,
-    pub required_oidc_tenant_id: Option<String>,
-    pub allowed_role_ids: Option<Vec<String>>,
-    pub sync_roles_from_idp: Option<bool>,
+    /// `null` or `""` clears the pin; absent leaves it.
+    #[serde(default, deserialize_with = "nullable")]
+    pub required_oidc_tenant_id: Option<Option<String>>,
     #[serde(default, rename = "require2fa")]
     pub require_2fa: Option<bool>,
     #[serde(default, rename = "allowed2faMethods")]
@@ -59,20 +62,32 @@ pub struct UpdateEmailDomainMappingRequest {
     pub remember_device_days: Option<i32>,
 }
 
+/// A member that tells an explicit `null` (`Some(None)`) from an absent one
+/// (`None`, with `#[serde(default)]`).
+fn nullable<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(deserializer)?))
+}
+
+/// Go `MappingResponse` (emaildomainmapping/api/dto.go): optional members
+/// absent when unset. Role sync lives on the identity provider (Go's 040).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailDomainMappingResponse {
     pub id: String,
     pub email_domain: String,
     pub identity_provider_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_provider_name: Option<String>,
     pub scope_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     pub additional_client_ids: Vec<String>,
     pub granted_client_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub required_oidc_tenant_id: Option<String>,
-    pub allowed_role_ids: Vec<String>,
-    pub identity_provider_name: Option<String>,
-    pub sync_roles_from_idp: bool,
     #[serde(rename = "require2fa")]
     pub require_2fa: bool,
     #[serde(rename = "allowed2faMethods")]
@@ -97,9 +112,7 @@ impl EmailDomainMappingResponse {
             additional_client_ids: m.additional_client_ids,
             granted_client_ids: m.granted_client_ids,
             required_oidc_tenant_id: m.required_oidc_tenant_id,
-            allowed_role_ids: m.allowed_role_ids,
             identity_provider_name,
-            sync_roles_from_idp: m.sync_roles_from_idp,
             require_2fa: m.require_2fa,
             allowed_2fa_methods: m.allowed_2fa_methods,
             remember_device_enabled: m.remember_device_enabled,
@@ -127,7 +140,8 @@ pub struct EmailDomainMappingsListResponse {
 pub struct EmailDomainMappingsState {
     pub edm_repo: Arc<EmailDomainMappingRepository>,
     pub idp_repo: Arc<IdentityProviderRepository>,
-    /// Role definitions, for the role ceiling on `allowedRoleIds`.
+    /// Role definitions (the role ceiling now applies to the identity
+    /// provider's `allowedRoleIds`).
     pub role_repo: Arc<crate::RoleRepository>,
     pub create_use_case: Arc<
         crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase<
@@ -174,16 +188,6 @@ pub async fn create_email_domain_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_create_email_domain_mappings(&auth.0)?;
-    // Owner ruling 14: `allowedRoleIds` decides which roles an IdP login
-    // may hand out, so it is bounded by the role ceiling.
-    let allowed_role_ids = req.allowed_role_ids.unwrap_or_default();
-    crate::role::ceiling::require_role_ref_change(
-        &auth.0,
-        &state.role_repo,
-        &[],
-        &allowed_role_ids,
-    )
-    .await?;
 
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
@@ -193,8 +197,9 @@ pub async fn create_email_domain_mapping(
         additional_client_ids: req.additional_client_ids.unwrap_or_default(),
         granted_client_ids: req.granted_client_ids.unwrap_or_default(),
         required_oidc_tenant_id: req.required_oidc_tenant_id,
-        allowed_role_ids,
-        sync_roles_from_idp: req.sync_roles_from_idp.unwrap_or(false),
+        // Role sync lives on the identity provider (Go's 040).
+        allowed_role_ids: Vec::new(),
+        sync_roles_from_idp: false,
         two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyInput {
             require_2fa: req.require_2fa.unwrap_or(false),
             allowed_2fa_methods: req.allowed_2fa_methods.unwrap_or_default(),
@@ -232,19 +237,15 @@ pub async fn list_email_domain_mappings(
     let mappings = state.edm_repo.find_all().await?;
     let total = mappings.len();
 
-    // Batch-lookup identity provider names
-    let idp_ids: Vec<String> = mappings
+    // Identity-provider names in one query (Go leaves an unresolvable one
+    // out).
+    let mut idp_ids: Vec<String> = mappings
         .iter()
         .map(|m| m.identity_provider_id.clone())
         .collect();
-    let mut idp_name_map = std::collections::HashMap::new();
-    for idp_id in &idp_ids {
-        if !idp_name_map.contains_key(idp_id) {
-            if let Some(idp) = state.idp_repo.find_by_id(idp_id).await? {
-                idp_name_map.insert(idp_id.clone(), idp.name);
-            }
-        }
-    }
+    idp_ids.sort();
+    idp_ids.dedup();
+    let idp_name_map = state.idp_repo.find_names_by_ids(&idp_ids).await?;
 
     let responses = mappings
         .into_iter()
@@ -354,29 +355,19 @@ pub async fn update_email_domain_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_email_domain_mappings(&auth.0)?;
-    // Owner ruling 14, as on create; a missing mapping is the use case's 404.
-    if let Some(after) = req.allowed_role_ids.as_deref() {
-        if let Some(existing) = state.edm_repo.find_by_id(&id).await? {
-            crate::role::ceiling::require_role_ref_change(
-                &auth.0,
-                &state.role_repo,
-                &existing.allowed_role_ids,
-                after,
-            )
-            .await?;
-        }
-    }
 
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,
         identity_provider_id: req.identity_provider_id,
         scope_type: crate::shared::enum_str::parse_opt(req.scope_type.as_deref())?,
-        primary_client_id: req.primary_client_id,
-        sync_roles_from_idp: req.sync_roles_from_idp,
+        // An explicit null clears: passed as blank, which the use case reads
+        // as "no link".
+        primary_client_id: req.primary_client_id.map(Option::unwrap_or_default),
+        sync_roles_from_idp: None,
         additional_client_ids: req.additional_client_ids,
         granted_client_ids: req.granted_client_ids,
-        required_oidc_tenant_id: req.required_oidc_tenant_id,
-        allowed_role_ids: req.allowed_role_ids,
+        required_oidc_tenant_id: req.required_oidc_tenant_id.map(Option::unwrap_or_default),
+        allowed_role_ids: None,
         two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyUpdate {
             require_2fa: req.require_2fa,
             allowed_2fa_methods: req.allowed_2fa_methods,

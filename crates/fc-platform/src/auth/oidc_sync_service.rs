@@ -38,6 +38,13 @@ pub struct OidcIdentity<'a> {
 }
 
 /// OIDC User and Role Synchronization Service
+/// An identity provider's role-sync setting for one login: the names its
+/// allow-list resolves to, or `None` for no restriction.
+#[derive(Debug, Clone, Copy)]
+pub struct RoleSync<'a> {
+    pub allowed_role_names: Option<&'a [String]>,
+}
+
 pub struct OidcSyncService {
     principal_repo: Arc<PrincipalRepository>,
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
@@ -231,14 +238,14 @@ impl OidcSyncService {
         Ok(authorized_role_names)
     }
 
-    /// Sync IDP roles with optional allowed_role_ids filter from EmailDomainMapping.
-    /// When allowed_role_ids is non-empty, only mapped roles whose platform_role_name
-    /// is in the allow-list will be assigned.
+    /// Sync IDP roles, bounded by the identity provider's allow-list: with
+    /// `allowed_role_names` set, only mapped roles named in it are assigned
+    /// (an empty list admits none); `None` is no restriction.
     pub async fn sync_idp_roles_filtered(
         &self,
         principal: &mut Principal,
         idp_role_names: &[String],
-        allowed_role_ids: Option<&[String]>,
+        allowed_role_names: Option<&[String]>,
     ) -> Result<HashSet<String>> {
         let mut authorized_role_names: HashSet<String> = HashSet::new();
         let email = principal.email().unwrap_or("unknown").to_string();
@@ -253,14 +260,14 @@ impl OidcSyncService {
                 let mapping = self.find_idp_role_mapping(idp_role_name).await?;
 
                 if let Some(mapping) = mapping {
-                    // Check against allowed_role_ids if provided
-                    if let Some(allowed) = allowed_role_ids {
-                        if !allowed.is_empty() && !allowed.contains(&mapping.platform_role_name) {
+                    // Check against the provider's allow-list, if it has one
+                    if let Some(allowed) = allowed_role_names {
+                        if !allowed.contains(&mapping.platform_role_name) {
                             debug!(
                                 principal_id = %principal.id,
                                 idp_role = %idp_role_name,
                                 internal_role = %mapping.platform_role_name,
-                                "Skipped IDP role: not in email domain mapping allowed_role_ids"
+                                "Skipped IDP role: not in identity provider allowed_role_ids"
                             );
                             continue;
                         }
@@ -321,21 +328,23 @@ impl OidcSyncService {
     /// called during the OIDC login callback.
     ///
     /// `idp_role_names` are the token's roles (see [`Self::sync_idp_roles`]).
-    /// When `allowed_role_ids` (from the EmailDomainMapping) is provided and
-    /// non-empty, only mapped roles whose internal role ID is in the
-    /// allow-list will be assigned.
+    /// `role_sync` is the identity provider's setting (Go's 040): `None`
+    /// when the provider has role sync off, which leaves the user's roles,
+    /// however sourced, alone.
     pub async fn sync_oidc_login(
         &self,
         identity: &OidcIdentity<'_>,
         idp_role_names: &[String],
-        allowed_role_ids: Option<&[String]>,
+        role_sync: Option<RoleSync<'_>>,
     ) -> Result<Principal> {
         // Sync user information
         let mut principal = self.sync_oidc_user(identity).await?;
 
         // CRITICAL SECURITY: Sync IDP roles with authorization check
-        self.sync_idp_roles_filtered(&mut principal, idp_role_names, allowed_role_ids)
-            .await?;
+        if let Some(sync) = role_sync {
+            self.sync_idp_roles_filtered(&mut principal, idp_role_names, sync.allowed_role_names)
+                .await?;
+        }
 
         Ok(principal)
     }
