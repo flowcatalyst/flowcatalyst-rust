@@ -200,7 +200,16 @@ async fn portal_users_admin_surface_follows_go() {
     let other_client = client(&app, "portal-other").await;
 
     // Validation and permissions.
+    // Go's huma answers a missing required member.
     let (status, body) = ensure(&app, &anchor, json!({ "email": "a@example.com" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "VALIDATION");
+    let (status, body) = ensure(
+        &app,
+        &anchor,
+        json!({ "clientId": "", "email": "a@example.com" }),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "CLIENT_ID_REQUIRED");
     let plain = app.client_user_token(&client_id);
@@ -342,8 +351,9 @@ async fn portal_users_admin_surface_follows_go() {
         .await,
     )
     .await;
+    // Go's huma answers the missing required member.
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["error"], "CLIENT_ID_REQUIRED");
+    assert_eq!(body["error"], "VALIDATION");
     let body = assert_status(
         app.post(
             &format!("/api/portal-users/{identity_id}/deactivate"),
@@ -502,12 +512,20 @@ async fn portal_apps_admin_surface_follows_go() {
             StatusCode::BAD_REQUEST,
         ),
         (
+            // Go's huma enum check.
             json!({ "clientId": client_id, "code": "t", "name": "T", "clientType": "PARTNER" }),
-            "INVALID_CLIENT_TYPE",
+            "VALIDATION",
             StatusCode::BAD_REQUEST,
         ),
         (
+            // A missing member is huma's required-property check…
             json!({ "clientId": client_id, "code": "noname" }),
+            "VALIDATION",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            // …a blank one the use case's.
+            json!({ "clientId": client_id, "code": "noname", "name": " " }),
             "NAME_REQUIRED",
             StatusCode::BAD_REQUEST,
         ),
@@ -518,6 +536,11 @@ async fn portal_apps_admin_surface_follows_go() {
         ),
         (
             json!({ "code": "x", "name": "X" }),
+            "VALIDATION",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({ "clientId": "", "code": "x", "name": "X" }),
             "CLIENT_ID_REQUIRED",
             StatusCode::BAD_REQUEST,
         ),
