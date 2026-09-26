@@ -65,6 +65,10 @@ The binding record for the work that follows. It supersedes anything in older do
 | 36 | Audit command JSON | Stored command JSON stays camelCase (Go stores PascalCase field names); operation names match Go. Owner, 2026-09-26. |
 | 37 | Developer portal | `/bff/developer` also admits application-scoped developers, for the applications they can access (Go: anchor + `openapi:view` only). Owner, 2026-09-26. |
 | 38 | Go 500s and data loss in admin writes | Where Go answers 500 or loses data and Rust answers correctly (anchor-domain update into an existing domain and duplicate IdP role mapping → 409; an email-domain mapping update clears `primaryClientId` only on explicit `null`), Rust keeps its behaviour, as #31. Owner, 2026-09-26. |
+| 39 | Developer portal and the platform app | Application-scoped developers (#37) also see the seeded `platform` application (the platform's own API reference). Owner, 2026-09-26. |
+| 40 | More Go defects Rust keeps correct | Go's app-scoped syncs answer 500 `AUDIT_WRITE` for application codes over 17 characters (Rust widened the column, migration 038), and Go's service-account delete leaves the principal and OAuth client behind so a deleted account's credentials still work. Rust stays correct; the harness allow-lists them citing this decision. Owner, 2026-09-26. |
+| 41 | Router release delays (deviation D1) | On a connection error, 5xx or open breaker, Rust returns the message to the broker after 30 s (5 s breaker, 10 s siblings); Go returns it at once, hot-looping during an outage and spending SQS receive counts toward the DLQ. Rust keeps its delays. Owner, 2026-09-26. |
+| 42 | Topcoat UI | `fc-web` uses Topcoat UI's components and Tailwind as its base ("use as much of Topcoat UI as makes sense"); the no-Tailwind rule is only for the PrimeVue SPA. fc-web stays optional behind `--features web` until the owner makes it primary. Owner, 2026-09-26. |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
