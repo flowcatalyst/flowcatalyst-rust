@@ -312,7 +312,7 @@ impl TwoFactorLogin {
                 );
             }
         };
-        let jar = jar.add(self.session_cookie.build_cookie(token));
+        let session_cookie = self.session_cookie.build_cookie(token);
         let email = email_of(p);
         record_user_login_attempt(
             &self.login_attempt_repo,
@@ -336,7 +336,14 @@ impl TwoFactorLogin {
             recovery_codes,
             sso_managed: self.sso_managed(p, None).await,
         };
-        (jar, Json(body)).into_response()
+        // The jar's cookies (a remembered device's) first, then the session
+        // cookie, in that order every time, as Go writes them: a jar
+        // iterates its changes in hash order.
+        let mut response = (jar, Json(body)).into_response();
+        if let Ok(value) = HeaderValue::from_str(&session_cookie.encoded().to_string()) {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+        response
     }
 
     /// Whether this just-authenticated password user owes a second factor.

@@ -555,6 +555,7 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         "platform:admin:subscription:synced",
         obj(&[
             req_str("applicationCode"),
+            opt_str("clientId"),
             req_u32("created"),
             req_u32("updated"),
             req_u32("deleted"),
