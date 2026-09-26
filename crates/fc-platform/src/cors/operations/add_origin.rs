@@ -98,9 +98,9 @@ impl<U: UnitOfWork> AddCorsOriginUseCase<U> {
     ) -> Result<(CorsAllowedOrigin, CorsOriginAdded), UseCaseError> {
         let origin = command.origin.trim();
 
-        // Check for duplicate origin
+        // Check for duplicate origin: 409, as Go's `usecase.Conflict`.
         if self.cors_repo.find_by_origin(origin).await?.is_some() {
-            return Err(UseCaseError::validation(
+            return Err(UseCaseError::business_rule(
                 "ORIGIN_ALREADY_EXISTS",
                 format!("CORS origin '{}' already exists", origin),
             ));

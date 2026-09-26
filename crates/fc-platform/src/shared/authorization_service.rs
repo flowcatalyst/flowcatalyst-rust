@@ -1215,15 +1215,15 @@ pub mod checks {
 
     /// Check write access to event types (create, update, or delete)
     pub fn can_write_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::admin::EVENT_TYPE_CREATE,
-            permissions::admin::EVENT_TYPE_UPDATE,
-            permissions::admin::EVENT_TYPE_DELETE,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot write event types"))
-        }
+        // Go `CanWriteEventTypes`: 403 `PERMISSION_REQUIRED`, `one of: …`.
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::EVENT_TYPE_CREATE,
+                permissions::admin::EVENT_TYPE_UPDATE,
+                permissions::admin::EVENT_TYPE_DELETE,
+            ],
+        )
     }
 
     // ── Process documentation ────────────────────────────────────────────

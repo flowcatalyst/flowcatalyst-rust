@@ -26,7 +26,10 @@ pub struct CreateCorsOriginRequest {
 pub struct CorsOriginResponse {
     pub id: String,
     pub origin: String,
+    // Go `AllowedOriginResponse`: absent when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
