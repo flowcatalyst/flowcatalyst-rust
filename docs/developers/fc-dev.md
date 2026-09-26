@@ -3,7 +3,7 @@
 `fc-dev` is the all-in-one developer binary for FlowCatalyst. One executable
 contains the platform API, message router (with an embedded SQLite queue),
 scheduler, stream processor, frontend, and — optionally — an embedded
-PostgreSQL. It also bundles utilities for bootstrapping a fresh project,
+PostgreSQL 18, the same cluster Go's and Java's `fcdev` use. It also bundles utilities for bootstrapping a fresh project,
 resetting the database, running the MCP server, and polling an external
 app's outbox.
 
@@ -72,6 +72,7 @@ fc-dev upgrade --force   # reinstall even if current
 | `fc-dev` (bare) / `fc-dev start` | Run the dev monolith — API, router, scheduler, stream, frontend, embedded PG. |
 | `fc-dev init` | Bootstrap a fresh local app: admin user, client, application, service account, `.env`. |
 | `fc-dev fresh` | TRUNCATE every FlowCatalyst-owned table in the DB (keeps schema). |
+| `fc-dev stop` | Stop the running fcdev — Rust, Go or Java — via the shared PID file (SIGTERM, then SIGKILL past `--timeout`). |
 | `fc-dev outbox init` | One-time setup: writes `FC_OUTBOX_*` keys to the project's `.env`. |
 | `fc-dev outbox poll` | Standalone outbox poller. Reads config from `.env` / process env; auto-creates the `outbox_messages` table if missing. |
 | `fc-dev mcp` | Read-only MCP server for LLM clients (stdio or HTTP). |
@@ -85,18 +86,20 @@ exact flags and env vars — this page summarises the intent.
 ## `fc-dev` / `fc-dev start` — run the dev monolith
 
 ```sh
-fc-dev                              # default: embedded PG, API :8080, metrics :9090
+fc-dev                              # default: shared embedded PG 18 on :15432, API :8080, metrics :9090
 fc-dev --api-port 3000              # change the API port
 FC_API_PORT=3000 fc-dev             # equivalent via env
-fc-dev --reset-db                   # wipe embedded PG data dir and start fresh
+fc-dev stop                         # stop the running fcdev (Rust, Go or Java)
 fc-dev --embedded-db=false \        # connect to external Postgres instead
        --database-url postgresql://localhost:5432/flowcatalyst
 ```
 
 What it does on first run:
 
-1. Downloads an embedded Postgres binary to
-   `~/.cache/flowcatalyst-dev/pgdata/` (~80 MB, one-time).
+1. Extracts the PostgreSQL 18 binaries bundled in the executable to
+   `<userCacheDir>/flowcatalyst/embedded-pg/theseus/<version>/` (one-time),
+   and creates the embedded cluster if there is none yet (see
+   [The shared embedded cluster](#the-shared-embedded-cluster)).
 2. Runs migrations.
 3. Seeds built-in roles, the `platform` application, default processes.
 4. Starts the API on `http://localhost:8080`, metrics on
@@ -123,11 +126,110 @@ data and the outbox table). When your app is on a separate database
 | `--api-port` / `FC_API_PORT` | `8080` | API + frontend port |
 | `--metrics-port` / `FC_METRICS_PORT` | `9090` | Prometheus + `/health` |
 | `--database-url` / `FC_DATABASE_URL` | embedded PG URL | Postgres connection |
-| `--embedded-db` / `FC_EMBEDDED_DB` | `true` | Start bundled PG vs. use `--database-url` |
-| `--reset-db` / `FC_RESET_DB` | `false` | Wipe `~/.cache/flowcatalyst-dev/pgdata/` first |
+| `--embedded-db` / `FC_EMBEDDED_DB` | `true` | Start the shared embedded PG vs. use `--database-url` |
+| `--embedded-db-path` / `FC_EMBEDDED_DB_PATH` | `<userDataDir>/flowcatalyst/embedded-pg` | Embedded cluster directory (cluster in `<path>/data`) |
+| `--embedded-db-port` / `FC_EMBEDDED_DB_PORT` | `15432` | Embedded PG port (`0` = any free port) |
+| `--embedded-db-extensions-from` / `FC_EMBEDDED_DB_EXTENSIONS_FROM` | — | A PG 18 tree to copy PostGIS from (tried first) |
+| `--embedded-db-reset` / `FC_EMBEDDED_DB_RESET` (old: `--reset-db` / `FC_RESET_DB`) | `false` | Delete the whole `--embedded-db-path` first; the shared default also needs `--confirm-shared-db-reset` |
+| `--pid-file` / `FC_DEV_PID_FILE` | `<userDataDir>/flowcatalyst/fcdev.pid` | PID file shared with Go/Java fcdev |
 | `--pool-concurrency` / `FC_POOL_CONCURRENCY` | `10` | Default router pool concurrency |
 | `--scheduler-enabled` / `FC_SCHEDULER_ENABLED` | `true` | Dispatch scheduler |
 | `--outbox-enabled` / `FC_OUTBOX_ENABLED` | `false` | Embedded outbox processor |
+
+### The shared embedded cluster
+
+fc-dev, Go's `fcdev` and Java's `fcdev` use **one** embedded PostgreSQL
+cluster, so a developer can switch between them without losing data. Same
+directory, port, credentials, database and PostgreSQL major:
+
+| | |
+|---|---|
+| Cluster | `<embedded-db-path>/data`; default `<userDataDir>/flowcatalyst/embedded-pg/data` |
+| `<userDataDir>` | `$XDG_DATA_HOME`, else macOS `~/Library/Application Support`, Windows `%AppData%`, Linux `$XDG_CONFIG_HOME` or `~/.config` (Go's `os.UserConfigDir`) |
+| Port | `15432` |
+| URL | `postgresql://postgres:postgres@localhost:15432/flowcatalyst?sslmode=disable` |
+| Major | PostgreSQL **18** (pinned; `POSTGRESQL_VERSION` in `.cargo/config.toml`) |
+| Keys | `<userDataDir>/flowcatalyst/app-key` (`FLOWCATALYST_APP_KEY`, created if absent) and `jwt-signing-key.pem` (used when present) |
+| PID file | `<userDataDir>/flowcatalyst/fcdev.pid` |
+
+Each binary runs the cluster with its own server binaries, all PG 18:
+Go's under `<userCacheDir>/flowcatalyst/embedded-pg/bin`, Java's under
+`…/embedded-pg/PG-<md5>`, fc-dev's under `…/embedded-pg/theseus/<version>`
+(extracted from the fc-dev executable, so a machine without Go or Java
+still gets a working cluster; `initdb` runs with Go's arguments). A data
+directory of another major is refused with Go's message: upgrade it with
+Go's or Java's `fcdev db upgrade`.
+
+**One at a time.** Only one fcdev may serve the cluster. fc-dev refuses to
+start while the PID file names a live fcdev, while the cluster's
+`postmaster.pid` names a live server, or while Java's `epg-lock` is held,
+and says which process it is. Stop the other one first:
+
+```sh
+fc-dev stop          # or `fcdev stop` with the Go/Java binary — same PID file
+fc-dev
+```
+
+While fc-dev runs it holds the PID file and Java's `epg-lock`, so Go's and
+Java's `fcdev stop` stop it, and a Java `fcdev` started meanwhile refuses
+at once. (Go's `fcdev start` does not check; it fails when its Postgres
+cannot start on the busy cluster, without touching it.) `fc-dev init` and
+`fc-dev fresh` use the running server when there is one, whichever binary
+started it.
+
+**PostGIS.** PostGIS lives only in the tree it was copied into (Go's, per
+`flowcatalyst-go/docs/embedded-postgres-postgis.md`). Before starting, fc-dev
+copies the PostGIS family (`postgis*`, `rtpostgis*`, `address_standardizer*`
+modules, `.control` and `.sql` files) into its own tree from the first
+source that has it: `--embedded-db-extensions-from`, Go's tree, Java's
+trees, Homebrew (`/opt/homebrew/opt/postgis`, `/usr/local/opt/postgis`),
+PGDG (`/usr/lib/postgresql/18`, `/usr/pgsql-18`). It never overwrites a
+file. After starting it checks every database's installed extensions and
+logs an error naming the database when its tree still lacks one (the
+platform's own database needs none, so fc-dev keeps running). Java does
+the same; fc-dev runs its own tree rather than Go's so that it never
+depends on another tool's cache being present or of a matching version.
+
+**Resetting.** `--embedded-db-reset` deletes the whole
+`--embedded-db-path`, as Go does. For the shared default it also needs
+`--confirm-shared-db-reset`, because that cluster holds every binary's data.
+
+**Differences from Go.** With `--embedded-db` on (the default) fc-dev uses
+the embedded cluster even when `FC_DATABASE_URL` is set (this repository's
+`.env.development` sets it); pass `--embedded-db=false` to use the URL. Go
+uses the URL whenever it is set. fc-dev has no `db upgrade`.
+
+**Migrations on a database Go and Java migrated.** Each binary keeps its
+own tracker beside the others (Go `goose_db_version`, Java
+`flyway_schema_history`, fc-dev `_schema_migrations`). On first contact
+fc-dev creates its tracker and backfills every migration whose effects are
+already visible, then applies only the rest. Verified on a copy of a
+Go/Java-migrated dev cluster (goose 54, Flyway V17): fc-dev applied
+037 and 038 and nothing else. Its schema changes there:
+
+| DDL | Verdict for Go / Java |
+|---|---|
+| `CREATE TABLE _schema_migrations` | fc-dev's tracker; neither reads it |
+| `ALTER TABLE aud_logs ALTER COLUMN entity_id TYPE VARCHAR(100)` (was 17) | Java's V18 is the same statement; a wider column accepts everything Go writes |
+| `fn_functions_runtime_check` re-created allowing `COMPONENT` besides `JVM`, `WASM` | widening only; rows Java writes still pass |
+| `ALTER TABLE fn_hosts ADD COLUMN IF NOT EXISTS runtimes JSONB` | nullable; Java's inserts leave it NULL; no Go/Java migration adds the column |
+| `CREATE TABLE/INDEX IF NOT EXISTS queue_messages…`, monthly partitions `CREATE TABLE IF NOT EXISTS … PARTITION OF` | no-ops there (already present) |
+
+No existing row is deleted. Seeding and start-up writes: built-in roles
+are reset to fc-dev's catalogue, which is Go's (Java's V17 renamed
+`platform:admin:config:update` to `…:config:manage`; whichever binary
+starts last wins, as between Go and Java today); 58 platform event types Go
+emits but had not catalogued are added, existing ones keep their values;
+plaintext service-account webhook secrets are encrypted with the shared
+`app-key` (Go re-encrypts them the same way on read, and decrypts the
+result); the platform application's OpenAPI document becomes fc-dev's (the
+previous one is kept as `ARCHIVED`). The developer-portal auto-sync also
+records one `platform:admin:eventtype:updated` event per platform event
+type on every start. `fc-dev init` only adds rows.
+
+The cluster fc-dev used before (`<userCacheDir>/flowcatalyst-dev/pgdata`,
+port 15432, password `flowcatalyst`) is no longer used; fc-dev logs its path
+while it exists. Delete it when you no longer need its data.
 
 ---
 
@@ -339,9 +441,9 @@ Your SDK reads the resulting `.env` automatically.
 ### Recipe: reset a wedged local state
 
 ```sh
-fc-dev fresh            # TRUNCATEs every FC table; preserves schema
-# or:
-fc-dev --reset-db       # wipes embedded PG data dir entirely (rare)
+fc-dev fresh            # drops + rebuilds the platform schema (asks first)
+# or, wiping the whole shared cluster — every database Go/Java/Rust keep there:
+fc-dev --embedded-db-reset --confirm-shared-db-reset
 ```
 
 ### Recipe: app with PostGIS (or any other extension fc-dev can't bundle)
@@ -352,7 +454,7 @@ docker run --name pg-postgis -p 5433:5432 \
   -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=myapp \
   postgis/postgis:16-3.4
 
-# 2. Run fc-dev as normal (uses its own embedded PG for the platform DB)
+# 2. Run fc-dev as normal (uses the shared embedded PG for the platform DB)
 fc-dev
 
 # 3. One-time: from your project directory, write FC_OUTBOX_* into .env
@@ -401,7 +503,13 @@ The full list lives in `fc-dev <subcommand> --help`. The most common:
 | `FC_METRICS_PORT` | `9090` | `start` |
 | `FC_DATABASE_URL` | (embedded PG) | `start`, `init`, `fresh` |
 | `FC_EMBEDDED_DB` | `true` | `start`, `init`, `fresh` |
-| `FC_RESET_DB` | `false` | `start` |
+| `FC_EMBEDDED_DB_PATH` | `<userDataDir>/flowcatalyst/embedded-pg` | `start`, `init`, `fresh` |
+| `FC_EMBEDDED_DB_PORT` | `15432` | `start`, `init`, `fresh` |
+| `FC_EMBEDDED_DB_EXTENSIONS_FROM` | — | `start`, `init`, `fresh` |
+| `FC_EMBEDDED_DB_RESET` (old: `FC_RESET_DB`) | `false` | `start` |
+| `FC_CONFIRM_SHARED_DB_RESET` | `false` | `start` |
+| `FC_DEV_PID_FILE` | `<userDataDir>/flowcatalyst/fcdev.pid` | `start`, `stop` |
+| `FLOWCATALYST_APP_KEY` | `<userDataDir>/flowcatalyst/app-key` (embedded); a fixed dev key otherwise | all |
 | `FC_SCHEDULER_ENABLED` | `true` | `start` |
 | `FC_OUTBOX_ENABLED` | `false` | `start` (embedded outbox) |
 | `FC_OUTBOX_DB_URL` | — | `start`, `outbox poll`, `outbox init` |
@@ -411,7 +519,7 @@ The full list lives in `fc-dev <subcommand> --help`. The most common:
 | `FC_OUTBOX_SKIP_BOOTSTRAP` | `false` | `outbox poll` — opt out of `CREATE TABLE IF NOT EXISTS` |
 | `FC_DEV_MODE` | `true` (auto-set) | global behaviour gate |
 | `FC_STATIC_DIR` | — | `start` — serve frontend from filesystem (live reload) |
-| `FC_JWT_PRIVATE_KEY_PATH` / `FC_JWT_PUBLIC_KEY_PATH` | `~/.cache/flowcatalyst-dev/jwt-keys/` | `start` |
+| `FC_JWT_PRIVATE_KEY_PATH` / `FC_JWT_PUBLIC_KEY_PATH` / `FC_JWT_SIGNING_KEY_PATH` | `<userDataDir>/flowcatalyst/jwt-signing-key.pem` when it exists (Go/Java's), else `<userCacheDir>/flowcatalyst-dev/jwt-keys/` | `start` |
 | `FC_WEBAUTHN_RP_ID` | `localhost` | `start` |
 | `FC_WEBAUTHN_ORIGINS` | `http://localhost:5173,http://localhost:8080` | `start` |
 
@@ -426,11 +534,15 @@ your shell.
 | Symptom | Most likely cause |
 |---|---|
 | `fc-dev: command not found` after install | Shell hasn't reloaded — see [INSTALL.md](../../INSTALL.md#troubleshooting) |
-| First-run download stuck | The bundled PG binary unpack — wait it out; `~/.cache/flowcatalyst-dev/pgdata/` grows ~200 MB |
+| First run slow | The bundled PG binaries unpack into `<userCacheDir>/flowcatalyst/embedded-pg/theseus/` (~45 MB, once) |
+| "… is already running (pid N …)" / "the embedded cluster … is already being served" | Go's, Java's or another fc-dev is using the shared cluster; `fc-dev stop` (or `fcdev stop`), then start again |
+| "the embedded cluster is locked by Java fcdev" | Java's fcdev holds the cluster's `epg-lock`; stop it first |
+| "data dir … is PG17 but this fc-dev embeds PG18" | The cluster is another major; `fcdev db upgrade` (Go/Java) or `--embedded-db-reset` |
+| Error log "Database uses extension(s) fc-dev's Postgres tree does not provide" | A database uses PostGIS but no source tree has it; `brew install postgis` or `--embedded-db-extensions-from <PG 18 tree>` |
 | `error: failed to run custom build command for postgresql_embedded` | Building from source behind a proxy; use the release binary instead |
 | Outbox poll prints "no token" warning | Set `FC_OUTBOX_TOKEN` — batch endpoints reject unauthenticated requests |
 | Outbox poll connects but no items flow | Confirm your app writes to a table the processor recognises (default `outbox_messages`) and at least one row has `status = 1` (PENDING) |
-| Embedded PG won't start: "data dir exists" | A previous fc-dev with different settings; `fc-dev --reset-db` wipes the data dir |
+| Embedded PG fails to start | The last lines of `<userCacheDir>/flowcatalyst/embedded-pg/theseus/postgres.log` are in the error |
 
 ---
 

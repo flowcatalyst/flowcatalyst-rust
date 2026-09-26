@@ -88,6 +88,20 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
   backend serves (Go or Rust): `frontend/src/api/auth.ts`, `router/guards.ts`. Fix in the SPA (point it at
   `/auth/oidc/interaction/{uid}/…`) once the interaction flow is exercised.
 
+## Developer machines (fcdev)
+- [x] Rust `fc-dev` opens the embedded cluster Go's and Java's `fcdev` share
+      (`<userDataDir>/flowcatalyst/embedded-pg`, port 15432, `postgres`/`postgres`, database `flowcatalyst`,
+      PG 18 pinned), with their `app-key`, JWT signing key and PID file; `fc-dev stop`; PostGIS mirrored from
+      Go's tree; one instance at a time (`feat/fcdev-shared-db`, `docs/developers/fc-dev.md`)
+- [x] Rust migrations verified on a copy of a Go/Java-migrated dev cluster: four compatible DDL changes, no
+      rows deleted (`docs/developers/fc-dev.md`, "Migrations on a database Go and Java migrated")
+- [ ] Owner: stop Go/Java `fcdev` before the first `fc-dev` start; the old Rust-only cluster
+      (`~/Library/Caches/flowcatalyst-dev/pgdata`) can be deleted once nothing in it is needed
+- [ ] Built-in role catalogue: Java's V17 `platform:admin:config:manage` vs Go/Rust `…:config:update` —
+      each binary resets built-in roles to its own on start; settle one name
+- [ ] fc-dev's developer-portal auto-sync records a `platform:admin:eventtype:updated` event per platform
+      event type (131) on every start; only record changed ones
+
 ## Also landed
 - Go's production SPA replaces the old Vue frontend (functions UI re-integrated in Go's idiom).
 - Topcoat UI trial (`crates/fc-web`) on main behind `fc-dev --features web`; excluded from default builds;
