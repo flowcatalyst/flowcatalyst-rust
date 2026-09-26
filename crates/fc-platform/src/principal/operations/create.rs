@@ -177,10 +177,11 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         //   - OIDC users authenticate through a federated provider; any
         //     password on the command is silently ignored so callers don't
         //     need to know the IdP before sending.
-        //   - Internal users get their supplied password (or, if none was
-        //     supplied, a random strong one) hashed and stored. The record
-        //     is never persisted with a null hash — the user completes
-        //     first-login by going through the password-reset flow.
+        //   - Internal users get their supplied password hashed and stored.
+        //     Without one the user is created passwordless (no hash), as Go's
+        //     CreateUser: login refuses it, `/auth/check-domain` answers
+        //     `passwordSetupRequired`, and the user sets a password through
+        //     the password-setup flow.
         let is_oidc = command.idp_type == Some(IdentityProviderType::Oidc);
 
         if !is_oidc {
@@ -188,24 +189,18 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             // (NIST shape: length, not common, not the account's own email
             // or name), whatever `enforcePasswordComplexity` says (Go accepts
             // the flag on create and does not apply it).
-            let hashed = match command.password.as_deref().filter(|p| !p.is_empty()) {
-                Some(password) => {
-                    let name = command.name.as_deref().unwrap_or_default();
-                    if let Some(v) = crate::portal::policy::validate(password, &email, name) {
-                        return UseCaseResult::failure(UseCaseError::validation(v.code, v.message));
-                    }
-                    self.password_service.rehash_password(password)
+            if let Some(password) = command.password.as_deref().filter(|p| !p.is_empty()) {
+                let name = command.name.as_deref().unwrap_or_default();
+                if let Some(v) = crate::portal::policy::validate(password, &email, name) {
+                    return UseCaseResult::failure(UseCaseError::validation(v.code, v.message));
                 }
-                None => self
-                    .password_service
-                    .rehash_password(&self.password_service.generate_password()),
-            };
-            let hash = match hashed {
-                Ok(h) => h,
-                Err(e) => return UseCaseResult::failure(e.into()),
-            };
-            if let Some(identity) = principal.user_identity.as_mut() {
-                identity.password_hash = Some(hash);
+                let hash = match self.password_service.rehash_password(password) {
+                    Ok(h) => h,
+                    Err(e) => return UseCaseResult::failure(e.into()),
+                };
+                if let Some(identity) = principal.user_identity.as_mut() {
+                    identity.password_hash = Some(hash);
+                }
             }
         }
 
