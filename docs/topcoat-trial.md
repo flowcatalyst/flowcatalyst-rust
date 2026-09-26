@@ -252,6 +252,8 @@ Postgres.
      means "none".
    - `String::new()` isn't allowed either; `"".to_owned()` is.
    - Your own structs and enums can't cross into the browser.
+   - Neither can tuples: a shard prop typed `(bool, bool)` compiles and
+     then fails in the browser ("Unknown surrogate type").
 2. **`view!` type errors take a while to read.**
    - Every `view!` is its own anonymous type, so a page can't return
      different views from different branches. The fix is to compute state
@@ -288,6 +290,10 @@ Postgres.
    workflow, but `topcoat ui add --overwrite` drops the edits (they are
    listed in topcoat-components.md).
 7. **Small API gotchas.**
+   - A `#[component]`, `#[route]` or `#[shard]` fn becomes a unit struct
+     of the same name, which shadows locals: a closure parameter called
+     `field` (the Topcoat component) or a variable called `roles` (a route
+     fn) fails with a confusing type error.
    - A `view!` outside a component needs the context passed explicitly.
    - Icon sizes take a `Length`, not a string.
    - `IconData` isn't `Copy`.

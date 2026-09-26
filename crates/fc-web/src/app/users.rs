@@ -1000,7 +1000,16 @@ async fn create_drawer(cx: &Cx, state: CreateState, close_href: String) -> Resul
                             })
                         )
                     </div>
-                    domain_check(email: $(email_signal.get()), scope: scope, client_id: client_id, send_invitation: send_invitation, return_link: return_link, redirect: f.invite_redirect_uri.clone())
+                    domain_check(email: $(email_signal.get()), scope: scope, client_id: client_id, send_invitation: send_invitation, return_link: return_link)
+                    // Outside the shard, so what was typed survives an email change.
+                    field(attrs: attributes! { class="mt-4" },
+                        field_label(attrs: attributes! { for="user-new-redirect" }, "After setting a password, go to (optional)")
+                        input(attrs: attributes! {
+                            id="user-new-redirect" name="invite_redirect_uri" type="url" value=(f.invite_redirect_uri.clone())
+                            placeholder="https://app.example.com/welcome"
+                        })
+                        field_description("Internal users only: where the invite link lands after the password is set.")
+                    )
                     if let Some(error) = state.error {
                         alert(variant: AlertVariant::Destructive, attrs: attributes! { role="alert" class="mt-4" },
                             icon(data: iconify_icon!("lucide:circle-alert"))
@@ -1035,7 +1044,6 @@ async fn domain_check(
     client_id: String,
     send_invitation: bool,
     return_link: bool,
-    redirect: String,
 ) -> Result<impl View> {
     let auth = auth(cx)?;
     permit(checks::can_write_principals(auth))?;
@@ -1157,13 +1165,6 @@ async fn domain_check(
                                 field_description("Show the 72-hour set-password link here, once, instead of emailing it.")
                             )
                             switch(attrs: attributes! { id="user-new-link" name="return_invite_link" checked=(return_link) })
-                        )
-                        field(
-                            field_label(attrs: attributes! { for="user-new-redirect" }, "After setting a password, go to (optional)")
-                            input(attrs: attributes! {
-                                id="user-new-redirect" name="invite_redirect_uri" type="url" value=(redirect)
-                                placeholder="https://app.example.com/welcome"
-                            })
                         )
                     } else {
                         <input type="hidden" name="send_invitation" value="on">
