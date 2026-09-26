@@ -125,44 +125,84 @@ pub struct Subscription {
     pub updated_at: DateTime<Utc>,
 }
 
+#[bon::bon]
 impl Subscription {
+    /// A new subscription from its code, name and endpoint, with every
+    /// other field at its default unless set: UI-sourced, ACTIVE, the
+    /// default dispatch mode (ruling X-01: NEXT_ON_ERROR, as in Go), 3
+    /// retries, a 30 s timeout, no delay, a day's max age, data only.
+    #[builder(
+        start_fn(name = builder, vis = "pub"),
+        finish_fn(name = build, vis = "pub"),
+        builder_type(name = SubscriptionBuilder, vis = "pub")
+    )]
+    fn from_parts(
+        #[builder(into)] code: String,
+        #[builder(into)] name: String,
+        #[builder(into)] endpoint: String,
+        application_code: Option<String>,
+        description: Option<String>,
+        client_id: Option<String>,
+        #[builder(default)] event_types: Vec<EventTypeBinding>,
+        connection_id: Option<String>,
+        queue: Option<String>,
+        #[builder(default)] custom_config: Vec<ConfigEntry>,
+        #[builder(default = SubscriptionSource::Ui)] source: SubscriptionSource,
+        #[builder(default = 86400)] max_age_seconds: i32,
+        dispatch_pool_id: Option<String>,
+        dispatch_pool_code: Option<String>,
+        #[builder(default)] delay_seconds: i32,
+        #[builder(default)] mode: DispatchMode,
+        #[builder(default = 30)] timeout_seconds: i32,
+        #[builder(default = 3)] max_retries: i32,
+        service_account_id: Option<String>,
+        #[builder(default = true)] data_only: bool,
+        created_by: Option<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: crate::shared::tsid::generate(crate::EntityType::Subscription),
+            code,
+            application_code,
+            name,
+            description,
+            client_id,
+            client_identifier: None,
+            client_scoped: false,
+            event_types,
+            connection_id,
+            endpoint,
+            queue,
+            custom_config,
+            source,
+            status: SubscriptionStatus::Active,
+            max_age_seconds,
+            dispatch_pool_id,
+            dispatch_pool_code,
+            delay_seconds,
+            sequence: 99,
+            mode,
+            timeout_seconds,
+            max_retries,
+            service_account_id,
+            data_only,
+            created_by,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// [`Subscription::builder`] with only the code, name and endpoint set.
     pub fn new(
         code: impl Into<String>,
         name: impl Into<String>,
         endpoint: impl Into<String>,
     ) -> Self {
-        let now = Utc::now();
-        Self {
-            id: crate::shared::tsid::generate(crate::EntityType::Subscription),
-            code: code.into(),
-            application_code: None,
-            name: name.into(),
-            description: None,
-            client_id: None,
-            client_identifier: None,
-            client_scoped: false,
-            event_types: vec![],
-            connection_id: None,
-            endpoint: endpoint.into(),
-            queue: None,
-            custom_config: vec![],
-            source: SubscriptionSource::Ui,
-            status: SubscriptionStatus::Active,
-            max_age_seconds: 86400,
-            dispatch_pool_id: None,
-            dispatch_pool_code: None,
-            delay_seconds: 0,
-            sequence: 99,
-            // Ruling X-01: unspecified means NEXT_ON_ERROR, as in Go.
-            mode: DispatchMode::default(),
-            timeout_seconds: 30,
-            max_retries: 3,
-            service_account_id: None,
-            data_only: true,
-            created_by: None,
-            created_at: now,
-            updated_at: now,
-        }
+        Self::builder()
+            .code(code)
+            .name(name)
+            .endpoint(endpoint)
+            .build()
     }
 
     pub fn with_endpoint(mut self, ep: impl Into<String>) -> Self {

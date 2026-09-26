@@ -98,15 +98,7 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
             access.can_write = cw;
         }
 
-        let event = PlatformConfigAccessGranted {
-            metadata: PlatformConfigAccessGranted::metadata_for(&ctx, &access.id),
-            access_id: access.id.clone(),
-            application_code: access.application_code.clone(),
-            role_code: access.role_code.clone(),
-            can_read: access.can_read,
-            can_write: access.can_write,
-            was_created,
-        };
+        let event = PlatformConfigAccessGranted::new(&ctx, &access, was_created);
 
         self.unit_of_work
             .commit(&access, &*self.access_repo, event, &command)

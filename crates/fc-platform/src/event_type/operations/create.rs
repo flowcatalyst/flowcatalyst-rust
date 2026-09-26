@@ -153,18 +153,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         }
         event_type.created_by = Some(ctx.principal_id.clone());
 
-        let event = EventTypeCreated {
-            metadata: EventTypeCreated::metadata_for(&ctx, &event_type.id),
-            event_type_id: event_type.id.clone(),
-            code: event_type.code.clone(),
-            name: event_type.name.clone(),
-            description: command.description.clone(),
-            application: event_type.application.clone(),
-            subdomain: event_type.subdomain.clone(),
-            aggregate: event_type.aggregate.clone(),
-            event_name: event_type.event_name.clone(),
-            client_id: command.client_id.clone(),
-        };
+        let event = EventTypeCreated::new(&ctx, &event_type);
 
         // Atomic commit: entity + event + audit log
         self.unit_of_work

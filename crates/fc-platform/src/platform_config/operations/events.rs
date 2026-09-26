@@ -11,6 +11,8 @@
 //! `#[serde(skip)]`, so they are not part of the event's data.
 
 use crate::impl_domain_event;
+use crate::platform_config::access_entity::PlatformConfigAccess;
+use crate::platform_config::entity::PlatformConfig;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
@@ -54,6 +56,22 @@ impl_domain_event!(PlatformConfigPropertySet);
 impl PlatformConfigPropertySet {
     pub const EVENT_TYPE: &'static str = "platform:admin:platform-config:property-set";
 
+    /// The event for `config` as just set inside `ctx`; `was_created` when
+    /// the set created it.
+    pub fn new(ctx: &ExecutionContext, config: &PlatformConfig, was_created: bool) -> Self {
+        Self {
+            metadata: Self::metadata_for(ctx, &config.id),
+            config_id: config.id.clone(),
+            application_code: config.application_code.clone(),
+            section: config.section.clone(),
+            property: config.property.clone(),
+            scope: config.scope.as_str().to_string(),
+            client_id: config.client_id.clone(),
+            value_type: config.value_type.as_str().to_string(),
+            was_created,
+        }
+    }
+
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(ctx: &ExecutionContext, config_id: &str) -> EventMetadata {
         metadata(ctx, Self::EVENT_TYPE, config_id)
@@ -80,6 +98,20 @@ impl_domain_event!(PlatformConfigAccessGranted);
 
 impl PlatformConfigAccessGranted {
     pub const EVENT_TYPE: &'static str = "platform:admin:platform-config:access-granted";
+
+    /// The event for `access` as just granted inside `ctx`; `was_created`
+    /// when the grant created it.
+    pub fn new(ctx: &ExecutionContext, access: &PlatformConfigAccess, was_created: bool) -> Self {
+        Self {
+            metadata: Self::metadata_for(ctx, &access.id),
+            access_id: access.id.clone(),
+            application_code: access.application_code.clone(),
+            role_code: access.role_code.clone(),
+            can_read: access.can_read,
+            can_write: access.can_write,
+            was_created,
+        }
+    }
 
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(ctx: &ExecutionContext, access_id: &str) -> EventMetadata {

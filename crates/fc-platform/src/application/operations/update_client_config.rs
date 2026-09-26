@@ -129,21 +129,12 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
                 Some(url.clone())
             };
         }
-        let config_changed = command.config.is_some();
         if let Some(ref cfg) = command.config {
             config.config_json = Some(cfg.clone());
         }
         config.updated_at = chrono::Utc::now();
 
-        let event = ApplicationClientConfigUpdated {
-            metadata: ApplicationClientConfigUpdated::metadata_for(&ctx, &command.application_id),
-            application_id: command.application_id.clone(),
-            client_id: command.client_id.clone(),
-            config_id: config.id.clone(),
-            enabled: command.enabled,
-            base_url_override: command.base_url_override.clone(),
-            config_changed,
-        };
+        let event = ApplicationClientConfigUpdated::new(&ctx, &command, &config);
 
         self.unit_of_work
             .commit(&config, &*self.config_repo, event, &command)

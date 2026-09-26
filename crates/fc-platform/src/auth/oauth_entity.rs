@@ -147,34 +147,71 @@ fn default_true() -> bool {
     true
 }
 
+#[bon::bon]
 impl OAuthClient {
-    pub fn new(client_id: impl Into<String>, client_name: impl Into<String>) -> Self {
+    /// A new client from its public id and name, with every other field at
+    /// its default unless set: a fresh id, PUBLIC, the authorization-code
+    /// grant, PKCE required, active, no secret, no redirect URIs, scopes,
+    /// applications or origins, no API access.
+    #[builder(
+        start_fn(name = builder, vis = "pub"),
+        finish_fn(name = build, vis = "pub"),
+        builder_type(name = OAuthClientBuilder, vis = "pub")
+    )]
+    fn from_parts(
+        #[builder(into)] client_id: String,
+        #[builder(into)] client_name: String,
+        #[builder(default = crate::shared::tsid::generate(crate::EntityType::OAuthClient))]
+        id: String,
+        #[builder(default = OAuthClientType::Public)] client_type: OAuthClientType,
+        client_secret_ref: Option<String>,
+        #[builder(default)] redirect_uris: Vec<String>,
+        #[builder(default)] post_logout_redirect_uris: Vec<String>,
+        #[builder(default = vec![GrantType::AuthorizationCode])] grant_types: Vec<GrantType>,
+        #[builder(default)] default_scopes: Vec<String>,
+        #[builder(default = true)] pkce_required: bool,
+        #[builder(default)] application_ids: Vec<String>,
+        #[builder(default)] allowed_origins: Vec<String>,
+        service_account_principal_id: Option<String>,
+        #[builder(default)] api_access: bool,
+        created_by: Option<String>,
+        portal_client_id: Option<String>,
+        portal_app_id: Option<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::shared::tsid::generate(crate::EntityType::OAuthClient),
-            client_id: client_id.into(),
-            client_name: client_name.into(),
-            client_type: OAuthClientType::Public,
-            client_secret_ref: None,
+            id,
+            client_id,
+            client_name,
+            client_type,
+            client_secret_ref,
             previous_secret_ref: None,
             previous_secret_expires_at: None,
             previous_secret_last_used_at: None,
-            redirect_uris: vec![],
-            post_logout_redirect_uris: vec![],
-            grant_types: vec![GrantType::AuthorizationCode],
-            default_scopes: vec![],
-            pkce_required: true,
-            application_ids: vec![],
-            allowed_origins: vec![],
-            service_account_principal_id: None,
+            redirect_uris,
+            post_logout_redirect_uris,
+            grant_types,
+            default_scopes,
+            pkce_required,
+            application_ids,
+            allowed_origins,
+            service_account_principal_id,
             active: true,
-            api_access: false,
+            api_access,
             created_at: now,
             updated_at: now,
-            created_by: None,
-            portal_client_id: None,
-            portal_app_id: None,
+            created_by,
+            portal_client_id,
+            portal_app_id,
         }
+    }
+
+    /// [`OAuthClient::builder`] with only the public id and name set.
+    pub fn new(client_id: impl Into<String>, client_name: impl Into<String>) -> Self {
+        Self::builder()
+            .client_id(client_id)
+            .client_name(client_name)
+            .build()
     }
 
     pub fn confidential(client_id: impl Into<String>, client_name: impl Into<String>) -> Self {
@@ -297,6 +334,39 @@ mod tests {
 
     fn confidential_with(secret: &str) -> OAuthClient {
         OAuthClient::confidential("cid", "Client").with_secret_ref(secret)
+    }
+
+    /// The defaults `new` (the builder with only the id and name) gives.
+    #[test]
+    fn new_has_the_defaults() {
+        let c = OAuthClient::new("cid", "Client");
+        assert!(c.id.starts_with("oac_"), "{}", c.id);
+        assert_eq!(
+            (c.client_id.as_str(), c.client_name.as_str()),
+            ("cid", "Client")
+        );
+        assert_eq!(c.client_type, OAuthClientType::Public);
+        assert!(c.client_secret_ref.is_none() && c.previous_secret_ref.is_none());
+        assert!(c.previous_secret_expires_at.is_none());
+        assert!(c.previous_secret_last_used_at.is_none());
+        assert!(c.redirect_uris.is_empty() && c.post_logout_redirect_uris.is_empty());
+        assert_eq!(c.grant_types, vec![GrantType::AuthorizationCode]);
+        assert!(c.default_scopes.is_empty());
+        assert!(c.pkce_required && c.active && !c.api_access);
+        assert!(c.application_ids.is_empty() && c.allowed_origins.is_empty());
+        assert!(c.service_account_principal_id.is_none() && c.created_by.is_none());
+        assert!(c.portal_client_id.is_none() && c.portal_app_id.is_none());
+        assert_eq!(c.created_at, c.updated_at);
+    }
+
+    #[test]
+    fn the_builder_keeps_a_given_id() {
+        let c = OAuthClient::builder()
+            .client_id("cid")
+            .client_name("Client")
+            .id("oac_given".to_string())
+            .build();
+        assert_eq!(c.id, "oac_given");
     }
 
     #[test]

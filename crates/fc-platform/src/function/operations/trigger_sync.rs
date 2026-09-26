@@ -828,17 +828,21 @@ impl TriggerSync {
                 .await?;
             }
             None => {
-                let mut sub = Subscription::new(key, name.clone(), endpoint.clone());
-                sub.application_code = Some(application_code.to_string());
-                sub.client_id = client_id.clone();
-                sub.event_types = vec![binding];
-                sub.source = SubscriptionSource::Function;
-                sub.dispatch_pool_id = Some(pool.id.clone());
-                sub.dispatch_pool_code = Some(pool.code.clone());
-                sub.mode = dispatch_mode(spec.mode);
-                sub.max_retries = spec.max_retries;
-                sub.timeout_seconds = spec.timeout_seconds;
-                sub.data_only = spec.data_only;
+                let sub = Subscription::builder()
+                    .code(key)
+                    .name(name.clone())
+                    .endpoint(endpoint.clone())
+                    .application_code(application_code.to_string())
+                    .maybe_client_id(client_id.clone())
+                    .event_types(vec![binding])
+                    .source(SubscriptionSource::Function)
+                    .dispatch_pool_id(pool.id.clone())
+                    .dispatch_pool_code(pool.code.clone())
+                    .mode(dispatch_mode(spec.mode))
+                    .max_retries(spec.max_retries)
+                    .timeout_seconds(spec.timeout_seconds)
+                    .data_only(spec.data_only)
+                    .build();
                 let event = SubscriptionCreated::new(ctx, &sub.id, &sub.code, &sub.name);
                 let command = CreateSubscriptionCommand {
                     code: key.to_string(),

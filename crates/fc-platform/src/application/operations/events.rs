@@ -6,9 +6,11 @@
 //! `platform.application.{id}`, group `platform:application:{id}`, and each
 //! payload carries exactly Go's `ToDataJSON` fields.
 
+use super::update_client_config::UpdateApplicationClientConfigCommand;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::{null_if_empty, EventMetadata};
 use crate::usecase::ExecutionContext;
+use crate::ApplicationClientConfig;
 use serde::{Deserialize, Serialize};
 
 const SPEC_VERSION: &str = "1.0";
@@ -261,6 +263,24 @@ impl_domain_event!(ApplicationClientConfigUpdated);
 
 impl ApplicationClientConfigUpdated {
     pub const EVENT_TYPE: &'static str = "platform:iam:application:client-config-updated";
+
+    /// The event for `config` as `command` updated it inside `ctx`: the
+    /// fields as requested, and whether a new config document was sent.
+    pub fn new(
+        ctx: &ExecutionContext,
+        command: &UpdateApplicationClientConfigCommand,
+        config: &ApplicationClientConfig,
+    ) -> Self {
+        Self {
+            metadata: Self::metadata_for(ctx, &command.application_id),
+            application_id: command.application_id.clone(),
+            client_id: command.client_id.clone(),
+            config_id: config.id.clone(),
+            enabled: command.enabled,
+            base_url_override: command.base_url_override.clone(),
+            config_changed: command.config.is_some(),
+        }
+    }
 
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(ctx: &ExecutionContext, application_id: &str) -> EventMetadata {

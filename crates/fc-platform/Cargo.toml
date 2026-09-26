@@ -98,6 +98,7 @@ chrono-tz = "0.10"
 cron = "0.15"
 tracing = { workspace = true }
 thiserror = { workspace = true }
+bon = { workspace = true }
 anyhow = { workspace = true }
 time = "0.3"
 

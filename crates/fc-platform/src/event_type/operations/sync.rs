@@ -170,18 +170,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                             input.code, e
                         )));
                     }
-                    rows.push(RecordedEvent::of(&EventTypeCreated {
-                        metadata: EventTypeCreated::metadata_for(&ctx, &et.id),
-                        event_type_id: et.id.clone(),
-                        code: et.code.clone(),
-                        name: et.name.clone(),
-                        description: et.description.clone(),
-                        application: et.application.clone(),
-                        subdomain: et.subdomain.clone(),
-                        aggregate: et.aggregate.clone(),
-                        event_name: et.event_name.clone(),
-                        client_id: et.client_id.clone(),
-                    })?);
+                    rows.push(RecordedEvent::of(&EventTypeCreated::new(&ctx, &et))?);
                     created_count += 1;
                     et.id.clone()
                 }

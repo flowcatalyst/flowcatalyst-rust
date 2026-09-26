@@ -188,22 +188,26 @@ impl<U: UnitOfWork> UseCase for CreatePortalAppWithOAuthClientUseCase<U> {
 
         let client_type =
             parse_client_type(&cmd.client_type).unwrap_or(OAuthClientType::Confidential);
-        let mut oc = OAuthClient::new(&cmd.oauth_client_id, format!("{} (portal)", app.name));
-        oc.id = cmd.oauth_client_row_id.clone();
-        oc.client_type = client_type;
-        oc.redirect_uris = cmd
-            .redirect_uris
-            .iter()
-            .map(|u| u.trim())
-            .filter(|u| !u.is_empty())
-            .map(String::from)
-            .collect();
-        // Portal logins never get refresh tokens.
-        oc.grant_types = vec![GrantType::AuthorizationCode];
-        oc.default_scopes = vec!["openid".into(), "profile".into(), "email".into()];
-        oc.pkce_required = true;
-        oc.portal_client_id = Some(app.client_id.clone());
-        oc.portal_app_id = Some(app.id.clone());
+        let mut oc = OAuthClient::builder()
+            .client_id(&cmd.oauth_client_id)
+            .client_name(format!("{} (portal)", app.name))
+            .id(cmd.oauth_client_row_id.clone())
+            .client_type(client_type)
+            .redirect_uris(
+                cmd.redirect_uris
+                    .iter()
+                    .map(|u| u.trim())
+                    .filter(|u| !u.is_empty())
+                    .map(String::from)
+                    .collect(),
+            )
+            // Portal logins never get refresh tokens.
+            .grant_types(vec![GrantType::AuthorizationCode])
+            .default_scopes(vec!["openid".into(), "profile".into(), "email".into()])
+            .pkce_required(true)
+            .portal_client_id(app.client_id.clone())
+            .portal_app_id(app.id.clone())
+            .build();
         if client_type == OAuthClientType::Confidential {
             let secret_ref = cmd.client_secret_ref.clone().ok_or_else(|| {
                 UseCaseError::internal("SECRET", "no client secret was generated")

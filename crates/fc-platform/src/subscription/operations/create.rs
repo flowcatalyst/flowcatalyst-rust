@@ -275,46 +275,40 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
             ));
         }
 
-        let bindings: Vec<EventTypeBinding> = command
-            .event_types
-            .iter()
-            .map(EventTypeBindingInput::to_binding)
-            .collect();
-
-        // Create the subscription entity (the endpoint as sent, as Go).
-        let mut subscription = Subscription::new(&code, name, &command.endpoint);
-        subscription.connection_id = command.connection_id.clone();
-
-        subscription.description = command.description.clone();
-        subscription.client_id = command.client_id.clone();
-        subscription.event_types = bindings;
-        subscription.dispatch_pool_id = command.dispatch_pool_id.clone();
-        subscription.service_account_id = command.service_account_id.clone();
-        subscription.data_only = command.data_only;
-        subscription.created_by = Some(ctx.principal_id.clone());
-
-        if let Some(mode) = command.mode {
-            subscription.mode = mode;
-        }
-        if let Some(retries) = command.max_retries {
-            subscription.max_retries = retries as i32;
-        }
-        if let Some(timeout) = command.timeout_seconds {
-            subscription.timeout_seconds = timeout as i32;
-        }
-        if let Some(delay) = command.delay_seconds {
-            subscription.delay_seconds = delay;
-        }
-        if let Some(max_age) = command.max_age_seconds {
-            subscription.max_age_seconds = max_age;
-        }
-        if let Some(ref config) = command.custom_config {
-            subscription.custom_config = config.clone();
-        }
-        // Stored canonically upper-case; validate rejected anything else.
-        if let Some(ref queue) = command.queue {
-            subscription.queue = parse_queue(queue).ok().flatten();
-        }
+        // Create the subscription entity (the endpoint as sent, as Go);
+        // an absent optional setting keeps the entity's default.
+        let subscription = Subscription::builder()
+            .code(&code)
+            .name(name)
+            .endpoint(&command.endpoint)
+            .maybe_connection_id(command.connection_id.clone())
+            .maybe_description(command.description.clone())
+            .maybe_client_id(command.client_id.clone())
+            .event_types(
+                command
+                    .event_types
+                    .iter()
+                    .map(EventTypeBindingInput::to_binding)
+                    .collect(),
+            )
+            .maybe_dispatch_pool_id(command.dispatch_pool_id.clone())
+            .maybe_service_account_id(command.service_account_id.clone())
+            .data_only(command.data_only)
+            .created_by(ctx.principal_id.clone())
+            .maybe_mode(command.mode)
+            .maybe_max_retries(command.max_retries.map(|r| r as i32))
+            .maybe_timeout_seconds(command.timeout_seconds.map(|t| t as i32))
+            .maybe_delay_seconds(command.delay_seconds)
+            .maybe_max_age_seconds(command.max_age_seconds)
+            .maybe_custom_config(command.custom_config.clone())
+            // Stored canonically upper-case; validate rejected anything else.
+            .maybe_queue(
+                command
+                    .queue
+                    .as_deref()
+                    .and_then(|queue| parse_queue(queue).ok().flatten()),
+            )
+            .build();
 
         // Create domain event
         let event = SubscriptionCreated::new(
