@@ -114,10 +114,13 @@ Go checks no permission on these (the profile-only gate still applies). Each is 
 
 - `GET /bff/event-types`, `GET /bff/event-types/{id}`: Go checks nothing; Rust keeps `can_read_event_types`
   and client confinement. Only the SPA calls `/bff`, and its event-type pages already need that permission.
-- `GET /bff/developer/*`: now as Go (api-area-a): `anchorWith(developer:application-openapi:view)`, every
-  active application visible; `POST /bff/developer/sync-platform-openapi` asks
-  `anchorWith(developer:application-openapi:sync)`. Rust used to admit application-scoped developers (view or
-  manage, no anchor, confined to their application access); restoring that needs an owner ruling.
+- `GET /bff/developer/*`: a superset of Go by owner decision #37. An anchor caller answers to Go's
+  `anchorWith(developer:application-openapi:view)` and sees every active application. A non-anchor caller
+  holding the view or manage permission (an application-scoped developer) is admitted too, and sees only the
+  applications it can access (Go's `CanAccessApplication` rule: all with `all_applications`, else its grants)
+  plus the seeded `platform` application; another application answers 404. Anyone else is refused with Go's
+  answer. Response shapes are Go's. `POST /bff/developer/sync-platform-openapi` asks
+  `anchorWith(developer:application-openapi:sync)`, as Go.
 - `GET /api/processes*` and scheduled-job instances admit one extra permission each (above); a superset of Go.
 - Go answers an unauthenticated call to its ungated routes (for example `/bff/roles`); Rust requires a login on
   every `/api` and `/bff` route except the public ones in the convention test's `PUBLIC_ROUTES`.
