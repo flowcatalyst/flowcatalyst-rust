@@ -85,6 +85,7 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
                 attempt_count, last_attempt_at, completed_at, duration_millis, last_error,
                 idempotency_key, is_completed, is_terminal,
                 application, subdomain, aggregate,
+                descriptor, metadata,
                 created_at, updated_at, projected_at
             )
             SELECT
@@ -102,6 +103,11 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
                 split_part(j.code, ':', 1),
                 NULLIF(split_part(j.code, ':', 2), ''),
                 NULLIF(split_part(j.code, ':', 3), ''),
+                -- Go's 057: the job's descriptor and its key/value tags
+                -- (the payload stays out). Neither changes after insert,
+                -- so the conflict arm leaves them. The write column is
+                -- nullable; the read column is not.
+                j.descriptor, COALESCE(j.metadata, '[]'::jsonb),
                 j.created_at, j.updated_at, NOW()
             FROM msg_dispatch_jobs j
             JOIN batch b ON b.id = j.id AND b.created_at = j.created_at

@@ -197,6 +197,10 @@ struct EventClaimRow {
     message_group: Option<String>,
     client_id: Option<String>,
     created_at: DateTime<Utc>,
+    /// The event's key/value tags (`[{key, value}]`), copied verbatim onto
+    /// each raised job's metadata (Go fan-out, 2026-09-22). `None` when the
+    /// event has none.
+    context_data: Option<serde_json::Value>,
 }
 
 async fn claim_events(
@@ -219,7 +223,8 @@ async fn claim_events(
         WHERE e.id = b.id AND e.created_at = b.created_at
         RETURNING
             e.id, e.type, e.source, e.subject, e.data,
-            e.correlation_id, e.message_group, e.client_id, e.created_at
+            e.correlation_id, e.message_group, e.client_id, e.created_at,
+            e.context_data
         "#,
     )
     .bind(batch_size as i64)
@@ -272,6 +277,9 @@ struct CachedSubscription {
     /// `msg_subscriptions.queue`, copied verbatim onto each raised job (Go
     /// fan-out R2): the job's own priority claim.
     queue: Option<String>,
+    /// The subscription's name: each raised job's descriptor, what the job
+    /// IS in words on the dispatch-jobs grid (Go fan-out, 2026-09-22).
+    name: String,
     /// Wildcard-supporting `:`-separated event type patterns
     event_type_patterns: Vec<String>,
 }
@@ -315,6 +323,7 @@ struct SubsRow {
     timeout_seconds: i32,
     sequence: i32,
     queue: Option<String>,
+    name: String,
     event_type_code: Option<String>,
 }
 
@@ -333,6 +342,7 @@ async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSu
             s.timeout_seconds,
             s.sequence,
             s.queue,
+            s.name,
             e.event_type_code
         FROM msg_subscriptions s
         LEFT JOIN msg_subscription_event_types e ON e.subscription_id = s.id
@@ -359,6 +369,7 @@ async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSu
                 timeout_seconds: r.timeout_seconds,
                 sequence: r.sequence,
                 queue: r.queue.clone(),
+                name: r.name.clone(),
                 event_type_patterns: Vec::new(),
             });
         if let Some(p) = r.event_type_code {
@@ -429,6 +440,10 @@ struct NewJobRow {
     client_id: Option<String>,
     subscription_id: String,
     queue: Option<String>,
+    /// The raising subscription's name ([`descriptor_for`]).
+    descriptor: Option<String>,
+    /// The raising event's `context_data`, verbatim; `None` takes `[]`.
+    metadata: Option<serde_json::Value>,
     mode: &'static str,
     dispatch_pool_id: Option<String>,
     message_group: Option<String>,
@@ -468,6 +483,8 @@ impl NewJobRow {
             client_id: event.client_id.clone(),
             subscription_id: sub.id.clone(),
             queue: sub.queue.clone(),
+            descriptor: descriptor_for(&sub.name),
+            metadata: event.context_data.clone(),
             mode: dispatch_mode_str(sub.mode),
             dispatch_pool_id: sub.dispatch_pool_id.clone(),
             message_group: event.message_group.clone(),
@@ -480,6 +497,21 @@ impl NewJobRow {
         }
     }
 }
+
+/// A raised job's descriptor: the subscription's name, trimmed, `None` when
+/// blank (absent is the legacy state, not an empty string), clipped to the
+/// column's 255 characters (Go `descriptorFor`, which clips bytes; this
+/// clips characters, so a multi-byte name never splits).
+fn descriptor_for(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.chars().take(DESCRIPTOR_MAX_CHARS).collect())
+}
+
+/// Width of `msg_dispatch_jobs.descriptor` (`VARCHAR(255)`).
+const DESCRIPTOR_MAX_CHARS: usize = 255;
 
 fn dispatch_mode_str(m: DispatchMode) -> &'static str {
     match m {
@@ -511,6 +543,8 @@ async fn insert_dispatch_jobs_tx(
     let mut client_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut subscription_ids = Vec::with_capacity(jobs.len());
     let mut queues: Vec<Option<String>> = Vec::with_capacity(jobs.len());
+    let mut descriptors: Vec<Option<String>> = Vec::with_capacity(jobs.len());
+    let mut metadatas: Vec<Option<serde_json::Value>> = Vec::with_capacity(jobs.len());
     let mut modes = Vec::with_capacity(jobs.len());
     let mut dispatch_pool_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
     let mut message_groups: Vec<Option<String>> = Vec::with_capacity(jobs.len());
@@ -536,6 +570,8 @@ async fn insert_dispatch_jobs_tx(
         client_ids.push(j.client_id.clone());
         subscription_ids.push(j.subscription_id.clone());
         queues.push(j.queue.clone());
+        descriptors.push(j.descriptor.clone());
+        metadatas.push(j.metadata.clone());
         modes.push(j.mode.to_string());
         dispatch_pool_ids.push(j.dispatch_pool_id.clone());
         message_groups.push(j.message_group.clone());
@@ -554,15 +590,30 @@ async fn insert_dispatch_jobs_tx(
             target_url, protocol, payload, data_only, service_account_id, client_id,
             subscription_id, mode, dispatch_pool_id, message_group,
             sequence, timeout_seconds, status, max_retries, idempotency_key,
-            created_at, updated_at, queue
+            created_at, updated_at, queue, descriptor, metadata
         )
-        SELECT * FROM UNNEST(
+        SELECT
+            u.id, u.code, u.source, u.subject, u.event_id, u.correlation_id,
+            u.target_url, u.protocol, u.payload, u.data_only, u.service_account_id, u.client_id,
+            u.subscription_id, u.mode, u.dispatch_pool_id, u.message_group,
+            u.sequence, u.timeout_seconds, u.status, u.max_retries, u.idempotency_key,
+            u.created_at, u.created_at, u.queue, u.descriptor,
+            -- Go: COALESCE($23::jsonb, '[]'::jsonb) — an event without
+            -- context data raises a job with no metadata.
+            COALESCE(u.metadata, '[]'::jsonb)
+        FROM UNNEST(
             $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
             $5::varchar[], $6::varchar[],
             $7::varchar[], $8::varchar[], $9::text[], $10::bool[], $11::varchar[], $12::varchar[],
             $13::varchar[], $14::varchar[], $15::varchar[], $16::varchar[],
             $17::int[], $18::int[], $19::varchar[], $20::int[], $21::varchar[],
-            $22::timestamptz[], $22::timestamptz[], $23::varchar[]
+            $22::timestamptz[], $23::varchar[], $24::varchar[], $25::jsonb[]
+        ) AS u(
+            id, code, source, subject, event_id, correlation_id,
+            target_url, protocol, payload, data_only, service_account_id, client_id,
+            subscription_id, mode, dispatch_pool_id, message_group,
+            sequence, timeout_seconds, status, max_retries, idempotency_key,
+            created_at, queue, descriptor, metadata
         )
         "#,
     )
@@ -589,6 +640,8 @@ async fn insert_dispatch_jobs_tx(
     .bind(&idempotency_keys)
     .bind(&created_ats)
     .bind(&queues)
+    .bind(&descriptors)
+    .bind(&metadatas)
     .execute(&mut **tx)
     .await?;
 
@@ -659,6 +712,7 @@ mod tests {
             timeout_seconds: 30,
             sequence: 99,
             queue: None,
+            name: "Orders".into(),
             event_type_patterns: vec![],
         }
     }
@@ -671,6 +725,20 @@ mod tests {
         cache.replace(Vec::new());
         // An empty set after a successful load is a real "no subscriptions".
         assert!(cache.has_loaded());
+    }
+
+    #[test]
+    fn a_descriptor_is_the_trimmed_subscription_name_or_none() {
+        assert_eq!(
+            descriptor_for("  Notify Value of user logins "),
+            Some("Notify Value of user logins".to_string())
+        );
+        assert_eq!(descriptor_for(""), None);
+        assert_eq!(descriptor_for("   "), None);
+        let long = "é".repeat(300);
+        let clipped = descriptor_for(&long).unwrap();
+        assert_eq!(clipped.chars().count(), 255);
+        assert!(clipped.chars().all(|c| c == 'é'));
     }
 
     #[test]

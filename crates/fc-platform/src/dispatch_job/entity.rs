@@ -377,6 +377,14 @@ pub struct DispatchJob {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
 
+    /// What the job IS, in words (Go's 057): for a job the event fan-out
+    /// raises, the raising subscription's name ("Notify Value of user
+    /// logins"); a directly created job may supply its own. The
+    /// dispatch-jobs grid shows it where a code and a target URL say nothing
+    /// to an operator. `None` is the legacy state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+
     // === Timestamps ===
     /// When the job was created
     pub created_at: DateTime<Utc>,
@@ -466,6 +474,7 @@ impl DispatchJob {
             attempts: vec![],
             metadata: vec![],
             idempotency_key: None,
+            descriptor: None,
             created_at: now,
             updated_at: now,
             scheduled_for: None,
@@ -1381,6 +1390,12 @@ pub struct DispatchJobRead {
     pub last_attempt_at: Option<DateTime<Utc>>,
     pub duration_millis: Option<i64>,
     pub idempotency_key: Option<String>,
+    /// The job's descriptor and key/value tags, projected from the write row
+    /// (Go's 057) so the grid shows them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    #[serde(default)]
+    pub metadata: Vec<DispatchMetadata>,
     #[serde(default)]
     pub is_completed: bool,
     #[serde(default)]
@@ -1427,6 +1442,8 @@ impl From<&DispatchJob> for DispatchJobRead {
             last_attempt_at: job.last_attempt_at,
             duration_millis: job.duration_millis,
             idempotency_key: job.idempotency_key.clone(),
+            descriptor: job.descriptor.clone(),
+            metadata: job.metadata.clone(),
             is_completed: job.status == DispatchStatus::Completed,
             is_terminal: job.status.is_terminal(),
             projected_at: Some(Utc::now()),
