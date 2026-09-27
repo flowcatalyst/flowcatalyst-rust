@@ -1,15 +1,25 @@
-//! `fn init <dir> [--runtime component|wasm] --lang rust` (Java `fn init`,
-//! `function-manifest-authoring.md` M3): scaffolds a Rust function from
-//! `templates/function-rust`, which is compiled into fc-dev, so neither
-//! `cargo generate` nor a network call is needed. The template's two
-//! placeholders are filled in-process: `{{project-name}}` (the kebab-case
-//! name) and `{{crate_name}}` (its snake-case form). `manifest.json` gains
-//! a `$schema` pointing at the platform's manifest schema.
+//! `fn init <dir> [--lang rust|ts|js] [--runtime component|wasm|js]` (Java
+//! `fn init`, `function-manifest-authoring.md` M3): scaffolds a function
+//! from one of the templates compiled into fc-dev, so neither
+//! `cargo generate`, npm nor a network call is needed:
 //!
-//! The manifest says `runtime: component` (its entrypoint defaults to
+//! | `--lang` | template | runtime |
+//! |---|---|---|
+//! | `rust` (default) | `templates/function-rust` | `component` (or `wasm`) |
+//! | `ts` | `templates/function-ts` | `js` |
+//! | `js` | `templates/function-js` | `js` |
+//!
+//! The placeholders are filled in-process: `{{project-name}}` (the
+//! kebab-case name) and, for Rust, `{{crate_name}}` (its snake-case form).
+//! `manifest.json` gains a `$schema` pointing at the platform's manifest
+//! schema.
+//!
+//! A Rust manifest says `runtime: component` (its entrypoint defaults to
 //! `wasi:http/incoming-handler`). `--runtime wasm` writes the same component
 //! as `runtime: wasm` with the `wasi_http_incoming_handler` entrypoint, for
-//! a platform that predates `component` (Java's).
+//! a platform that predates `component` (Java's). A TypeScript or
+//! JavaScript manifest says `runtime: js` (its entrypoint defaults to the
+//! bundle's default export).
 //!
 //! Local only: it never contacts the platform. It refuses when any file it
 //! would write already exists, and then writes nothing.
@@ -19,8 +29,8 @@ use std::path::{Path, PathBuf};
 use super::credentials::platform_url_or_default;
 use super::{CliError, Ctx, Io};
 
-/// The template, as `(relative path, contents)`. `cargo-generate.toml` is
-/// `cargo generate`'s own and is not copied.
+/// The Rust template, as `(relative path, contents)`. `cargo-generate.toml`
+/// is `cargo generate`'s own and is not copied.
 pub const TEMPLATE: &[(&str, &str)] = &[
     (
         "Cargo.toml",
@@ -44,22 +54,125 @@ pub const TEMPLATE: &[(&str, &str)] = &[
     ),
 ];
 
+/// The TypeScript template (`--lang ts`).
+pub const TEMPLATE_TS: &[(&str, &str)] = &[
+    (
+        "package.json",
+        include_str!("../../../../templates/function-ts/package.json"),
+    ),
+    (
+        "tsconfig.json",
+        include_str!("../../../../templates/function-ts/tsconfig.json"),
+    ),
+    (
+        "README.md",
+        include_str!("../../../../templates/function-ts/README.md"),
+    ),
+    (
+        ".gitignore",
+        include_str!("../../../../templates/function-ts/.gitignore"),
+    ),
+    (
+        "manifest.json",
+        include_str!("../../../../templates/function-ts/manifest.json"),
+    ),
+    (
+        "src/index.ts",
+        include_str!("../../../../templates/function-ts/src/index.ts"),
+    ),
+    (
+        "types/flowcatalyst-function.d.ts",
+        include_str!("../../../../templates/function-ts/types/flowcatalyst-function.d.ts"),
+    ),
+];
+
+/// The JavaScript template (`--lang js`).
+pub const TEMPLATE_JS: &[(&str, &str)] = &[
+    (
+        "package.json",
+        include_str!("../../../../templates/function-js/package.json"),
+    ),
+    (
+        "jsconfig.json",
+        include_str!("../../../../templates/function-js/jsconfig.json"),
+    ),
+    (
+        "README.md",
+        include_str!("../../../../templates/function-js/README.md"),
+    ),
+    (
+        ".gitignore",
+        include_str!("../../../../templates/function-js/.gitignore"),
+    ),
+    (
+        "manifest.json",
+        include_str!("../../../../templates/function-js/manifest.json"),
+    ),
+    (
+        "src/index.js",
+        include_str!("../../../../templates/function-js/src/index.js"),
+    ),
+    (
+        "types/flowcatalyst-function.d.ts",
+        include_str!("../../../../templates/function-js/types/flowcatalyst-function.d.ts"),
+    ),
+];
+
+/// A template's language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lang {
+    Rust,
+    Ts,
+    Js,
+}
+
+impl Lang {
+    fn parse(raw: &str) -> Result<Lang, CliError> {
+        match raw.to_ascii_lowercase().as_str() {
+            "rust" => Ok(Lang::Rust),
+            "ts" | "typescript" => Ok(Lang::Ts),
+            "js" | "javascript" => Ok(Lang::Js),
+            other => Err(CliError::Usage(format!(
+                "--lang must be rust, ts or js, got \"{other}\""
+            ))),
+        }
+    }
+
+    pub fn template(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Lang::Rust => TEMPLATE,
+            Lang::Ts => TEMPLATE_TS,
+            Lang::Js => TEMPLATE_JS,
+        }
+    }
+
+    /// The template directory, relative to the repository root.
+    #[cfg(test)]
+    pub fn dir(self) -> &'static str {
+        match self {
+            Lang::Rust => "templates/function-rust",
+            Lang::Ts => "templates/function-ts",
+            Lang::Js => "templates/function-js",
+        }
+    }
+}
+
 #[derive(clap::Args, Debug)]
 pub struct InitArgs {
     /// The directory to write the project into.
     pub dir: PathBuf,
 
-    /// The function runtime. fc-dev's host runs WASI 0.2 components:
-    /// `component`, or `wasm` for a platform without `component`. JVM
-    /// functions are scaffolded by Java's fcdev.
-    #[arg(long, default_value = "component")]
-    pub runtime: String,
+    /// The function runtime: for Rust `component` (the default) or `wasm`
+    /// (a platform without `component`); for TypeScript and JavaScript `js`
+    /// (the only one). JVM functions are scaffolded by Java's fcdev.
+    #[arg(long)]
+    pub runtime: Option<String>,
 
-    /// The guest language.
+    /// The language: rust, ts (TypeScript) or js (JavaScript).
     #[arg(long, default_value = "rust")]
     pub lang: String,
 
-    /// The crate name (default: the directory's name).
+    /// The crate or package name (default: the directory's name).
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 
@@ -73,27 +186,39 @@ pub struct InitArgs {
 }
 
 pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliError> {
-    let as_wasm =
-        match args.runtime.to_ascii_lowercase().as_str() {
-            "component" => false,
-            "wasm" => true,
-            "jvm" => return Err(CliError::Usage(
-                "fc-dev's function host runs wasm components; scaffold a JVM function with Java's \
-                 `fcdev fn init --runtime jvm`"
+    let lang = Lang::parse(&args.lang)?;
+    let runtime = args
+        .runtime
+        .as_deref()
+        .unwrap_or(if lang == Lang::Rust {
+            "component"
+        } else {
+            "js"
+        })
+        .to_ascii_lowercase();
+    let as_wasm = match (lang, runtime.as_str()) {
+        (_, "jvm") => {
+            return Err(CliError::Usage(
+                "fc-dev's function host runs wasm components and JS bundles; scaffold a JVM \
+                 function with Java's `fcdev fn init --runtime jvm`"
                     .into(),
-            )),
-            other => {
-                return Err(CliError::Usage(format!(
-                    "--runtime must be component or wasm, got \"{other}\""
-                )))
-            }
-        };
-    if !args.lang.eq_ignore_ascii_case("rust") {
-        return Err(CliError::Usage(format!(
-            "--lang must be rust (the one wasm template), got \"{}\"",
-            args.lang
-        )));
-    }
+            ))
+        }
+        (Lang::Rust, "component") => false,
+        (Lang::Rust, "wasm") => true,
+        (Lang::Rust, other) => {
+            return Err(CliError::Usage(format!(
+                "--runtime for --lang rust must be component or wasm, got \"{other}\""
+            )))
+        }
+        (Lang::Ts | Lang::Js, "js") => false,
+        (Lang::Ts | Lang::Js, other) => {
+            return Err(CliError::Usage(format!(
+                "--runtime for --lang {} must be js, got \"{other}\"",
+                args.lang.to_ascii_lowercase()
+            )))
+        }
+    };
     let raw_name = match &args.name {
         Some(name) => name.clone(),
         None => default_name(&args.dir),
@@ -113,6 +238,7 @@ pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliEr
         };
 
     let mut files = render(
+        lang,
         &project_name,
         &platform_url,
         pdk_path.as_deref(),
@@ -153,32 +279,36 @@ pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliEr
     }
     let crate_name = project_name.replace('-', "_");
     let address = format!("<app>.default.{project_name}");
+    let written: Vec<&str> = files.iter().map(|(rel, _)| rel.as_str()).collect();
     writeln!(
         io.out,
-        "wrote {}: Cargo.toml, manifest.json, src/lib.rs, README.md, .gitignore",
-        args.dir.display()
+        "wrote {}: {}",
+        args.dir.display(),
+        written.join(", ")
     )?;
+    let artifact = match lang {
+        Lang::Rust => format!("target/wasm32-wasip2/release/{crate_name}.wasm"),
+        Lang::Ts | Lang::Js => "dist/function.mjs".to_string(),
+    };
     writeln!(io.out, "next steps:")?;
     writeln!(io.out, "  cd {}", args.dir.display())?;
     writeln!(io.out, "  fc-dev fn build")?;
     writeln!(io.out, "  fc-dev fn config set {address} GREETING=Hello")?;
-    writeln!(
-        io.out,
-        "  fc-dev fn deploy target/wasm32-wasip2/release/{crate_name}.wasm {address}"
-    )?;
+    writeln!(io.out, "  fc-dev fn deploy {artifact} {address}")?;
     writeln!(io.out, "  fc-dev fn invoke {address} --path /hello/world")?;
     Ok(0)
 }
 
 /// The files to write, relative to the project directory.
 pub fn render(
+    lang: Lang,
     project_name: &str,
     platform_url: &str,
     pdk_path: Option<&Path>,
     manifest_only: bool,
 ) -> Vec<(String, String)> {
     let crate_name = project_name.replace('-', "_");
-    TEMPLATE
+    lang.template()
         .iter()
         .filter(|(rel, _)| !manifest_only || *rel == "manifest.json")
         .map(|(rel, contents)| {
@@ -280,7 +410,7 @@ mod tests {
     fn init_args(dir: PathBuf) -> InitArgs {
         InitArgs {
             dir,
-            runtime: "component".into(),
+            runtime: None,
             lang: "rust".into(),
             name: None,
             manifest_only: false,
@@ -355,7 +485,7 @@ mod tests {
         let (code, _, err) = run_init(&args(
             tmp.path(),
             InitArgs {
-                runtime: "wasm".into(),
+                runtime: Some("wasm".into()),
                 ..init_args(dir.clone())
             },
         ));
@@ -400,6 +530,7 @@ mod tests {
         assert!(!only.join("Cargo.toml").exists());
 
         let files = render(
+            Lang::Rust,
             "x",
             "http://p",
             Some(Path::new("/src/fc-function-pdk")),
@@ -417,7 +548,7 @@ mod tests {
     fn jvm_and_other_languages_are_usage_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let jvm = InitArgs {
-            runtime: "jvm".into(),
+            runtime: Some("jvm".into()),
             ..init_args(tmp.path().join("j"))
         };
         assert_eq!(run_init(&args(tmp.path(), jvm)).0, 2);
@@ -426,21 +557,106 @@ mod tests {
             ..init_args(tmp.path().join("g"))
         };
         assert_eq!(run_init(&args(tmp.path(), go)).0, 2);
+        let ts_component = InitArgs {
+            lang: "ts".into(),
+            runtime: Some("component".into()),
+            ..init_args(tmp.path().join("t"))
+        };
+        assert_eq!(run_init(&args(tmp.path(), ts_component)).0, 2);
+        let rust_js = InitArgs {
+            runtime: Some("js".into()),
+            ..init_args(tmp.path().join("r"))
+        };
+        assert_eq!(run_init(&args(tmp.path(), rust_js)).0, 2);
         assert!(!tmp.path().join("j").exists());
+        assert!(!tmp.path().join("t").exists());
     }
 
-    /// Every template file is embedded, and the template uses no
+    #[test]
+    fn scaffolds_the_typescript_and_javascript_templates_as_runtime_js() {
+        for (lang, source) in [("ts", "src/index.ts"), ("js", "src/index.js")] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("Order_Mapper");
+            let (code, out, err) = run_init(&args(
+                tmp.path(),
+                InitArgs {
+                    lang: lang.into(),
+                    ..init_args(dir.clone())
+                },
+            ));
+            assert_eq!(code, 0, "{err}");
+            assert!(out.contains("fc-dev fn deploy dist/function.mjs"), "{out}");
+            let package: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
+                    .unwrap();
+            assert_eq!(package["name"], "order-mapper");
+            assert!(package["scripts"]["build"]
+                .as_str()
+                .unwrap()
+                .contains("--external:flowcatalyst:*"));
+            let text = std::fs::read_to_string(dir.join(source)).unwrap();
+            assert!(
+                text.starts_with("// order-mapper: a FlowCatalyst function."),
+                "{text}"
+            );
+            assert!(dir.join("types/flowcatalyst-function.d.ts").exists());
+            let manifest: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
+                    .unwrap();
+            assert_eq!(manifest["runtime"], "js");
+            assert!(manifest.get("entrypoint").is_none(), "it defaults");
+            assert_eq!(
+                manifest["$schema"],
+                "http://localhost:9999/api/schemas/function-manifest.json"
+            );
+        }
+    }
+
+    /// Each template ships the host's own declarations, byte for byte.
+    #[test]
+    fn the_templates_declarations_are_the_hosts() {
+        let canonical =
+            include_str!("../../../../crates/fc-fnhost-js/types/flowcatalyst-function.d.ts");
+        for lang in [Lang::Ts, Lang::Js] {
+            let copy = lang
+                .template()
+                .iter()
+                .find(|(rel, _)| *rel == "types/flowcatalyst-function.d.ts")
+                .unwrap()
+                .1;
+            assert_eq!(
+                copy,
+                canonical,
+                "{}/types/flowcatalyst-function.d.ts is not the host's: copy \
+                 crates/fc-fnhost-js/types/flowcatalyst-function.d.ts over it",
+                lang.dir()
+            );
+        }
+    }
+
+    /// Every template file is embedded, and the templates use no
     /// placeholder the renderer does not fill.
     #[test]
-    fn the_embedded_template_is_the_whole_template() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../templates/function-rust");
+    fn the_embedded_templates_are_the_whole_templates() {
+        for lang in [Lang::Rust, Lang::Ts, Lang::Js] {
+            embedded_template_is_the_whole_template(lang);
+        }
+    }
+
+    fn embedded_template_is_the_whole_template(lang: Lang) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(lang.dir());
         let mut on_disk = BTreeSet::new();
         let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
-                    if path.file_name().is_some_and(|n| n != "target") {
+                    if path
+                        .file_name()
+                        .is_some_and(|n| n != "target" && n != "node_modules" && n != "dist")
+                    {
                         stack.push(path);
                     }
                 } else {
@@ -449,17 +665,21 @@ mod tests {
                         .unwrap()
                         .to_string_lossy()
                         .replace('\\', "/");
-                    if rel != "cargo-generate.toml" && rel != "Cargo.lock" {
+                    if rel != "cargo-generate.toml"
+                        && rel != "Cargo.lock"
+                        && rel != "package-lock.json"
+                    {
                         on_disk.insert(rel);
                     }
                 }
             }
         }
-        let embedded: BTreeSet<String> = TEMPLATE.iter().map(|(r, _)| r.to_string()).collect();
-        assert_eq!(embedded, on_disk);
+        let embedded: BTreeSet<String> =
+            lang.template().iter().map(|(r, _)| r.to_string()).collect();
+        assert_eq!(embedded, on_disk, "{}", lang.dir());
 
         let mut placeholders = BTreeSet::new();
-        for (_, text) in TEMPLATE {
+        for (_, text) in lang.template() {
             let mut rest = *text;
             while let Some(start) = rest.find("{{") {
                 let after = &rest[start + 2..];
@@ -474,9 +694,10 @@ mod tests {
                 rest = &after[end.min(after.len())..];
             }
         }
-        assert_eq!(
-            placeholders,
-            BTreeSet::from(["crate_name".to_string(), "project-name".to_string()])
-        );
+        let expected = match lang {
+            Lang::Rust => BTreeSet::from(["crate_name".to_string(), "project-name".to_string()]),
+            Lang::Ts | Lang::Js => BTreeSet::from(["project-name".to_string()]),
+        };
+        assert_eq!(placeholders, expected, "{}", lang.dir());
     }
 }

@@ -168,8 +168,9 @@ mod drift_tests {
         }
     }
 
-    /// Java's schema plus `component`, when the Java checkout is next to
-    /// this repo: the same properties, and Java's runtimes a subset of ours.
+    /// Java's schema plus `component` and `js`, when the Java checkout is
+    /// next to this repo: the same properties, and Java's runtimes a subset
+    /// of ours.
     #[test]
     fn extends_javas_file() {
         let java = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -185,7 +186,7 @@ mod drift_tests {
         let theirs = enum_values(&java["properties"]["runtime"]);
         let mine = enum_values(&ours["properties"]["runtime"]);
         assert!(theirs.is_subset(&mine), "{theirs:?} ⊄ {mine:?}");
-        assert_eq!(&mine - &theirs, set(["component"]));
+        assert_eq!(&mine - &theirs, set(["component", "js"]));
     }
 }
 

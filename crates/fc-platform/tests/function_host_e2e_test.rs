@@ -1,8 +1,9 @@
 //! The whole Rust stack, end to end: the production platform router served
 //! on a real socket (Docker Postgres through the harness) and an in-process
-//! function host (fc-fnhost-core's `FnHost` with `host::wasm_loaders` and
-//! `host::function_listener`: the assembly `fc-server`'s function-host role
-//! runs, `FC_FUNCTION_HOST_ENABLED`) talking to it over HTTP, authenticated
+//! function host (fc-fnhost-core's `FnHost` with `fc_fnhost_js::loaders`,
+//! WASI components and JS, and `host::function_listener`: the assembly
+//! `fc-server`'s function-host role runs, `FC_FUNCTION_HOST_ENABLED`)
+//! talking to it over HTTP, authenticated
 //! with OAuth `client_credentials` as a service account holding the
 //! `function-host` role. The role's process shape (environment, exit codes,
 //! drain) is `bin/fc-server/tests/function_host_role.rs`.
@@ -27,6 +28,10 @@
 //!    precondition and serves; republishing it is a 200 no-op.
 //! 7. Disabling the function unloads it from the host; deleting it leaves
 //!    the pool's document empty.
+//! 8. `runtime: js` (owner decisions 6 and 27): a component is refused for a
+//!    js function at publish; a JS bundle publishes, becomes READY, is
+//!    promoted and serves with its config and secret, and its emit lands in
+//!    `msg_events`.
 //!
 //! Requires Docker. Its own test binary: it sets process environment.
 
@@ -44,7 +49,7 @@ use sha2::Digest as _;
 use tower::ServiceExt;
 
 use fc_fnhost_core::env::{EnvReader, HostEnv};
-use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
+use fc_fnhost_core::host::{function_listener, FnHost};
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::{permissions, roles, AuthRole};
 use fc_platform::service_account::entity::RoleAssignment;
@@ -172,7 +177,7 @@ async fn start_host(
         ("FC_FN_MAX_EXECUTING", "2"),
     ]))
     .expect("host environment");
-    let loaders = wasm_loaders(&env).expect("wasm runtime");
+    let loaders = fc_fnhost_js::loaders(&env).expect("the runtimes");
     let listener = function_listener(&env);
     let mut host = FnHost::new(env, loaders, Some(listener)).expect("host");
     host.start().await.expect("host starts");
@@ -182,10 +187,19 @@ async fn start_host(
 /// Uploads `bytes` as the function's artifact: its `platform://` ref and
 /// digest.
 async fn upload_artifact(app: &TestApp, token: &str, bytes: &[u8]) -> (String, String) {
+    upload_artifact_at(app, token, ADDRESS, bytes).await
+}
+
+async fn upload_artifact_at(
+    app: &TestApp,
+    token: &str,
+    address: &str,
+    bytes: &[u8],
+) -> (String, String) {
     let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)));
     let request = Request::builder()
         .method(Method::PUT)
-        .uri(format!("/api/functions/{ADDRESS}/artifacts/{digest}"))
+        .uri(format!("/api/functions/{address}/artifacts/{digest}"))
         .header("authorization", format!("Bearer {token}"))
         .header("content-type", "application/octet-stream")
         .header("content-length", bytes.len())
@@ -446,7 +460,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
         .fetch_one(&app.pool)
         .await
         .unwrap();
-    assert_eq!(runtimes, json!(["component", "wasm"]));
+    assert_eq!(runtimes, json!(["component", "js", "wasm"]));
     let component_manifest = json!({
         "runtime": "component",
         "pool": POOL,
@@ -618,6 +632,143 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
         doc,
         json!({"pool": POOL, "functions": [], "unload": [], "publicRoutes": []})
     );
+
+    // ── 8. runtime: js ───────────────────────────────────────────────────
+    const JS_ADDRESS: &str = "fixture.pdk.e2ejs";
+    let (status, body) = api(
+        &app,
+        Method::POST,
+        "/api/functions",
+        &admin,
+        Some(
+            json!({"applicationCode": "fixture", "serviceName": "pdk", "name": "e2ejs",
+                    "runtime": "js", "clientId": client.id}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let js_manifest = json!({
+        "runtime": "js",
+        "pool": POOL,
+        "endpoints": [{"path": "/*", "auth": "none"}],
+        "config": ["GREETING"],
+        "secrets": ["API_KEY"],
+    });
+    // A component is not a JS bundle: refused at publish.
+    let component = upload_artifact_at(&app, &admin, JS_ADDRESS, &guest()).await;
+    let (status, body) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{JS_ADDRESS}/versions"),
+        &admin,
+        Some(json!({"artifactRef": component.0, "digest": component.1, "manifest": js_manifest})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"], "ARTIFACT_RUNTIME_MISMATCH");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("JavaScript bundle"),
+        "{body}"
+    );
+    let bundle = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fc-fnhost-js/tests/fixtures/js/guest.mjs"
+    ))
+    .unwrap();
+    let js = upload_artifact_at(&app, &admin, JS_ADDRESS, &bundle).await;
+    let (status, body) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{JS_ADDRESS}/versions"),
+        &admin,
+        Some(json!({"artifactRef": js.0, "digest": js.1, "manifest": js_manifest})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["version"], 1);
+    for (path, value) in [
+        ("config", json!({"values": {"GREETING": "hello from js"}})),
+        ("secrets/API_KEY", json!({"value": "k-js-9"})),
+    ] {
+        let (status, body) = api(
+            &app,
+            Method::PUT,
+            &format!("/api/functions/{JS_ADDRESS}/{path}"),
+            &admin,
+            Some(value),
+        )
+        .await;
+        assert!(status.is_success(), "{status} {body}");
+    }
+    host.reconciler().reconcile_once(Utc::now()).await;
+    let (_, v1) = api(
+        &app,
+        Method::GET,
+        &format!("/api/functions/{JS_ADDRESS}/versions/1"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(v1["state"], "READY", "{v1}");
+    assert_eq!(v1["manifest"]["entrypoint"], "default", "{v1}");
+    let (status, body) = api(
+        &app,
+        Method::PUT,
+        &format!("/api/functions/{JS_ADDRESS}/aliases/live"),
+        &admin,
+        Some(json!({"version": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    host.reconciler().reconcile_once(Utc::now()).await;
+    let config: Value = http
+        .get(format!("{base}/functions/{JS_ADDRESS}/config?key=GREETING"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["value"], "hello from js", "{config}");
+    let secret: Value = http
+        .get(format!("{base}/functions/{JS_ADDRESS}/secret?key=API_KEY"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(secret, json!({"present": true, "length": 6}));
+    let emitted: Value = http
+        .get(format!(
+            "{base}/functions/{JS_ADDRESS}/emit?type={EVENT_TYPE}&dedup=e2e-js-1"
+        ))
+        .header("X-Correlation-Id", "corr-e2e-js")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(emitted["ok"], true, "{emitted}");
+    let (event_id, source, data, correlation): (String, String, Value, Option<String>) =
+        sqlx::query_as(
+            "SELECT id, source, data, correlation_id FROM msg_events \
+             WHERE deduplication_id = 'e2e-js-1'",
+        )
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        emitted["id"], event_id,
+        "the id the platform stored it under"
+    );
+    assert_eq!(source, format!("function:{JS_ADDRESS}"));
+    assert_eq!(data, json!({"id": 1, "ok": true}));
+    assert_eq!(correlation.as_deref(), Some("corr-e2e-js"));
 
     tokio::time::timeout(Duration::from_secs(30), host.close())
         .await

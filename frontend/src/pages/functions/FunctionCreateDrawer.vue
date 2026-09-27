@@ -30,6 +30,7 @@ const description = ref("");
 const runtime = ref<FunctionRuntime>("component");
 const runtimeOptions: Array<{ label: string; value: FunctionRuntime }> = [
 	{ label: "Component (WASI 0.2)", value: "component" },
+	{ label: "JavaScript / TypeScript (V8)", value: "js" },
 	{ label: "WASM", value: "wasm" },
 	{ label: "JVM", value: "jvm" },
 ];
@@ -197,6 +198,12 @@ async function onSubmit() {
             A WASI 0.2 component exporting <code>wasi:http/incoming-handler</code>, run by a Rust
             function host. The platform checks an uploaded artifact is a component when you
             publish.
+          </template>
+          <template v-else-if="runtime === 'js'">
+            One ES module bundle (UTF-8 JavaScript, e.g. built from TypeScript with esbuild), run
+            in a V8 isolate by a Rust function host. Its default export handles each request as a
+            <code>Request</code> and answers a <code>Response</code>. The platform checks an
+            uploaded artifact is text when you publish.
           </template>
           <template v-else-if="runtime === 'wasm'">
             On a Rust function host, a WASM function is a WASI 0.2 component exporting

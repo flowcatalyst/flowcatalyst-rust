@@ -57,17 +57,25 @@ const canSubmit = computed(
 // `component` (or `wasm`, for a Rust host) artifact must be a WASI 0.2
 // component: the platform refuses a core module for `component` at publish
 // (ARTIFACT_RUNTIME_MISMATCH); a Rust host refuses one under `wasm` at load
-// (WASM_CORE_MODULE_UNSUPPORTED).
-const artifactRuntime = computed<"jvm" | "wasm">(() =>
-	parsed.value.manifest?.runtime === "jvm" ? "jvm" : "wasm",
-);
+// (WASM_CORE_MODULE_UNSUPPORTED). A `js` artifact is one ES module bundle
+// (UTF-8 text; anything else is ARTIFACT_RUNTIME_MISMATCH at publish).
+const artifactRuntime = computed<"jvm" | "wasm" | "js">(() => {
+	const runtime = parsed.value.manifest?.runtime;
+	return runtime === "jvm" || runtime === "js" ? runtime : "wasm";
+});
 const artifactLabel = computed(() =>
-	artifactRuntime.value === "wasm" ? "Wasm component" : "Jar file",
+	artifactRuntime.value === "wasm"
+		? "Wasm component"
+		: artifactRuntime.value === "js"
+			? "JS bundle (ES module)"
+			: "Jar file",
 );
 const artifactAccept = computed(() =>
 	artifactRuntime.value === "wasm"
 		? ".wasm,application/wasm,application/octet-stream"
-		: ".jar,application/java-archive,application/octet-stream",
+		: artifactRuntime.value === "js"
+			? ".mjs,.js,text/javascript,application/javascript"
+			: ".jar,application/java-archive,application/octet-stream",
 );
 
 function onArtifactChange(event: Event) {

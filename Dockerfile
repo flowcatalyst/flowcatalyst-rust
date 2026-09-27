@@ -27,26 +27,40 @@ COPY frontend/ ./
 RUN pnpm build
 
 # ── Stage 2: Plan Rust dependencies ─────────────────────────────────
-FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
+# Rust 1.98: the toolchain CI (dtolnay/rust-toolchain@stable) and local
+# builds use. The workspace needs at least 1.96 (wasmtime 49's cranelift
+# crates declare it); 1.92 no longer builds main.
+FROM lukemathwalker/cargo-chef:latest-rust-1.98-bookworm AS chef
 WORKDIR /app
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY bin ./bin
+# Workspace members too (`cargo metadata` reads every member's manifest).
+COPY harness ./harness
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: Build Rust dependencies (cached layer) ─────────────────
 FROM chef AS builder
 
 COPY --from=planner /app/recipe.json recipe.json
+# fc-dev's optional `web` dependency lives outside the workspace, so the
+# recipe does not carry it; cargo still reads its manifest to resolve the
+# lockfile (it is never built here).
+COPY crates/fc-web ./crates/fc-web
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy source and build
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY bin ./bin
+COPY harness ./harness
 COPY migrations ./migrations
+# Read at compile time: the function host's WIT package (wasmtime's
+# bindgen!) and the platform's published docs (include_str!).
+COPY wit ./wit
+COPY docs/published ./docs/published
 # The version the binary reports (owner decision #33), e.g.
 # --build-arg FC_BUILD_VERSION=$(git describe --tags --always); unset or empty
 # means the workspace package version.

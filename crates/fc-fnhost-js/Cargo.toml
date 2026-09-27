@@ -1,0 +1,47 @@
+[package]
+name = "fc-fnhost-js"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FlowCatalyst function host: the `runtime: js` loader (V8 isolates through deno_core), beside fc-fnhost-core's WASI components"
+
+[dependencies]
+fc-fnhost-core = { path = "../fc-fnhost-core" }
+fc-function-abi = { path = "../fc-function-abi" }
+fc-function-model = { path = "../fc-function-model" }
+
+# V8 through deno_core (owner decisions #6, #27). Pinned exactly: a
+# snapshot is only valid for the V8 that wrote it, and every number in
+# docs/function-runner-density.md §10 was measured on this release. The
+# default features are deno_core's own (V8, its custom libc++, the tokio
+# reactor); the prebuilt V8 static library is downloaded by `v8`'s build
+# script (RUSTY_V8_ARCHIVE / RUSTY_V8_MIRROR point it elsewhere offline).
+deno_core = "=0.412.0"
+# The error type deno_core's ops and module loader take (its own pin).
+deno_error = "=0.7.1"
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+reqwest = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+url = { workspace = true }
+http = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tracing-subscriber = { workspace = true }
+fc-function-abi = { path = "../fc-function-abi" }
+parking_lot = { workspace = true }
+tracing = { workspace = true }

@@ -2499,7 +2499,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "description": {
@@ -2578,7 +2579,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "description": {
@@ -2675,12 +2677,13 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "entrypoint": {
             "type": "string",
-            "description": "Optional for runtime component (default wasi:http/incoming-handler); required otherwise."
+            "description": "Optional for runtime component (default wasi:http/incoming-handler) and js (default: the bundle's default export); required otherwise."
           },
           "pool": {
             "type": "string"
@@ -3201,7 +3204,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "entrypoint": {
@@ -4060,7 +4064,8 @@
               "enum": [
                 "jvm",
                 "wasm",
-                "component"
+                "component",
+                "js"
               ]
             }
           }
@@ -4120,7 +4125,8 @@
               "enum": [
                 "jvm",
                 "wasm",
-                "component"
+                "component",
+                "js"
               ]
             }
           }

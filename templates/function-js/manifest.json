@@ -1,0 +1,12 @@
+{
+  "runtime": "js",
+  "limits": {
+    "maxConcurrency": 8,
+    "wasmMemoryMb": 32
+  },
+  "endpoints": [
+    { "path": "/hello/{name}", "auth": "none", "methods": ["GET"] },
+    { "path": "/events/greeting-requested", "auth": "webhook", "methods": ["POST"] }
+  ],
+  "config": ["GREETING"]
+}

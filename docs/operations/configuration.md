@@ -69,7 +69,7 @@ Each role is a flag, with Go's names and truth table (`1/true/yes/on`, `0/false/
 | `FC_STREAM_PROCESSOR_ENABLED` | `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor + fan-out + partition manager |
 | `FC_OUTBOX_ENABLED` | `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the embedded outbox processor (uncommon — outbox usually runs as application sidecar) |
 | `FC_MCP_ENABLED` | — | `false` | Run the read-only MCP server on its own listener ([MCP](#mcp-server-fc-server-with-fc_mcp_enabledtrue)) |
-| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the WASM function host ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
+| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the function host: WASI components and JS bundles ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
 
 ---
 
@@ -238,7 +238,7 @@ Locally: `fc-dev mcp` (stdio or `--http`) or `fc-dev --mcp`.
 
 ## Function host (`fc-server` with `FC_FUNCTION_HOST_ENABLED=true`)
 
-The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). It reads its own `FC_FN_*` environment:
+The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). It loads WASI 0.2 components (`runtime: component` / `wasm`) and, with fc-server's default `js` cargo feature, JS bundles in V8 isolates (`runtime: js`, `crates/fc-fnhost-js`); its heartbeat reports the runtimes it loads (`["component","js","wasm"]`). It reads its own `FC_FN_*` environment:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -248,7 +248,7 @@ The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost
 | `FC_FN_HOST_ID` | `<hostname>-<random>` | The id its heartbeats carry |
 | `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` | Artifact signature policy (`off` only with `FLOWCATALYST_DEV_MODE=true`) |
 | `FC_FN_CACHE_DIR` | `<tmp>/fc-fn-cache` | Artifact and compiled-module cache |
-| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits |
+| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits. `FC_FN_MAX_EXECUTING` sizes each runtime's own threads: the WASM guests' runtime and the JS workers (so a host busy with both kinds can execute up to twice that many at once) |
 | `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
 | `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown |
 | `FC_FN_PORT` | `8080` host only / `8095` beside other roles | Private function listener (`/functions/<address>/…`) |
@@ -258,6 +258,7 @@ The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost
 | `FC_FN_MAX_DB_POOLS` | `16` | Distinct function database pools (one per connection a manifest `db[]` names); one more fails that load with `DB_POOL_LIMIT` |
 | `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION` | `2` | Open transactions one invocation may hold per database (never more than its `db[].poolSize`) |
 | `FC_FN_DB_SECRET_REFRESH_SECONDS` | `300` | How often an `aws-sm://` function database secret is re-read (a rotated password reaches its pool); `0` never |
+| `FC_FN_JS_SNAPSHOT` | `true` on Linux, `false` elsewhere | JS runtime: make each request's isolate from V8's base snapshot (≈0.7 ms) rather than from scratch (≈2.5 ms). Off by default outside Linux: on macOS, disposing thousands of snapshot-made isolates aborted the process (`docs/function-runner-density.md` §10.1) |
 
 **Function databases** (`docs/developers/functions.md#database-access`): a manifest's `db[]` connections are opened by the host, not the platform — so the host needs network reach to them, and, for `aws-sm://` secrets, `secretsmanager:GetSecretValue` on those secrets for its own IAM role. Each pool is sqlx, lazily connected (nothing at load), sized to the largest `poolSize` of the functions sharing it, idle connections closed after 60 s and every connection replaced after 30 min; a connection is reset (`ROLLBACK` if needed, `DISCARD ALL`) each time it goes back. An unreachable database is logged at WARN (throttled, 10 s) with the `db` name and SQLSTATE, never SQL or a secret.
 

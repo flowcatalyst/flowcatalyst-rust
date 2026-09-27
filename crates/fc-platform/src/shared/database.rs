@@ -644,6 +644,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "055_identity_provider_role_sync",
             include_str!("../../../../migrations/055_identity_provider_role_sync.sql"),
         ),
+        // `runtime: js` (owner decisions 6 and 27): the runtime CHECK
+        // widens to JS.
+        (
+            "056_function_js_runtime",
+            include_str!("../../../../migrations/056_function_js_runtime.sql"),
+        ),
         // Go's 057 (the rest of it): a dispatch job's descriptor, and the
         // job's descriptor and metadata on the read projection.
         (
@@ -910,6 +916,13 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' \
                AND table_name = 'oauth_identity_provider_allowed_roles')",
+        ),
+        // The widened CHECK.
+        (
+            "056_function_js_runtime",
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'fn_functions_runtime_check' \
+               AND pg_get_constraintdef(oid) LIKE '%''JS''%')",
         ),
         // A database Go migrated to 057 has all three columns.
         (

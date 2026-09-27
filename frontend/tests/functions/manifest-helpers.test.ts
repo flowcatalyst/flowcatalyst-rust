@@ -54,6 +54,13 @@ describe("manifestModel", () => {
 		});
 	});
 
+	it("starts a js function with the entrypoint left to the bundle's default export", () => {
+		expect(newManifestModel("js")).toEqual({
+			runtime: "js",
+			endpoints: [{ path: "/hello", auth: "platform", methods: ["GET"] }],
+		});
+	});
+
 	it("starts a wasm function from a component template, not an Extism module", () => {
 		expect(newManifestModel("wasm")).toEqual({
 			runtime: "wasm",

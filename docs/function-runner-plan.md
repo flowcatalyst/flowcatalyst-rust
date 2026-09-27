@@ -110,7 +110,9 @@ Not done:
 ### Open owner decisions (consolidated)
 
 **Runtime and contract**
-1. **JS/TS guest runtime**: componentize-js, a QuickJS component, or V8 isolates (§4a).
+1. ~~**JS/TS guest runtime**: componentize-js, a QuickJS component, or V8 isolates (§4a).~~ Resolved (owner
+   decisions 6 and 27): V8 isolates through `deno_core`, `runtime: js`, a WIT-shaped JS API. Built on
+   `feat/fn-v8` (H9 below).
 2. ~~An explicit manifest runtime value such as `component`.~~ Done in Rust (owner decision 5): `runtime:
    component`, while `wasm` plus the alias still work. Java's schema and DB CHECK don't have it.
 3. ~~The guest DB connection model~~ (done, owner decision #7: one shared pool per DSN; see the Status above).
@@ -272,15 +274,12 @@ The measurements are in `docs/function-runner-density.md` (macOS M4 Pro; redo on
   This deliberately differs from Java, which reuses instances.
 - **Noisy neighbours:** contained with a host-wide executing-guests cap below the core count (`FC_FN_MAX_EXECUTING`)
   plus per-function `maxConcurrency`. No engine meets the +30% p99 bar under saturation without the cap.
-- **JS/TS guests: open owner decision.**
+- **JS/TS guests: resolved (owner decisions 6 and 27): V8 isolates through `deno_core`, `runtime: js`** (H9).
   - componentize-js (StarlingMonkey) works but is heavy: 14 MB artifact, 26 MB per function, 0.6 ms per request.
   - The QuickJS component backend didn't build.
   - V8 isolates (`deno_core`) are best for JS (1.65 MB, 2.3 µs), but they are a second engine with a different
     sandbox.
-  - Options: wait for or invest in QuickJS components (Javy, componentize-qjs); use componentize-js as is; or add a
-    V8 isolate pool for JS.
   - This matters because JSON mapping and transform adapters are natural in TS.
-  - H4 ships Rust components first.
 
 ## 5. Workstreams
 
@@ -649,6 +648,61 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
 > fc-dev fn deploy target/wasm32-wasip2/release/hello.wasm shop.default.hello
 > fc-dev fn invoke shop.default.hello --path /hello/world
 > ```
+
+**H9: the JS runtime, `runtime: js`** (done on `feat/fn-v8`; owner decisions 6 and 27)
+
+As built, in a crate of its own, `crates/fc-fnhost-js`, which plugs into the host through the `FunctionLoader`
+seam for `js`; listeners, permits, deadlines, reconciler and heartbeat are fc-fnhost-core's, unchanged. fc-server's
+function-host role and fc-dev's in-process host load it behind a default `js` cargo feature
+(`fc_fnhost_js::loaders`: components and JS); without the feature the binary carries no V8.
+
+- **Contract.** `runtime: js` (stored `JS`, migration 056 widens the CHECK). The artifact is one ES module bundle,
+  UTF-8; the platform checks it is text at publish (`422 ARTIFACT_RUNTIME_MISMATCH`, as for a non-component under
+  `component`). `entrypoint` is an export name, `default` unless given; the export is a function
+  `(Request) => Response | Promise<Response>`, or an object with `fetch`. `limits.wasmMemoryMb` caps the isolate.
+  `js` is compatible only with itself (`RUNTIME_MISMATCH`).
+- **Engine.** `deno_core =0.412.0` (V8 150.4, the prebuilt static library). One V8 platform per process.
+- **The JS API is Rust/WIT-shaped** (not Java's `@flowcatalyst/function`): modules
+  `flowcatalyst:function/{config,secrets,log,events,invocation}` mirror the WIT interfaces (`events.emit` resolves to
+  `{ok: true, id} | {ok: false, error: {kind: invalid|refused|unavailable, …}}`, `emit-event`'s result), outbound
+  HTTP is the global `fetch` under `httpAllow` exactly as the WASM host enforces it (`wasm::egress::decide`; no
+  redirects, no proxy; a refusal rejects with `HttpError` code `HTTP-request-denied`), and a web subset is global
+  (`Request`, `Response`, `Headers`, `URL`, `URLSearchParams`, `TextEncoder`/`TextDecoder`, `atob`/`btoa`,
+  `console`, timers, `crypto.getRandomValues`/`randomUUID`, `structuredClone`). No Node APIs, no `Deno`, no
+  WebAssembly (it would escape the memory limit), no filesystem. `crates/fc-fnhost-js/types/flowcatalyst-function.d.ts`
+  declares it; the templates ship a byte-identical copy. The emit path is `fc_fnhost_core::emit`, shared with the
+  WASM runtime, so refusals read the same.
+- **Isolate per request**, the `wasi:http` model: every request gets a fresh isolate, which compiles the bundle from
+  a V8 **code cache** made at load and runs its top-level code, then the handler. On Linux the isolate comes from the
+  process's **base snapshot** (deno_core's JS plus `js/bootstrap.js`, warmed by one request, built once before any
+  other isolate): ≈0.7 ms. *Not* a snapshot per version: V8's snapshot creator writes the read-only space all
+  isolates of a process share, and running isolates crashed (SIGSEGV/SIGBUS in `ReadOnlySpace` and
+  `StringForwardingTable`). So the bundle's top-level code runs per request; host APIs other than logging are refused
+  there. On **macOS** isolates are made without a snapshot (≈2.5 ms): snapshot-made isolates aborted the process
+  under churn there (`BackingStore::~BackingStore`, reproduced with deno_core alone), never on Linux.
+  `FC_FN_JS_SNAPSHOT` overrides. The crate runs its own V8 platform (`src/platform.rs`) so no V8 task outlives its
+  isolate, which deno_core's does under per-request isolates.
+- **Where it runs.** `FC_FN_MAX_EXECUTING` worker threads (the variable the WASM guests' runtime uses; the two pools
+  are separate), each a current-thread tokio runtime driving many isolates: an isolate is exited after creation,
+  entered around every poll, and entered again to be dropped (rusty_v8 otherwise requires strictly nested isolate
+  lifetimes). A request goes to the least-loaded worker. A function waiting on I/O holds no thread; a computing one
+  holds its worker until it awaits (V8 does not preempt).
+- **Limits.** V8 heap = `wasmMemoryMb` (8 MiB floor); near the limit the isolate is terminated rather than V8
+  aborting the process. `ArrayBuffer` storage has its own cap (a counting allocator). The deadline is a watchdog that
+  terminates the isolate from another thread (504); the listener's permits are held until the isolate is gone.
+- **Outcomes** as the WASM runtime: a `Response` verbatim; a throw, a rejection, a non-`Response`, a promise that can
+  never settle, out of memory or a body over the cap is Java's `500 {"error":"the function failed"}` with the detail
+  on the WARN line. Load refusals: `JS_INVALID`, `JS_IMPORT_NOT_ALLOWED`, `JS_ENTRYPOINT_NOT_EXPORTED`,
+  `JS_INIT_FAILED` (top-level throw, request-only API, OOM, or the 10 s init timeout).
+- **Tooling.** `fc-dev fn init --lang ts|js` (templates `templates/function-{ts,js}`: esbuild `--platform=neutral
+  --external:flowcatalyst:*` to `dist/function.mjs`, `tsc` against the declarations; optional, the platform only
+  needs the bundle); `fn build` runs npm for a `package.json` project. SPA: the runtime option, the manifest editor
+  and the publish dialog know `js`. Author guide: `docs/developers/functions.md`.
+- **Tests.** `crates/fc-fnhost-js/tests/js_{listener,loading,logging}.rs` through the real listener against committed
+  bundles (`tests/fixtures/js`, `SHA256SUMS`; `hello.mjs` is the TypeScript template built by esbuild,
+  `build-hello.sh`); `fc-dev`'s `functions_e2e_test` deploys the template's bundle; the Docker
+  `function_host_e2e_test` publishes, promotes and invokes a JS function and finds its event in `msg_events`.
+- **Measured**: `docs/function-runner-density.md` §10.
 
 ### Track G: guests
 

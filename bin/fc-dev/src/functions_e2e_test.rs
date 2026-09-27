@@ -21,6 +21,10 @@
 //!    decision #7): its connection is a secret set with `fn secret set`
 //!    (here fc-dev's own Postgres), and it creates a table, inserts and
 //!    reads back through the host's pool.
+//! 6. `runtime: js` (the `js` feature): the TypeScript template's bundle
+//!    (`crates/fc-fnhost-js/tests/fixtures/js/hello.mjs`) with the template's
+//!    manifest deploys and answers on the same host; a component published
+//!    to it is refused (`ARTIFACT_RUNTIME_MISMATCH`).
 //!
 //! Needs no Docker: the Postgres is the one bundled into fc-dev, in a
 //! temporary data directory on a free port. It sets process environment
@@ -559,6 +563,86 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     // A two-part address is a usage error.
     let (code, _, err) = fc_dev_fn(&["--credentials-file", &creds, "invoke", "shop.book"]).await;
     assert_eq!(code, 2, "{err}");
+
+    // ── 6. runtime: js, the TypeScript template's bundle ─────────────────
+    #[cfg(feature = "js")]
+    {
+        const JS_ADDRESS: &str = "shop.default.hello-js";
+        let manifest = repo_path("templates/function-ts/manifest.json");
+        let manifest = manifest.to_str().unwrap();
+        let bundle = repo_path("crates/fc-fnhost-js/tests/fixtures/js/hello.mjs");
+        let bundle = bundle.to_str().unwrap();
+        let (code, out, err) = fc_dev_fn(&[
+            "--credentials-file",
+            &creds,
+            "config",
+            "set",
+            JS_ADDRESS,
+            "GREETING=Hi",
+            "--manifest",
+            manifest,
+        ])
+        .await;
+        assert_eq!(code, 0, "{out}{err}");
+        let (code, out, err) = fc_dev_fn(&[
+            "--credentials-file",
+            &creds,
+            "deploy",
+            bundle,
+            JS_ADDRESS,
+            "--manifest",
+            manifest,
+            "--wait",
+            "90s",
+        ])
+        .await;
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(
+            out.trim(),
+            format!("{JS_ADDRESS}: version 1 deployed and live")
+        );
+        let (runtime,): (String,) =
+            sqlx::query_as("SELECT runtime FROM fn_functions WHERE name = 'hello-js'")
+                .fetch_one(&repos.pool)
+                .await
+                .unwrap();
+        assert_eq!(runtime, "JS");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let (code, out, err) = loop {
+            let result = fc_dev_fn(&[
+                "--credentials-file",
+                &creds,
+                "--output",
+                "json",
+                "invoke",
+                JS_ADDRESS,
+                "--path",
+                "/hello/Ada",
+            ])
+            .await;
+            if result.0 == 0 || Instant::now() > deadline {
+                break result;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        };
+        assert_eq!(code, 0, "{out}{err}");
+        let answer: Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(answer["status"], 200, "{answer}");
+        assert_eq!(answer["body"], r#"{"message":"Hi, Ada!"}"#, "{answer}");
+        // A component is not a JS bundle: refused at publish.
+        let (code, out, err) = fc_dev_fn(&[
+            "--credentials-file",
+            &creds,
+            "publish",
+            wasm,
+            JS_ADDRESS,
+            "--manifest",
+            manifest,
+        ])
+        .await;
+        assert_eq!(code, 1, "{out}{err}");
+        assert!(err.contains("ARTIFACT_RUNTIME_MISMATCH"), "{out}{err}");
+    }
 
     tokio::time::timeout(Duration::from_secs(30), slot.close())
         .await

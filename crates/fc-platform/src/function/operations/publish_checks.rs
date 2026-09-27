@@ -337,7 +337,16 @@ mod tests {
             support(&[rust.clone(), java.clone()], Runtime::Jvm),
             "unknown"
         );
-        assert_eq!(support(&[java.clone(), rust], Runtime::Wasm), "yes");
-        assert_eq!(support(&[java], Runtime::Component), "unknown");
+        assert_eq!(support(&[java.clone(), rust.clone()], Runtime::Wasm), "yes");
+        assert_eq!(
+            support(std::slice::from_ref(&java), Runtime::Component),
+            "unknown"
+        );
+        // `js`: a Rust host built with the JS runtime reports it; one built
+        // without (fc-server's `js` feature off) does not.
+        let with_js = host(Some(&["component", "js", "wasm"]));
+        assert_eq!(support(std::slice::from_ref(&rust), Runtime::Js), "no");
+        assert_eq!(support(&[rust, with_js], Runtime::Js), "yes");
+        assert_eq!(support(&[java], Runtime::Js), "unknown");
     }
 }

@@ -778,3 +778,68 @@ fn wasm_and_component_functions_take_each_others_manifests_not_jvm() {
     let (code, _) = parse(r#"{"runtime": "wasm"}"#, Runtime::Wasm, &unrestricted()).unwrap_err();
     assert_eq!(code, "ENTRYPOINT_REQUIRED");
 }
+
+// ── runtime: js (owner decisions 6 and 27, beyond Java) ─────────────────
+
+#[test]
+fn a_js_manifest_defaults_its_entrypoint_to_the_default_export() {
+    let m = parse(r#"{"runtime": "js"}"#, Runtime::Js, &unrestricted()).unwrap();
+    assert_eq!(m.runtime, Runtime::Js);
+    assert_eq!(m.entrypoint, "default");
+    // `limits.wasmMemoryMb` is the isolate's memory cap.
+    assert_eq!(
+        m.limits.wasm_memory_mb,
+        Some(FunctionLimits::DEFAULT_WASM_MEMORY_MB)
+    );
+    assert_eq!(Manifest::read_stored(&m.to_json()).unwrap(), m);
+    assert_eq!(
+        Manifest::read_stored(&tree(r#"{"runtime": "js"}"#))
+            .unwrap()
+            .entrypoint,
+        "default"
+    );
+    let named = parse(
+        r#"{"runtime": "js", "entrypoint": "handle", "limits": {"wasmMemoryMb": 32}}"#,
+        Runtime::Js,
+        &unrestricted(),
+    )
+    .unwrap();
+    assert_eq!(named.entrypoint, "handle");
+    assert_eq!(named.limits.wasm_memory_mb, Some(32));
+    let (code, _) = parse(
+        r#"{"runtime": "js", "entrypoint": "wasi:http/incoming-handler"}"#,
+        Runtime::Js,
+        &unrestricted(),
+    )
+    .unwrap_err();
+    assert_eq!(code, "ENTRYPOINT_INVALID");
+}
+
+#[test]
+fn a_js_function_takes_only_js_manifests() {
+    let (code, message) =
+        parse(r#"{"runtime": "js"}"#, Runtime::Component, &unrestricted()).unwrap_err();
+    assert_eq!(code, "RUNTIME_MISMATCH");
+    assert_eq!(
+        message,
+        "manifest runtime 'js' does not match the function's runtime 'component'"
+    );
+    let (code, _) = parse(r#"{"runtime": "component"}"#, Runtime::Js, &unrestricted()).unwrap_err();
+    assert_eq!(code, "RUNTIME_MISMATCH");
+}
+
+#[test]
+fn max_fuel_is_not_applicable_to_a_js_function() {
+    let (code, message) = parse(
+        r#"{"runtime":"js","limits":{"maxFuel":1000},"endpoints":[{"path":"/a","auth":"none"}]}"#,
+        Runtime::Js,
+        &unrestricted(),
+    )
+    .unwrap_err();
+    assert_eq!(code, "LIMIT_NOT_APPLICABLE");
+    assert_eq!(message, "maxFuel is not applicable to a js function");
+    let stored =
+        Manifest::read_stored(&tree(r#"{"runtime":"js","limits":{"maxFuel":10}}"#)).unwrap();
+    assert_eq!(stored.limits.max_fuel, None);
+    assert!(!fc_function_model::Limits::takes_fuel(Runtime::Js));
+}
