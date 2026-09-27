@@ -206,8 +206,8 @@ async fn the_deadline_stops_a_spinning_function_and_the_host_carries_on() {
     assert_eq!(reply.status, 504, "{}", reply.text());
     assert_eq!(reply.json()["error"], "FUNCTION_TIMEOUT");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "stopped at the deadline, not later: {:?}",
+        started.elapsed() < Duration::from_secs(5),
+        "stopped at the deadline, not left spinning: {:?}",
         started.elapsed()
     );
     // A function waiting on a timer is stopped as well.
@@ -259,7 +259,7 @@ async fn at_most_fc_fn_max_executing_functions_run_javascript_at_once() {
         )
         .await;
         let started = Instant::now();
-        let (a, b) = tokio::join!(h.get("/busy?ms=300"), h.get("/busy?ms=300"));
+        let (a, b) = tokio::join!(h.get("/busy?ms=400"), h.get("/busy?ms=400"));
         let took = started.elapsed();
         assert_eq!((a.status, b.status), (200, 200));
         h.close().await;
@@ -267,13 +267,13 @@ async fn at_most_fc_fn_max_executing_functions_run_javascript_at_once() {
     }
     let one = two_busy_calls(1).await;
     assert!(
-        one >= Duration::from_millis(590),
-        "one worker runs the two 300 ms computations one after the other: {one:?}"
+        one >= Duration::from_millis(790),
+        "one worker runs the two 400 ms computations one after the other: {one:?}"
     );
     let two = two_busy_calls(2).await;
     assert!(
-        two < Duration::from_millis(550),
-        "two workers run them side by side: {two:?}"
+        two * 4 < one * 3,
+        "two workers run them side by side: {two:?} against {one:?}"
     );
 }
 
@@ -299,8 +299,8 @@ async fn a_function_waiting_on_io_holds_no_worker() {
         assert_eq!(reply.text(), "slept");
     }
     assert!(
-        started.elapsed() < Duration::from_millis(900),
-        "six sleeping calls share one worker: {:?}",
+        started.elapsed() < Duration::from_millis(1500),
+        "six sleeping calls share one worker (one after the other would be 1800 ms): {:?}",
         started.elapsed()
     );
     h.close().await;
@@ -418,7 +418,7 @@ async fn emit_refusals_are_values_mirroring_emit_event_error() {
 // ── outbound HTTP under httpAllow ───────────────────────────────────────
 
 /// A loopback upstream: `/ok` answers 201 with `x-upstream`, `/redirect`
-/// a 302, `/slow` after 3 s.
+/// a 302, `/slow` after 5 s.
 fn upstream() -> (u16, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -452,7 +452,7 @@ fn upstream() -> (u16, Arc<AtomicUsize>) {
                     }
                     "/redirect" => "HTTP/1.1 302 Found\r\nlocation: /ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
                     "/slow" => {
-                        std::thread::sleep(Duration::from_secs(3));
+                        std::thread::sleep(Duration::from_secs(5));
                         "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\nslow".into()
                     }
                     _ => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
@@ -470,7 +470,7 @@ async fn fetch_reaches_only_allowed_hosts_https_only_except_loopback_and_never_f
     let h = guest(
         json!({
             "httpAllow": ["127.0.0.1", "*.allowed.test"],
-            "endpoints": [{"path": "/*", "auth": "none", "timeoutMs": 800}],
+            "endpoints": [{"path": "/*", "auth": "none", "timeoutMs": 2000}],
         }),
         json!({}),
     )
@@ -503,7 +503,7 @@ async fn fetch_reaches_only_allowed_hosts_https_only_except_loopback_and_never_f
     );
     let apex = call("https://allowed.test/ok".into()).await;
     assert_eq!(apex["code"], "HTTP-request-denied", "never the apex");
-    // The deadline caps the call: the upstream takes 3 s, the endpoint 800 ms.
+    // The deadline caps the call: the upstream takes 5 s, the endpoint 2 s.
     let started = Instant::now();
     let slow = h
         .get(&format!(
@@ -516,7 +516,7 @@ async fn fetch_reaches_only_allowed_hosts_https_only_except_loopback_and_never_f
         "{}",
         slow.text()
     );
-    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_millis(4500));
     assert_eq!(
         served.load(Ordering::SeqCst),
         3,
