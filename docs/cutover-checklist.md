@@ -133,8 +133,8 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       rows deleted (`docs/developers/fc-dev.md`, "Migrations on a database Go and Java migrated")
 - [ ] Owner: stop Go/Java `fcdev` before the first `fc-dev` start; the old Rust-only cluster
       (`~/Library/Caches/flowcatalyst-dev/pgdata`) can be deleted once nothing in it is needed
-- [ ] Built-in role catalogue: Java's V17 `platform:admin:config:manage` vs Go/Rust `…:config:update` —
-      each binary resets built-in roles to its own on start; settle one name
+- [x] Built-in role catalogue: `platform:admin:config:manage` (owner decision #44); built-in roles grant it,
+      and a stored role still holding Go's `…:config:update` is honoured as `manage` (no data rewrite)
 
 ## Also landed
 - Go's production SPA replaces the old Vue frontend (functions UI re-integrated in Go's idiom).

@@ -1021,11 +1021,14 @@ pub mod checks {
     }
 
     /// Platform-config access grants, write: anchor plus
-    /// `platform:admin:config:update` (Go's `CanUpdatePlatformConfig`,
-    /// shared/auth/auth.go:785).
+    /// `platform:admin:config:manage` (Go's `CanUpdatePlatformConfig`,
+    /// shared/auth/auth.go:785, checks `…:config:update`; owner decision #44
+    /// renames it). A stored role holding Go's `…:config:update` still passes.
     pub fn can_update_platform_config(context: &AuthContext) -> Result<()> {
         require_anchor(context)?;
-        if context.has_permission(permissions::admin::CONFIG_UPDATE) {
+        if context.has_permission(permissions::admin::CONFIG_MANAGE)
+            || context.has_permission(permissions::admin::CONFIG_UPDATE_GO)
+        {
             Ok(())
         } else {
             Err(PlatformError::forbidden(
@@ -1900,6 +1903,23 @@ mod tests {
     fn test_check_require_anchor_fails() {
         let ctx = create_test_context(vec![], "CLIENT", vec![]);
         assert!(checks::require_anchor(&ctx).is_err());
+    }
+
+    /// Owner decision #44: config writes need `…:config:manage`; a custom
+    /// role stored while Go ran still holds `…:config:update` and passes.
+    #[test]
+    fn platform_config_writes_take_manage_or_gos_update() {
+        for code in [
+            "platform:admin:config:manage",
+            "platform:admin:config:update",
+        ] {
+            let ctx = create_test_context(vec![code], "ANCHOR", vec!["*"]);
+            assert!(checks::can_update_platform_config(&ctx).is_ok(), "{code}");
+            let ctx = create_test_context(vec![code], "CLIENT", vec![]);
+            assert!(checks::can_update_platform_config(&ctx).is_err(), "{code}");
+        }
+        let ctx = create_test_context(vec!["platform:admin:config:view"], "ANCHOR", vec!["*"]);
+        assert!(checks::can_update_platform_config(&ctx).is_err());
     }
 
     #[test]

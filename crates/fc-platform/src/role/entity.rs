@@ -389,7 +389,14 @@ pub mod permissions {
 
         // Config management
         pub const CONFIG_READ: &str = "platform:admin:config:view";
-        pub const CONFIG_UPDATE: &str = "platform:admin:config:update";
+        /// Platform-config writes (owner decision #44, 2026-09-27: Java's
+        /// V17 name). Go's roles held `…:config:update` instead; a stored
+        /// role that still does is read as this ([`CONFIG_UPDATE_GO`]).
+        pub const CONFIG_MANAGE: &str = "platform:admin:config:manage";
+        /// Go's name for [`CONFIG_MANAGE`]. Never granted by a built-in role;
+        /// still honoured on a custom role stored while Go ran, so the
+        /// cutover needs no data rewrite and a rollback to Go keeps working.
+        pub const CONFIG_UPDATE_GO: &str = "platform:admin:config:update";
 
         // Batch operations
         pub const BATCH_EVENTS_WRITE: &str = "platform:messaging:batch:events-write";
@@ -490,7 +497,7 @@ pub mod permissions {
             AUDIT_LOG_EXPORT,
             DOCS_READ,
             CONFIG_READ,
-            CONFIG_UPDATE,
+            CONFIG_MANAGE,
             BATCH_EVENTS_WRITE,
             BATCH_DISPATCH_JOBS_WRITE,
             BATCH_AUDIT_LOGS_WRITE,
@@ -788,7 +795,7 @@ pub mod roles {
                 permissions::admin::DOCS_READ,
                 permissions::developer::APPLICATION_OPENAPI_MANAGE,
                 permissions::admin::CONFIG_READ,
-                permissions::admin::CONFIG_UPDATE,
+                permissions::admin::CONFIG_MANAGE,
                 permissions::admin::CORS_ORIGIN_READ,
                 permissions::admin::CORS_ORIGIN_CREATE,
                 permissions::admin::CORS_ORIGIN_DELETE,

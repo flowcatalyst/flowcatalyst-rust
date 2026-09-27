@@ -54,7 +54,8 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
             "platform:admin:docs:view",
             "platform:developer:application-openapi:manage",
             "platform:admin:config:view",
-            "platform:admin:config:update",
+            // Go: `platform:admin:config:update` (owner decision #44 renames it).
+            "platform:admin:config:manage",
             "platform:admin:cors-origin:view",
             "platform:admin:cors-origin:create",
             "platform:admin:cors-origin:delete",

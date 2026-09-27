@@ -218,9 +218,10 @@ Go/Java-migrated dev cluster (goose 54, Flyway V17): fc-dev applied
 | `CREATE TABLE/INDEX IF NOT EXISTS queue_messages…`, monthly partitions `CREATE TABLE IF NOT EXISTS … PARTITION OF` | no-ops there (already present) |
 
 No existing row is deleted. Seeding and start-up writes: built-in roles
-are reset to fc-dev's catalogue, which is Go's (Java's V17 renamed
-`platform:admin:config:update` to `…:config:manage`; whichever binary
-starts last wins, as between Go and Java today); 58 platform event types Go
+are reset to fc-dev's catalogue, which is Go's except that it grants
+`platform:admin:config:manage` (Java V17's name, owner decision #44) where
+Go grants `…:config:update`; a role holding either passes the config check,
+and whichever binary starts last resets the built-in roles to its own; 58 platform event types Go
 emits but had not catalogued are added, existing ones keep their values;
 plaintext service-account webhook secrets are encrypted with the shared
 `app-key` (Go re-encrypts them the same way on read, and decrypts the

@@ -414,6 +414,8 @@ Also aligned to Go in the same pass:
 
 **Data written by Go that Rust must still read** is unchanged from the list above, except that
 `platform:admin:config:update` is now simply Go's code rather than an alias for `manage`.
+(Superseded by owner decision #44, 2026-09-27: the code is `platform:admin:config:manage` again, and Go's
+`…:config:update` on a stored role is read as it.)
 
 ### Remaining deviations from Go (existing behaviour)
 
