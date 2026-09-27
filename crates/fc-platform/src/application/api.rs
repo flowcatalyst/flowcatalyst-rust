@@ -1333,9 +1333,13 @@ pub struct ApplicationRolesResponse {
     pub roles: Vec<String>,
 }
 
-/// Client config response DTO
+/// The answer to `PUT /api/applications/{id}/clients/{clientId}` (a route
+/// Go does not have): Go's `ClientConfigResponse` members, plus the client's
+/// name and identifier, the base URL in effect, and `config` (a copy of
+/// `configJson`, the member this route answered before it carried Go's).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = UpdateClientConfigResponse)]
 pub struct ClientConfigResponse {
     pub id: String,
     pub application_id: String,
@@ -1345,7 +1349,15 @@ pub struct ClientConfigResponse {
     pub enabled: bool,
     pub base_url_override: Option<String>,
     pub effective_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub config_json: Option<serde_json::Value>,
+    /// Deprecated: a copy of `configJson`.
     pub config: Option<serde_json::Value>,
+    #[schema(format = DateTime)]
+    pub created_at: String,
+    #[schema(format = DateTime)]
+    pub updated_at: String,
 }
 
 /// Client configs list response: Go's `{items}` of `ClientConfigResponse`.
@@ -1356,12 +1368,15 @@ pub struct ClientConfigsResponse {
     pub items: Vec<crate::application::go_api::GoClientConfigResponse>,
 }
 
-/// Client config request
+/// Client config request. `baseUrlOverride: ""` clears the override;
+/// absent members are left as they are. The configuration document is
+/// `configJson` (Go's response member) or `config`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigRequest {
     pub enabled: Option<bool>,
     pub base_url_override: Option<String>,
+    #[serde(alias = "configJson")]
     pub config: Option<serde_json::Value>,
 }
 
@@ -1471,7 +1486,10 @@ pub async fn update_client_config<U: UnitOfWork>(
         enabled: config.enabled,
         base_url_override: config.base_url_override.clone(),
         effective_base_url: config.base_url_override.or(app.default_base_url),
+        config_json: config.config_json.clone(),
         config: config.config_json,
+        created_at: config.created_at.to_rfc3339(),
+        updated_at: config.updated_at.to_rfc3339(),
     }))
 }
 
@@ -1840,5 +1858,35 @@ mod tests {
             Some("https://custom.example.com".to_string())
         );
         assert!(req.config.is_some());
+    }
+
+    #[test]
+    fn client_config_request_takes_gos_member_name_for_the_document() {
+        let req: ClientConfigRequest =
+            serde_json::from_value(serde_json::json!({"configJson": {"theme": "dark"}})).unwrap();
+        assert_eq!(req.config, Some(serde_json::json!({"theme": "dark"})));
+    }
+
+    #[test]
+    fn go_client_config_answers_the_overrides_only_when_set() {
+        let mut config = crate::ApplicationClientConfig::new("app_1", "clt_1");
+        let bare = serde_json::to_value(crate::application::go_api::GoClientConfigResponse::from(
+            config.clone(),
+        ))
+        .unwrap();
+        assert!(bare.get("baseUrlOverride").is_none());
+        assert!(bare.get("configJson").is_none());
+
+        config.base_url_override = Some("https://acme.example.com".to_string());
+        config.config_json = Some(serde_json::json!({"flags": {"beta": true}}));
+        let set = serde_json::to_value(crate::application::go_api::GoClientConfigResponse::from(
+            config,
+        ))
+        .unwrap();
+        assert_eq!(set["baseUrlOverride"], "https://acme.example.com");
+        assert_eq!(
+            set["configJson"],
+            serde_json::json!({"flags": {"beta": true}})
+        );
     }
 }

@@ -15,6 +15,8 @@ struct AppClientConfigRow {
     application_id: String,
     client_id: String,
     enabled: bool,
+    base_url_override: Option<String>,
+    config_json: Option<serde_json::Value>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -26,8 +28,8 @@ impl From<AppClientConfigRow> for ApplicationClientConfig {
             application_id: r.application_id,
             client_id: r.client_id,
             enabled: r.enabled,
-            base_url_override: None,
-            config_json: None,
+            base_url_override: r.base_url_override,
+            config_json: r.config_json,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -46,13 +48,16 @@ impl ApplicationClientConfigRepository {
     pub async fn insert(&self, config: &ApplicationClientConfig) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO app_client_configs (id, application_id, client_id, enabled, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6)"
+            "INSERT INTO app_client_configs (id, application_id, client_id, enabled, \
+             base_url_override, config_json, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(&config.id)
         .bind(&config.application_id)
         .bind(&config.client_id)
         .bind(config.enabled)
+        .bind(&config.base_url_override)
+        .bind(&config.config_json)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -186,13 +191,17 @@ impl ApplicationClientConfigRepository {
                 application_id = $2,
                 client_id = $3,
                 enabled = $4,
-                updated_at = $5
+                base_url_override = $5,
+                config_json = $6,
+                updated_at = $7
              WHERE id = $1",
         )
         .bind(&config.id)
         .bind(&config.application_id)
         .bind(&config.client_id)
         .bind(config.enabled)
+        .bind(&config.base_url_override)
+        .bind(&config.config_json)
         .bind(Utc::now())
         .execute(&self.pool)
         .await?;
@@ -240,16 +249,21 @@ impl crate::usecase::Persist<ApplicationClientConfig> for ApplicationClientConfi
     ) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "INSERT INTO app_client_configs (id, application_id, client_id, enabled, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            "INSERT INTO app_client_configs (id, application_id, client_id, enabled, \
+             base_url_override, config_json, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (id) DO UPDATE SET
                 enabled = EXCLUDED.enabled,
-                updated_at = EXCLUDED.updated_at"
+                base_url_override = EXCLUDED.base_url_override,
+                config_json = EXCLUDED.config_json,
+                updated_at = EXCLUDED.updated_at",
         )
         .bind(&c.id)
         .bind(&c.application_id)
         .bind(&c.client_id)
         .bind(c.enabled)
+        .bind(&c.base_url_override)
+        .bind(&c.config_json)
         .bind(now)
         .bind(now)
         .execute(&mut **tx.inner)

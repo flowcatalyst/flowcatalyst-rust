@@ -43,8 +43,9 @@ pub struct AttachServiceAccountRequest {
     pub service_account_code: String,
 }
 
-/// Go `ClientConfigResponse` (its query never selects the base-URL override
-/// or the config JSON, so neither appears).
+/// Go `ClientConfigResponse`. Go documents `baseUrlOverride` and
+/// `configJson` but has no column for them, so it never answers them; this
+/// platform stores both (migration 058) and answers them when set.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = ClientConfigResponse)]
@@ -53,6 +54,15 @@ pub struct GoClientConfigResponse {
     pub application_id: String,
     pub client_id: String,
     pub enabled: bool,
+    /// The base URL this client reaches the application at, when it is not
+    /// the application's default. Absent: the default applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url_override: Option<String>,
+    /// The application's configuration document for this client. Absent
+    /// when none was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub config_json: Option<serde_json::Value>,
     #[schema(format = DateTime)]
     pub created_at: String,
     #[schema(format = DateTime)]
@@ -152,6 +162,8 @@ impl From<crate::application::ApplicationClientConfig> for GoClientConfigRespons
             application_id: c.application_id,
             client_id: c.client_id,
             enabled: c.enabled,
+            base_url_override: c.base_url_override,
+            config_json: c.config_json,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
         }

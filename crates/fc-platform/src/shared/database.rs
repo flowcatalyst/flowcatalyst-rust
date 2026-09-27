@@ -658,6 +658,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
                 "../../../../migrations/057_dispatch_job_descriptor_and_read_metadata.sql"
             ),
         ),
+        // An application's per-client base-URL override and configuration
+        // document, which Go documents but never stores.
+        (
+            "058_app_client_config_overrides",
+            include_str!("../../../../migrations/058_app_client_config_overrides.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -936,6 +942,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs_read' \
                AND column_name = 'metadata')",
+        ),
+        (
+            "058_app_client_config_overrides",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'app_client_configs' \
+               AND column_name = 'config_json')",
         ),
     ];
 
