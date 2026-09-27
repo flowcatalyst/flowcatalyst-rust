@@ -34,6 +34,7 @@ pub mod artifact;
 pub mod clock;
 pub mod control_plane;
 pub mod desired;
+pub mod emit;
 pub mod env;
 pub mod fingerprint;
 pub mod heartbeat;

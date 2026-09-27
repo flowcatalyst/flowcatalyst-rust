@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fc_function_abi::{emit_error, Caller, FunctionAddress};
-use serde_json::Value;
-use tokio::runtime::Handle;
 use wasmtime::component::{HasSelf, Linker, ResourceTable};
 use wasmtime::StoreLimits;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
@@ -16,7 +14,6 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use super::egress::EgressHooks;
 use super::output::GuestLogger;
-use crate::control_plane::{ControlPlane, EmitItem, EmitRequest};
 
 wasmtime::component::bindgen!({
     path: "../../wit/flowcatalyst-function",
@@ -41,14 +38,7 @@ pub fn linker(engine: &wasmtime::Engine) -> wasmtime::Result<Linker<GuestState>>
     Ok(linker)
 }
 
-/// Where emitted events go: the control plane, spoken for one loaded
-/// version. The call runs on the host's own runtime (not the guest
-/// runtime), so the control plane's connections live with the reconciler's.
-pub struct Emitter {
-    pub control_plane: Arc<dyn ControlPlane>,
-    pub host_id: String,
-    pub host_runtime: Option<Handle>,
-}
+pub use crate::emit::Emitter;
 
 /// What every invocation of one loaded version shares. Holds secret
 /// values: deliberately not `Debug`.
@@ -69,59 +59,29 @@ pub struct FunctionShared {
     pub emitter: Emitter,
 }
 
-/// Why the host did not publish an event: its own refusal before the
-/// platform (an `INVALID_EVENT` code), or the platform's answer.
-enum EmitFailure {
-    Invalid(String),
-    Platform(fc_function_abi::EventEmitError),
-}
+use crate::emit::EmitFailure;
 
 impl FunctionShared {
-    /// Publishes `event`; the id the platform stored it under.
+    /// Publishes `event` (the WIT record) through the shared [`Emitter`].
     async fn emit(
         self: Arc<Self>,
         event: events::OutboundEvent,
         defaults: (String, Option<String>),
     ) -> Result<String, EmitFailure> {
-        if crate::java::is_blank(&event.type_) {
-            return Err(EmitFailure::Invalid(
-                emit_error::INVALID_EVENT_TYPE_REQUIRED.to_owned(),
-            ));
-        }
-        if crate::java::is_blank(&event.dedup_id) {
-            return Err(EmitFailure::Invalid(
-                emit_error::DEDUP_ID_REQUIRED.to_owned(),
-            ));
-        }
-        let data = match &event.data {
-            None => Value::Null,
-            Some(text) => serde_json::from_str(text)
-                .map_err(|_| EmitFailure::Invalid(INVALID_EVENT_DATA_NOT_JSON.to_owned()))?,
+        let event = crate::emit::OutboundEvent {
+            event_type: event.type_,
+            source: event.source,
+            subject: event.subject,
+            data_content_type: event.data_content_type,
+            data: event.data,
+            correlation_id: event.correlation_id,
+            causation_id: event.causation_id,
+            message_group: event.message_group,
+            dedup_id: event.dedup_id,
         };
-        let (correlation_id, causation_id) = defaults;
-        let request = EmitRequest {
-            host_id: self.emitter.host_id.clone(),
-            address: self.address.clone(),
-            version: self.version,
-            events: vec![EmitItem {
-                event_type: event.type_,
-                subject: event.subject,
-                dedup_id: event.dedup_id,
-                data,
-                correlation_id: event.correlation_id.or(Some(correlation_id)),
-                causation_id: event.causation_id.or(causation_id),
-                message_group: event.message_group,
-            }],
-        };
-        let control_plane = self.emitter.control_plane.clone();
-        let sent = match &self.emitter.host_runtime {
-            Some(runtime) => runtime
-                .spawn(async move { control_plane.emit(&request).await })
-                .await
-                .unwrap_or_else(|_| Err(fc_function_abi::EventEmitError::unavailable())),
-            None => control_plane.emit(&request).await,
-        };
-        sent.map_err(EmitFailure::Platform)
+        self.emitter
+            .emit(&self.address, self.version, event, defaults)
+            .await
     }
 }
 
