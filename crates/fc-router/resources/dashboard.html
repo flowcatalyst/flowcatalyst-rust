@@ -13,7 +13,11 @@
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8">
-        <!-- Login Modal (for BasicAuth) -->
+        <!-- Decision #43: the router's API is open (AUTH_MODE=NONE outside dev mode) -->
+        <div id="authWarning" class="hidden mb-4 p-4 bg-red-100 text-red-800 rounded font-medium"></div>
+        <!-- Sign-in problems (platform sign-in, owner ruling 2) -->
+        <div id="authMessage" class="hidden mb-4 p-4 bg-yellow-100 text-yellow-800 rounded"></div>
+        <!-- Login Modal (for BasicAuth, dev mode only) -->
         <div id="loginModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
             <div class="bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
                 <div class="px-6 py-4 border-b border-gray-200">
@@ -554,10 +558,15 @@
             }
 
             async checkAuth() {
-                // Check for stored BasicAuth
+                // Check for stored BasicAuth (dev mode only)
                 const stored = localStorage.getItem('flowcatalyst_auth');
                 if (stored) {
                     this.basicAuth = stored;
+                }
+
+                // Returning from the platform's sign-in page with a code.
+                if (!(await this.completeSignIn())) {
+                    return;
                 }
 
                 try {
@@ -572,6 +581,12 @@
                         const authMode = response.headers.get('X-Auth-Mode');
                         if (authMode === 'BASIC') {
                             this.showLoginModal();
+                        } else if (authMode === 'BEARER') {
+                            if (response.status === 403) {
+                                this.showAuthMessage('Signed in, but your roles do not include platform:messaging:router:view.');
+                            } else {
+                                await this.startSignIn();
+                            }
                         } else if (authMode === 'OIDC') {
                             // Redirect to OIDC login
                             window.location.href = '/monitoring/health';
@@ -589,6 +604,95 @@
                     // Try to show dashboard anyway
                     this.showDashboard();
                 }
+            }
+
+            // ── Platform sign-in: authorization code + PKCE (owner ruling 2) ──
+            // The access token lives in memory only; the verifier and state sit in
+            // sessionStorage across the redirect and are removed on return.
+
+            showAuthMessage(text) {
+                const el = document.getElementById('authMessage');
+                el.textContent = text;
+                el.classList.remove('hidden');
+            }
+
+            static base64Url(bytes) {
+                let s = '';
+                bytes.forEach(b => { s += String.fromCharCode(b); });
+                return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            }
+
+            async startSignIn() {
+                // One redirect per page load: a second 401 right after signing in means the
+                // token is being refused, and redirecting again would loop.
+                if (sessionStorage.getItem('fc_router_signin_attempted')) {
+                    sessionStorage.removeItem('fc_router_signin_attempted');
+                    this.showAuthMessage('Signed in, but the router refused the token. Check that the dashboard client has API access and your roles include the router permissions.');
+                    return;
+                }
+                const base = window.__API_BASE__ || '';
+                let config;
+                try {
+                    config = await (await fetch(base + '/dashboard/auth-config')).json();
+                } catch (error) {
+                    this.showAuthMessage('Could not reach the router to start sign-in.');
+                    return;
+                }
+                if (!config.enabled) {
+                    this.showAuthMessage('Sign-in is not configured for this router: set FC_ROUTER_DASHBOARD_CLIENT_ID to a public platform OAuth client.');
+                    return;
+                }
+                const verifier = Dashboard.base64Url(crypto.getRandomValues(new Uint8Array(32)));
+                const state = Dashboard.base64Url(crypto.getRandomValues(new Uint8Array(16)));
+                const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+                const redirectUri = window.location.origin + window.location.pathname;
+                sessionStorage.setItem('fc_router_pkce', JSON.stringify({ verifier, state, redirectUri }));
+                sessionStorage.setItem('fc_router_signin_attempted', '1');
+                const params = new URLSearchParams({
+                    response_type: 'code',
+                    client_id: config.clientId,
+                    redirect_uri: redirectUri,
+                    scope: config.scope,
+                    state,
+                    code_challenge: Dashboard.base64Url(digest),
+                    code_challenge_method: 'S256'
+                });
+                window.location.assign(config.authorizationEndpoint + '?' + params.toString());
+            }
+
+            // Returns false when it has shown an error and the page should stop.
+            async completeSignIn() {
+                const query = new URLSearchParams(window.location.search);
+                if (!query.has('code') && !query.has('error')) {
+                    sessionStorage.removeItem('fc_router_signin_attempted');
+                    return true;
+                }
+                const pending = JSON.parse(sessionStorage.getItem('fc_router_pkce') || 'null');
+                sessionStorage.removeItem('fc_router_pkce');
+                // Drop code/state from the address bar either way.
+                window.history.replaceState(null, '', window.location.pathname);
+                if (query.has('error')) {
+                    this.showAuthMessage('Sign-in failed: ' + query.get('error'));
+                    return false;
+                }
+                if (!pending || pending.state !== query.get('state')) {
+                    this.showAuthMessage('Sign-in failed: the response did not match the request. Reload to try again.');
+                    return false;
+                }
+                const base = window.__API_BASE__ || '';
+                const response = await fetch(base + '/dashboard/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: query.get('code'), codeVerifier: pending.verifier, redirectUri: pending.redirectUri })
+                });
+                if (!response.ok) {
+                    const body = await response.json().catch(() => ({}));
+                    this.showAuthMessage('Sign-in failed: ' + (body.error || response.status));
+                    return false;
+                }
+                const token = await response.json();
+                this.accessToken = token.accessToken;
+                return true;
             }
 
             showLoginModal() {
@@ -633,6 +737,7 @@
             logout() {
                 localStorage.removeItem('flowcatalyst_auth');
                 this.basicAuth = null;
+                this.accessToken = null;
                 window.location.reload();
             }
 
@@ -649,7 +754,9 @@
 
             async fetchWithAuth(url, options = {}) {
                 const headers = { ...(options.headers || {}) };
-                if (this.basicAuth) {
+                if (this.accessToken) {
+                    headers['Authorization'] = 'Bearer ' + this.accessToken;
+                } else if (this.basicAuth) {
                     headers['Authorization'] = 'Basic ' + this.basicAuth;
                 }
                 // Prepend the server-injected mount prefix to absolute paths.
@@ -657,7 +764,15 @@
                 // unchanged.
                 const base = window.__API_BASE__ || '';
                 const resolved = url.startsWith('/') ? base + url : url;
-                return fetch(resolved, { ...options, headers, credentials: 'include' });
+                const response = await fetch(resolved, { ...options, headers, credentials: 'include' });
+                if (response.status === 401 && this.accessToken && !this.reSigningIn) {
+                    // The token expired: sign in again (instant while the platform session lasts).
+                    this.reSigningIn = true;
+                    this.accessToken = null;
+                    sessionStorage.removeItem('fc_router_signin_attempted');
+                    await this.startSignIn();
+                }
+                return response;
             }
 
             // Convenience wrapper for the operator-mutation endpoints
@@ -902,6 +1017,14 @@
                         await Promise.all(responses.map(r => r.json()));
 
                     this.data = { health, queueStats, poolStats, warnings, circuitBreakers };
+                    // Decision #43: say so while the router's API is unauthenticated.
+                    const authWarning = document.getElementById('authWarning');
+                    if (health && health.authWarning) {
+                        authWarning.textContent = 'Warning: ' + health.authWarning;
+                        authWarning.classList.remove('hidden');
+                    } else {
+                        authWarning.classList.add('hidden');
+                    }
                     this.updateUI();
                 } catch (error) {
                     console.error('Failed to load data:', error);
