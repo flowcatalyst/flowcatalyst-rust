@@ -8,12 +8,11 @@ import "context"
 
 // PermissionResponse is one permission catalogue entry.
 type PermissionResponse struct {
+	// Permission is the full permission string.
 	Permission  string `json:"permission"`
-	Application string `json:"application"`
-	Context     string `json:"context"`
-	Aggregate   string `json:"aggregate"`
-	Action      string `json:"action"`
-	Description string `json:"description"`
+	Name        string `json:"name"`
+	Category    string `json:"category,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // PermissionListResponse — GET /api/roles/permissions.

@@ -77,9 +77,9 @@ func (s *Synchronizer) runRoles(ctx context.Context, app string, defs []RoleDefi
 }
 
 func (s *Synchronizer) runEventTypes(ctx context.Context, app string, defs []EventTypeDefinition, removeUnlisted bool) *CategoryResult {
-	items := make([]client.CreateEventTypeRequest, 0, len(defs))
+	items := make([]client.SyncEventTypeItem, 0, len(defs))
 	for _, d := range defs {
-		items = append(items, client.CreateEventTypeRequest{
+		items = append(items, client.SyncEventTypeItem{
 			Code:        d.Code,
 			Name:        d.Name,
 			Description: d.Description,
@@ -151,7 +151,9 @@ func (s *Synchronizer) runProcesses(ctx context.Context, app string, defs []Proc
 			Code:        d.Code,
 			Name:        d.Name,
 			Description: d.Description,
-			Steps:       d.Steps,
+			Body:        d.Body,
+			DiagramType: d.DiagramType,
+			Tags:        d.Tags,
 		})
 	}
 	res, err := s.client.Processes().Sync(ctx, app, &client.SyncProcessesRequest{Processes: items}, removeUnlisted)

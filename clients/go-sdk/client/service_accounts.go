@@ -18,10 +18,12 @@ type CreateServiceAccountRequest struct {
 	ClientIDs []string `json:"clientIds,omitempty"`
 	// AllApplications grants every application. Omitted when false.
 	AllApplications bool `json:"allApplications,omitempty"`
+	// ApplicationID optionally links the account to an application.
+	ApplicationID string `json:"applicationId,omitempty"`
 }
 
 // ServiceAccount — a service account as the /api/service-accounts routes
-// return it.
+// return it (the platform's ServiceAccountResponse).
 type ServiceAccount struct {
 	ID            string   `json:"id"`
 	Code          string   `json:"code"`
@@ -30,6 +32,8 @@ type ServiceAccount struct {
 	Scope         string   `json:"scope,omitempty"`
 	ClientIDs     []string `json:"clientIds"`
 	ApplicationID string   `json:"applicationId,omitempty"`
+	PrincipalID   string   `json:"principalId,omitempty"`
+	OAuthClientID string   `json:"oauthClientId,omitempty"`
 	Active        bool     `json:"active"`
 	AuthType      string   `json:"authType"`
 	Roles         []string `json:"roles"`
@@ -69,6 +73,15 @@ type ServiceAccountsResource struct {
 func (r *ServiceAccountsResource) Create(ctx context.Context, req *CreateServiceAccountRequest) (*CreateServiceAccountResponse, error) {
 	var out CreateServiceAccountResponse
 	if err := r.c.Post(ctx, "/api/service-accounts", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// Get — GET /api/service-accounts/{id}.
+func (r *ServiceAccountsResource) Get(ctx context.Context, id string) (*ServiceAccount, error) {
+	var out ServiceAccount
+	if err := r.c.Get(ctx, "/api/service-accounts/"+id, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

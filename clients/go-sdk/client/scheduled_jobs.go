@@ -16,7 +16,9 @@ type CreateScheduledJobRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// ClientID empty = platform-scoped (anchor only); set = client-scoped.
-	ClientID            string          `json:"clientId,omitempty"`
+	ClientID string `json:"clientId,omitempty"`
+	// ApplicationID optionally links the job to an application.
+	ApplicationID       string          `json:"applicationId,omitempty"`
 	Crons               []string        `json:"crons"`
 	Timezone            string          `json:"timezone,omitempty"`
 	Payload             json.RawMessage `json:"payload,omitempty"`
@@ -89,14 +91,12 @@ type ScheduledJobFilters struct {
 	Size     *uint32
 }
 
-// InstanceFilters — query parameters for instance listings.
+// InstanceFilters — query parameters for instance listings. The platform
+// filters instances by status only.
 type InstanceFilters struct {
-	Status      string
-	TriggerKind string
-	From        string
-	To          string
-	Page        *uint32
-	Size        *uint32
+	Status string
+	Page   *uint32
+	Size   *uint32
 }
 
 // ─── Response DTOs ───────────────────────────────────────────────────
@@ -105,6 +105,7 @@ type InstanceFilters struct {
 type ScheduledJobResponse struct {
 	ID                  string          `json:"id"`
 	ClientID            string          `json:"clientId,omitempty"`
+	ApplicationID       string          `json:"applicationId,omitempty"`
 	Code                string          `json:"code"`
 	Name                string          `json:"name"`
 	Description         string          `json:"description,omitempty"`
@@ -129,32 +130,34 @@ type ScheduledJobResponse struct {
 
 // ScheduledJobInstanceResponse — one firing of a scheduled job.
 type ScheduledJobInstanceResponse struct {
-	ID                string          `json:"id"`
-	ScheduledJobID    string          `json:"scheduledJobId"`
-	ClientID          string          `json:"clientId,omitempty"`
-	JobCode           string          `json:"jobCode"`
-	TriggerKind       string          `json:"triggerKind"`
-	ScheduledFor      string          `json:"scheduledFor,omitempty"`
-	FiredAt           string          `json:"firedAt"`
-	DeliveredAt       string          `json:"deliveredAt,omitempty"`
-	CompletedAt       string          `json:"completedAt,omitempty"`
-	Status            string          `json:"status"`
-	DeliveryAttempts  int32           `json:"deliveryAttempts"`
-	DeliveryError     string          `json:"deliveryError,omitempty"`
-	CompletionStatus  string          `json:"completionStatus,omitempty"`
-	CompletionResult  json.RawMessage `json:"completionResult,omitempty"`
-	CorrelationID     string          `json:"correlationId,omitempty"`
-	CreatedAt         string          `json:"createdAt"`
+	ID               string          `json:"id"`
+	ScheduledJobID   string          `json:"scheduledJobId"`
+	ClientID         string          `json:"clientId,omitempty"`
+	JobCode          string          `json:"jobCode"`
+	TriggerKind      string          `json:"triggerKind"`
+	ScheduledFor     string          `json:"scheduledFor,omitempty"`
+	FiredAt          string          `json:"firedAt"`
+	DeliveredAt      string          `json:"deliveredAt,omitempty"`
+	CompletedAt      string          `json:"completedAt,omitempty"`
+	Status           string          `json:"status"`
+	DeliveryAttempts int32           `json:"deliveryAttempts"`
+	DeliveryError    string          `json:"deliveryError,omitempty"`
+	CompletionStatus string          `json:"completionStatus,omitempty"`
+	CompletionResult json.RawMessage `json:"completionResult,omitempty"`
+	CorrelationID    string          `json:"correlationId,omitempty"`
+	CreatedAt        string          `json:"createdAt"`
 }
 
 // InstanceLogResponse — one log line from an instance.
 type InstanceLogResponse struct {
-	ID         string          `json:"id"`
-	InstanceID string          `json:"instanceId"`
-	Level      string          `json:"level"`
-	Message    string          `json:"message"`
-	Metadata   json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt  string          `json:"createdAt"`
+	ID             string          `json:"id"`
+	InstanceID     string          `json:"instanceId"`
+	ScheduledJobID string          `json:"scheduledJobId,omitempty"`
+	ClientID       string          `json:"clientId,omitempty"`
+	Level          string          `json:"level"`
+	Message        string          `json:"message"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt      string          `json:"createdAt"`
 }
 
 // ScheduledJobListResponse — paginated list for List().
@@ -163,7 +166,7 @@ type ScheduledJobListResponse struct {
 	Page       uint32                 `json:"page"`
 	Size       uint32                 `json:"size"`
 	Total      uint64                 `json:"total"`
-	TotalPages uint32                 `json:"totalPages"`
+	TotalPages uint32                 `json:"total_pages"`
 }
 
 // ScheduledJobInstanceListResponse — paginated list for ListInstances().
@@ -172,7 +175,7 @@ type ScheduledJobInstanceListResponse struct {
 	Page       uint32                         `json:"page"`
 	Size       uint32                         `json:"size"`
 	Total      uint64                         `json:"total"`
-	TotalPages uint32                         `json:"totalPages"`
+	TotalPages uint32                         `json:"total_pages"`
 }
 
 // InstanceLogListResponse — GET /api/scheduled-jobs/instances/{id}/logs.
@@ -181,9 +184,11 @@ type InstanceLogListResponse struct {
 	Total uint64                `json:"total,omitempty"`
 }
 
-// FireResponse — { instanceId } from a manual fire.
+// FireResponse — the platform's answer (202) to a manual fire.
 type FireResponse struct {
-	InstanceID string `json:"instanceId"`
+	ID             string `json:"id"`
+	ScheduledJobID string `json:"scheduledJobId"`
+	InstanceID     string `json:"instanceId"`
 }
 
 // ─── Sync DTOs ───────────────────────────────────────────────────────
@@ -193,22 +198,22 @@ type FireResponse struct {
 // ArchiveUnlisted archives jobs not in the list (note: this is in the
 // body, not the query — distinct from other sync endpoints).
 type SyncScheduledJobsRequest struct {
-	ClientID        string                  `json:"clientId,omitempty"`
-	Jobs            []SyncScheduledJobItem  `json:"jobs"`
-	ArchiveUnlisted bool                    `json:"archiveUnlisted,omitempty"`
+	ClientID        string                 `json:"clientId,omitempty"`
+	Jobs            []SyncScheduledJobItem `json:"jobs"`
+	ArchiveUnlisted bool                   `json:"archiveUnlisted,omitempty"`
 }
 
 // SyncScheduledJobItem — one entry in the sync payload.
 type SyncScheduledJobItem struct {
-	Code                string          `json:"code"`
-	Name                string          `json:"name"`
-	Description         string          `json:"description,omitempty"`
-	Crons               []string        `json:"crons"`
-	Timezone            string          `json:"timezone,omitempty"`
-	Payload             json.RawMessage `json:"payload,omitempty"`
-	Concurrent          bool            `json:"concurrent,omitempty"`
-	TracksCompletion    bool            `json:"tracksCompletion,omitempty"`
-	TimeoutSeconds      *int32          `json:"timeoutSeconds,omitempty"`
+	Code             string          `json:"code"`
+	Name             string          `json:"name"`
+	Description      string          `json:"description,omitempty"`
+	Crons            []string        `json:"crons"`
+	Timezone         string          `json:"timezone,omitempty"`
+	Payload          json.RawMessage `json:"payload,omitempty"`
+	Concurrent       bool            `json:"concurrent,omitempty"`
+	TracksCompletion bool            `json:"tracksCompletion,omitempty"`
+	TimeoutSeconds   *int32          `json:"timeoutSeconds,omitempty"`
 	// DeliveryMaxAttempts: defaults to 3 server-side when omitted (nil).
 	DeliveryMaxAttempts *int32 `json:"deliveryMaxAttempts,omitempty"`
 	TargetURL           string `json:"targetUrl,omitempty"`
@@ -277,40 +282,28 @@ func (r *ScheduledJobsResource) GetByCode(ctx context.Context, code, clientID st
 	return &out, nil
 }
 
-// Update — PUT /api/scheduled-jobs/{id}.
-func (r *ScheduledJobsResource) Update(ctx context.Context, id string, req *UpdateScheduledJobRequest) (*ScheduledJobResponse, error) {
-	var out ScheduledJobResponse
-	if err := r.c.Put(ctx, "/api/scheduled-jobs/"+id, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Update — PUT /api/scheduled-jobs/{id}. The platform answers 204; call
+// Get for the refreshed record.
+func (r *ScheduledJobsResource) Update(ctx context.Context, id string, req *UpdateScheduledJobRequest) error {
+	return r.c.Put(ctx, "/api/scheduled-jobs/"+id, req, nil)
 }
 
-// Pause — POST /api/scheduled-jobs/{id}/pause.
-func (r *ScheduledJobsResource) Pause(ctx context.Context, id string) (*ScheduledJobResponse, error) {
-	var out ScheduledJobResponse
-	if err := r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/pause", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Pause — POST /api/scheduled-jobs/{id}/pause. The platform
+// answers 204.
+func (r *ScheduledJobsResource) Pause(ctx context.Context, id string) error {
+	return r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/pause", nil, nil)
 }
 
-// Resume — POST /api/scheduled-jobs/{id}/resume.
-func (r *ScheduledJobsResource) Resume(ctx context.Context, id string) (*ScheduledJobResponse, error) {
-	var out ScheduledJobResponse
-	if err := r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/resume", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Resume — POST /api/scheduled-jobs/{id}/resume. The platform
+// answers 204.
+func (r *ScheduledJobsResource) Resume(ctx context.Context, id string) error {
+	return r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/resume", nil, nil)
 }
 
-// Archive — POST /api/scheduled-jobs/{id}/archive (soft delete, kept for audit).
-func (r *ScheduledJobsResource) Archive(ctx context.Context, id string) (*ScheduledJobResponse, error) {
-	var out ScheduledJobResponse
-	if err := r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/archive", nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Archive — POST /api/scheduled-jobs/{id}/archive (soft delete, kept for audit). The platform
+// answers 204.
+func (r *ScheduledJobsResource) Archive(ctx context.Context, id string) error {
+	return r.c.Post(ctx, "/api/scheduled-jobs/"+id+"/archive", nil, nil)
 }
 
 // Delete — DELETE /api/scheduled-jobs/{id} (hard delete).
@@ -336,9 +329,6 @@ func (r *ScheduledJobsResource) ListInstances(ctx context.Context, jobID string,
 	if filters != nil {
 		q = NewQuery().
 			String("status", filters.Status).
-			String("triggerKind", filters.TriggerKind).
-			String("from", filters.From).
-			String("to", filters.To).
 			Uint32("page", filters.Page).
 			Uint32("size", filters.Size).
 			Encode()
@@ -373,28 +363,22 @@ func (r *ScheduledJobsResource) ListInstanceLogs(ctx context.Context, instanceID
 // LogForInstance — SDK callback to append a log entry to a running instance.
 // POST /api/scheduled-jobs/instances/{id}/log.
 //
-// The platform requires a level; an empty Level is sent as INFO.
-func (r *ScheduledJobsResource) LogForInstance(ctx context.Context, instanceID string, req *InstanceLogRequest) (*InstanceLogResponse, error) {
+// The platform requires a level; an empty Level is sent as INFO. The
+// platform answers 204.
+func (r *ScheduledJobsResource) LogForInstance(ctx context.Context, instanceID string, req *InstanceLogRequest) error {
 	if req != nil && req.Level == "" {
 		withLevel := *req
 		withLevel.Level = LogLevelInfo
 		req = &withLevel
 	}
-	var out InstanceLogResponse
-	if err := r.c.Post(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/log", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return r.c.Post(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/log", req, nil)
 }
 
 // CompleteInstance — SDK callback to mark an instance complete.
-// POST /api/scheduled-jobs/instances/{id}/complete.
-func (r *ScheduledJobsResource) CompleteInstance(ctx context.Context, instanceID string, req *InstanceCompleteRequest) (*ScheduledJobInstanceResponse, error) {
-	var out ScheduledJobInstanceResponse
-	if err := r.c.Post(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/complete", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// POST /api/scheduled-jobs/instances/{id}/complete. The platform answers
+// 204; call GetInstance for the refreshed record.
+func (r *ScheduledJobsResource) CompleteInstance(ctx context.Context, instanceID string, req *InstanceCompleteRequest) error {
+	return r.c.Post(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/complete", req, nil)
 }
 
 // Sync — POST /api/applications/{appCode}/scheduled-jobs/sync. Unlike

@@ -18,11 +18,13 @@ type CreateRoleRequest struct {
 	ClientManaged   bool     `json:"clientManaged"`
 }
 
-// UpdateRoleRequest — PUT /api/roles/{name}.
+// UpdateRoleRequest — PUT /api/roles/{name}. Nil members are left
+// unchanged; a non-nil Permissions replaces the role's permission set.
 type UpdateRoleRequest struct {
-	DisplayName   *string `json:"displayName,omitempty"`
-	Description   *string `json:"description,omitempty"`
-	ClientManaged *bool   `json:"clientManaged,omitempty"`
+	DisplayName   *string   `json:"displayName,omitempty"`
+	Description   *string   `json:"description,omitempty"`
+	Permissions   *[]string `json:"permissions,omitempty"`
+	ClientManaged *bool     `json:"clientManaged,omitempty"`
 }
 
 // GrantPermissionRequest — body for POST /api/roles/{name}/permissions.
@@ -34,15 +36,18 @@ type GrantPermissionRequest struct {
 
 // RoleResponse is the platform's role aggregate.
 type RoleResponse struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	ShortName       string   `json:"shortName"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// ShortName is not sent by the Go platform (only by the Rust one);
+	// derive it from Name when needed.
+	ShortName       string   `json:"shortName,omitempty"`
 	DisplayName     string   `json:"displayName"`
 	Description     string   `json:"description,omitempty"`
 	ApplicationCode string   `json:"applicationCode"`
-	Permissions     []string `json:"permissions,omitempty"`
+	ApplicationID   string   `json:"applicationId,omitempty"`
+	Permissions     []string `json:"permissions"`
 	Source          string   `json:"source"`
-	ClientManaged   bool     `json:"clientManaged,omitempty"`
+	ClientManaged   bool     `json:"clientManaged"`
 	CreatedAt       string   `json:"createdAt"`
 	UpdatedAt       string   `json:"updatedAt"`
 }

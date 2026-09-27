@@ -12,14 +12,19 @@ type CreateConnectionRequest struct {
 	ServiceAccountID string `json:"serviceAccountId"`
 	ExternalID       string `json:"externalId,omitempty"`
 	ClientID         string `json:"clientId,omitempty"`
+	ApplicationCode  string `json:"applicationCode,omitempty"`
 }
 
 // UpdateConnectionRequest — PUT /api/connections/{id}.
+//
+// Name is required and always sent: the platform replaces the name on
+// every update. Nil optional members are left unchanged.
 type UpdateConnectionRequest struct {
-	Name        *string `json:"name,omitempty"`
-	Description *string `json:"description,omitempty"`
-	ExternalID  *string `json:"externalId,omitempty"`
-	Status      *string `json:"status,omitempty"`
+	Name            string  `json:"name"`
+	Description     *string `json:"description,omitempty"`
+	ExternalID      *string `json:"externalId,omitempty"`
+	Status          *string `json:"status,omitempty"`
+	ApplicationCode *string `json:"applicationCode,omitempty"`
 }
 
 // ─── Response DTOs ───────────────────────────────────────────────────
@@ -35,6 +40,8 @@ type ConnectionResponse struct {
 	ServiceAccountID string `json:"serviceAccountId"`
 	ClientID         string `json:"clientId,omitempty"`
 	ClientIdentifier string `json:"clientIdentifier,omitempty"`
+	ApplicationCode  string `json:"applicationCode,omitempty"`
+	Source           string `json:"source"`
 	CreatedAt        string `json:"createdAt"`
 	UpdatedAt        string `json:"updatedAt"`
 }
@@ -52,9 +59,9 @@ type ConnectionsResource struct {
 	c *FlowCatalystClient
 }
 
-// Create — POST /api/connections. Returns the new connection's id.
-func (r *ConnectionsResource) Create(ctx context.Context, req *CreateConnectionRequest) (*CreatedResponse, error) {
-	var out CreatedResponse
+// Create — POST /api/connections. Returns the created connection.
+func (r *ConnectionsResource) Create(ctx context.Context, req *CreateConnectionRequest) (*ConnectionResponse, error) {
+	var out ConnectionResponse
 	if err := r.c.Post(ctx, "/api/connections", req, &out); err != nil {
 		return nil, err
 	}
@@ -70,12 +77,12 @@ func (r *ConnectionsResource) Get(ctx context.Context, id string) (*ConnectionRe
 	return &out, nil
 }
 
-// List — GET /api/connections with optional filters.
-func (r *ConnectionsResource) List(ctx context.Context, clientID, status, serviceAccountID string) (*ConnectionsListResponse, error) {
+// List — GET /api/connections with optional clientId / status filters
+// (pass "" to omit one).
+func (r *ConnectionsResource) List(ctx context.Context, clientID, status string) (*ConnectionsListResponse, error) {
 	q := NewQuery().
 		String("clientId", clientID).
 		String("status", status).
-		String("serviceAccountId", serviceAccountID).
 		Encode()
 	var out ConnectionsListResponse
 	if err := r.c.Get(ctx, "/api/connections"+q, &out); err != nil {
@@ -84,7 +91,7 @@ func (r *ConnectionsResource) List(ctx context.Context, clientID, status, servic
 	return &out, nil
 }
 
-// Update — PUT /api/connections/{id}.
+// Update — PUT /api/connections/{id}. The platform answers 204.
 func (r *ConnectionsResource) Update(ctx context.Context, id string, req *UpdateConnectionRequest) error {
 	return r.c.Put(ctx, "/api/connections/"+id, req, nil)
 }
