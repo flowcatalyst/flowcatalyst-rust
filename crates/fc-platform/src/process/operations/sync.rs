@@ -105,8 +105,12 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
         let mut updated = 0u32;
         let mut deleted = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut saves: Vec<Process> = Vec::new();
+        let mut deletes: Vec<Process> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
+        // Plan every row before anything is written (Go's `usecaseop.Sync`):
+        // a bad row fails the sync with nothing written.
         for input in &command.processes {
             synced_codes.push(input.code.clone());
             match existing.iter().find(|p| p.code == input.code) {
@@ -125,15 +129,10 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                         }
                         up.tags = input.tags.clone();
                         up.updated_at = chrono::Utc::now();
-                        if let Err(e) = self.process_repo.update(&up).await {
-                            return Err(UseCaseError::commit(format!(
-                                "Failed to update process '{}': {}",
-                                input.code, e
-                            )));
-                        }
                         rows.push(RecordedEvent::of(&ProcessUpdated::new(
                             &ctx, &up.id, &up.name,
                         ))?);
+                        saves.push(up);
                         updated += 1;
                     }
                 }
@@ -149,15 +148,10 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                         }
                     }
                     p.tags = input.tags.clone();
-                    if let Err(e) = self.process_repo.insert(&p).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to create process '{}': {}",
-                            input.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&ProcessCreated::new(
                         &ctx, &p.id, &p.code, &p.name,
                     ))?);
+                    saves.push(p);
                     created += 1;
                 }
             }
@@ -168,15 +162,10 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                 if (p.source == ProcessSource::Api || p.source == ProcessSource::Code)
                     && !synced_codes.contains(&p.code)
                 {
-                    if let Err(e) = self.process_repo.delete(&p.id).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to delete process '{}': {}",
-                            p.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&ProcessDeleted::new(
                         &ctx, &p.id, &p.code,
                     ))?);
+                    deletes.push(p.clone());
                     deleted += 1;
                 }
             }
@@ -191,8 +180,10 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
             synced_codes,
         };
 
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // process, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
+        // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
+        // synced process, then the rollup, in one transaction.
+        self.unit_of_work
+            .commit_sync(&*self.process_repo, &saves, &deletes, rows, event, &command)
+            .await
     }
 }

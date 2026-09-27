@@ -194,8 +194,11 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut saves: Vec<Subscription> = Vec::new();
+        let mut deletes: Vec<Subscription> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
+        // Plan every row before anything is written (Go's `usecaseop.Sync`).
         for (input, connection_id) in command.subscriptions.iter().zip(connection_ids) {
             synced_codes.push(input.code.clone());
 
@@ -231,17 +234,12 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                             updated.dispatch_pool_code = Some(pool.code.clone());
                         }
                         updated.updated_at = chrono::Utc::now();
-                        if let Err(e) = self.subscription_repo.update(&updated).await {
-                            return Err(UseCaseError::commit(format!(
-                                "Failed to update subscription '{}': {}",
-                                input.code, e
-                            )));
-                        }
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
                             &ctx,
                             &updated.id,
                             &updated.name,
                         ))?);
+                        saves.push(updated);
                         updated_count += 1;
                     }
                 }
@@ -271,15 +269,10 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
                         .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
                         .build();
-                    if let Err(e) = self.subscription_repo.insert(&sub).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to create subscription '{}': {}",
-                            input.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
                         &ctx, &sub.id, &sub.code, &sub.name,
                     ))?);
+                    saves.push(sub);
                     created_count += 1;
                 }
             }
@@ -291,15 +284,10 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                 if (sub.source == SubscriptionSource::Api || sub.source == SubscriptionSource::Code)
                     && !synced_codes.contains(&sub.code)
                 {
-                    if let Err(e) = self.subscription_repo.delete(&sub.id).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to delete subscription '{}': {}",
-                            sub.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
                         &ctx, &sub.id, &sub.code,
                     ))?);
+                    deletes.push(sub.clone());
                     deleted_count += 1;
                 }
             }
@@ -315,9 +303,18 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
             synced_codes,
         };
 
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // subscription, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
+        // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
+        // synced subscription, then the rollup, in one transaction.
+        self.unit_of_work
+            .commit_sync(
+                &*self.subscription_repo,
+                &saves,
+                &deletes,
+                rows,
+                event,
+                &command,
+            )
+            .await
     }
 }
 
