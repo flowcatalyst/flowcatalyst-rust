@@ -441,7 +441,9 @@ pub async fn get_event(
 }
 
 /// `GET /api/events/{id}`: Go's `EventResponse` (event/api/dto.go), from the
-/// read projection. Absent members stay absent.
+/// read projection, with the event's `contextData` from its stored row (Go
+/// documents it here but reads only the projection, which has none, so it
+/// never answers it). Absent members stay absent.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = EventResponse)]
@@ -457,6 +459,10 @@ pub struct EventDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<serde_json::Value>)]
     pub data: Option<serde_json::Value>,
+    /// The event's context entries; absent when it has none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(required = false)]
+    pub context_data: Vec<ContextDataDto>,
     pub deduplication_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -481,6 +487,7 @@ pub struct EventDetailResponse {
 
 impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
     fn from(e: crate::event::repository::EventReadDetail) -> Self {
+        let context_data = e.context_entries().into_iter().map(Into::into).collect();
         // `data` is stored as text; Go hands it back as raw JSON.
         let data = e
             .data
@@ -494,6 +501,7 @@ impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
             subject: e.subject.unwrap_or_default(),
             time: e.time.to_rfc3339(),
             data,
+            context_data,
             deduplication_id: e.deduplication_id.unwrap_or_default(),
             client_id: e.client_id,
             message_group: e.message_group,

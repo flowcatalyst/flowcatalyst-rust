@@ -721,6 +721,7 @@ async fn create_event_type(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                         description: Some(form.description.trim().to_owned())
                             .filter(|d| !d.is_empty()),
                         client_id: None,
+                        client_scoped: false,
                         schema: None,
                     },
                     ExecutionContext::from_auth(auth),
@@ -939,6 +940,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
                     event_type_id: et.id.clone(),
                     name: Some(form.name.trim().to_owned()),
                     description: Some(form.description.trim().to_owned()),
+                    client_scoped: None,
                 },
                 ExecutionContext::from_auth(auth),
             )

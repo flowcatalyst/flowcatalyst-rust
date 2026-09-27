@@ -195,6 +195,13 @@ pub struct RoleAssignment {
 }
 
 impl RoleAssignment {
+    /// This assignment, recorded as made by `principal_id` (stored as
+    /// `iam_principal_roles.assigned_by`).
+    pub fn assigned_by(mut self, principal_id: impl Into<String>) -> Self {
+        self.assigned_by = Some(principal_id.into());
+        self
+    }
+
     pub fn new(role: impl Into<String>) -> Self {
         Self {
             role: role.into(),

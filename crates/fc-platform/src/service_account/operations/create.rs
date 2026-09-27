@@ -296,7 +296,8 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             service_account.roles = vec![RoleAssignment::with_source(
                 roles::application_service().name,
                 AssignmentSource::Provisioned,
-            )];
+            )
+            .assigned_by(&ctx.principal_id)];
         }
         service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token_ref);
         service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);

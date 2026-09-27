@@ -31,6 +31,12 @@ pub struct CreateEventTypeCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
+    /// Events of this type are carried per client (Go `clientScoped`): the
+    /// subscription editor offers client-scoped types only to client-scoped
+    /// subscriptions. Distinct from `client_id`, which scopes the row itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub client_scoped: bool,
+
     /// Optional initial schema payload. When provided, persisted as spec
     /// version `1.0`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -83,6 +89,8 @@ fn name_required() -> UseCaseError {
 ///     name,
 ///     description: Some("Emitted when a shipment leaves".to_string()),
 ///     client_id: None,
+///     client_scoped: false,
+///     schema: None,
 /// };
 ///
 /// let result = use_case.run(command, ctx).await;
@@ -147,6 +155,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         if let Some(client_id) = &command.client_id {
             event_type.client_id = Some(client_id.clone());
         }
+        event_type.client_scoped = command.client_scoped;
         if let Some(schema) = &command.schema {
             let spec = crate::SpecVersion::new(&event_type.id, "1.0", Some(schema.clone()));
             event_type.add_schema_version(spec);
@@ -177,11 +186,20 @@ mod tests {
             name: "Shipment Shipped".to_string(),
             description: Some("When a shipment leaves".to_string()),
             client_id: None,
+            client_scoped: false,
             schema: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains(r#""code":"orders:fulfillment:shipment:shipped""#));
+        // Go's `clientScoped,omitempty`: absent unless set.
+        assert!(!json.contains("clientScoped"));
+        let scoped = CreateEventTypeCommand {
+            client_scoped: true,
+            ..cmd
+        };
+        let json = serde_json::to_string(&scoped).unwrap();
+        assert!(json.contains(r#""clientScoped":true"#));
     }
 
     fn parse_err(code: &str, name: &str) -> (String, String) {

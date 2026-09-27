@@ -164,9 +164,24 @@ struct ServiceAccountsDoc;
 #[openapi(paths(crate::shared::batch_api::batch_events))]
 struct EventsBatchDoc;
 
-/// The operations above, at their mount points.
+/// The schemas of the BFF routes Go documents with huma and then strips from
+/// its published document (`/bff/debug/events`, `/bff/debug/events/{id}`,
+/// `/bff/debug/dispatch-jobs`): Go's document keeps them as components no
+/// path references, and a client generated from it has their types.
+#[derive(OpenApi)]
+#[openapi(components(schemas(
+    crate::shared::debug_api::RawEventResponse,
+    crate::shared::debug_api::RawDispatchJobResponse,
+)))]
+struct DebugSchemasDoc;
+
+/// [`DebugSchemasDoc`]'s schemas, kept by [`drop_unreachable_schemas`]
+/// although no published path reaches them.
+const BFF_ONLY_SCHEMAS: &[&str] = &["RawDispatchJobResponse", "RawEventResponse"];
+
+/// The operations above, at their mount points, and the BFF-only schemas.
 pub fn documented_plain_routes() -> utoipa::openapi::OpenApi {
-    utoipa::openapi::OpenApiBuilder::new()
+    let mut doc = utoipa::openapi::OpenApiBuilder::new()
         .build()
         .nest("/api/anchor-domains", AnchorDomainsDoc::openapi())
         .nest("/api/auth-configs", AuthConfigsDoc::openapi())
@@ -184,7 +199,9 @@ pub fn documented_plain_routes() -> utoipa::openapi::OpenApi {
         .nest("/api/portal-apps", PortalAppsDoc::openapi())
         .nest("/api/portal-users", PortalUsersDoc::openapi())
         .nest("/api/service-accounts", ServiceAccountsDoc::openapi())
-        .nest("/api/events", EventsBatchDoc::openapi())
+        .nest("/api/events", EventsBatchDoc::openapi());
+    doc.merge(DebugSchemasDoc::openapi());
+    doc
 }
 
 /// Go's error envelope as its document names it (`httpcompat.ErrorModel`):
@@ -223,7 +240,9 @@ fn error_model() -> Value {
 ///    `additionalProperties: false`; the component schemas get the same.
 /// 5. **No orphans of this document's own making.** Component schemas no
 ///    operation reaches (e.g. `ErrorResponse`, `PaginationParams`, the
-///    shapes of the error responses dropped in 1) are removed.
+///    shapes of the error responses dropped in 1) are removed. Go's own two
+///    (`RawDispatchJobResponse`, `RawEventResponse`, the debug BFF routes'
+///    shapes) are kept, as Go keeps them.
 ///
 /// The full document (`/q/openapi-full`, including `/bff`) is not reshaped.
 pub fn shape_as_go_contract(doc: &mut Value) {
@@ -426,7 +445,7 @@ fn unwrap_nullable(schema: &mut Value) {
 /// Remove component schemas no path reaches (transitively).
 fn drop_unreachable_schemas(doc: &mut Value) {
     let mut reachable = std::collections::BTreeSet::new();
-    let mut queue = Vec::new();
+    let mut queue: Vec<String> = BFF_ONLY_SCHEMAS.iter().map(|s| s.to_string()).collect();
     collect_refs(doc.get("paths").unwrap_or(&Value::Null), &mut queue);
     while let Some(name) = queue.pop() {
         if !reachable.insert(name.clone()) {

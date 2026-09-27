@@ -14,13 +14,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::service_account::entity::{SigningAlgorithm, WebhookAuthType, WebhookCredentials};
 use crate::service_account::operations::{
     AssignRolesCommand, AssignRolesUseCase, CreateServiceAccountCommand,
     CreateServiceAccountUseCase, DeleteServiceAccountCommand, DeleteServiceAccountUseCase,
     RegenerateAuthTokenCommand, RegenerateAuthTokenUseCase, RegenerateSigningSecretCommand,
     RegenerateSigningSecretUseCase, UpdateServiceAccountCommand, UpdateServiceAccountUseCase,
 };
-use crate::shared::enum_str::parse_opt;
+use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase};
@@ -78,13 +79,90 @@ pub struct CreateServiceAccountRequest {
     pub webhook_credentials: Option<WebhookCredentialsRequest>,
 }
 
-/// Go `WebhookCredentialsDTO`: only `authType` is read.
+/// Go `WebhookCredentialsDTO`: how the platform authenticates the
+/// account's outbound webhooks. Every member is write-only: no read answers
+/// them (a service account read carries `authType` alone), and `token`,
+/// `password` and `signingSecret` are stored as `encrypted:` references and
+/// redacted from the audit log. A create reads only `authType` (the account
+/// is created with generated credentials, as Go creates it); an update
+/// replaces the account's credentials with these, as Go's does, so a member
+/// left out is cleared.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = WebhookCredentialsDTO)]
 pub struct WebhookCredentialsRequest {
+    /// `NONE`, `BEARER_TOKEN`, `BASIC_AUTH`, `API_KEY` or `HMAC_SIGNATURE`;
+    /// blank is `NONE`, anything else a 400 `INVALID_AUTH_TYPE`.
     #[serde(default)]
+    #[schema(required = true)]
     pub auth_type: String,
+    /// The bearer token (or API key) the webhooks carry.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// The basic-auth user name.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// The basic-auth password.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// The header the API key travels in.
+    #[serde(default)]
+    pub header_name: Option<String>,
+    /// The HMAC key the webhooks are signed with.
+    #[serde(default)]
+    pub signing_secret: Option<String>,
+    /// `HMAC_SHA256` (`SHA256` is read as it); anything else a 400
+    /// `INVALID_SIGNING_ALGORITHM`.
+    #[serde(default)]
+    pub signing_algorithm: Option<String>,
+    /// The header the signature travels in.
+    #[serde(default)]
+    pub signature_header: Option<String>,
+}
+
+impl WebhookCredentialsRequest {
+    /// The authentication type (Go `ParseAuthType`: blank is `NONE`, an
+    /// unknown one is refused, never coerced).
+    fn parse_auth_type(&self) -> Result<WebhookAuthType, PlatformError> {
+        if self.auth_type.is_empty() {
+            return Ok(WebhookAuthType::None);
+        }
+        self.auth_type.parse().map_err(|_| {
+            PlatformError::bad_request_code(
+                "INVALID_AUTH_TYPE",
+                format!("unknown webhook auth type {:?}", self.auth_type),
+            )
+        })
+    }
+
+    /// The credentials as sent, in plaintext (the update use case seals the
+    /// secrets). A blank member is an absent one.
+    pub fn to_credentials(&self) -> Result<WebhookCredentials, PlatformError> {
+        let text = |v: &Option<String>| {
+            v.as_deref()
+                .and_then(|s| non_empty(Some(s)))
+                .map(String::from)
+        };
+        let signing_algorithm = match non_empty(self.signing_algorithm.as_deref()) {
+            None => None,
+            Some(alg) => Some(alg.parse::<SigningAlgorithm>().map_err(|_| {
+                PlatformError::bad_request_code(
+                    "INVALID_SIGNING_ALGORITHM",
+                    format!("unknown webhook signing algorithm {alg:?}"),
+                )
+            })?),
+        };
+        Ok(WebhookCredentials {
+            auth_type: self.parse_auth_type()?,
+            token: text(&self.token),
+            username: text(&self.username),
+            password: text(&self.password),
+            header_name: text(&self.header_name),
+            signing_secret: text(&self.signing_secret),
+            signing_algorithm,
+            signature_header: text(&self.signature_header),
+        })
+    }
 }
 
 /// Update service account request
@@ -107,6 +185,11 @@ pub struct UpdateServiceAccountRequest {
     /// Updated client IDs. The token tier follows them, as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_ids: Option<Vec<String>>,
+
+    /// Replaces the account's webhook credentials (Go's
+    /// `webhookCredentials`); absent leaves them as they are.
+    #[serde(default)]
+    pub webhook_credentials: Option<WebhookCredentialsRequest>,
 }
 
 /// Assign roles request (declarative - replaces all)
@@ -260,11 +343,33 @@ pub struct RegenerateSecretResponse {
 #[schema(as = RoleAssignmentDTO)]
 pub struct RoleAssignmentResponse {
     pub role_name: String,
+    /// The client the role is confined to. Role grants here are not
+    /// client-scoped (a role applies wherever the account reaches), so it is
+    /// always absent; Go never fills it either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_source: Option<String>,
     #[schema(format = DateTime)]
     pub assigned_at: String,
+    /// The principal who assigned the role. Go documents it but never
+    /// stores it; here it is recorded for roles an administrator assigns or
+    /// provisioning grants, and absent for synced roles and older rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_by: Option<String>,
+}
+
+impl From<&crate::service_account::entity::RoleAssignment> for RoleAssignmentResponse {
+    fn from(r: &crate::service_account::entity::RoleAssignment) -> Self {
+        Self {
+            role_name: r.role.clone(),
+            client_id: r.client_id.clone(),
+            assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
+            assigned_at: r.assigned_at.to_rfc3339(),
+            assigned_by: r.assigned_by.clone(),
+        }
+    }
 }
 
 /// Roles response
@@ -458,22 +563,10 @@ pub async fn create_service_account<U: UnitOfWork>(
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
     crate::checks::can_write_service_accounts(&auth.0)?;
     // Go `WebhookCredentialsDTO.toEntity`: an unknown type is refused, never
-    // coerced (empty means none).
+    // coerced (empty means none). The rest of the members are not used: the
+    // account is created with generated credentials, as Go creates it.
     if let Some(creds) = &req.webhook_credentials {
-        const KNOWN: [&str; 6] = [
-            "",
-            "NONE",
-            "BEARER_TOKEN",
-            "BASIC_AUTH",
-            "API_KEY",
-            "HMAC_SIGNATURE",
-        ];
-        if !KNOWN.contains(&creds.auth_type.as_str()) {
-            return Err(PlatformError::bad_request_code(
-                "INVALID_AUTH_TYPE",
-                format!("unknown webhook auth type {:?}", creds.auth_type),
-            ));
-        }
+        creds.parse_auth_type()?;
     }
     let all_applications = req.all_applications == Some(true);
     // Go serviceaccount/api/api.go:155-159: the rule for granting
@@ -614,12 +707,18 @@ pub async fn update_service_account<U: UnitOfWork>(
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
     crate::checks::can_write_service_accounts(&auth.0)?;
+    let webhook_credentials = req
+        .webhook_credentials
+        .as_ref()
+        .map(WebhookCredentialsRequest::to_credentials)
+        .transpose()?;
     let command = UpdateServiceAccountCommand {
         id: id.clone(),
         name: req.name,
         description: req.description,
         scope: parse_opt(req.scope.as_deref())?,
         client_ids: req.client_ids,
+        webhook_credentials,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -853,11 +952,7 @@ pub async fn get_roles<U: UnitOfWork>(
     let roles: Vec<RoleAssignmentResponse> = account
         .roles
         .iter()
-        .map(|r| RoleAssignmentResponse {
-            role_name: r.role.clone(),
-            assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
-            assigned_at: r.assigned_at.to_rfc3339(),
-        })
+        .map(RoleAssignmentResponse::from)
         .collect();
 
     Ok(Json(RolesResponse { roles }))
@@ -920,11 +1015,7 @@ pub async fn assign_roles<U: UnitOfWork>(
             let roles: Vec<RoleAssignmentResponse> = account
                 .roles
                 .iter()
-                .map(|r| RoleAssignmentResponse {
-                    role_name: r.role.clone(),
-                    assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
-                    assigned_at: r.assigned_at.to_rfc3339(),
-                })
+                .map(RoleAssignmentResponse::from)
                 .collect();
 
             Ok(Json(AssignRolesResponse {

@@ -8,6 +8,8 @@ use std::sync::Arc;
 use super::client_reach::{dedupe_client_ids, require_clients_exist};
 use super::events::ServiceAccountUpdated;
 use crate::principal::entity::UserScope;
+use crate::service_account::entity::WebhookCredentials;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ClientRepository, ServiceAccountRepository};
 
@@ -35,15 +37,46 @@ pub struct UpdateServiceAccountCommand {
     /// → ANCHOR, one → CLIENT, several → PARTNER), as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_ids: Option<Vec<String>>,
+
+    /// New webhook credentials, in plaintext: they replace the account's, as
+    /// Go's update does, and their secrets are sealed before they are
+    /// stored. `token`, `password` and `signingSecret` are secret-named, so
+    /// the audit row masks them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_credentials: Option<WebhookCredentials>,
 }
 
 impl crate::usecase::AuditMasked for UpdateServiceAccountCommand {}
+
+/// `creds` with its secrets (`token`, `password`, `signing_secret`) sealed as
+/// `encrypted:` references, the form every stored webhook secret takes. A
+/// secret with no key configured is refused, never stored in plaintext.
+fn seal_credentials(
+    encryption: Option<&EncryptionService>,
+    creds: &WebhookCredentials,
+) -> Result<WebhookCredentials, UseCaseError> {
+    let seal = |secret: &Option<String>| -> Result<Option<String>, UseCaseError> {
+        secret
+            .as_deref()
+            .map(|plaintext| Ok(require_configured(encryption)?.encrypt_ref(plaintext)?))
+            .transpose()
+    };
+    Ok(WebhookCredentials {
+        token: seal(&creds.token)?,
+        password: seal(&creds.password)?,
+        signing_secret: seal(&creds.signing_secret)?,
+        ..creds.clone()
+    })
+}
 
 /// Use case for updating a service account.
 pub struct UpdateServiceAccountUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
     client_repo: Arc<ClientRepository>,
     unit_of_work: Arc<U>,
+    /// Seals new webhook secrets. `None` when no key is configured; an
+    /// update carrying a secret then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
 }
 
 impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
@@ -51,11 +84,13 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
         service_account_repo: Arc<ServiceAccountRepository>,
         client_repo: Arc<ClientRepository>,
         unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
     ) -> Self {
         Self {
             service_account_repo,
             client_repo,
             unit_of_work,
+            encryption,
         }
     }
 }
@@ -131,6 +166,12 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
             service_account.link_clients(links);
         }
 
+        // Go's update replaces the credentials with the ones sent.
+        if let Some(ref creds) = command.webhook_credentials {
+            service_account.webhook_credentials =
+                seal_credentials(self.encryption.as_deref(), creds)?;
+        }
+
         service_account.updated_at = Utc::now();
 
         // Create domain event
@@ -160,10 +201,58 @@ mod tests {
             description: None,
             scope: Some(UserScope::Partner),
             client_ids: Some(vec!["client-1".to_string(), "client-2".to_string()]),
+            webhook_credentials: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("sa-123"));
         assert!(json.contains("Updated Name"));
+        assert!(!json.contains("webhookCredentials"));
+    }
+
+    #[test]
+    fn the_audit_row_masks_the_credentials_secrets() {
+        let mut creds = WebhookCredentials::basic_auth("svc", "hunter2");
+        creds.token = Some("tok".to_string());
+        creds.signing_secret = Some("sig".to_string());
+        let cmd = UpdateServiceAccountCommand {
+            id: "sa-1".to_string(),
+            name: None,
+            description: None,
+            scope: None,
+            client_ids: None,
+            webhook_credentials: Some(creds),
+        };
+        let audited = fc_common::audit_redaction::redacted_command_json(&cmd).unwrap();
+        let wh = &audited["webhookCredentials"];
+        assert_eq!(wh["authType"], "BASIC_AUTH");
+        assert_eq!(wh["username"], "svc");
+        for secret in ["password", "token", "signingSecret"] {
+            assert_eq!(wh[secret], "***", "{secret}");
+        }
+    }
+
+    #[test]
+    fn sealing_encrypts_the_secrets_and_keeps_the_rest() {
+        let enc = EncryptionService::new("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=").unwrap();
+        let mut creds = WebhookCredentials::api_key("key-1", Some("X-Key".to_string()));
+        creds.password = Some("pw".to_string());
+        let sealed = seal_credentials(Some(&enc), &creds).unwrap();
+        assert_eq!(sealed.header_name.as_deref(), Some("X-Key"));
+        assert_eq!(
+            enc.decrypt_ref(sealed.token.as_deref().unwrap()).unwrap(),
+            "key-1"
+        );
+        assert_eq!(
+            enc.decrypt_ref(sealed.password.as_deref().unwrap())
+                .unwrap(),
+            "pw"
+        );
+        assert!(sealed.signing_secret.is_none());
+
+        // No key: a secret is refused; credentials without one need none.
+        assert!(seal_credentials(None, &creds).is_err());
+        let none = WebhookCredentials::none();
+        assert!(seal_credentials(None, &none).is_ok());
     }
 }

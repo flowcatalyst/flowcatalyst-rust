@@ -41,6 +41,12 @@ pub struct CreateEventTypeRequest {
     /// Client ID (optional, null = anchor-level)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// Events of this type are per-client (Go `clientScoped`): the
+    /// subscription editor offers client-scoped types only to client-scoped
+    /// subscriptions. Distinct from `clientId`, which scopes the type itself.
+    #[serde(default)]
+    pub client_scoped: bool,
 }
 
 /// Update event type request: Go's `UpdateEventTypeRequest` (`name` is
@@ -54,6 +60,11 @@ pub struct UpdateEventTypeRequest {
     /// Description
     #[serde(default)]
     pub description: Option<String>,
+
+    /// Events of this type are per-client; absent leaves it unchanged (Go
+    /// `clientScoped`).
+    #[serde(default)]
+    pub client_scoped: Option<bool>,
 }
 
 /// Event type response DTO: Go's `EventTypeResponse`
@@ -204,6 +215,7 @@ pub async fn create_event_type(
         name: req.name,
         description: req.description,
         client_id: req.client_id,
+        client_scoped: req.client_scoped,
         schema: req.schema,
     };
     // Go's `CreateEventType`: the command is validated (the code parsed
@@ -416,6 +428,7 @@ pub async fn update_event_type(
         event_type_id: id,
         name: Some(req.name),
         description: req.description,
+        client_scoped: req.client_scoped,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;

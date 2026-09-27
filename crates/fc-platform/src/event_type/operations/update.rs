@@ -22,6 +22,11 @@ pub struct UpdateEventTypeCommand {
     /// New description (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+
+    /// Whether events of this type are carried per client (Go
+    /// `clientScoped`); `None` leaves it unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_scoped: Option<bool>,
 }
 
 impl crate::usecase::AuditMasked for UpdateEventTypeCommand {}
@@ -54,7 +59,10 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
             ));
         }
 
-        if command.name.is_none() && command.description.is_none() {
+        if command.name.is_none()
+            && command.description.is_none()
+            && command.client_scoped.is_none()
+        {
             return Err(UseCaseError::validation(
                 "NO_UPDATES",
                 "At least one field must be provided for update",
@@ -95,6 +103,9 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         if let Some(ref desc) = command.description {
             event_type.description = Some(desc.clone());
         }
+        if let Some(client_scoped) = command.client_scoped {
+            event_type.client_scoped = client_scoped;
+        }
         event_type.updated_at = chrono::Utc::now();
 
         // Create domain event
@@ -122,6 +133,7 @@ mod tests {
             event_type_id: "et-123".to_string(),
             name: Some("New Name".to_string()),
             description: Some("New Description".to_string()),
+            client_scoped: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

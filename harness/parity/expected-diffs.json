@@ -1181,5 +1181,33 @@
     "pointer": "/access_token/«jwt»/claims/scope",
     "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
     "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "assign-router-role",
+    "pointer": "**/assignedBy",
+    "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
+    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "service-accounts*",
+    "step": "assign-roles",
+    "pointer": "**/assignedBy",
+    "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
+    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "service-accounts*",
+    "step": "list-roles",
+    "pointer": "**/assignedBy",
+    "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
+    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+  },
+  {
+    "scenario": "functions*",
+    "step": "assign-host-role",
+    "pointer": "**/assignedBy",
+    "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
+    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
   }
 ]

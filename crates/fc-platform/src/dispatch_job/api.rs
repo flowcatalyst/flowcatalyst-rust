@@ -195,6 +195,12 @@ pub struct DispatchJobReadResponse {
     pub mode: String,
     #[schema(required = false)]
     pub dispatch_mode: String,
+    /// The job's own dispatch priority: `1` when it claims `HIGH_PRIORITY`,
+    /// `0` when it claims `DEFAULT`, absent when it claims neither (it then
+    /// dispatches at its subscription's priority). Go documents the member
+    /// but never fills it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,6 +227,17 @@ pub struct DispatchJobReadResponse {
     #[schema(format = DateTime)]
     pub last_attempt_at: Option<String>,
     pub attempt_count: u32,
+}
+
+/// The list row's `priority` for a job's stored claim: `HIGH_PRIORITY` is
+/// 1, `DEFAULT` 0; no claim, a blank one or unrecognised legacy text is
+/// none, as the scheduler reads it (`Priority::for_job`).
+fn priority_rank(queue: Option<&str>) -> Option<i32> {
+    use crate::scheduler::destination::Priority;
+    Priority::for_job(queue).map(|p| match p {
+        Priority::HighPriority => 1,
+        Priority::Default => 0,
+    })
 }
 
 /// Go's `splitCode`: application, subdomain and aggregate from the
@@ -257,6 +274,7 @@ impl From<DispatchJobRead> for DispatchJobReadResponse {
             target_url: job.target_url,
             dispatch_mode: mode.clone(),
             mode,
+            priority: priority_rank(job.queue.as_deref()),
             correlation_id: job.correlation_id,
             message_group: job.message_group,
             descriptor: job.descriptor,
@@ -1249,4 +1267,19 @@ pub fn dispatch_jobs_api_router(state: DispatchJobsState) -> OpenApiRouter {
         .routes(routes!(get_dispatch_job_attempts))
         .routes(routes!(get_jobs_for_event))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::priority_rank;
+
+    #[test]
+    fn priority_ranks_the_jobs_own_claim_as_the_scheduler_reads_it() {
+        assert_eq!(priority_rank(Some("HIGH_PRIORITY")), Some(1));
+        assert_eq!(priority_rank(Some("high_priority")), Some(1));
+        assert_eq!(priority_rank(Some("DEFAULT")), Some(0));
+        assert_eq!(priority_rank(None), None);
+        assert_eq!(priority_rank(Some("")), None);
+        assert_eq!(priority_rank(Some("LEGACY-QUEUE")), None);
+    }
 }

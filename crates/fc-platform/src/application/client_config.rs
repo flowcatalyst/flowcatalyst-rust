@@ -10,10 +10,12 @@ pub struct ApplicationClientConfig {
     pub application_id: String,
     pub client_id: String,
     pub enabled: bool,
-    /// Transient: not stored in DB, used by API layer
+    /// The base URL this client reaches the application at, when it is not
+    /// the application's `default_base_url` (`app_client_configs.base_url_override`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url_override: Option<String>,
-    /// Transient: not stored in DB, used by API layer
+    /// The application's configuration document for this client
+    /// (`app_client_configs.config_json`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_json: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,

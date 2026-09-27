@@ -1271,6 +1271,7 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     let mut sa = ServiceAccount::new("legacy-svc", "Legacy", UserScope::Anchor);
     sa.webhook_credentials = WebhookCredentials::bearer_token("fc_plaintoken");
     sa.webhook_credentials.signing_secret = Some("plain-signing".to_string());
+    sa.webhook_credentials.password = Some("plain-password".to_string());
     ServiceAccountRepository::new(&pool)
         .insert(&sa)
         .await
@@ -1307,6 +1308,11 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
                 encrypted,
             ),
             ("app_platform_configs.value".to_string(), 1, encrypted),
+            (
+                "iam_service_accounts.wh_password_ref".to_string(),
+                1,
+                encrypted,
+            ),
         ]
     };
 
@@ -1369,10 +1375,16 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     assert_eq!(enc.decrypt_ref(&token).unwrap(), "fc_plaintoken");
     let signing = stored(
         "SELECT wh_signing_secret_ref FROM iam_service_accounts WHERE id = $1",
-        sa_row_id,
+        sa_row_id.clone(),
     )
     .await;
     assert_eq!(enc.decrypt_ref(&signing).unwrap(), "plain-signing");
+    let password = stored(
+        "SELECT wh_password_ref FROM iam_service_accounts WHERE id = $1",
+        sa_row_id,
+    )
+    .await;
+    assert_eq!(enc.decrypt_ref(&password).unwrap(), "plain-password");
     let cfg = stored(
         "SELECT value FROM app_platform_configs WHERE id = $1",
         secret.id.clone(),

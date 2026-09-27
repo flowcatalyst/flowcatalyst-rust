@@ -19,6 +19,7 @@ use FlowCatalyst\Client\Resources\Router;
 use FlowCatalyst\Client\Resources\ScheduledJobs;
 use FlowCatalyst\Client\Resources\Subscriptions;
 use FlowCatalyst\DTOs\Requests\CreateApplicationRequest;
+use FlowCatalyst\DTOs\Requests\CreateEventTypeRequest;
 use FlowCatalyst\DTOs\Requests\UpdateApplicationRequest;
 use FlowCatalyst\DTOs\Requests\UpdateClientRequest;
 use FlowCatalyst\DTOs\Requests\UpdateConnectionRequest;
@@ -328,6 +329,22 @@ final class GoApiWireTest extends TestCase
         $this->assertSame(['GET', 'PUT', 'PUT'], array_column($this->calls, 'method'));
         $this->assertSame(['name' => 'Order Created', 'description' => 'd'], $this->calls[1]['options']['json']);
         $this->assertSame(['name' => 'N', 'clientScoped' => true], $this->calls[2]['options']['json']);
+    }
+
+    public function test_event_type_create_sends_client_scoped_only_when_set(): void
+    {
+        $eventTypes = new EventTypes($this->client([['id' => 'evt_1'], ['id' => 'evt_2']]));
+
+        $this->assertSame('evt_1', $eventTypes->create(
+            new CreateEventTypeRequest(code: 'orders:sales:order:created', name: 'Created', clientScoped: true),
+        ));
+        $eventTypes->create(new CreateEventTypeRequest(code: 'orders:sales:order:paid', name: 'Paid'));
+
+        $this->assertSame(
+            ['code' => 'orders:sales:order:created', 'name' => 'Created', 'clientScoped' => true],
+            $this->calls[0]['options']['json'],
+        );
+        $this->assertSame(['code' => 'orders:sales:order:paid', 'name' => 'Paid'], $this->calls[1]['options']['json']);
     }
 
     public function test_event_type_reads_event_name_and_archive_is_the_delete_route(): void

@@ -152,6 +152,7 @@ struct DispatchJobReadRow {
     idempotency_key: Option<String>,
     descriptor: Option<String>,
     metadata: serde_json::Value,
+    queue: Option<String>,
     is_completed: Option<bool>,
     is_terminal: Option<bool>,
     projected_at: Option<DateTime<Utc>>,
@@ -210,6 +211,7 @@ impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
             // As Go's `rowToJob`: tags that are not `[{key, value}]` read as
             // none.
             metadata: serde_json::from_value(r.metadata).unwrap_or_default(),
+            queue: r.queue,
             is_completed: r.is_completed.unwrap_or_default(),
             is_terminal: r.is_terminal.unwrap_or_default(),
             projected_at: r.projected_at,
@@ -1103,10 +1105,10 @@ impl DispatchJobRepository {
                  max_retries, last_error, timeout_seconds, retry_strategy, application,
                  subdomain, aggregate, created_at, updated_at, scheduled_for, expires_at,
                  completed_at, last_attempt_at, duration_millis, idempotency_key,
-                 is_completed, is_terminal, projected_at, descriptor, metadata)
+                 is_completed, is_terminal, projected_at, descriptor, metadata, queue)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)"#,
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40)"#,
         )
         .bind(&p.id)
         .bind(&p.external_id)
@@ -1147,6 +1149,7 @@ impl DispatchJobRepository {
         .bind(p.projected_at)
         .bind(&p.descriptor)
         .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
+        .bind(&p.queue)
         .execute(&self.pool)
         .await?;
 
@@ -1162,10 +1165,10 @@ impl DispatchJobRepository {
                  max_retries, last_error, timeout_seconds, retry_strategy, application,
                  subdomain, aggregate, created_at, updated_at, scheduled_for, expires_at,
                  completed_at, last_attempt_at, duration_millis, idempotency_key,
-                 is_completed, is_terminal, projected_at, descriptor, metadata)
+                 is_completed, is_terminal, projected_at, descriptor, metadata, queue)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40)
             ON CONFLICT (id, created_at) DO UPDATE SET
                 status = EXCLUDED.status,
                 attempt_count = EXCLUDED.attempt_count,
@@ -1217,6 +1220,7 @@ impl DispatchJobRepository {
         .bind(p.projected_at)
         .bind(&p.descriptor)
         .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
+        .bind(&p.queue)
         .execute(&self.pool)
         .await?;
 

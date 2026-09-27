@@ -1,6 +1,6 @@
 //! Platform-config routes as Go serves them (`platformconfig/api/api.go:32-40`):
 //!
-//! - `GET|PUT|DELETE /api/config/{appCode}/{section}/{property}` (`?clientId=`)
+//! - `GET|PUT|DELETE /api/config/{app}/{section}/{property}` (`?clientId=`)
 //! - `GET    /api/platform-config/{app}`          → `{items}`
 //! - `GET    /api/platform-config/{app}/access`   → `{items}`
 //! - `POST   /api/platform-config/{app}/access`   → 201 `{id}`
@@ -248,11 +248,11 @@ pub async fn list_platform_config(
 /// One property (Go `getConfigProperty`).
 #[utoipa::path(
     get,
-    path = "/api/config/{appCode}/{section}/{property}",
+    path = "/api/config/{app}/{section}/{property}",
     tag = "platform-config",
     operation_id = "getPlatformConfigProperty",
     params(
-        ("appCode" = String, Path, description = "Application code"),
+        ("app" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
         ("property" = String, Path, description = "Property"),
         ("clientId" = Option<String>, Query, description = "Client for a CLIENT-scoped property")
@@ -285,11 +285,11 @@ pub async fn get_config_property(
 /// Create or update a property (Go `setConfigProperty`): 200 with the row.
 #[utoipa::path(
     put,
-    path = "/api/config/{appCode}/{section}/{property}",
+    path = "/api/config/{app}/{section}/{property}",
     tag = "platform-config",
     operation_id = "setPlatformConfigProperty",
     params(
-        ("appCode" = String, Path, description = "Application code"),
+        ("app" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
         ("property" = String, Path, description = "Property"),
         ("clientId" = Option<String>, Query, description = "Client for a CLIENT-scoped property")
@@ -345,11 +345,11 @@ pub async fn set_config_property(
 /// property delete, which this mirrors.
 #[utoipa::path(
     delete,
-    path = "/api/config/{appCode}/{section}/{property}",
+    path = "/api/config/{app}/{section}/{property}",
     tag = "platform-config",
     operation_id = "deletePlatformConfigProperty",
     params(
-        ("appCode" = String, Path, description = "Application code"),
+        ("app" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
         ("property" = String, Path, description = "Property"),
         ("clientId" = Option<String>, Query, description = "Client for a CLIENT-scoped property")

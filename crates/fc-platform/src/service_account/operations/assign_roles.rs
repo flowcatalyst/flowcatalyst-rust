@@ -85,11 +85,15 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
         let roles_added: Vec<String> = new_roles.difference(&current_roles).cloned().collect();
         let roles_removed: Vec<String> = current_roles.difference(&new_roles).cloned().collect();
 
-        // Replace roles
+        // Replace roles, as Go does (every assignment is made now), recording
+        // who made them.
         service_account.roles = command
             .roles
             .iter()
-            .map(|r| RoleAssignment::with_source(r, AssignmentSource::AdminAssigned))
+            .map(|r| {
+                RoleAssignment::with_source(r, AssignmentSource::AdminAssigned)
+                    .assigned_by(&ctx.principal_id)
+            })
             .collect();
         service_account.updated_at = Utc::now();
 
