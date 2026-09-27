@@ -14,13 +14,24 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`feat/harness-delivery`)
 - [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
       `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
-- [ ] API parity converged: every diff fixed or ruled. Run 5: 1231 OK / 113 ACCEPTED / 19 DIFF / 0 ERROR
-      (`docs/parity/api-run-5.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), portal
-      token `tier` (2), audit by-principal/facets (3), 3 unnamed Go defects, service-accounts list (below)
-- [ ] **Service-account events use the principal id, not the account id:** Go uses the account's `sac_` id
-      for `created`, `updated`, `deactivated`, `deleted` and `roles-assigned` (event subject, payload
-      `serviceAccountId`, audit `entityId`); Rust uses the principal's `prn_`. Subscribers matching on these
-      would see different ids. Fix after the use-case refactor.
+- [ ] API parity converged: every diff fixed or ruled. Run 6: 1234 OK / 113 ACCEPTED / 16 DIFF / 0 ERROR
+      (`docs/parity/api-run-6.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), audit
+      by-principal/facets (3), 3 unnamed Go defects (mint-token name, sync-platform schema tally,
+      unmapped-domain OIDC login)
+- [x] **Service-account events use the account id:** every `platform:iam:serviceaccount:*` event (and
+      `service-account-provisioned`) carries the account's `sac_` id as subject, group and
+      `serviceAccountId`, so the audit `entityId` too, as Go (`feat/cutover-fixes`)
+- [x] Syncs are atomic as Go's `usecaseop.Sync`: event types, processes, roles, dispatch pools,
+      subscriptions (and the OpenAPI spec sync) plan every row, then write rows, per-row events and rollup
+      in one transaction; a bad row writes nothing (`feat/cutover-fixes`)
+- [x] Portal tokens carry Go's empty `tier`; the platform and the function host read it as no tier on an
+      identity-only token, granting nothing (`feat/cutover-fixes`)
+- [x] Go's auth purger: expired OAuth payloads, OIDC login states, portal login flows, 2FA email PINs and
+      trusted devices, reset/invite tokens (30 days after expiry), lapsed OAuth secrets, and the
+      `iam_login_attempts` quarterly partitions on a Go-partitioned database, every minute
+      (`feat/cutover-fixes`)
+- [x] Reset, invite and portal emails in Go's branded layout with the login theme (logo, colours, brand)
+      (`feat/cutover-fixes`)
 
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
 - [x] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
@@ -53,8 +64,6 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       revocation); token claims per #3/#20; `/auth/login` and `/api/me` shapes; passkey gate for INTERNAL IdPs
 - [x] Missing routes (`feat/go-routes`): the run-1 list (2FA, change-password, login-history, portal, docs,
       role-permission paths, service-account tokens, config properties, and more)
-- [ ] Per-area pass: write status codes (201/204), idempotent no-op repeats, Go's input validation, list
-      envelopes, null vs absent members, login-attempt fields, audit facet names
 - [ ] OpenAPI documents (`/q/openapi` and the developer spec) vs Go's huma documents: decide whether they
       must match
 
@@ -105,8 +114,6 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`~/Library/Caches/flowcatalyst-dev/pgdata`) can be deleted once nothing in it is needed
 - [ ] Built-in role catalogue: Java's V17 `platform:admin:config:manage` vs Go/Rust `…:config:update` —
       each binary resets built-in roles to its own on start; settle one name
-- [ ] fc-dev's developer-portal auto-sync records a `platform:admin:eventtype:updated` event per platform
-      event type (131) on every start; only record changed ones
 
 ## Also landed
 - Go's production SPA replaces the old Vue frontend (functions UI re-integrated in Go's idiom).
