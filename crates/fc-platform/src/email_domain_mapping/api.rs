@@ -165,7 +165,7 @@ pub struct EmailDomainMappingsState {
     post,
     path = "",
     tag = "email-domain-mappings",
-    operation_id = "postApiEmailDomainMappings",
+    operation_id = "createEmailDomainMapping",
     request_body = CreateEmailDomainMappingRequest,
     responses(
         (status = 201, description = "Email domain mapping created", body = crate::shared::api_common::CreatedResponse),
@@ -222,7 +222,7 @@ pub async fn create_email_domain_mapping(
     get,
     path = "",
     tag = "email-domain-mappings",
-    operation_id = "getApiEmailDomainMappings",
+    operation_id = "listEmailDomainMappings",
     responses(
         (status = 200, description = "List of email domain mappings", body = EmailDomainMappingsListResponse)
     ),
@@ -266,7 +266,7 @@ pub async fn list_email_domain_mappings(
     get,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "getApiEmailDomainMappingsById",
+    operation_id = "getEmailDomainMapping",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),
@@ -334,7 +334,7 @@ pub async fn lookup_email_domain_mapping(
     put,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "putApiEmailDomainMappingsById",
+    operation_id = "updateEmailDomainMapping",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),
@@ -385,7 +385,7 @@ pub async fn update_email_domain_mapping(
     delete,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "deleteApiEmailDomainMappingsById",
+    operation_id = "deleteEmailDomainMapping",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),

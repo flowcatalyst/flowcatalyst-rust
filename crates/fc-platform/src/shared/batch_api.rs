@@ -199,7 +199,19 @@ pub struct SdkEventsState {
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
-async fn batch_events(
+/// Ingest a batch of events (SDK)
+#[utoipa::path(
+    post,
+    path = "/batch",
+    tag = "events",
+    operation_id = "batchIngestEvents",
+    request_body = BatchEventsRequest,
+    responses(
+        (status = 201, description = "Created", body = BatchResponse),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn batch_events(
     State(state): State<SdkEventsState>,
     auth: Authenticated,
     Json(req): Json<BatchEventsRequest>,

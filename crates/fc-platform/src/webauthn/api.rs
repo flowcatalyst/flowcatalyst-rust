@@ -167,7 +167,7 @@ fn invalid_credentials() -> Response {
     post,
     path = "/webauthn/register/begin",
     tag = "webauthn",
-    operation_id = "postWebauthnRegisterBegin",
+    operation_id = "webauthnRegisterBegin",
     request_body = RegisterBeginRequest,
     responses(
         (status = 200, description = "Registration challenge issued", body = RegisterBeginResponse),
@@ -237,7 +237,7 @@ pub async fn register_begin(
     post,
     path = "/webauthn/register/complete",
     tag = "webauthn",
-    operation_id = "postWebauthnRegisterComplete",
+    operation_id = "webauthnRegisterComplete",
     request_body = RegisterCompleteRequest,
     responses(
         (status = 200, description = "Passkey registered", body = RegisterCompleteResponse),
@@ -315,7 +315,7 @@ pub async fn register_complete(
     post,
     path = "/webauthn/authenticate/begin",
     tag = "webauthn",
-    operation_id = "postWebauthnAuthenticateBegin",
+    operation_id = "webauthnAuthenticateBegin",
     request_body = AuthenticateBeginRequest,
     responses(
         (status = 200, description = "Authentication challenge issued", body = AuthenticateBeginResponse)
@@ -402,7 +402,7 @@ async fn resolve_real_credentials(
     post,
     path = "/webauthn/authenticate/complete",
     tag = "webauthn",
-    operation_id = "postWebauthnAuthenticateComplete",
+    operation_id = "webauthnAuthenticateComplete",
     request_body = AuthenticateCompleteRequest,
     responses(
         (status = 200, description = "Login successful, session cookie set", body = AuthenticateCompleteResponse),
@@ -581,7 +581,7 @@ pub async fn authenticate_complete(
     get,
     path = "/webauthn/credentials",
     tag = "webauthn",
-    operation_id = "getWebauthnCredentials",
+    operation_id = "listWebauthnCredentials",
     responses(
         (status = 200, description = "Caller's passkeys", body = Vec<CredentialSummary>),
         (status = 401, description = "Authentication required")

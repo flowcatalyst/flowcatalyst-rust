@@ -436,7 +436,7 @@ fn check_create_access(auth: &Authenticated, client_id: Option<&str>) -> Result<
 
 #[utoipa::path(
     post, path = "", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobs",
+    operation_id = "createScheduledJob",
     request_body = CreateScheduledJobRequest,
     responses((status = 201, body = CreatedResponse), (status = 400), (status = 403), (status = 409)),
     security(("bearer_auth" = []))
@@ -480,7 +480,7 @@ pub async fn create_scheduled_job(
 
 #[utoipa::path(
     get, path = "", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobs",
+    operation_id = "listScheduledJobs",
     params(ListJobsQuery),
     responses((status = 200, body = PaginatedResponse<ScheduledJobResponse>)),
     security(("bearer_auth" = []))
@@ -558,7 +558,7 @@ pub async fn list_scheduled_jobs(
 
 #[utoipa::path(
     get, path = "/{id}", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobsById",
+    operation_id = "getScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     responses((status = 200, body = ScheduledJobResponse), (status = 404)),
     security(("bearer_auth" = []))
@@ -590,7 +590,7 @@ pub async fn get_scheduled_job(
 
 #[utoipa::path(
     get, path = "/by-code/{code}", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobsByCode",
+    operation_id = "getScheduledJobByCode",
     params(
         ("code" = String, Path, description = "Scheduled job code"),
         ByCodeQuery,
@@ -627,7 +627,7 @@ pub async fn get_scheduled_job_by_code(
 
 #[utoipa::path(
     put, path = "/{id}", tag = "scheduled-jobs",
-    operation_id = "putApiScheduledJobsById",
+    operation_id = "updateScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     request_body = UpdateScheduledJobRequest,
     responses((status = 204), (status = 404)),
@@ -668,7 +668,7 @@ pub async fn update_scheduled_job(
 
 #[utoipa::path(
     post, path = "/{id}/pause", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsByIdPause",
+    operation_id = "pauseScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     responses((status = 204), (status = 404), (status = 409)),
     security(("bearer_auth" = []))
@@ -696,7 +696,7 @@ pub async fn pause_scheduled_job(
 
 #[utoipa::path(
     post, path = "/{id}/resume", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsByIdResume",
+    operation_id = "resumeScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     responses((status = 204), (status = 404), (status = 409)),
     security(("bearer_auth" = []))
@@ -724,7 +724,7 @@ pub async fn resume_scheduled_job(
 
 #[utoipa::path(
     post, path = "/{id}/archive", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsByIdArchive",
+    operation_id = "archiveScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     responses((status = 204), (status = 404), (status = 409)),
     security(("bearer_auth" = []))
@@ -752,7 +752,7 @@ pub async fn archive_scheduled_job(
 
 #[utoipa::path(
     delete, path = "/{id}", tag = "scheduled-jobs",
-    operation_id = "deleteApiScheduledJobsById",
+    operation_id = "deleteScheduledJob",
     params(("id" = String, Path, description = "Scheduled job ID")),
     responses((status = 204), (status = 404)),
     security(("bearer_auth" = []))
@@ -780,7 +780,7 @@ pub async fn delete_scheduled_job(
 
 #[utoipa::path(
     post, path = "/{id}/fire", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsByIdFire",
+    operation_id = "fireScheduledJobNow",
     params(("id" = String, Path, description = "Scheduled job ID")),
     request_body = FireRequest,
     responses((status = 202, body = FireNowResponse), (status = 404), (status = 409)),
@@ -823,7 +823,7 @@ pub async fn fire_scheduled_job(
 
 #[utoipa::path(
     get, path = "/{id}/instances", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobsByIdInstances",
+    operation_id = "listScheduledJobInstances",
     params(("id" = String, Path, description = "Scheduled job ID"), ListInstancesQuery),
     responses((status = 200, body = PaginatedResponse<ScheduledJobInstanceResponse>)),
     security(("bearer_auth" = []))
@@ -875,7 +875,7 @@ pub async fn list_instances_for_job(
 
 #[utoipa::path(
     get, path = "/instances/{instanceId}", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobsInstancesById",
+    operation_id = "getScheduledJobInstance",
     params(("instanceId" = String, Path, description = "Instance ID")),
     responses((status = 200, body = ScheduledJobInstanceResponse), (status = 404)),
     security(("bearer_auth" = []))
@@ -901,7 +901,7 @@ pub async fn get_instance(
 
 #[utoipa::path(
     get, path = "/instances/{instanceId}/logs", tag = "scheduled-jobs",
-    operation_id = "getApiScheduledJobsInstancesByIdLogs",
+    operation_id = "listScheduledJobInstanceLogs",
     params(("instanceId" = String, Path, description = "Instance ID")),
     responses((status = 200, body = Vec<InstanceLogResponse>), (status = 404)),
     security(("bearer_auth" = []))
@@ -932,7 +932,7 @@ pub async fn list_instance_logs(
 
 #[utoipa::path(
     post, path = "/instances/{instanceId}/log", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsInstancesByIdLog",
+    operation_id = "writeScheduledJobInstanceLog",
     params(("instanceId" = String, Path, description = "Instance ID")),
     request_body = InstanceLogRequest,
     responses((status = 204), (status = 400), (status = 403), (status = 404)),
@@ -968,7 +968,7 @@ pub async fn post_instance_log(
 
 #[utoipa::path(
     post, path = "/instances/{instanceId}/complete", tag = "scheduled-jobs",
-    operation_id = "postApiScheduledJobsInstancesByIdComplete",
+    operation_id = "completeScheduledJobInstance",
     params(("instanceId" = String, Path, description = "Instance ID")),
     request_body = InstanceCompleteRequest,
     responses((status = 204), (status = 403), (status = 404)),

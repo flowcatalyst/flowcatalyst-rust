@@ -618,7 +618,7 @@ pub struct PrincipalsState {
     post,
     path = "/users",
     tag = "principals",
-    operation_id = "postApiPrincipalsUsers",
+    operation_id = "createUser",
     request_body = CreateUserRequest,
     responses(
         (status = 201, description = "User created", body = PrincipalResponse),
@@ -1192,7 +1192,7 @@ pub fn derive_user_scope(
     get,
     path = "/{id}",
     tag = "principals",
-    operation_id = "getApiPrincipalsById",
+    operation_id = "getPrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1219,7 +1219,7 @@ pub async fn get_principal(
     get,
     path = "",
     tag = "principals",
-    operation_id = "getApiPrincipals",
+    operation_id = "listPrincipals",
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
@@ -1252,7 +1252,7 @@ pub async fn list_principals(
     put,
     path = "/{id}",
     tag = "principals",
-    operation_id = "putApiPrincipalsById",
+    operation_id = "updatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1280,7 +1280,7 @@ pub async fn update_principal(
     get,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdRoles",
+    operation_id = "listPrincipalRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1308,7 +1308,7 @@ pub async fn get_roles(
     post,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdRoles",
+    operation_id = "addPrincipalRole",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1338,7 +1338,7 @@ pub async fn assign_role(
     put,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "putApiPrincipalsByIdRoles",
+    operation_id = "assignPrincipalRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1368,7 +1368,7 @@ pub async fn batch_assign_roles(
     delete,
     path = "/{id}/roles/{role}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsByIdRolesByRoleName",
+    operation_id = "removePrincipalRole",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("role" = String, Path, description = "Role to remove")
@@ -1397,7 +1397,7 @@ pub async fn remove_role(
     get,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdClientAccess",
+    operation_id = "listPrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1425,7 +1425,7 @@ pub async fn get_client_access(
     post,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdClientAccess",
+    operation_id = "grantPrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1455,7 +1455,7 @@ pub async fn grant_client_access(
     delete,
     path = "/{id}/client-access/{clientId}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsByIdClientAccessByClientId",
+    operation_id = "revokePrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("clientId" = String, Path, description = "Client ID to revoke")
@@ -1484,7 +1484,7 @@ pub async fn revoke_client_access(
     delete,
     path = "/{id}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsById",
+    operation_id = "deletePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1545,7 +1545,7 @@ pub struct SyncUsersResponse {
     post,
     path = "/sync",
     tag = "principals",
-    operation_id = "postApiPrincipalsSync",
+    operation_id = "syncUsers",
     request_body = SyncUsersRequest,
     responses(
         (status = 200, description = "Users synced", body = SyncUsersResponse),
@@ -1608,7 +1608,7 @@ pub async fn sync_users(
     post,
     path = "/{id}/activate",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdActivate",
+    operation_id = "activatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1637,7 +1637,7 @@ pub async fn activate_principal(
     post,
     path = "/{id}/deactivate",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdDeactivate",
+    operation_id = "deactivatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1666,7 +1666,7 @@ pub async fn deactivate_principal(
     post,
     path = "/{id}/reset-password",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdResetPassword",
+    operation_id = "resetPrincipalPassword",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1713,7 +1713,7 @@ pub struct SendPasswordResetRequest {
     post,
     path = "/{id}/send-password-reset",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdSendPasswordReset",
+    operation_id = "sendPrincipalPasswordReset",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1755,7 +1755,7 @@ pub async fn send_password_reset(
     get,
     path = "/check-email-domain",
     tag = "principals",
-    operation_id = "getApiPrincipalsCheckEmailDomain",
+    operation_id = "checkPrincipalEmailDomain",
     params(
         ("domain" = String, Query, description = "Email domain to check")
     ),
@@ -1788,7 +1788,7 @@ pub async fn check_email_domain(
     get,
     path = "/{id}/application-access",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdApplicationAccess",
+    operation_id = "listPrincipalApplicationAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1818,7 +1818,7 @@ pub async fn get_application_access(
     put,
     path = "/{id}/application-access",
     tag = "principals",
-    operation_id = "putApiPrincipalsByIdApplicationAccess",
+    operation_id = "assignPrincipalApplicationAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1851,7 +1851,7 @@ pub async fn set_application_access(
     get,
     path = "/{id}/available-applications",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdAvailableApplications",
+    operation_id = "listPrincipalAvailableApplications",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),

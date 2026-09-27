@@ -494,6 +494,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .paths
             .retain(|path, _| !path.starts_with("/bff/"));
 
+        // The operations Go documents that are routed through the plain
+        // routers below (`shared::openapi_contract`).
+        openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
+
         // 2. Hand-curated schemas for types referenced via #[serde(flatten)] or
         //    via raw JSON responses — utoipa can't auto-collect these.
         //    Keep these in sync with the actual structs in

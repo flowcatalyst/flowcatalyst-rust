@@ -81,7 +81,7 @@ pub struct LoginAttemptsState {
     get,
     path = "",
     tag = "login-attempts",
-    operation_id = "getApiLoginAttempts",
+    operation_id = "listLoginAttempts",
     params(
         ("attempt_type" = Option<String>, Query, description = "Filter by attempt type"),
         ("outcome" = Option<String>, Query, description = "Filter by outcome"),

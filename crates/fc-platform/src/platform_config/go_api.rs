@@ -215,7 +215,7 @@ impl GoPlatformConfigState {
     get,
     path = "/api/platform-config/{app}",
     tag = "platform-config",
-    operation_id = "listPlatformConfig",
+    operation_id = "listPlatformConfigProperties",
     params(("app" = String, Path, description = "Application code")),
     responses((status = 200, description = "Properties", body = GoConfigListResponse)),
     security(("bearer_auth" = []))
@@ -244,7 +244,7 @@ pub async fn list_platform_config(
     get,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "getConfigProperty",
+    operation_id = "getPlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
@@ -281,7 +281,7 @@ pub async fn get_config_property(
     put,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "setConfigProperty",
+    operation_id = "setPlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
@@ -341,7 +341,7 @@ pub async fn set_config_property(
     delete,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "deleteConfigProperty",
+    operation_id = "deletePlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),

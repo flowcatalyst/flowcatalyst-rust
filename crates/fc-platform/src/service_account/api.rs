@@ -302,7 +302,7 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     get,
     path = "",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccounts",
+    operation_id = "listServiceAccounts",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("applicationId" = Option<String>, Query, description = "Filter by application ID"),
@@ -356,7 +356,7 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsById",
+    operation_id = "getServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -397,7 +397,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     get,
     path = "/code/{code}",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsCodeByCode",
+    operation_id = "getServiceAccountByCode",
     params(
         ("code" = String, Path, description = "Service account code")
     ),
@@ -427,7 +427,7 @@ pub async fn get_service_account_by_code<U: UnitOfWork>(
     post,
     path = "",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccounts",
+    operation_id = "createServiceAccount",
     request_body = CreateServiceAccountRequest,
     responses(
         (status = 201, description = "Service account created", body = CreateServiceAccountResponse),
@@ -581,7 +581,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "putApiServiceAccountsById",
+    operation_id = "updateServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -620,7 +620,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "deleteApiServiceAccountsById",
+    operation_id = "deleteServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -692,7 +692,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-auth-token",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccountsByIdRegenerateAuthToken",
+    operation_id = "regenerateServiceAccountAuthToken_regenerate-auth-token",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -733,7 +733,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-signing-secret",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccountsByIdRegenerateSigningSecret",
+    operation_id = "regenerateServiceAccountSigningSecret_regenerate-signing-secret",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -769,12 +769,51 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     }
 }
 
+/// Go's shorter spelling of `regenerate-auth-token`, served by
+/// [`regenerate_auth_token`] (see `service_accounts_router`). Documentation
+/// only: Go documents each spelling as its own operation.
+#[utoipa::path(
+    post,
+    path = "/{id}/regenerate-token",
+    tag = "service-accounts",
+    operation_id = "regenerateServiceAccountAuthToken_regenerate-token",
+    params(
+        ("id" = String, Path, description = "Service account ID")
+    ),
+    responses(
+        (status = 200, description = "Token regenerated", body = RegenerateTokenResponse),
+        (status = 404, description = "Service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+#[allow(dead_code)]
+pub(crate) fn regenerate_token_alias() {}
+
+/// Go's shorter spelling of `regenerate-signing-secret`, served by
+/// [`regenerate_signing_secret`]. Documentation only.
+#[utoipa::path(
+    post,
+    path = "/{id}/regenerate-secret",
+    tag = "service-accounts",
+    operation_id = "regenerateServiceAccountSigningSecret_regenerate-secret",
+    params(
+        ("id" = String, Path, description = "Service account ID")
+    ),
+    responses(
+        (status = 200, description = "Secret regenerated", body = RegenerateSecretResponse),
+        (status = 404, description = "Service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+#[allow(dead_code)]
+pub(crate) fn regenerate_secret_alias() {}
+
 /// Get assigned roles
 #[utoipa::path(
     get,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsByIdRoles",
+    operation_id = "listServiceAccountRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -814,7 +853,7 @@ pub async fn get_roles<U: UnitOfWork>(
     put,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "putApiServiceAccountsByIdRoles",
+    operation_id = "assignServiceAccountRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),

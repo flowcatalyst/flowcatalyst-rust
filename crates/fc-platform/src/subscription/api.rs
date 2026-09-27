@@ -369,7 +369,7 @@ pub struct SubscriptionsState {
     post,
     path = "",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptions",
+    operation_id = "createSubscription",
     request_body = CreateSubscriptionRequest,
     responses(
         (status = 201, description = "Subscription created", body = crate::shared::api_common::CreatedResponse),
@@ -438,7 +438,7 @@ pub async fn create_subscription(
     get,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "getApiSubscriptionsById",
+    operation_id = "getSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -472,7 +472,7 @@ pub async fn get_subscription(
     get,
     path = "",
     tag = "subscriptions",
-    operation_id = "getApiSubscriptions",
+    operation_id = "listSubscriptions",
     params(SubscriptionsQuery),
     responses(
         (status = 200, description = "List of subscriptions", body = SubscriptionListResponse)
@@ -520,7 +520,7 @@ pub async fn list_subscriptions(
     put,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "putApiSubscriptionsById",
+    operation_id = "updateSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -582,7 +582,7 @@ pub async fn update_subscription(
     post,
     path = "/{id}/pause",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptionsByIdPause",
+    operation_id = "pauseSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -626,7 +626,7 @@ pub async fn pause_subscription(
     post,
     path = "/{id}/resume",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptionsByIdResume",
+    operation_id = "resumeSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -670,7 +670,7 @@ pub async fn resume_subscription(
     delete,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "deleteApiSubscriptionsById",
+    operation_id = "deleteSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),

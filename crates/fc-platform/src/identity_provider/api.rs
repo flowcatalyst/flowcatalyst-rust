@@ -196,7 +196,7 @@ pub(crate) fn seal_client_secret(
     post,
     path = "",
     tag = "identity-providers",
-    operation_id = "postApiIdentityProviders",
+    operation_id = "createIdentityProvider",
     request_body = CreateIdentityProviderRequest,
     responses(
         (status = 201, description = "Identity provider created", body = IdentityProviderResponse),
@@ -271,7 +271,7 @@ async fn create_identity_provider(
     get,
     path = "",
     tag = "identity-providers",
-    operation_id = "getApiIdentityProviders",
+    operation_id = "listIdentityProviders",
     responses(
         (status = 200, description = "List of identity providers", body = IdentityProvidersListResponse)
     ),
@@ -295,7 +295,7 @@ async fn list_identity_providers(
     get,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "getApiIdentityProvidersById",
+    operation_id = "getIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -324,7 +324,7 @@ async fn get_identity_provider(
     put,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "putApiIdentityProvidersById",
+    operation_id = "updateIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -405,7 +405,7 @@ async fn update_identity_provider(
     delete,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "deleteApiIdentityProvidersById",
+    operation_id = "deleteIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),

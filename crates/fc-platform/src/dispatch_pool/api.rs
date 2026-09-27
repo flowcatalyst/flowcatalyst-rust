@@ -144,7 +144,7 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     post,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPools",
+    operation_id = "createDispatchPool",
     request_body = CreateDispatchPoolRequest,
     responses(
         (status = 201, description = "Dispatch pool created", body = crate::shared::api_common::CreatedResponse),
@@ -191,7 +191,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "getApiDispatchPoolsById",
+    operation_id = "getDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -231,7 +231,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     get,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "getApiDispatchPools",
+    operation_id = "listDispatchPools",
     params(DispatchPoolsQuery),
     responses(
         (status = 200, description = "List of dispatch pools", body = DispatchPoolListResponse)
@@ -278,7 +278,7 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "putApiDispatchPoolsById",
+    operation_id = "updateDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -323,7 +323,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/archive",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdArchive",
+    operation_id = "archiveDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -367,7 +367,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/suspend",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdSuspend",
+    operation_id = "suspendDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -414,7 +414,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/activate",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdActivate",
+    operation_id = "activateDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -466,7 +466,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "deleteApiDispatchPoolsById",
+    operation_id = "deleteDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),

@@ -328,7 +328,7 @@ fn parse_grant_types(grant_types: &[String]) -> Result<Vec<GrantType>, PlatformE
     post,
     path = "",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClients",
+    operation_id = "createOAuthClient",
     request_body = CreateOAuthClientRequest,
     responses(
         (status = 201, description = "OAuth client created", body = CreateOAuthClientResponse),
@@ -449,7 +449,7 @@ pub async fn create_oauth_client(
     get,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClientsById",
+    operation_id = "getOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -480,7 +480,7 @@ pub async fn get_oauth_client(
     get,
     path = "",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClients",
+    operation_id = "listOAuthClients",
     params(OAuthClientsQuery),
     responses(
         (status = 200, description = "List of OAuth clients", body = OAuthClientListResponse)
@@ -519,7 +519,7 @@ pub async fn list_oauth_clients(
     put,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "putApiOauthClientsById",
+    operation_id = "updateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -582,7 +582,7 @@ pub async fn update_oauth_client(
     delete,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "deleteApiOauthClientsById",
+    operation_id = "deleteOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -646,7 +646,7 @@ pub struct RotateSecretRequest {
     get,
     path = "/by-client-id/{clientId}",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClientsByClientId",
+    operation_id = "getOAuthClientByClientID",
     params(
         ("clientId" = String, Path, description = "OAuth client_id (public identifier)")
     ),
@@ -677,7 +677,7 @@ pub async fn get_oauth_client_by_client_id(
     post,
     path = "/{id}/activate",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsActivate",
+    operation_id = "activateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -717,7 +717,7 @@ pub async fn activate_oauth_client(
     post,
     path = "/{id}/deactivate",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsDeactivate",
+    operation_id = "deactivateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -770,7 +770,7 @@ fn parse_rotate_body(body: &[u8]) -> Result<RotateSecretRequest, PlatformError> 
     post,
     path = "/{id}/regenerate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRegenerateSecret",
+    operation_id = "regenerateOAuthClientSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -833,7 +833,7 @@ pub async fn regenerate_oauth_client_secret(
     post,
     path = "/{id}/rotate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRotateSecret",
+    operation_id = "rotateOAuthClientSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -863,7 +863,7 @@ pub async fn rotate_oauth_client_secret(
     post,
     path = "/{id}/revoke-previous-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRevokePreviousSecret",
+    operation_id = "revokeOAuthClientPreviousSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),

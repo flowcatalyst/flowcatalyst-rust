@@ -132,7 +132,7 @@ pub struct ProcessesState {
     post,
     path = "",
     tag = "processes",
-    operation_id = "postApiProcesses",
+    operation_id = "createProcess",
     request_body = CreateProcessRequest,
     responses(
         (status = 201, description = "Process created", body = CreatedResponse),
@@ -168,7 +168,7 @@ pub async fn create_process(
     get,
     path = "/{id}",
     tag = "processes",
-    operation_id = "getApiProcessesById",
+    operation_id = "getProcess",
     params(("id" = String, Path, description = "Process ID")),
     responses(
         (status = 200, description = "Process found", body = ProcessResponse),
@@ -194,7 +194,7 @@ pub async fn get_process(
     get,
     path = "/by-code/{code}",
     tag = "processes",
-    operation_id = "getApiProcessesByCode",
+    operation_id = "getProcessByCode",
     params(("code" = String, Path, description = "Process code")),
     responses(
         (status = 200, description = "Process found", body = ProcessResponse),
@@ -220,7 +220,7 @@ pub async fn get_process_by_code(
     get,
     path = "",
     tag = "processes",
-    operation_id = "getApiProcesses",
+    operation_id = "listProcesses",
     params(ProcessesQuery),
     responses(
         (status = 200, description = "List of processes", body = ProcessListResponse)
@@ -263,7 +263,7 @@ pub async fn list_processes(
     put,
     path = "/{id}",
     tag = "processes",
-    operation_id = "putApiProcessesById",
+    operation_id = "updateProcess",
     params(("id" = String, Path, description = "Process ID")),
     request_body = UpdateProcessRequest,
     responses(
@@ -304,7 +304,7 @@ pub async fn update_process(
     post,
     path = "/{id}/archive",
     tag = "processes",
-    operation_id = "postApiProcessesByIdArchive",
+    operation_id = "archiveProcess",
     params(("id" = String, Path, description = "Process ID")),
     responses(
         (status = 204, description = "Process archived"),
@@ -335,7 +335,7 @@ pub async fn archive_process(
     delete,
     path = "/{id}",
     tag = "processes",
-    operation_id = "deleteApiProcessesById",
+    operation_id = "deleteProcess",
     params(("id" = String, Path, description = "Process ID")),
     responses(
         (status = 204, description = "Process deleted"),

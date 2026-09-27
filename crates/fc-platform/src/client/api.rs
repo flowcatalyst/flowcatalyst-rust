@@ -231,7 +231,7 @@ pub struct ClientsState {
     post,
     path = "",
     tag = "clients",
-    operation_id = "postApiClients",
+    operation_id = "createClient",
     request_body = CreateClientRequest,
     responses(
         (status = 201, description = "Client created", body = crate::shared::api_common::CreatedResponse),
@@ -270,7 +270,7 @@ pub async fn create_client(
     get,
     path = "/{id}",
     tag = "clients",
-    operation_id = "getApiClientsById",
+    operation_id = "getClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -311,7 +311,7 @@ fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, Plat
     get,
     path = "",
     tag = "clients",
-    operation_id = "getApiClients",
+    operation_id = "listClients",
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
@@ -352,7 +352,7 @@ pub async fn list_clients(
     put,
     path = "/{id}",
     tag = "clients",
-    operation_id = "putApiClientsById",
+    operation_id = "updateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -389,7 +389,7 @@ pub async fn update_client(
     delete,
     path = "/{id}",
     tag = "clients",
-    operation_id = "deleteApiClientsById",
+    operation_id = "deleteClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -427,7 +427,7 @@ pub async fn delete_client(
     post,
     path = "/{id}/activate",
     tag = "clients",
-    operation_id = "postApiClientsByIdActivate",
+    operation_id = "activateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -468,7 +468,7 @@ pub async fn activate_client(
     post,
     path = "/{id}/suspend",
     tag = "clients",
-    operation_id = "postApiClientsByIdSuspend",
+    operation_id = "suspendClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -518,7 +518,7 @@ pub async fn suspend_client(
     post,
     path = "/{id}/deactivate",
     tag = "clients",
-    operation_id = "postApiClientsByIdDeactivate",
+    operation_id = "deactivateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -568,7 +568,7 @@ pub async fn deactivate_client(
     get,
     path = "/search",
     tag = "clients",
-    operation_id = "getApiClientsSearch",
+    operation_id = "searchClientsByQuery",
     params(
         ("q" = Option<String>, Query, description = "Search term")
     ),
@@ -616,7 +616,7 @@ pub async fn search_clients(
     get,
     path = "/by-identifier/{identifier}",
     tag = "clients",
-    operation_id = "getApiClientsByIdentifierByIdentifier",
+    operation_id = "getClientByIdentifier",
     params(
         ("identifier" = String, Path, description = "Client identifier/slug")
     ),
@@ -650,7 +650,7 @@ pub async fn get_client_by_identifier(
     post,
     path = "/{id}/notes",
     tag = "clients",
-    operation_id = "postApiClientsByIdNotes",
+    operation_id = "addClientNote",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -696,7 +696,7 @@ pub async fn add_note(
     get,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "getApiClientsByIdApplications",
+    operation_id = "getClientApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -760,7 +760,7 @@ pub async fn get_client_applications(
     post,
     path = "/{id}/applications/{applicationId}/enable",
     tag = "clients",
-    operation_id = "postApiClientsByIdApplicationsByAppIdEnable",
+    operation_id = "enableClientApplication",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("applicationId" = String, Path, description = "Application ID")
@@ -797,7 +797,7 @@ pub async fn enable_application(
     post,
     path = "/{id}/applications/{applicationId}/disable",
     tag = "clients",
-    operation_id = "postApiClientsByIdApplicationsByAppIdDisable",
+    operation_id = "disableClientApplication",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("applicationId" = String, Path, description = "Application ID")
@@ -834,7 +834,7 @@ pub async fn disable_application(
     put,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "putApiClientsByIdApplications",
+    operation_id = "updateClientApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),

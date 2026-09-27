@@ -276,7 +276,7 @@ pub struct EventsState {
     post,
     path = "",
     tag = "events",
-    operation_id = "postApiEvents",
+    operation_id = "createEvent",
     request_body = CreateEventRequest,
     responses(
         (status = 201, description = "Event created", body = CreateEventResponse),
@@ -398,7 +398,7 @@ pub async fn create_event(
     get,
     path = "/{id}",
     tag = "events",
-    operation_id = "getApiEventsById",
+    operation_id = "getEvent",
     params(
         ("id" = String, Path, description = "Event ID")
     ),
@@ -551,7 +551,7 @@ impl From<EventRead> for EventListItem {
     get,
     path = "",
     tag = "events",
-    operation_id = "getApiEvents",
+    operation_id = "listEvents",
     params(EventsQuery),
     responses(
         (status = 200, description = "List of events", body = Vec<EventListItem>)
@@ -835,7 +835,7 @@ pub struct PaginatedEventsResponse {
     get,
     path = "/raw",
     tag = "events",
-    operation_id = "getApiEventsRaw",
+    operation_id = "listEventsRawAlias",
     params(EventsQuery),
     responses(
         (status = 200, description = "Events", body = Vec<EventListItem>)
@@ -872,7 +872,7 @@ pub struct EventFilterOptionsResponse {
     get,
     path = "/filter-options",
     tag = "events",
-    operation_id = "getApiEventsFilterOptions",
+    operation_id = "eventFilterOptions",
     responses((status = 200, body = EventFilterOptionsResponse)),
     security(("bearer_auth" = []))
 )]

@@ -467,7 +467,7 @@ fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), 
     get,
     path = "/{id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsById",
+    operation_id = "getDispatchJob",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -500,7 +500,7 @@ pub async fn get_dispatch_job(
     get,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobs",
+    operation_id = "listDispatchJobs",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobReadResponse>)
@@ -610,7 +610,7 @@ async fn with_client_identifiers(
     get,
     path = "/by-event/{eventId}",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByEventByEventId",
+    operation_id = "dispatchJobsByEventAlias",
     params(
         ("eventId" = String, Path, description = "Event ID")
     ),
@@ -935,7 +935,7 @@ pub async fn batch_create_dispatch_jobs(
     get,
     path = "/{id}/attempts",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByIdAttempts",
+    operation_id = "listDispatchJobAttempts",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -994,7 +994,7 @@ pub struct DispatchJobFilterOptionsResponse {
     get,
     path = "/filter-options",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsFilterOptions",
+    operation_id = "dispatchJobFilterOptions",
     responses(
         (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse)
     ),
@@ -1037,7 +1037,7 @@ pub async fn get_filter_options(
     get,
     path = "/{id}/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByIdRaw",
+    operation_id = "getDispatchJobRaw",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -1080,7 +1080,7 @@ pub struct PaginatedDispatchJobsResponse {
     get,
     path = "/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsRaw",
+    operation_id = "listDispatchJobsRawAlias",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>)

@@ -123,7 +123,7 @@ fn row(n: usize, email: &str, status: &str, message: Option<String>) -> BulkImpo
     post,
     path = "/api/principals/bulk-import",
     tag = "principals",
-    operation_id = "bulkImportPrincipals",
+    operation_id = "bulkImportUsers",
     request_body = BulkImportRequest,
     responses(
         (status = 200, description = "Per-row outcomes", body = BulkImportResponse),

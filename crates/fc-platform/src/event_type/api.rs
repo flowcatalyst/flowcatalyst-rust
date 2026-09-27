@@ -176,7 +176,7 @@ pub struct EventTypesState {
     post,
     path = "",
     tag = "event-types",
-    operation_id = "postApiEventTypes",
+    operation_id = "createEventType",
     request_body = CreateEventTypeRequest,
     responses(
         (status = 201, description = "Event type created", body = crate::shared::api_common::CreatedResponse),
@@ -230,7 +230,7 @@ pub async fn create_event_type(
     get,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "getApiEventTypesById",
+    operation_id = "getEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -268,7 +268,7 @@ pub async fn get_event_type(
     get,
     path = "/by-code/{code}",
     tag = "event-types",
-    operation_id = "getApiEventTypesByCodeByCode",
+    operation_id = "getEventTypeByCode",
     params(
         ("code" = String, Path, description = "Event type code")
     ),
@@ -306,7 +306,7 @@ pub async fn get_event_type_by_code(
     get,
     path = "",
     tag = "event-types",
-    operation_id = "getApiEventTypes",
+    operation_id = "listEventTypes",
     params(EventTypesQuery),
     responses(
         (status = 200, description = "List of event types", body = EventTypeListResponse)
@@ -367,7 +367,7 @@ pub async fn list_event_types(
     put,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "putApiEventTypesById",
+    operation_id = "updateEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -424,7 +424,7 @@ pub async fn update_event_type(
     post,
     path = "/{id}/versions",
     tag = "event-types",
-    operation_id = "postApiEventTypesByIdSchemas",
+    operation_id = "addEventTypeVersion",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -461,7 +461,7 @@ pub async fn add_schema_version(
     delete,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "deleteApiEventTypesById",
+    operation_id = "deleteEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
