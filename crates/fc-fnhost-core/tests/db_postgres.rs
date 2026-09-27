@@ -291,6 +291,9 @@ async fn a_committed_transaction_is_visible_and_a_dropped_one_is_rolled_back() {
         .await
         .unwrap();
     tx.rollback().await.unwrap();
+    // The pool resets a released connection (`after_release`) before it is
+    // idle again, so wait for it before counting the next borrow.
+    eventually_returned(&b).await;
 
     let mut tx = db.begin().await.unwrap();
     tx.execute(&format!("INSERT INTO {t} VALUES ('dropped')"), &[])
