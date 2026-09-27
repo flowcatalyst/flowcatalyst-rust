@@ -32,7 +32,7 @@ export type CreateFunctionRequest = {
     applicationCode: string;
     serviceName: string;
     name: string;
-    runtime: 'jvm' | 'wasm' | 'component';
+    runtime: 'jvm' | 'wasm' | 'component' | 'js';
     description?: string;
     clientId?: string;
 };
@@ -55,7 +55,7 @@ export type FunctionResponse = {
     name: string;
     applicationId: string;
     clientId?: string;
-    runtime: 'jvm' | 'wasm' | 'component';
+    runtime: 'jvm' | 'wasm' | 'component' | 'js';
     description?: string;
     status: 'ACTIVE' | 'DISABLED';
     live?: FunctionResponseLive;
@@ -86,9 +86,9 @@ export type SignerResponse = {
  * The publish-time manifest, as parsed by Manifest#parseStrict — only runtime/entrypoint are mandatory, everything else defaults.
  */
 export type PublishManifestRequest = {
-    runtime: 'jvm' | 'wasm' | 'component';
+    runtime: 'jvm' | 'wasm' | 'component' | 'js';
     /**
-     * Optional for runtime component (default wasi:http/incoming-handler); required otherwise.
+     * Optional for runtime component (default wasi:http/incoming-handler) and js (default: the bundle's default export); required otherwise.
      */
     entrypoint?: string;
     pool?: string;
@@ -228,7 +228,7 @@ export type ManifestDbRef = {
  * The resolved manifest as the server writes it back (Manifest#toJson) — every key always present.
  */
 export type Manifest = {
-    runtime: 'jvm' | 'wasm' | 'component';
+    runtime: 'jvm' | 'wasm' | 'component' | 'js';
     entrypoint: string;
     pool: string;
     warm: boolean;
@@ -477,7 +477,7 @@ export type SetSecretRequest = {
 export type PolicySignerRequest = {
     issuer: string;
     subject: string;
-    runtimes?: Array<'jvm' | 'wasm' | 'component'>;
+    runtimes?: Array<'jvm' | 'wasm' | 'component' | 'js'>;
 };
 
 export type PolicyCeilingsRequest = {
@@ -495,7 +495,7 @@ export type PutPolicyRequest = {
 export type PolicySignerResponse = {
     issuer: string;
     subject: string;
-    runtimes: Array<'jvm' | 'wasm' | 'component'>;
+    runtimes: Array<'jvm' | 'wasm' | 'component' | 'js'>;
 };
 
 export type PolicyCeilingsResponse = {

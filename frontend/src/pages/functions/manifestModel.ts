@@ -91,7 +91,8 @@ export function manifestSchemaUrl(): string {
  * WASI 0.2 component exporting `wasi:http/incoming-handler`, its default
  * entrypoint, so none is written; `wasm` is the same component under the
  * manifest-safe entrypoint alias the Rust host accepts (what a platform
- * without `component` takes); `jvm` is the template Java's
+ * without `component` takes); `js` is a JS bundle whose entrypoint defaults
+ * to its default export, so none is written; `jvm` is the template Java's
  * `fn init --manifest-only` writes. Each has one platform-authenticated
  * `GET /hello` endpoint.
  */
@@ -101,6 +102,7 @@ export function newManifestModel(runtime: FunctionRuntime = "component"): Manife
 	];
 	switch (runtime) {
 		case "component":
+		case "js":
 			return { runtime, endpoints };
 		case "wasm":
 			return { runtime, entrypoint: "wasi_http_incoming_handler", endpoints };

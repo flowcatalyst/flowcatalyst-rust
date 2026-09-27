@@ -248,6 +248,7 @@ function parseList(text: string | undefined): string[] | undefined {
 const optionsOf = <T extends string>(all: Record<T, true>): T[] => Object.keys(all) as T[];
 const runtimeOptions = optionsOf<ManifestModel["runtime"]>({
 	component: true,
+	js: true,
 	wasm: true,
 	jvm: true,
 });
@@ -399,12 +400,17 @@ function onPublished(published: PublishResponse) {
                 </div>
                 <div class="form-field">
                   <label>
-                    Entrypoint <span v-if="model.runtime !== 'component'" class="required">*</span>
+                    Entrypoint
+                    <span v-if="model.runtime !== 'component' && model.runtime !== 'js'" class="required">*</span>
                   </label>
                   <InputText v-model="model.entrypoint" class="full-width" data-testid="manifest-entrypoint-input" />
                   <small v-if="topFieldError('entrypoint')" class="field-error">{{ topFieldError("entrypoint") }}</small>
                   <small v-else-if="model.runtime === 'component'" class="hint">
                     Optional: <code>wasi:http/incoming-handler</code> when blank.
+                  </small>
+                  <small v-else-if="model.runtime === 'js'" class="hint">
+                    Optional: the bundle's <code>default</code> export when blank, or the name of
+                    another export.
                   </small>
                   <small v-else-if="model.runtime === 'wasm'" class="hint">
                     A component's <code>wasi_http_incoming_handler</code> (or
@@ -445,7 +451,7 @@ function onPublished(published: PublishResponse) {
                     />
                   </div>
                   <div v-if="model.runtime !== 'jvm'" class="form-field">
-                    <label>Wasm memory (MB)</label>
+                    <label>{{ model.runtime === "js" ? "Memory (MB)" : "Wasm memory (MB)" }}</label>
                     <InputNumber
                       :modelValue="model.limits.wasmMemoryMb ?? null"
                       class="full-width"
