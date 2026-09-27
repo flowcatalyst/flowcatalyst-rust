@@ -119,6 +119,8 @@ pub struct ScheduledJobResponse {
     pub id: String,
     #[serde(default)]
     pub client_id: Option<String>,
+    #[serde(default)]
+    pub application_id: Option<String>,
     pub code: String,
     pub name: String,
     #[serde(default)]
@@ -183,6 +185,10 @@ pub struct ScheduledJobInstanceResponse {
 pub struct InstanceLogResponse {
     pub id: String,
     pub instance_id: String,
+    #[serde(default)]
+    pub scheduled_job_id: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
     pub level: String,
     pub message: String,
     #[serde(default)]
@@ -190,7 +196,8 @@ pub struct InstanceLogResponse {
     pub created_at: String,
 }
 
-/// Paginated list wrapper used by `list` and `list_instances`.
+/// One page of scheduled jobs (Go's `OffsetPageScheduledJobResponse`).
+/// Go spells the page count `total_pages`; `totalPages` is still read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJobListResponse {
@@ -198,9 +205,11 @@ pub struct ScheduledJobListResponse {
     pub page: u32,
     pub size: u32,
     pub total: u64,
+    #[serde(rename = "total_pages", alias = "totalPages")]
     pub total_pages: u32,
 }
 
+/// One page of instances (Go's `OffsetPageScheduledJobInstanceResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJobInstanceListResponse {
@@ -208,23 +217,19 @@ pub struct ScheduledJobInstanceListResponse {
     pub page: u32,
     pub size: u32,
     pub total: u64,
+    #[serde(rename = "total_pages", alias = "totalPages")]
     pub total_pages: u32,
 }
 
-/// List of instance logs — `GET /api/scheduled-jobs/instances/{id}/logs`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstanceLogListResponse {
-    pub logs: Vec<InstanceLogResponse>,
-    #[serde(default)]
-    pub total: Option<u64>,
-}
-
-/// Response from a manual fire — returns the new instance.
+/// Response from a manual fire (Go's `FireNowResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FireResponse {
     pub instance_id: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub scheduled_job_id: Option<String>,
 }
 
 // ── Filters ───────────────────────────────────────────────────────────────
@@ -240,13 +245,10 @@ pub struct ScheduledJobFilters {
     pub size: Option<u32>,
 }
 
-/// Filters for listing instances of a job.
+/// Filters for listing instances of a job (Go's `status`, `page`, `size`).
 #[derive(Debug, Clone, Default)]
 pub struct InstanceFilters {
     pub status: Option<String>,
-    pub trigger_kind: Option<String>,
-    pub from: Option<String>,
-    pub to: Option<String>,
     pub page: Option<u32>,
     pub size: Option<u32>,
 }
@@ -328,26 +330,22 @@ impl ScheduledJobs<'_> {
         filters: &ScheduledJobFilters,
     ) -> Result<ScheduledJobListResponse, ClientError> {
         let mut params = Vec::new();
-        if let Some(ref c) = filters.client_id {
-            params.push(format!("clientId={}", c));
-        }
         if let Some(ref s) = filters.status {
-            params.push(format!("status={}", s));
+            params.push(("status", s.clone()));
+        }
+        if let Some(ref c) = filters.client_id {
+            params.push(("clientId", c.clone()));
         }
         if let Some(ref q) = filters.search {
-            params.push(format!("search={}", q));
+            params.push(("search", q.clone()));
         }
         if let Some(p) = filters.page {
-            params.push(format!("page={}", p));
+            params.push(("page", p.to_string()));
         }
         if let Some(s) = filters.size {
-            params.push(format!("size={}", s));
+            params.push(("size", s.to_string()));
         }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        let query = FlowCatalystClient::query_string(&params);
         self.client
             .get(&format!("/api/scheduled-jobs{}", query))
             .await
@@ -355,7 +353,9 @@ impl ScheduledJobs<'_> {
 
     /// Get a scheduled job by ID.
     pub async fn get(&self, id: &str) -> Result<ScheduledJobResponse, ClientError> {
-        self.client.get(&format!("/api/scheduled-jobs/{}", id)).await
+        self.client
+            .get(&format!("/api/scheduled-jobs/{}", id))
+            .await
     }
 
     /// Get a scheduled job by code. Optionally scope to a single client.
@@ -373,36 +373,36 @@ impl ScheduledJobs<'_> {
             .await
     }
 
-    /// Update a scheduled job.
+    /// Update a scheduled job (204). Call `get(id)` for the updated record.
     pub async fn update(
         &self,
         id: &str,
         req: &UpdateScheduledJobRequest,
-    ) -> Result<ScheduledJobResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/scheduled-jobs/{}", id), req)
+            .put_empty(&format!("/api/scheduled-jobs/{}", id), req)
             .await
     }
 
-    /// Pause a scheduled job.
-    pub async fn pause(&self, id: &str) -> Result<ScheduledJobResponse, ClientError> {
+    /// Pause a scheduled job (204).
+    pub async fn pause(&self, id: &str) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!("/api/scheduled-jobs/{}/pause", id))
+            .post_empty(&format!("/api/scheduled-jobs/{}/pause", id))
             .await
     }
 
-    /// Resume a paused scheduled job.
-    pub async fn resume(&self, id: &str) -> Result<ScheduledJobResponse, ClientError> {
+    /// Resume a paused scheduled job (204).
+    pub async fn resume(&self, id: &str) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!("/api/scheduled-jobs/{}/resume", id))
+            .post_empty(&format!("/api/scheduled-jobs/{}/resume", id))
             .await
     }
 
-    /// Archive (soft-delete) a scheduled job. Distinct from `delete` —
+    /// Archive (soft-delete) a scheduled job (204). Distinct from `delete` —
     /// archived jobs are kept for audit.
-    pub async fn archive(&self, id: &str) -> Result<ScheduledJobResponse, ClientError> {
+    pub async fn archive(&self, id: &str) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!("/api/scheduled-jobs/{}/archive", id))
+            .post_empty(&format!("/api/scheduled-jobs/{}/archive", id))
             .await
     }
 
@@ -414,11 +414,7 @@ impl ScheduledJobs<'_> {
     }
 
     /// Manually fire a scheduled job. Returns the new instance ID.
-    pub async fn fire(
-        &self,
-        id: &str,
-        req: &FireRequest,
-    ) -> Result<FireResponse, ClientError> {
+    pub async fn fire(&self, id: &str, req: &FireRequest) -> Result<FireResponse, ClientError> {
         self.client
             .post(&format!("/api/scheduled-jobs/{}/fire", id), req)
             .await
@@ -432,30 +428,20 @@ impl ScheduledJobs<'_> {
     ) -> Result<ScheduledJobInstanceListResponse, ClientError> {
         let mut params = Vec::new();
         if let Some(ref s) = filters.status {
-            params.push(format!("status={}", s));
-        }
-        if let Some(ref t) = filters.trigger_kind {
-            params.push(format!("triggerKind={}", t));
-        }
-        if let Some(ref f) = filters.from {
-            params.push(format!("from={}", f));
-        }
-        if let Some(ref t) = filters.to {
-            params.push(format!("to={}", t));
+            params.push(("status", s.clone()));
         }
         if let Some(p) = filters.page {
-            params.push(format!("page={}", p));
+            params.push(("page", p.to_string()));
         }
         if let Some(s) = filters.size {
-            params.push(format!("size={}", s));
+            params.push(("size", s.to_string()));
         }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        let query = FlowCatalystClient::query_string(&params);
         self.client
-            .get(&format!("/api/scheduled-jobs/{}/instances{}", job_id, query))
+            .get(&format!(
+                "/api/scheduled-jobs/{}/instances{}",
+                job_id, query
+            ))
             .await
     }
 
@@ -469,11 +455,11 @@ impl ScheduledJobs<'_> {
             .await
     }
 
-    /// List logs for an instance.
+    /// List logs for an instance. The platform answers a bare array.
     pub async fn list_instance_logs(
         &self,
         instance_id: &str,
-    ) -> Result<InstanceLogListResponse, ClientError> {
+    ) -> Result<Vec<InstanceLogResponse>, ClientError> {
         self.client
             .get(&format!(
                 "/api/scheduled-jobs/instances/{}/logs",
@@ -482,28 +468,28 @@ impl ScheduledJobs<'_> {
             .await
     }
 
-    /// SDK callback — append a log entry to a running instance.
+    /// SDK callback — append a log entry to a running instance (204).
     pub async fn log_for_instance(
         &self,
         instance_id: &str,
         req: &InstanceLogRequest,
-    ) -> Result<InstanceLogResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .post(
+            .post_no_content(
                 &format!("/api/scheduled-jobs/instances/{}/log", instance_id),
                 req,
             )
             .await
     }
 
-    /// SDK callback — mark an instance complete with the given status.
+    /// SDK callback — mark an instance complete with the given status (204).
     pub async fn complete_instance(
         &self,
         instance_id: &str,
         req: &InstanceCompleteRequest,
-    ) -> Result<ScheduledJobInstanceResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .post(
+            .post_no_content(
                 &format!("/api/scheduled-jobs/instances/{}/complete", instance_id),
                 req,
             )
@@ -528,5 +514,160 @@ impl ScheduledJobs<'_> {
                 req,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    const JOB: &str = r#"{"id":"sj_1","code":"nightly","name":"Nightly","status":"ACTIVE",
+        "crons":["0 0 * * *"],"timezone":"UTC","concurrent":false,"tracksCompletion":true,
+        "deliveryMaxAttempts":3,"hasActiveInstance":false,"version":1,
+        "createdAt":"t","updatedAt":"t"}"#;
+
+    #[tokio::test]
+    async fn list_reads_gos_pagination_members() {
+        let page = format!(r#"{{"data":[{JOB}],"page":0,"size":20,"total":1,"total_pages":1}}"#);
+        let stub = MockPlatform::start(&[("GET", "/api/scheduled-jobs", 200, &page)]).await;
+        let resp = stub
+            .client()
+            .scheduled_jobs()
+            .list(&ScheduledJobFilters {
+                status: Some("ACTIVE".into()),
+                size: Some(20),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.total_pages, 1);
+        assert_eq!(resp.data[0].code, "nightly");
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![
+                ("status".to_string(), "ACTIVE".to_string()),
+                ("size".to_string(), "20".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_instances_sends_only_gos_filters() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/scheduled-jobs/sj_1/instances",
+            200,
+            r#"{"data":[],"page":1,"size":10,"total":0,"total_pages":0}"#,
+        )])
+        .await;
+        stub.client()
+            .scheduled_jobs()
+            .list_instances(
+                "sj_1",
+                &InstanceFilters {
+                    status: Some("FAILED".into()),
+                    page: Some(1),
+                    size: Some(10),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![
+                ("status".to_string(), "FAILED".to_string()),
+                ("page".to_string(), "1".to_string()),
+                ("size".to_string(), "10".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn no_content_writes_accept_204() {
+        let stub = MockPlatform::start(&[
+            ("PUT", "/api/scheduled-jobs/sj_1", 204, ""),
+            ("POST", "/api/scheduled-jobs/sj_1/pause", 204, ""),
+            ("POST", "/api/scheduled-jobs/sj_1/resume", 204, ""),
+            ("POST", "/api/scheduled-jobs/sj_1/archive", 204, ""),
+            ("POST", "/api/scheduled-jobs/instances/in_1/log", 204, ""),
+            (
+                "POST",
+                "/api/scheduled-jobs/instances/in_1/complete",
+                204,
+                "",
+            ),
+        ])
+        .await;
+        let c = stub.client();
+        let jobs = c.scheduled_jobs();
+        jobs.update(
+            "sj_1",
+            &UpdateScheduledJobRequest {
+                name: Some("Nightly".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        jobs.pause("sj_1").await.unwrap();
+        jobs.resume("sj_1").await.unwrap();
+        jobs.archive("sj_1").await.unwrap();
+        jobs.log_for_instance(
+            "in_1",
+            &InstanceLogRequest {
+                message: "hello".into(),
+                level: LogLevel::default(),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        jobs.complete_instance(
+            "in_1",
+            &InstanceCompleteRequest {
+                status: CompletionStatus::Success,
+                result: None,
+            },
+        )
+        .await
+        .unwrap();
+        let reqs = stub.requests();
+        assert_eq!(reqs.len(), 6);
+        assert_eq!(
+            reqs[4].json(),
+            serde_json::json!({"message": "hello", "level": "INFO"})
+        );
+        assert_eq!(reqs[5].json(), serde_json::json!({"status": "SUCCESS"}));
+    }
+
+    #[tokio::test]
+    async fn list_instance_logs_reads_a_bare_array_and_fire_reads_202() {
+        let stub = MockPlatform::start(&[
+            (
+                "GET",
+                "/api/scheduled-jobs/instances/in_1/logs",
+                200,
+                r#"[{"id":"log_1","instanceId":"in_1","scheduledJobId":"sj_1","level":"INFO",
+                    "message":"m","createdAt":"t"}]"#,
+            ),
+            (
+                "POST",
+                "/api/scheduled-jobs/sj_1/fire",
+                202,
+                r#"{"id":"in_2","instanceId":"in_2","scheduledJobId":"sj_1"}"#,
+            ),
+        ])
+        .await;
+        let c = stub.client();
+        let logs = c.scheduled_jobs().list_instance_logs("in_1").await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].scheduled_job_id.as_deref(), Some("sj_1"));
+        let fired = c
+            .scheduled_jobs()
+            .fire("sj_1", &FireRequest::default())
+            .await
+            .unwrap();
+        assert_eq!(fired.instance_id, "in_2");
     }
 }

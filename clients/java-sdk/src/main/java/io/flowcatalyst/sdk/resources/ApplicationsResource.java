@@ -1,5 +1,7 @@
 package io.flowcatalyst.sdk.resources;
 
+import io.flowcatalyst.sdk.error.FlowCatalystException;
+import io.flowcatalyst.sdk.error.SdkError;
 import io.flowcatalyst.sdk.generated.model.ApplicationListResponse;
 import io.flowcatalyst.sdk.generated.model.ApplicationProvisionServiceAccountResponse;
 import io.flowcatalyst.sdk.generated.model.ApplicationResponse;
@@ -11,6 +13,7 @@ import io.flowcatalyst.sdk.generated.model.CreatedResponse;
 import io.flowcatalyst.sdk.generated.model.ServiceAccountResponse;
 import io.flowcatalyst.sdk.generated.model.UpdateApplicationRequest;
 import io.flowcatalyst.sdk.http.Transport;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Applications resource — registered applications and per-client enablement. */
@@ -28,6 +31,17 @@ public final class ApplicationsResource {
 
     public ApplicationListResponse list() {
         return transport.get("/api/applications", null, ApplicationListResponse.class);
+    }
+
+    /**
+     * List applications, filtered by {@code type} ({@code APPLICATION} or
+     * {@code INTEGRATION}) and/or {@code active}; a null filter is not sent.
+     */
+    public ApplicationListResponse list(String type, Boolean active) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("type", type);
+        query.put("active", active);
+        return transport.get("/api/applications", query, ApplicationListResponse.class);
     }
 
     public ApplicationResponse get(String id) {
@@ -72,10 +86,24 @@ public final class ApplicationsResource {
                 ApplicationProvisionServiceAccountResponse.class);
     }
 
-    /** Get the service account attached to an application. */
+    /**
+     * Get the service account attached to an application.
+     *
+     * <p>The platform has no read route for an application's service account,
+     * so this reads the application and then
+     * {@code GET /api/service-accounts/{serviceAccountId}}.
+     *
+     * @throws FlowCatalystException with {@link SdkError.NotFound} when the
+     *     application has no service account
+     */
     public ServiceAccountResponse getServiceAccount(String id) {
+        String serviceAccountId = get(id).getServiceAccountId();
+        if (serviceAccountId == null || serviceAccountId.isEmpty()) {
+            throw new FlowCatalystException(
+                    new SdkError.NotFound("Application " + id + " has no service account"));
+        }
         return transport.get(
-                "/api/applications/" + Transport.enc(id) + "/service-account",
+                "/api/service-accounts/" + Transport.enc(serviceAccountId),
                 null,
                 ServiceAccountResponse.class);
     }
@@ -96,7 +124,24 @@ public final class ApplicationsResource {
                 ClientConfigListResponse.class);
     }
 
-    /** Update the per-client config for an application. */
+    /** Get one client's configuration for an application. */
+    public ClientConfigResponse getClientConfig(String id, String clientId) {
+        return transport.get(
+                "/api/applications/" + Transport.enc(id) + "/clients/" + Transport.enc(clientId),
+                null,
+                ClientConfigResponse.class);
+    }
+
+    /**
+     * Update the per-client config for an application.
+     *
+     * @deprecated Only the Rust platform serves
+     *     {@code PUT /api/applications/{id}/clients/{clientId}}; the Go platform
+     *     has no such route. Use {@link #enableForClient} /
+     *     {@link #disableForClient}, and {@link #getClientConfig} to read the
+     *     result.
+     */
+    @Deprecated
     public ClientConfigResponse updateClientConfig(
             String id, String clientId, ClientConfigRequest data) {
         return transport.put(

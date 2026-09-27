@@ -111,6 +111,12 @@ const FN_SKIPLIST: &[&str] = &[
     // /auth/client/switch — part of the authenticated login flow; no extra
     // permission needed to pick a different client for your own session.
     "shared/client_selection_api.rs::switch_client",
+    // Documentation-only `#[utoipa::path]` stubs for Go's alias spellings
+    // (`regenerate-token`, `regenerate-secret`); never routed. The routes
+    // are served by `regenerate_auth_token` / `regenerate_signing_secret`,
+    // which check `can_update_service_accounts`.
+    "service_account/api.rs::regenerate_token_alias",
+    "service_account/api.rs::regenerate_secret_alias",
 ];
 
 fn src_root() -> PathBuf {

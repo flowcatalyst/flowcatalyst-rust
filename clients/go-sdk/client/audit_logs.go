@@ -1,20 +1,28 @@
 package client
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // ─── Request DTOs ────────────────────────────────────────────────────
 
 // AuditLogFilters — query parameters for GET /api/audit-logs.
+//
+// The list is cursor-paged: pass the previous page's NextCursor as After
+// to fetch the next page. ApplicationIDs and ClientIDs are sent as
+// comma-separated lists.
 type AuditLogFilters struct {
-	EntityType  string
-	EntityID    string
-	Operation   string
-	PrincipalID string
-	ClientID    string
-	From        string
-	To          string
-	Page        *uint32
-	PageSize    *uint32
+	EntityType     string
+	EntityID       string
+	Operation      string
+	PrincipalID    string
+	ApplicationIDs []string
+	ClientIDs      []string
+	// After is the opaque cursor from a previous page's NextCursor.
+	After string
+	// PageSize defaults to 50 server-side and is capped at 200.
+	PageSize *uint32
 }
 
 // ─── Response DTOs ───────────────────────────────────────────────────
@@ -23,8 +31,9 @@ type AuditLogFilters struct {
 type AuditLogResponse struct {
 	ID            string `json:"id"`
 	Operation     string `json:"operation"`
+	OperationJSON string `json:"operationJson,omitempty"`
 	EntityType    string `json:"entityType"`
-	EntityID      string `json:"entityId,omitempty"`
+	EntityID      string `json:"entityId"`
 	PrincipalID   string `json:"principalId,omitempty"`
 	PrincipalName string `json:"principalName,omitempty"`
 	ApplicationID string `json:"applicationId,omitempty"`
@@ -32,12 +41,12 @@ type AuditLogResponse struct {
 	PerformedAt   string `json:"performedAt"`
 }
 
-// AuditLogListResponse — GET /api/audit-logs.
+// AuditLogListResponse — GET /api/audit-logs. When HasMore is true, pass
+// NextCursor as AuditLogFilters.After to fetch the next page.
 type AuditLogListResponse struct {
-	AuditLogs []AuditLogResponse `json:"auditLogs"`
-	Total     int64              `json:"total,omitempty"`
-	Page      int32              `json:"page,omitempty"`
-	PageSize  int32              `json:"pageSize,omitempty"`
+	AuditLogs  []AuditLogResponse `json:"auditLogs"`
+	HasMore    bool               `json:"hasMore"`
+	NextCursor string             `json:"nextCursor,omitempty"`
 }
 
 // ─── Resource ────────────────────────────────────────────────────────
@@ -47,7 +56,7 @@ type AuditLogsResource struct {
 	c *FlowCatalystClient
 }
 
-// List — GET /api/audit-logs with optional filters.
+// List — GET /api/audit-logs with optional filters (one cursor page).
 func (r *AuditLogsResource) List(ctx context.Context, filters *AuditLogFilters) (*AuditLogListResponse, error) {
 	q := ""
 	if filters != nil {
@@ -56,10 +65,9 @@ func (r *AuditLogsResource) List(ctx context.Context, filters *AuditLogFilters) 
 			String("entityId", filters.EntityID).
 			String("operation", filters.Operation).
 			String("principalId", filters.PrincipalID).
-			String("clientId", filters.ClientID).
-			String("from", filters.From).
-			String("to", filters.To).
-			Uint32("page", filters.Page).
+			String("applicationIds", strings.Join(filters.ApplicationIDs, ",")).
+			String("clientIds", strings.Join(filters.ClientIDs, ",")).
+			String("after", filters.After).
 			Uint32("pageSize", filters.PageSize).
 			Encode()
 	}

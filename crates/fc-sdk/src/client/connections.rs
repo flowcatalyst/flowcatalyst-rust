@@ -34,18 +34,20 @@ pub struct CreateConnectionRequest {
     pub client_id: Option<String>,
 }
 
-/// Request to update a connection.
+/// Request to update a connection. Go's platform replaces the record, so
+/// `name` is required and always sent.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateConnectionRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_code: Option<String>,
 }
 
 /// Connection response from the platform API.
@@ -65,6 +67,11 @@ pub struct ConnectionResponse {
     pub client_id: Option<String>,
     #[serde(default)]
     pub client_identifier: Option<String>,
+    #[serde(default)]
+    pub application_code: Option<String>,
+    /// Where the connection came from (e.g. `UI`, `API`, `CODE`).
+    #[serde(default)]
+    pub source: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -90,40 +97,27 @@ impl Connections<'_> {
         self.client.get(&format!("/api/connections/{}", id)).await
     }
 
-    /// List connections with optional filters.
+    /// List connections, optionally filtered by client and status.
     pub async fn list(
         &self,
         client_id: Option<&str>,
         status: Option<&str>,
-        service_account_id: Option<&str>,
     ) -> Result<ConnectionsListResponse, ClientError> {
-        let mut query = String::new();
         let mut params = Vec::new();
-        if let Some(v) = client_id {
-            params.push(format!("clientId={}", v));
-        }
         if let Some(v) = status {
-            params.push(format!("status={}", v));
+            params.push(("status", v.to_string()));
         }
-        if let Some(v) = service_account_id {
-            params.push(format!("serviceAccountId={}", v));
+        if let Some(v) = client_id {
+            params.push(("clientId", v.to_string()));
         }
-        if !params.is_empty() {
-            query = format!("?{}", params.join("&"));
-        }
-        self.client
-            .get(&format!("/api/connections{}", query))
-            .await
+        let query = FlowCatalystClient::query_string(&params);
+        self.client.get(&format!("/api/connections{}", query)).await
     }
 
-    /// Update a connection.
-    pub async fn update(
-        &self,
-        id: &str,
-        req: &UpdateConnectionRequest,
-    ) -> Result<(), ClientError> {
+    /// Update a connection (204).
+    pub async fn update(&self, id: &str, req: &UpdateConnectionRequest) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/connections/{}", id), req)
+            .put_empty(&format!("/api/connections/{}", id), req)
             .await
     }
 
@@ -146,5 +140,67 @@ impl Connections<'_> {
         self.client
             .post_empty(&format!("/api/connections/{}/activate", id))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    #[tokio::test]
+    async fn update_always_sends_name_and_accepts_204() {
+        let stub = MockPlatform::start(&[("PUT", "/api/connections/con_1", 204, "")]).await;
+        stub.client()
+            .connections()
+            .update(
+                "con_1",
+                &UpdateConnectionRequest {
+                    name: "Billing".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let req = stub.single();
+        assert_eq!(req.method, "PUT");
+        assert_eq!(req.json(), serde_json::json!({"name": "Billing"}));
+    }
+
+    #[tokio::test]
+    async fn create_reads_the_id_and_list_sends_gos_filters() {
+        let conn = r#"{"id":"con_1","code":"billing","name":"Billing","status":"ACTIVE",
+            "serviceAccountId":"sa_1","source":"API","createdAt":"t","updatedAt":"t"}"#;
+        let list = format!(r#"{{"connections":[{conn}],"total":1}}"#);
+        let stub = MockPlatform::start(&[
+            ("POST", "/api/connections", 201, conn),
+            ("GET", "/api/connections", 200, &list),
+        ])
+        .await;
+        let c = stub.client();
+        let created = c
+            .connections()
+            .create(&CreateConnectionRequest {
+                code: "billing".into(),
+                name: "Billing".into(),
+                service_account_id: "sa_1".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.id, "con_1");
+        let listed = c
+            .connections()
+            .list(Some("clt_1"), Some("ACTIVE"))
+            .await
+            .unwrap();
+        assert_eq!(listed.connections[0].source.as_deref(), Some("API"));
+        assert_eq!(
+            stub.requests()[1].query_pairs(),
+            vec![
+                ("status".to_string(), "ACTIVE".to_string()),
+                ("clientId".to_string(), "clt_1".to_string())
+            ]
+        );
     }
 }

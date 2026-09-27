@@ -38,6 +38,7 @@ pub struct AccessResponse {
     pub role_code: String,
     pub can_read: bool,
     pub can_write: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 

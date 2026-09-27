@@ -58,3 +58,32 @@ test("events and audit logs are unchanged", async () => {
 	await outbox.createEvent(CreateEventDto.create("shop:orders:order:placed", { a: 1 }));
 	assert.equal(JSON.parse(messages[0].payload).id, undefined);
 });
+
+test("a dispatch job's payload carries descriptor and queue when set", async () => {
+	const { driver, messages } = capture();
+	const outbox = new OutboxManager(driver, "clt_1");
+
+	await outbox.createDispatchJob(
+		job().withDescriptor("Notify Value of user logins").withQueue("HIGH_PRIORITY"),
+	);
+
+	const payload = JSON.parse(messages[0].payload);
+	assert.equal(payload.descriptor, "Notify Value of user logins");
+	assert.equal(payload.queue, "HIGH_PRIORITY");
+});
+
+test("a dispatch job's payload omits descriptor and queue when unset", async () => {
+	const { driver, messages } = capture();
+	const outbox = new OutboxManager(driver, "clt_1");
+
+	await outbox.createDispatchJobs([job()]);
+
+	const payload = JSON.parse(messages[0].payload);
+	assert.equal("descriptor" in payload, false);
+	assert.equal("queue" in payload, false);
+});
+
+test("a dispatch job descriptor is at most 255 characters", () => {
+	assert.equal(job().withDescriptor("é".repeat(255)).descriptor?.length, 255);
+	assert.throws(() => job().withDescriptor("x".repeat(256)), /at most 255 characters/);
+});

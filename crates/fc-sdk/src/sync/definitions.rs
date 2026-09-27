@@ -13,7 +13,7 @@ use crate::client::processes::SyncProcessInput;
 use crate::client::roles::SyncRoleItem;
 use crate::client::scheduled_jobs::SyncScheduledJobItem;
 use crate::client::subscriptions::{SyncEventTypeBinding, SyncSubscriptionItem};
-use crate::client::CreateEventTypeRequest;
+use crate::client::SyncEventTypeItem;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Role
@@ -98,13 +98,11 @@ impl EventTypeDefinition {
         self
     }
 
-    pub(crate) fn into_wire(self) -> CreateEventTypeRequest {
-        CreateEventTypeRequest {
+    pub(crate) fn into_wire(self) -> SyncEventTypeItem {
+        SyncEventTypeItem {
             code: self.code,
             name: self.name,
             description: self.description,
-            schema: None,
-            client_id: None,
         }
     }
 }
@@ -281,7 +279,7 @@ impl DispatchPoolDefinition {
     pub(crate) fn into_wire(self) -> SyncDispatchPoolItem {
         SyncDispatchPoolItem {
             code: self.code,
-            name: Some(self.name),
+            name: self.name,
             concurrency: self.concurrency,
             rate_limit: self.rate_limit,
             description: self.description,
@@ -623,9 +621,6 @@ mod tests {
             json["eventTypes"][0]["eventTypeCode"],
             "orders:fulfilment:shipment:shipped"
         );
-        assert_eq!(
-            json["eventTypes"][0]["filter"],
-            "subject like 'orders.%'"
-        );
+        assert_eq!(json["eventTypes"][0]["filter"], "subject like 'orders.%'");
     }
 }

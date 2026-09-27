@@ -20,6 +20,10 @@ class Clients
 
     /**
      * List clients.
+     *
+     * The platform's list has no status filter, so `$status` is applied to
+     * the returned clients here (it is still sent, for older platforms);
+     * `total` is then the filtered count.
      */
     public function list(?string $status = null): ClientList
     {
@@ -28,7 +32,17 @@ class Clients
             : '';
         $response = $this->client->request('GET', "/api/clients{$query}");
 
-        return ClientList::fromArray($response);
+        $list = ClientList::fromArray($response);
+        if ($status === null) {
+            return $list;
+        }
+
+        $clients = array_values(array_filter(
+            $list->clients,
+            static fn(Client $c) => strcasecmp($c->status, $status) === 0,
+        ));
+
+        return new ClientList(clients: $clients, total: count($clients));
     }
 
     /**
@@ -78,15 +92,14 @@ class Clients
     }
 
     /**
-     * Update a client.
+     * Update a client. The platform responds with 204 No Content; call
+     * `get($id)` if you need the updated record.
      */
-    public function update(string $id, UpdateClientRequest $request): Client
+    public function update(string $id, UpdateClientRequest $request): void
     {
-        $response = $this->client->request('PUT', "/api/clients/{$id}", [
+        $this->client->request('PUT', "/api/clients/{$id}", [
             'json' => $request->toArray(),
         ]);
-
-        return Client::fromArray($response);
     }
 
     /**

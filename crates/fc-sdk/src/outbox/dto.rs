@@ -188,6 +188,10 @@ pub struct CreateDispatchJobDto {
     pub idempotency_key: Option<String>,
     pub external_id: Option<String>,
     pub connection_id: Option<String>,
+    /// The job's own dispatch priority (`DEFAULT` or `HIGH_PRIORITY`).
+    pub queue: Option<String>,
+    /// What the job is, in words, shown in the dispatch-jobs grid.
+    pub descriptor: Option<String>,
 }
 
 impl CreateDispatchJobDto {
@@ -221,6 +225,8 @@ impl CreateDispatchJobDto {
             idempotency_key: None,
             external_id: None,
             connection_id: None,
+            queue: None,
+            descriptor: None,
         }
     }
 
@@ -333,6 +339,23 @@ impl CreateDispatchJobDto {
         self
     }
 
+    /// The job's own dispatch priority: `DEFAULT` or `HIGH_PRIORITY`, matched
+    /// ignoring case. Unset stays absent, never defaulted, so "not asked for"
+    /// stays distinguishable from an explicit `DEFAULT`. Not validated here:
+    /// the platform answers 400 `INVALID_QUEUE` for anything else.
+    pub fn queue(mut self, queue: impl Into<String>) -> Self {
+        self.queue = Some(queue.into());
+        self
+    }
+
+    /// What the job is, in words (e.g. "Notify Value of user logins"), shown
+    /// in the platform's dispatch-jobs grid. At most 255 characters; the
+    /// platform answers 400 `VALIDATION` for a longer one.
+    pub fn descriptor(mut self, descriptor: impl Into<String>) -> Self {
+        self.descriptor = Some(descriptor.into());
+        self
+    }
+
     /// Build the dispatch job payload JSON for the outbox.
     pub fn to_payload(&self) -> serde_json::Value {
         let mut payload = serde_json::json!({
@@ -386,6 +409,12 @@ impl CreateDispatchJobDto {
         }
         if let Some(ref v) = self.connection_id {
             obj.insert("connectionId".into(), serde_json::json!(v));
+        }
+        if let Some(ref v) = self.queue {
+            obj.insert("queue".into(), serde_json::json!(v));
+        }
+        if let Some(ref v) = self.descriptor {
+            obj.insert("descriptor".into(), serde_json::json!(v));
         }
 
         payload
@@ -677,6 +706,8 @@ mod tests {
         assert!(dto.idempotency_key.is_none());
         assert!(dto.external_id.is_none());
         assert!(dto.connection_id.is_none());
+        assert!(dto.queue.is_none());
+        assert!(dto.descriptor.is_none());
     }
 
     #[test]
@@ -794,6 +825,8 @@ mod tests {
         assert!(payload.get("idempotencyKey").is_none());
         assert!(payload.get("externalId").is_none());
         assert!(payload.get("connectionId").is_none());
+        assert!(payload.get("queue").is_none());
+        assert!(payload.get("descriptor").is_none());
     }
 
     #[test]
@@ -811,7 +844,9 @@ mod tests {
             .expires_at(scheduled)
             .idempotency_key("ik")
             .external_id("eid")
-            .connection_id("cid");
+            .connection_id("cid")
+            .queue("HIGH_PRIORITY")
+            .descriptor("Notify Value of user logins");
 
         let payload = dto.to_payload();
 
@@ -827,6 +862,8 @@ mod tests {
         assert_eq!(payload["idempotencyKey"], "ik");
         assert_eq!(payload["externalId"], "eid");
         assert_eq!(payload["connectionId"], "cid");
+        assert_eq!(payload["queue"], "HIGH_PRIORITY");
+        assert_eq!(payload["descriptor"], "Notify Value of user logins");
     }
 
     // ─── CreateAuditLogDto ──────────────────────────────────────────────

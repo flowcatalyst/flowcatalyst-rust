@@ -13,7 +13,9 @@ use FlowCatalyst\DTOs\Requests\CreateApplicationRequest;
 use FlowCatalyst\DTOs\Requests\UpdateApplicationRequest;
 use FlowCatalyst\DTOs\Responses\ApplicationList;
 use FlowCatalyst\DTOs\Responses\ClientConfigList;
+use FlowCatalyst\DTOs\Responses\ProvisionServiceAccountResult;
 use FlowCatalyst\DTOs\ServiceAccount;
+use FlowCatalyst\Exceptions\FlowCatalystException;
 
 class Applications
 {
@@ -22,13 +24,19 @@ class Applications
     ) {}
 
     /**
-     * List applications.
+     * List applications, optionally filtered by `active` and `type`
+     * (`APPLICATION` or `INTEGRATION`).
      */
-    public function list(?bool $active = null): ApplicationList
+    public function list(?bool $active = null, ?string $type = null): ApplicationList
     {
-        $query = $active !== null
-            ? '?' . http_build_query(['active' => $active ? 'true' : 'false'])
-            : '';
+        $params = [];
+        if ($active !== null) {
+            $params['active'] = $active ? 'true' : 'false';
+        }
+        if ($type !== null) {
+            $params['type'] = $type;
+        }
+        $query = $params !== [] ? '?' . http_build_query($params) : '';
 
         $response = $this->client->request('GET', "/api/applications{$query}");
 
@@ -57,26 +65,28 @@ class Applications
 
     /**
      * Create a new application.
+     *
+     * Returns the created application's ID. The platform's create endpoint
+     * returns `{id}` only; call `get($id)` if you need the full record.
      */
-    public function create(CreateApplicationRequest $request): Application
+    public function create(CreateApplicationRequest $request): string
     {
         $response = $this->client->request('POST', '/api/applications', [
             'json' => $request->toArray(),
         ]);
 
-        return Application::fromArray($response);
+        return (string) ($response['id'] ?? '');
     }
 
     /**
-     * Update an application.
+     * Update an application. The platform responds with 204 No Content;
+     * call `get($id)` if you need the updated record.
      */
-    public function update(string $id, UpdateApplicationRequest $request): Application
+    public function update(string $id, UpdateApplicationRequest $request): void
     {
-        $response = $this->client->request('PUT', "/api/applications/{$id}", [
+        $this->client->request('PUT', "/api/applications/{$id}", [
             'json' => $request->toArray(),
         ]);
-
-        return Application::fromArray($response);
     }
 
     /**
@@ -109,23 +119,46 @@ class Applications
 
     /**
      * Provision a service account for an application.
+     *
+     * The platform returns
+     * `{message, serviceAccount: {principalId, name, oauthClient: {id, clientId, clientSecret}}}`.
+     * The client secret is in `$result->serviceAccount->oauthClient->clientSecret`
+     * and is only returned once.
      */
-    public function provisionServiceAccount(string $id): ServiceAccount
+    public function provisionServiceAccount(string $id): ProvisionServiceAccountResult
     {
         $response = $this->client->request(
             'POST',
             "/api/applications/{$id}/provision-service-account",
         );
 
-        return ServiceAccount::fromArray($response);
+        return ProvisionServiceAccountResult::fromArray($response);
     }
 
     /**
      * Get the service account attached to an application.
+     *
+     * The platform has no read route for an application's service account, so
+     * this reads the application and then
+     * `GET /api/service-accounts/{serviceAccountId}`.
+     *
+     * @throws FlowCatalystException with code 404 when the application has no
+     *         service account
      */
     public function getServiceAccount(string $id): ServiceAccount
     {
-        $response = $this->client->request('GET', "/api/applications/{$id}/service-account");
+        $serviceAccountId = $this->get($id)->serviceAccountId;
+
+        if ($serviceAccountId === null || $serviceAccountId === '') {
+            throw new FlowCatalystException(
+                "Application {$id} has no service account",
+                404,
+                null,
+                ['error' => 'NOT_FOUND', 'applicationId' => $id],
+            );
+        }
+
+        $response = $this->client->request('GET', "/api/service-accounts/{$serviceAccountId}");
 
         return ServiceAccount::fromArray($response);
     }
@@ -133,8 +166,11 @@ class Applications
     /**
      * List roles defined for an application (by TSID).
      *
-     * Mounted under `/by-id` server-side so the admin TSID lookup doesn't
-     * collide with the SDK's `/{app_code}/roles/sync` route.
+     * The platform returns role names only (`{roles: [string]}`). Each name
+     * comes back as an ApplicationRole whose `code` is the role name and whose
+     * other fields are empty.
+     *
+     * @deprecated Use listRoleNames(): the platform returns names, not role records.
      *
      * @return ApplicationRole[]
      */
@@ -142,9 +178,56 @@ class Applications
     {
         $response = $this->client->request('GET', "/api/applications/by-id/{$id}/roles");
 
-        /** @var array<int, array<string, mixed>> $rows */
-        $rows = is_array($response) ? $response : [];
-        return array_map(static fn(array $row) => ApplicationRole::fromArray($row), $rows);
+        if (array_is_list($response)) {
+            // Older platforms returned role records.
+            /** @var array<int, array<string, mixed>> $response */
+            return array_map(static fn(array $row) => ApplicationRole::fromArray($row), $response);
+        }
+
+        return array_map(
+            static fn(string $name) => new ApplicationRole(
+                id: '',
+                code: $name,
+                displayName: '',
+                applicationCode: '',
+                source: '',
+                permissions: [],
+                clientManaged: false,
+            ),
+            self::roleNames($response),
+        );
+    }
+
+    /**
+     * The names of the roles defined for an application (by TSID):
+     * `GET /api/applications/by-id/{id}/roles`, which returns `{roles: [string]}`.
+     *
+     * @return string[]
+     */
+    public function listRoleNames(string $id): array
+    {
+        $response = $this->client->request('GET', "/api/applications/by-id/{$id}/roles");
+
+        if (array_is_list($response)) {
+            // Older platforms returned role records.
+            return array_values(array_map(
+                static fn($row) => is_array($row) ? (string) ($row['code'] ?? $row['name'] ?? '') : (string) $row,
+                $response,
+            ));
+        }
+
+        return self::roleNames($response);
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     * @return string[]
+     */
+    private static function roleNames(array $response): array
+    {
+        $roles = $response['roles'] ?? [];
+
+        return is_array($roles) ? array_values(array_map('strval', $roles)) : [];
     }
 
     /**
@@ -158,7 +241,21 @@ class Applications
     }
 
     /**
+     * Get one client's configuration for an application.
+     */
+    public function getClientConfig(string $id, string $clientId): ClientConfig
+    {
+        $response = $this->client->request('GET', "/api/applications/{$id}/clients/{$clientId}");
+
+        return ClientConfig::fromArray($response);
+    }
+
+    /**
      * Update per-client config for an application.
+     *
+     * @deprecated Only the Rust platform serves `PUT /api/applications/{id}/clients/{clientId}`;
+     *             the Go platform has no such route. Use enableForClient() /
+     *             disableForClient(), and getClientConfig() to read the result.
      */
     public function updateClientConfig(
         string $id,
@@ -177,28 +274,26 @@ class Applications
     }
 
     /**
-     * Enable an application for a specific client.
+     * Enable an application for a specific client. The platform responds
+     * with 204 No Content; call getClientConfig() for the resulting config.
      */
-    public function enableForClient(string $id, string $clientId): ClientConfig
+    public function enableForClient(string $id, string $clientId): void
     {
-        $response = $this->client->request(
+        $this->client->request(
             'POST',
             "/api/applications/{$id}/clients/{$clientId}/enable",
         );
-
-        return ClientConfig::fromArray($response);
     }
 
     /**
-     * Disable an application for a specific client.
+     * Disable an application for a specific client. The platform responds
+     * with 204 No Content; call getClientConfig() for the resulting config.
      */
-    public function disableForClient(string $id, string $clientId): ClientConfig
+    public function disableForClient(string $id, string $clientId): void
     {
-        $response = $this->client->request(
+        $this->client->request(
             'POST',
             "/api/applications/{$id}/clients/{$clientId}/disable",
         );
-
-        return ClientConfig::fromArray($response);
     }
 }

@@ -114,7 +114,7 @@ export interface RoleDefinition {
  * The first segment MUST match the application code being synced.
  *
  * JSON Schema for the event payload is not sync'd via this endpoint — attach
- * schemas through the admin UI or the per-resource `eventTypes.addSchema(...)`
+ * schemas through the admin UI or the per-resource `eventTypes.addSchemaVersion(...)`
  * API. See `docs/syncing-definitions.md#event-types`.
  */
 export interface EventTypeDefinition {

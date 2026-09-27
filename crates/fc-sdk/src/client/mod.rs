@@ -35,6 +35,9 @@ pub mod scheduled_jobs;
 pub mod service_accounts;
 pub mod subscriptions;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
@@ -223,6 +226,22 @@ impl FlowCatalystClient {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Build a `?k=v&...` query string with every value form-encoded (an
+    /// email's `+` or a CSV's `,` survive intact). Empty when `params` is.
+    pub(crate) fn query_string(params: &[(&str, String)]) -> String {
+        if params.is_empty() {
+            return String::new();
+        }
+        let mut url = reqwest::Url::parse("http://query.invalid/").expect("static URL parses");
+        {
+            let mut pairs = url.query_pairs_mut();
+            for (k, v) in params {
+                pairs.append_pair(k, v);
+            }
+        }
+        format!("?{}", url.query().unwrap_or_default())
+    }
+
     pub(crate) async fn get<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
@@ -374,6 +393,35 @@ impl FlowCatalystClient {
             .http
             .post(self.url(path))
             .headers(self.headers())
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// POST with a JSON body, discarding the response body. For platform
+    /// endpoints that answer 204 No Content (or a body the caller doesn't
+    /// need).
+    pub(crate) async fn post_no_content<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<(), ClientError> {
+        let resp = self
+            .http
+            .post(self.url(path))
+            .headers(self.headers())
+            .json(body)
             .send()
             .await
             .map_err(ClientError::Request)?;

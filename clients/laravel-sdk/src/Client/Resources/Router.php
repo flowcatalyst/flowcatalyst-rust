@@ -62,7 +62,13 @@ class Router
      * Check whether a single application message ID is currently held in
      * the router's in-pipeline map. O(1) on the server side.
      *
-     * @return array{messageId: string, inPipeline: bool, detail?: array<string, mixed>}
+     * The router returns `{messageId, inPipeline, poolCode?, queueId?}`, with
+     * the pool and queue at the top level. When those are present and there is
+     * no `detail`, the returned array also carries
+     * `detail: {messageId, poolCode, queueId}`, the shape earlier routers
+     * returned.
+     *
+     * @return array{messageId: string, inPipeline: bool, poolCode?: string, queueId?: string, detail?: array<string, mixed>}
      *
      * @throws FlowCatalystException
      */
@@ -90,8 +96,20 @@ class Router
             );
         }
 
-        /** @var array{messageId: string, inPipeline: bool, detail?: array<string, mixed>} $decoded */
+        /** @var array{messageId: string, inPipeline: bool, poolCode?: string, queueId?: string, detail?: array<string, mixed>} $decoded */
         $decoded = json_decode($body, true, flags: JSON_THROW_ON_ERROR);
+
+        if (!isset($decoded['detail']) && (isset($decoded['poolCode']) || isset($decoded['queueId']))) {
+            $decoded['detail'] = array_filter(
+                [
+                    'messageId' => $decoded['messageId'] ?? $messageId,
+                    'poolCode' => $decoded['poolCode'] ?? null,
+                    'queueId' => $decoded['queueId'] ?? null,
+                ],
+                static fn($v) => $v !== null,
+            );
+        }
+
         return $decoded;
     }
 

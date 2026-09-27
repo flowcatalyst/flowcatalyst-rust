@@ -48,6 +48,7 @@ pub struct ServiceAccountAdminState {
 /// Go `MintTokenResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountTokenResponse)]
 pub struct MintTokenResponse {
     pub access_token: String,
     pub token_type: String,

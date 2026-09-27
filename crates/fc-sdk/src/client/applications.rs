@@ -85,19 +85,40 @@ pub struct ApplicationListResponse {
     pub total: Option<u64>,
 }
 
-/// Service account response.
+/// Go's `ServiceAccountResponse`: the service account as
+/// `GET /api/service-accounts/{id}` returns it. Alias of
+/// [`super::service_accounts::ServiceAccount`].
+pub type ServiceAccountResponse = super::service_accounts::ServiceAccount;
+
+/// Go's `ApplicationProvisionServiceAccountResponse`: the answer to
+/// `POST /api/applications/{id}/provision-service-account`. The OAuth
+/// client secret inside is shown only once.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServiceAccountResponse {
-    pub id: String,
-    pub code: String,
+pub struct ApplicationProvisionServiceAccountResponse {
+    pub message: String,
+    pub service_account: ApplicationServiceAccountCredentials,
+}
+
+/// The provisioned service account (Go's
+/// `ApplicationServiceAccountCredentials`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationServiceAccountCredentials {
     pub name: String,
+    pub principal_id: String,
+    pub oauth_client: ApplicationOAuthClientCredentials,
+}
+
+/// The provisioned OAuth client (Go's `ApplicationOAuthClientCredentials`).
+/// `client_secret` is present only in this response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationOAuthClientCredentials {
+    pub id: String,
+    pub client_id: String,
     #[serde(default)]
-    pub description: Option<String>,
-    pub active: bool,
-    #[serde(default)]
-    pub application_id: Option<String>,
-    pub created_at: String,
+    pub client_secret: Option<String>,
 }
 
 /// Application role response.
@@ -124,7 +145,7 @@ pub struct ApplicationRolesResponse {
     pub roles: Vec<String>,
 }
 
-/// Client config for an application.
+/// Per-client config for an application (Go's `ClientConfigResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigResponse {
@@ -132,17 +153,17 @@ pub struct ClientConfigResponse {
     pub application_id: String,
     pub client_id: String,
     #[serde(default)]
-    pub client_name: Option<String>,
-    #[serde(default)]
-    pub client_identifier: Option<String>,
-    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub base_url_override: Option<String>,
+    /// Free-form per-client config. The Rust platform's older `config` is
+    /// still read.
+    #[serde(default, alias = "config")]
+    pub config_json: Option<serde_json::Value>,
     #[serde(default)]
-    pub effective_base_url: Option<String>,
+    pub created_at: String,
     #[serde(default)]
-    pub config: Option<serde_json::Value>,
+    pub updated_at: String,
 }
 
 /// Client configs list response: the platform's `{items}` (Go's shape;
@@ -187,30 +208,22 @@ impl Applications<'_> {
         self.client.post("/api/applications", req).await
     }
 
-    /// List applications with optional pagination and filters.
+    /// List applications, optionally filtered by `active` and application
+    /// `type` (e.g. `APPLICATION`, `INTEGRATION`). Go's platform does not
+    /// paginate this list.
     pub async fn list(
         &self,
         active: Option<bool>,
-        page: Option<u32>,
-        page_size: Option<u32>,
+        application_type: Option<&str>,
     ) -> Result<ApplicationListResponse, ClientError> {
         let mut params = Vec::new();
+        if let Some(t) = application_type {
+            params.push(("type", t.to_string()));
+        }
         if let Some(a) = active {
-            params.push(format!("active={}", a));
+            params.push(("active", a.to_string()));
         }
-        if let Some(p) = page {
-            params.push(format!("page={}", p));
-        }
-        if let Some(ps) = page_size {
-            params.push(format!("pageSize={}", ps));
-        }
-
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
-
+        let query = FlowCatalystClient::query_string(&params);
         self.client
             .get(&format!("/api/applications{}", query))
             .await
@@ -228,14 +241,15 @@ impl Applications<'_> {
             .await
     }
 
-    /// Update an application.
+    /// Update an application. The platform answers 204; call `get(id)`
+    /// for the updated record.
     pub async fn update(
         &self,
         id: &str,
         req: &UpdateApplicationRequest,
-    ) -> Result<ApplicationResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/applications/{}", id), req)
+            .put_empty(&format!("/api/applications/{}", id), req)
             .await
     }
 
@@ -260,11 +274,12 @@ impl Applications<'_> {
             .await
     }
 
-    /// Provision a service account for an application.
+    /// Provision a service account for an application. The response
+    /// carries the OAuth client secret, which is never shown again.
     pub async fn provision_service_account(
         &self,
         id: &str,
-    ) -> Result<ServiceAccountResponse, ClientError> {
+    ) -> Result<ApplicationProvisionServiceAccountResponse, ClientError> {
         self.client
             .post_action(&format!(
                 "/api/applications/{}/provision-service-account",
@@ -273,14 +288,28 @@ impl Applications<'_> {
             .await
     }
 
-    /// Get the service account for an application.
+    /// Get the service account attached to an application.
+    ///
+    /// Go's platform has no `GET …/service-account` route, so this reads the
+    /// application and then `GET /api/service-accounts/{serviceAccountId}`.
+    /// An application without a service account yields
+    /// `ClientError::Api { status: 404, .. }`.
     pub async fn get_service_account(
         &self,
         id: &str,
     ) -> Result<ServiceAccountResponse, ClientError> {
-        self.client
-            .get(&format!("/api/applications/{}/service-account", id))
-            .await
+        let app = self.get(id).await?;
+        match app.service_account_id.as_deref().filter(|s| !s.is_empty()) {
+            Some(sa_id) => {
+                self.client
+                    .get(&format!("/api/service-accounts/{}", sa_id))
+                    .await
+            }
+            None => Err(ClientError::Api {
+                status: 404,
+                body: format!("application {} has no service account", id),
+            }),
+        }
     }
 
     /// List the names of the roles registered against an application (by
@@ -303,7 +332,24 @@ impl Applications<'_> {
             .await
     }
 
+    /// Get one client's config for an application (Go's
+    /// `GET /api/applications/{id}/clients/{clientId}`).
+    pub async fn get_client_config(
+        &self,
+        id: &str,
+        client_id: &str,
+    ) -> Result<ClientConfigResponse, ClientError> {
+        self.client
+            .get(&format!("/api/applications/{}/clients/{}", id, client_id))
+            .await
+    }
+
     /// Update per-client config for an application.
+    ///
+    /// Go's platform has no such PUT (only the GET plus the enable/disable
+    /// POSTs); use [`Self::enable_for_client`] / [`Self::disable_for_client`]
+    /// there.
+    #[deprecated(note = "only the Rust platform serves this PUT")]
     pub async fn update_client_config(
         &self,
         id: &str,
@@ -336,5 +382,197 @@ impl Applications<'_> {
                 id, client_id
             ))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    const APP: &str = r#"{"id":"app_1","code":"orders","name":"Orders","type":"APPLICATION",
+        "active":true,"hasLoginClient":false,"serviceAccountId":"sa_1",
+        "createdAt":"t","updatedAt":"t"}"#;
+    const APP_NO_SA: &str = r#"{"id":"app_2","code":"hr","name":"HR","type":"APPLICATION",
+        "active":true,"hasLoginClient":false,"createdAt":"t","updatedAt":"t"}"#;
+    const SA: &str = r#"{"id":"sa_1","code":"orders-sa","name":"Orders SA","active":true,
+        "authType":"BEARER_TOKEN","clientIds":[],"roles":["orders:admin"],
+        "applicationId":"app_1","principalId":"prn_1","oauthClientId":"oc_1",
+        "createdAt":"t","updatedAt":"t"}"#;
+
+    #[tokio::test]
+    async fn get_service_account_reads_the_application_then_the_service_account() {
+        let stub = MockPlatform::start(&[
+            ("GET", "/api/applications/app_1", 200, APP),
+            ("GET", "/api/service-accounts/sa_1", 200, SA),
+        ])
+        .await;
+        let sa = stub
+            .client()
+            .applications()
+            .get_service_account("app_1")
+            .await
+            .unwrap();
+        assert_eq!(sa.id, "sa_1");
+        assert_eq!(sa.principal_id.as_deref(), Some("prn_1"));
+        assert_eq!(sa.oauth_client_id.as_deref(), Some("oc_1"));
+        let paths: Vec<_> = stub
+            .requests()
+            .into_iter()
+            .map(|r| (r.method, r.path))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                ("GET".to_string(), "/api/applications/app_1".to_string()),
+                ("GET".to_string(), "/api/service-accounts/sa_1".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_service_account_is_not_found_without_one() {
+        let stub = MockPlatform::start(&[("GET", "/api/applications/app_2", 200, APP_NO_SA)]).await;
+        let err = stub
+            .client()
+            .applications()
+            .get_service_account("app_2")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ClientError::Api { status: 404, .. }),
+            "{err:?}"
+        );
+        assert_eq!(stub.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn provision_service_account_keeps_the_one_time_secret() {
+        let stub = MockPlatform::start(&[(
+            "POST",
+            "/api/applications/app_1/provision-service-account",
+            201,
+            r#"{"message":"provisioned","serviceAccount":{"name":"Orders SA",
+                "principalId":"prn_1","oauthClient":{"id":"oc_1","clientId":"cid",
+                "clientSecret":"s3cret"}}}"#,
+        )])
+        .await;
+        let resp = stub
+            .client()
+            .applications()
+            .provision_service_account("app_1")
+            .await
+            .unwrap();
+        assert_eq!(resp.service_account.principal_id, "prn_1");
+        assert_eq!(resp.service_account.oauth_client.client_id, "cid");
+        assert_eq!(
+            resp.service_account.oauth_client.client_secret.as_deref(),
+            Some("s3cret")
+        );
+        assert_eq!(stub.single().method, "POST");
+    }
+
+    #[tokio::test]
+    async fn get_client_config_reads_gos_shape() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/applications/app_1/clients/clt_1",
+            200,
+            r#"{"id":"acc_1","applicationId":"app_1","clientId":"clt_1","enabled":true,
+                "baseUrlOverride":"https://x","configJson":{"k":"v"},
+                "createdAt":"c","updatedAt":"u"}"#,
+        )])
+        .await;
+        let cfg = stub
+            .client()
+            .applications()
+            .get_client_config("app_1", "clt_1")
+            .await
+            .unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.base_url_override.as_deref(), Some("https://x"));
+        assert_eq!(cfg.config_json, Some(serde_json::json!({"k": "v"})));
+        assert_eq!(cfg.created_at, "c");
+        assert_eq!(cfg.updated_at, "u");
+    }
+
+    #[tokio::test]
+    async fn list_clients_reads_items_and_config_json() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/applications/app_1/clients",
+            200,
+            r#"{"items":[{"id":"acc_1","applicationId":"app_1","clientId":"clt_1",
+                "enabled":false,"configJson":{"a":1},"createdAt":"c","updatedAt":"u"}]}"#,
+        )])
+        .await;
+        let list = stub
+            .client()
+            .applications()
+            .list_clients("app_1")
+            .await
+            .unwrap();
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].config_json, Some(serde_json::json!({"a": 1})));
+    }
+
+    #[tokio::test]
+    async fn list_roles_decodes_the_roles_envelope() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/applications/by-id/app_1/roles",
+            200,
+            r#"{"roles":["orders:admin","orders:viewer"]}"#,
+        )])
+        .await;
+        let roles = stub
+            .client()
+            .applications()
+            .list_roles("app_1")
+            .await
+            .unwrap();
+        assert_eq!(roles, vec!["orders:admin", "orders:viewer"]);
+    }
+
+    #[tokio::test]
+    async fn list_sends_only_gos_filters() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/applications",
+            200,
+            r#"{"applications":[],"total":0}"#,
+        )])
+        .await;
+        stub.client()
+            .applications()
+            .list(Some(true), Some("INTEGRATION"))
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![
+                ("type".to_string(), "INTEGRATION".to_string()),
+                ("active".to_string(), "true".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_accepts_204() {
+        let stub = MockPlatform::start(&[("PUT", "/api/applications/app_1", 204, "")]).await;
+        stub.client()
+            .applications()
+            .update(
+                "app_1",
+                &UpdateApplicationRequest {
+                    name: Some("New".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let req = stub.single();
+        assert_eq!(req.method, "PUT");
+        assert_eq!(req.json(), serde_json::json!({"name": "New"}));
     }
 }

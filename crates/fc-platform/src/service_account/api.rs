@@ -81,6 +81,7 @@ pub struct CreateServiceAccountRequest {
 /// Go `WebhookCredentialsDTO`: only `authType` is read.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = WebhookCredentialsDTO)]
 pub struct WebhookCredentialsRequest {
     #[serde(default)]
     pub auth_type: String,
@@ -135,6 +136,7 @@ pub struct ServiceAccountsQuery {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountListResponse {
     pub service_accounts: Vec<ServiceAccountResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -169,8 +171,11 @@ pub struct ServiceAccountResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_used_at: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -199,6 +204,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
 /// OAuth credentials (one-time, shown only at creation)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountOAuthSecrets)]
 pub struct OAuthCredentials {
     pub client_id: String,
     pub client_secret: String,
@@ -207,6 +213,7 @@ pub struct OAuthCredentials {
 /// Webhook credentials (one-time, shown only at creation)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountWebhookSecrets)]
 pub struct WebhookCredentialsResponse {
     pub auth_token: String,
     pub signing_secret: String,
@@ -226,37 +233,44 @@ pub struct CreateServiceAccountResponse {
 /// Regenerate token response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RegenerateAuthTokenResponse)]
 pub struct RegenerateTokenResponse {
     /// The service account's id (Go `RegenerateTokenResponse.id`)
     pub id: String,
     /// New auth token (shown only once)
+    #[schema(required = false)]
     pub auth_token: String,
 }
 
 /// Regenerate secret response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RegenerateSigningSecretResponse)]
 pub struct RegenerateSecretResponse {
     /// The service account's id (Go `RegenerateSecretResponse.id`)
     pub id: String,
     /// New signing secret (shown only once)
+    #[schema(required = false)]
     pub signing_secret: String,
 }
 
 /// Role assignment response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RoleAssignmentDTO)]
 pub struct RoleAssignmentResponse {
     pub role_name: String,
     /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_source: Option<String>,
+    #[schema(format = DateTime)]
     pub assigned_at: String,
 }
 
 /// Roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountRoleListResponse)]
 pub struct RolesResponse {
     pub roles: Vec<RoleAssignmentResponse>,
 }
@@ -264,6 +278,7 @@ pub struct RolesResponse {
 /// Assign roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountRolesAssignedResponse)]
 pub struct AssignRolesResponse {
     pub roles: Vec<RoleAssignmentResponse>,
     pub added_roles: Vec<String>,
@@ -302,7 +317,7 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     get,
     path = "",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccounts",
+    operation_id = "listServiceAccounts",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("applicationId" = Option<String>, Query, description = "Filter by application ID"),
@@ -356,7 +371,7 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsById",
+    operation_id = "getServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -397,7 +412,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     get,
     path = "/code/{code}",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsCodeByCode",
+    operation_id = "getServiceAccountByCode",
     params(
         ("code" = String, Path, description = "Service account code")
     ),
@@ -427,7 +442,7 @@ pub async fn get_service_account_by_code<U: UnitOfWork>(
     post,
     path = "",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccounts",
+    operation_id = "createServiceAccount",
     request_body = CreateServiceAccountRequest,
     responses(
         (status = 201, description = "Service account created", body = CreateServiceAccountResponse),
@@ -581,7 +596,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "putApiServiceAccountsById",
+    operation_id = "updateServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -620,7 +635,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "deleteApiServiceAccountsById",
+    operation_id = "deleteServiceAccount",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -692,7 +707,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-auth-token",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccountsByIdRegenerateAuthToken",
+    operation_id = "regenerateServiceAccountAuthToken_regenerate-auth-token",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -733,7 +748,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-signing-secret",
     tag = "service-accounts",
-    operation_id = "postApiServiceAccountsByIdRegenerateSigningSecret",
+    operation_id = "regenerateServiceAccountSigningSecret_regenerate-signing-secret",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -769,12 +784,51 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     }
 }
 
+/// Go's shorter spelling of `regenerate-auth-token`, served by
+/// [`regenerate_auth_token`] (see `service_accounts_router`). Documentation
+/// only: Go documents each spelling as its own operation.
+#[utoipa::path(
+    post,
+    path = "/{id}/regenerate-token",
+    tag = "service-accounts",
+    operation_id = "regenerateServiceAccountAuthToken_regenerate-token",
+    params(
+        ("id" = String, Path, description = "Service account ID")
+    ),
+    responses(
+        (status = 200, description = "Token regenerated", body = RegenerateTokenResponse),
+        (status = 404, description = "Service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+#[allow(dead_code)]
+pub(crate) fn regenerate_token_alias() {}
+
+/// Go's shorter spelling of `regenerate-signing-secret`, served by
+/// [`regenerate_signing_secret`]. Documentation only.
+#[utoipa::path(
+    post,
+    path = "/{id}/regenerate-secret",
+    tag = "service-accounts",
+    operation_id = "regenerateServiceAccountSigningSecret_regenerate-secret",
+    params(
+        ("id" = String, Path, description = "Service account ID")
+    ),
+    responses(
+        (status = 200, description = "Secret regenerated", body = RegenerateSecretResponse),
+        (status = 404, description = "Service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+#[allow(dead_code)]
+pub(crate) fn regenerate_secret_alias() {}
+
 /// Get assigned roles
 #[utoipa::path(
     get,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "getApiServiceAccountsByIdRoles",
+    operation_id = "listServiceAccountRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -814,7 +868,7 @@ pub async fn get_roles<U: UnitOfWork>(
     put,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "putApiServiceAccountsByIdRoles",
+    operation_id = "assignServiceAccountRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),

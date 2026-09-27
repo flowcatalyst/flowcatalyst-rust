@@ -42,6 +42,7 @@ pub struct RouterConfigState {
 /// Go `common.RouterConfig`.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RouterConfig)]
 pub struct RouterConfigDocument {
     pub processing_pools: Vec<RouterPoolConfig>,
     pub queues: Vec<RouterQueueConfig>,
@@ -50,6 +51,7 @@ pub struct RouterConfigDocument {
 /// Go `common.PoolConfig`.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PoolConfig)]
 pub struct RouterPoolConfig {
     pub code: String,
     pub concurrency: u32,
@@ -60,6 +62,7 @@ pub struct RouterPoolConfig {
 /// Go `common.QueueConfig`.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = QueueConfig)]
 pub struct RouterQueueConfig {
     pub queue_name: String,
     pub queue_uri: String,

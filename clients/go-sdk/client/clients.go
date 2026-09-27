@@ -38,14 +38,23 @@ type UpdateClientApplicationsRequest struct {
 
 // ClientResponse is the platform's client (tenant) aggregate.
 type ClientResponse struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Identifier      string `json:"identifier"`
-	Status          string `json:"status"`
-	StatusReason    string `json:"statusReason,omitempty"`
-	StatusChangedAt string `json:"statusChangedAt,omitempty"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	Identifier      string         `json:"identifier"`
+	Status          string         `json:"status"`
+	StatusReason    string         `json:"statusReason,omitempty"`
+	StatusChangedAt string         `json:"statusChangedAt,omitempty"`
+	Notes           []NoteResponse `json:"notes"`
+	CreatedAt       string         `json:"createdAt"`
+	UpdatedAt       string         `json:"updatedAt"`
+}
+
+// NoteResponse is one note on a client.
+type NoteResponse struct {
+	Category string `json:"category"`
+	Text     string `json:"text"`
+	AddedBy  string `json:"addedBy,omitempty"`
+	AddedAt  string `json:"addedAt"`
 }
 
 // ClientListResponse — GET /api/clients.
@@ -97,15 +106,11 @@ func (r *ClientsResource) Create(ctx context.Context, req *CreateClientRequest) 
 	return &out, nil
 }
 
-// List — GET /api/clients with optional status + pagination filters.
-func (r *ClientsResource) List(ctx context.Context, status string, page, pageSize *uint32) (*ClientListResponse, error) {
-	q := NewQuery().
-		String("status", status).
-		Uint32("page", page).
-		Uint32("pageSize", pageSize).
-		Encode()
+// List — GET /api/clients. The platform takes no filters and does not
+// page this list; use Search to narrow it.
+func (r *ClientsResource) List(ctx context.Context) (*ClientListResponse, error) {
 	var out ClientListResponse
-	if err := r.c.Get(ctx, "/api/clients"+q, &out); err != nil {
+	if err := r.c.Get(ctx, "/api/clients", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -139,13 +144,10 @@ func (r *ClientsResource) Search(ctx context.Context, query string) (*ClientList
 	return &out, nil
 }
 
-// Update — PUT /api/clients/{id}.
-func (r *ClientsResource) Update(ctx context.Context, id string, req *UpdateClientRequest) (*ClientResponse, error) {
-	var out ClientResponse
-	if err := r.c.Put(ctx, "/api/clients/"+id, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Update — PUT /api/clients/{id}. The platform answers 204; call Get for
+// the refreshed record.
+func (r *ClientsResource) Update(ctx context.Context, id string, req *UpdateClientRequest) error {
+	return r.c.Put(ctx, "/api/clients/"+id, req, nil)
 }
 
 // Delete — DELETE /api/clients/{id}.
@@ -199,28 +201,19 @@ func (r *ClientsResource) ListApplications(ctx context.Context, clientID string)
 }
 
 // EnableApplication — POST /api/clients/{clientId}/applications/{applicationId}/enable.
-func (r *ClientsResource) EnableApplication(ctx context.Context, clientID, applicationID string) (*SuccessResponse, error) {
-	var out SuccessResponse
-	if err := r.c.Post(ctx, fmt.Sprintf("/api/clients/%s/applications/%s/enable", clientID, applicationID), nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// The platform answers 204.
+func (r *ClientsResource) EnableApplication(ctx context.Context, clientID, applicationID string) error {
+	return r.c.Post(ctx, fmt.Sprintf("/api/clients/%s/applications/%s/enable", clientID, applicationID), nil, nil)
 }
 
 // DisableApplication — POST /api/clients/{clientId}/applications/{applicationId}/disable.
-func (r *ClientsResource) DisableApplication(ctx context.Context, clientID, applicationID string) (*SuccessResponse, error) {
-	var out SuccessResponse
-	if err := r.c.Post(ctx, fmt.Sprintf("/api/clients/%s/applications/%s/disable", clientID, applicationID), nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// The platform answers 204.
+func (r *ClientsResource) DisableApplication(ctx context.Context, clientID, applicationID string) error {
+	return r.c.Post(ctx, fmt.Sprintf("/api/clients/%s/applications/%s/disable", clientID, applicationID), nil, nil)
 }
 
-// UpdateApplications — PUT /api/clients/{id}/applications (bulk enable list).
-func (r *ClientsResource) UpdateApplications(ctx context.Context, clientID string, req *UpdateClientApplicationsRequest) (*SuccessResponse, error) {
-	var out SuccessResponse
-	if err := r.c.Put(ctx, "/api/clients/"+clientID+"/applications", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// UpdateApplications — PUT /api/clients/{id}/applications (bulk enable
+// list). The platform answers 204.
+func (r *ClientsResource) UpdateApplications(ctx context.Context, clientID string, req *UpdateClientApplicationsRequest) error {
+	return r.c.Put(ctx, "/api/clients/"+clientID+"/applications", req, nil)
 }

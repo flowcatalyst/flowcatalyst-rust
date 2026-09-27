@@ -36,7 +36,11 @@ export class AuditLogsResource {
 	}
 
 	/**
-	 * List audit logs with optional filters and pagination.
+	 * List audit logs with optional filters.
+	 *
+	 * Paging is by cursor: pass the previous page's `nextCursor` as `after`
+	 * (with `pageSize`, default 50, capped at 200) while `hasMore` is true.
+	 * `applicationIds` / `clientIds` take comma-separated ids.
 	 */
 	list(
 		filters?: AuditLogFilters,
@@ -64,14 +68,19 @@ export class AuditLogsResource {
 	}
 
 	/**
-	 * Fetch recent audit log entries (typically last 100, server-defined).
+	 * Fetch recent audit log entries. Takes the same cursor paging and
+	 * filters as `list` (`after` / `pageSize`, `clientIds`, …); the response
+	 * carries `hasMore` and `nextCursor`.
 	 */
-	recent(): ResultAsync<RecentAuditLogsResponse, SdkError> {
+	recent(
+		filters?: AuditLogFilters,
+	): ResultAsync<RecentAuditLogsResponse, SdkError> {
 		return this.client.request<RecentAuditLogsResponse>(
 			(httpClient, headers) =>
 				sdk.listAuditLogsRecent({
 					client: httpClient,
 					headers,
+					...(filters ? { query: filters } : {}),
 				}),
 		);
 	}

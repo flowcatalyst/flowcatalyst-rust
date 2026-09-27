@@ -174,10 +174,11 @@ _fcdev-port-free *ARGS:
 #
 # The SDKs' generated clients (and their vendored openapi.json) are the
 # published ones, generated from the Go platform's spec. This platform's
-# spec still uses path-derived operationIds, so regenerating from it would
-# rename every generated class and break the published SDK API. Until its
-# operationIds match Go's (see docs/sdks.md), the SDK steps refuse to run
-# unless FC_SDK_REGEN_FROM_RUST_SPEC=1.
+# spec now carries Go's operationIds and schema names
+# (tests/openapi_go_contract_test.rs), but regenerating from it still
+# changes the generated code: it has no huma `$schema` member (owner
+# decision #30) and the residual differences listed in docs/sdks.md. The SDK
+# steps therefore refuse to run unless FC_SDK_REGEN_FROM_RUST_SPEC=1.
 #
 # The frontend is not regenerated here: the SPA is Go's and is typed against
 # Go's OpenAPI lockfile (frontend/openapi/openapi.json, a copy of
@@ -188,7 +189,7 @@ regen-sdks:
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi >/dev/null \
         || (echo "✗ Platform not reachable at http://localhost:{{ FC_API_PORT }}/q/openapi — run 'just run' (or 'just dev') first."; exit 1)
     @[ "${FC_SDK_REGEN_FROM_RUST_SPEC:-}" = "1" ] \
-        || (echo "✗ Not regenerating the SDKs from this platform's spec: its operationIds differ from the published SDKs' (docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
+        || (echo "✗ Not regenerating the SDKs from this platform's spec: the generated code would still differ from the published SDKs' (no \$schema member, #30; residuals in docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
     @echo "▸ Refreshing SDK OpenAPI snapshots from /q/openapi"
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/typescript-sdk/openapi/openapi.json
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/laravel-sdk/openapi/openapi.json
@@ -612,12 +613,25 @@ _release-sdk kind bump:
     git add -- "$version_file" $manifest $manifest_pom
     git commit -m "$prefix v$new"
     git tag "$prefix/v$new"
-    git push origin HEAD "$prefix/v$new"
+    # JitPack (the Java SDK's distribution, jitpack.yml) builds a git ref and
+    # uses its name as the Maven version, which cannot contain '/': the Java
+    # release also gets a slash-free tag, java-sdk-vX.Y.Z, on the same commit.
+    jitpack_tag=""
+    if [ "{{ kind }}" = "java" ]; then
+        jitpack_tag="$prefix-v$new"
+        git tag "$jitpack_tag"
+    fi
+    git push origin HEAD "$prefix/v$new" $jitpack_tag
 
     echo ""
     echo "✓ Released $prefix v$new"
     echo ""
-    echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst-rust/actions/workflows/split-$prefix.yml"
+    if [ -n "$jitpack_tag" ]; then
+        echo "  JitPack:   https://jitpack.io/#flowcatalyst/flowcatalyst-rust/$jitpack_tag"
+        echo "             (the first request for that version builds it)"
+    else
+        echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst-rust/actions/workflows/split-$prefix.yml"
+    fi
 
 # ─── Tools ─────────────────────────────────────────────────────────────────
 

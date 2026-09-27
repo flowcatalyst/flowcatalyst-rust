@@ -59,8 +59,17 @@ public final class EventTypesResource {
         return transport.post("/api/event-types", data, CreatedResponse.class);
     }
 
-    /** Update an event type. */
+    /**
+     * Update an event type. The platform answers 204.
+     *
+     * <p>The platform requires {@code name} on every update. When
+     * {@code data.getName()} is null the event type's current name is read
+     * first and set on {@code data}, so it is sent unchanged.
+     */
     public void update(String id, UpdateEventTypeRequest data) {
+        if (data.getName() == null) {
+            data.setName(get(id).getName());
+        }
         transport.put("/api/event-types/" + Transport.enc(id), data, Void.class);
     }
 
@@ -71,12 +80,19 @@ public final class EventTypesResource {
     }
 
     /**
-     * Archive (soft-delete) an event type. The server's DELETE on this
-     * resource is a soft archive — the row is retained with status flipped to
-     * ARCHIVED. Named {@code archive} rather than {@code delete} to make the
-     * semantics visible (the TypeScript and Laravel SDKs match).
+     * Archive an event type.
+     *
+     * @deprecated The platform has no archive route for event types. This
+     *     sends {@code DELETE /api/event-types/{id}}, which the Go platform
+     *     treats as a delete (the Rust platform archived). Use {@link #delete}.
      */
+    @Deprecated
     public void archive(String id) {
+        delete(id);
+    }
+
+    /** Delete an event type: {@code DELETE /api/event-types/{id}}. */
+    public void delete(String id) {
         transport.delete("/api/event-types/" + Transport.enc(id), Void.class);
     }
 

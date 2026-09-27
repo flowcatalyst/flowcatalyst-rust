@@ -15,6 +15,8 @@ import type {
 	SearchClientsByQueryResponse,
 	UpdateClientApplicationsData,
 	CreateClientData,
+	CreatedResponse,
+	StatusChangeResponse,
 	AddClientNoteData,
 	AddClientNoteResponse,
 	UpdateClientData,
@@ -32,11 +34,18 @@ export type UpdateClientApplicationsRequest =
 	UpdateClientApplicationsData["body"];
 
 /**
- * Response for status change operations (enable/disable).
+ * @deprecated `enableApplication` / `disableApplication` resolve `void`: the
+ * platform answers them `204 No Content`.
  */
 export interface StatusResponse {
 	message: string;
 }
+
+/** The body of a create: the new entity's id only. */
+export type CreateClientResponse = CreatedResponse;
+
+/** `{ message }`, the platform's answer to activate / deactivate / suspend. */
+export type ClientStatusChangeResponse = StatusChangeResponse;
 
 /**
  * Clients resource for managing platform clients (tenants).
@@ -87,10 +96,13 @@ export class ClientsResource {
 	}
 
 	/**
-	 * Create a new client.
+	 * Create a new client. The platform answers `201 { id }`; call
+	 * `get(id)` for the full entity.
 	 */
-	create(data: CreateClientRequest): ResultAsync<ClientDto, SdkError> {
-		return this.client.request<ClientDto>((httpClient, headers) =>
+	create(
+		data: CreateClientRequest,
+	): ResultAsync<CreateClientResponse, SdkError> {
+		return this.client.request<CreateClientResponse>((httpClient, headers) =>
 			sdk.createClient({
 				client: httpClient,
 				headers,
@@ -100,27 +112,28 @@ export class ClientsResource {
 	}
 
 	/**
-	 * Update a client.
+	 * Update a client. The platform answers `204 No Content`; call
+	 * `get(id)` to read the result.
 	 */
-	update(
-		id: string,
-		data: UpdateClientRequest,
-	): ResultAsync<ClientDto, SdkError> {
-		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.updateClient({
-				client: httpClient,
-				headers,
-				path: { id },
-				body: data,
-			}),
-		);
+	update(id: string, data: UpdateClientRequest): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.updateClient({
+					client: httpClient,
+					headers,
+					path: { id },
+					body: data,
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**
-	 * Activate a client.
+	 * Activate a client. The platform answers `{ message }`; call `get(id)`
+	 * for the client.
 	 */
-	activate(id: string): ResultAsync<ClientDto, SdkError> {
-		return this.client.request<ClientDto>((httpClient, headers) =>
+	activate(id: string): ResultAsync<ClientStatusChangeResponse, SdkError> {
+		return this.client.request<ClientStatusChangeResponse>((httpClient, headers) =>
 			sdk.activateClient({
 				client: httpClient,
 				headers,
@@ -130,10 +143,14 @@ export class ClientsResource {
 	}
 
 	/**
-	 * Deactivate a client.
+	 * Deactivate a client. The platform answers `{ message }`; call
+	 * `get(id)` for the client.
 	 */
-	deactivate(id: string, reason: string): ResultAsync<ClientDto, SdkError> {
-		return this.client.request<ClientDto>((httpClient, headers) =>
+	deactivate(
+		id: string,
+		reason: string,
+	): ResultAsync<ClientStatusChangeResponse, SdkError> {
+		return this.client.request<ClientStatusChangeResponse>((httpClient, headers) =>
 			sdk.deactivateClient({
 				client: httpClient,
 				headers,
@@ -144,10 +161,14 @@ export class ClientsResource {
 	}
 
 	/**
-	 * Suspend a client with a reason.
+	 * Suspend a client with a reason. The platform answers `{ message }`;
+	 * call `get(id)` for the client.
 	 */
-	suspend(id: string, reason: string): ResultAsync<ClientDto, SdkError> {
-		return this.client.request<ClientDto>((httpClient, headers) =>
+	suspend(
+		id: string,
+		reason: string,
+	): ResultAsync<ClientStatusChangeResponse, SdkError> {
+		return this.client.request<ClientStatusChangeResponse>((httpClient, headers) =>
 			sdk.suspendClient({
 				client: httpClient,
 				headers,
@@ -174,53 +195,59 @@ export class ClientsResource {
 	}
 
 	/**
-	 * Update the applications configured for a client.
+	 * Update the applications configured for a client. The platform answers
+	 * `204 No Content`; call `getApplications(id)` to read the result.
 	 */
 	updateApplications(
 		id: string,
 		data: UpdateClientApplicationsRequest,
-	): ResultAsync<ClientApplicationsResponse, SdkError> {
-		return this.client.request<ClientApplicationsResponse>(
-			(httpClient, headers) =>
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
 				sdk.updateClientApplications({
 					client: httpClient,
 					headers,
 					path: { id },
 					body: data,
 				}),
-		);
+			)
+			.map((): void => undefined);
 	}
 
 	/**
-	 * Enable an application for a client.
+	 * Enable an application for a client. The platform answers `204 No Content`.
 	 */
 	enableApplication(
 		clientId: string,
 		applicationId: string,
-	): ResultAsync<StatusResponse, SdkError> {
-		return this.client.request<StatusResponse>((httpClient, headers) =>
-			sdk.enableClientApplication({
-				client: httpClient,
-				headers,
-				path: { id: clientId, applicationId },
-			}),
-		);
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.enableClientApplication({
+					client: httpClient,
+					headers,
+					path: { id: clientId, applicationId },
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**
-	 * Disable an application for a client.
+	 * Disable an application for a client. The platform answers `204 No Content`.
 	 */
 	disableApplication(
 		clientId: string,
 		applicationId: string,
-	): ResultAsync<StatusResponse, SdkError> {
-		return this.client.request<StatusResponse>((httpClient, headers) =>
-			sdk.disableClientApplication({
-				client: httpClient,
-				headers,
-				path: { id: clientId, applicationId },
-			}),
-		);
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.disableClientApplication({
+					client: httpClient,
+					headers,
+					path: { id: clientId, applicationId },
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**

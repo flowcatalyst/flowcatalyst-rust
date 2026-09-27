@@ -18,6 +18,17 @@ published, plus the additions below.
 - `CreateAuditLogDto.withOperationData(Map, Set<String> maskedFields)`: an
   overload for extra top-level fields to mask. The one-argument form is
   unchanged.
+- `CreateDispatchJobDto.withQueue(String)`: the job's own dispatch priority,
+  `DEFAULT` or `HIGH_PRIORITY` (any case; the platform answers 400
+  `INVALID_QUEUE` for anything else). Unset stays absent, never defaulted.
+- `CreateDispatchJobDto.withDescriptor(String)`: what the job is, in words
+  (e.g. "Notify Value of user logins"), shown in the platform's
+  dispatch-jobs grid. At most 255 characters
+  (`CreateDispatchJobDto.MAX_DESCRIPTOR_LENGTH`); a longer one throws
+  `IllegalArgumentException`, where the platform would answer 400
+  `VALIDATION`.
+- Both travel in the outbox payload as `queue` / `descriptor` and are left
+  out when unset.
 
 ### Changed
 - `client.router().inPipeline()` / `inPipelineBatch()` send the platform
@@ -25,6 +36,45 @@ published, plus the additions below.
   routers ignore it; a router that enforces platform tokens (owner ruling 2
   of 2026-09-25) requires it. `Transport.rawAuthenticated` is new;
   `rawUnauthenticated` stays for callers.
+
+### Fixed: calls against Go's platform API
+The resources already used models generated from Go's spec; these calls
+still sent or read something Go's API does not. No signature changed.
+- `applications().getServiceAccount()`: the platform has no
+  `GET …/service-account`. It now reads the application and then
+  `GET /api/service-accounts/{serviceAccountId}`, and throws
+  `FlowCatalystException` with `SdkError.NotFound` when the application has
+  none.
+- `eventTypes().update()` and `connections().update()` always send `name`,
+  which the platform requires (a null name was sent as `"name": null` and
+  rejected): when it is null, the current name is read first and set on the
+  request.
+- `roles().create()` and `scheduledJobs().create()` send the platform's
+  required booleans: a null `clientManaged` / `concurrent` /
+  `tracksCompletion` is set to `false` on the request.
+- `auditLogs().list()` sends `applicationIds` / `clientIds`, and
+  `principals().list()` sends `roles`, as one comma-separated value. The
+  platform reads each as a single CSV value, so a repeated parameter kept
+  only the first id.
+- `router().inPipeline()`: the router puts `poolCode` / `queueId` at the
+  top level, so `detail()` was always null. `InPipelineCheckResponse` gains
+  `poolCode` and `queueId`, and `detail()` is built from them when the router
+  sends no `detail`. The three-argument constructor is kept.
+
+### Deprecated
+- `eventTypes().archive()`: the platform has no archive for event types; it
+  sends `DELETE`, which deletes. Use the new `eventTypes().delete()`.
+- `applications().updateClientConfig()`: only the Rust platform serves that
+  `PUT`. Use `enableForClient()` / `disableForClient()` and the new
+  `getClientConfig()`.
+
+### Added
+- `applications().getClientConfig(id, clientId)`,
+  `applications().list(type, active)`, `dispatchPools().archive(id)`
+  (`POST …/archive`), `eventTypes().delete(id)`,
+  `scheduledJobs().getByCode(code, clientId)`.
+- `ScheduledJobsResource.InstanceFilters`: documented that the platform
+  ignores `triggerKind`, `from` and `to`.
 
 ## 0.0.10 and earlier
 

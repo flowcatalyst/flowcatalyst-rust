@@ -142,6 +142,7 @@ pub struct OAuthClientResponse {
     pub client_type: String,
     pub redirect_uris: Vec<String>,
     #[serde(default)]
+    #[schema(required = true)]
     pub post_logout_redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     pub default_scopes: Vec<String>,
@@ -151,6 +152,7 @@ pub struct OAuthClientResponse {
     /// list page reads its length unconditionally).
     pub applications: Vec<OAuthClientApplicationRef>,
     #[serde(default)]
+    #[schema(required = true)]
     pub allowed_origins: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_principal_id: Option<String>,
@@ -163,15 +165,19 @@ pub struct OAuthClientResponse {
     pub active: bool,
     /// Authority-bearing interactive access tokens (Go `apiAccess`).
     pub api_access: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     /// When a secret-rotation overlap lapses. Absent when none is in flight
     /// (Go's shape, auth/api/dto.go:157-166).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub previous_secret_expires_at: Option<String>,
     /// When the superseded secret was last accepted, while the overlap is
     /// open. Absent means unused since the rotation.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub previous_secret_last_used_at: Option<String>,
 }
 
@@ -328,7 +334,7 @@ fn parse_grant_types(grant_types: &[String]) -> Result<Vec<GrantType>, PlatformE
     post,
     path = "",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClients",
+    operation_id = "createOAuthClient",
     request_body = CreateOAuthClientRequest,
     responses(
         (status = 201, description = "OAuth client created", body = CreateOAuthClientResponse),
@@ -449,7 +455,7 @@ pub async fn create_oauth_client(
     get,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClientsById",
+    operation_id = "getOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -480,7 +486,7 @@ pub async fn get_oauth_client(
     get,
     path = "",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClients",
+    operation_id = "listOAuthClients",
     params(OAuthClientsQuery),
     responses(
         (status = 200, description = "List of OAuth clients", body = OAuthClientListResponse)
@@ -519,7 +525,7 @@ pub async fn list_oauth_clients(
     put,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "putApiOauthClientsById",
+    operation_id = "updateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -582,7 +588,7 @@ pub async fn update_oauth_client(
     delete,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "deleteApiOauthClientsById",
+    operation_id = "deleteOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -618,14 +624,17 @@ pub async fn delete_oauth_client(
 /// Regenerate secret response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RotateOAuthClientSecretResponse)]
 pub struct RegenerateSecretResponse {
     /// The public client_id (Go's shape).
     pub client_id: String,
     /// The new plaintext client secret (shown once)
+    #[schema(required = false)]
     pub client_secret: String,
     /// When the superseded secret stops being accepted. Absent when the
     /// rotation was an immediate cutover.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub previous_secret_expires_at: Option<String>,
 }
 
@@ -633,6 +642,7 @@ pub struct RegenerateSecretResponse {
 /// outgoing secret keeps working for the default overlap (24h).
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RotateOAuthClientSecretRequest)]
 pub struct RotateSecretRequest {
     /// How long the outgoing secret stays acceptable, in seconds. Omit for
     /// the default overlap; 0 cuts over immediately (for a secret that may
@@ -646,7 +656,7 @@ pub struct RotateSecretRequest {
     get,
     path = "/by-client-id/{clientId}",
     tag = "oauth-clients",
-    operation_id = "getApiOauthClientsByClientId",
+    operation_id = "getOAuthClientByClientID",
     params(
         ("clientId" = String, Path, description = "OAuth client_id (public identifier)")
     ),
@@ -677,7 +687,7 @@ pub async fn get_oauth_client_by_client_id(
     post,
     path = "/{id}/activate",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsActivate",
+    operation_id = "activateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -717,7 +727,7 @@ pub async fn activate_oauth_client(
     post,
     path = "/{id}/deactivate",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsDeactivate",
+    operation_id = "deactivateOAuthClient",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -770,7 +780,7 @@ fn parse_rotate_body(body: &[u8]) -> Result<RotateSecretRequest, PlatformError> 
     post,
     path = "/{id}/regenerate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRegenerateSecret",
+    operation_id = "regenerateOAuthClientSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -833,7 +843,7 @@ pub async fn regenerate_oauth_client_secret(
     post,
     path = "/{id}/rotate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRotateSecret",
+    operation_id = "rotateOAuthClientSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -863,7 +873,7 @@ pub async fn rotate_oauth_client_secret(
     post,
     path = "/{id}/revoke-previous-secret",
     tag = "oauth-clients",
-    operation_id = "postApiOauthClientsRevokePreviousSecret",
+    operation_id = "revokeOAuthClientPreviousSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),

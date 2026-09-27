@@ -63,7 +63,9 @@ pub struct ConnectionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
     pub source: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -89,8 +91,10 @@ impl From<Connection> for ConnectionResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConnectionListResponse)]
 pub struct ConnectionsListResponse {
     pub connections: Vec<ConnectionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -120,7 +124,7 @@ pub struct ConnectionsState {
     post,
     path = "",
     tag = "connections",
-    operation_id = "postApiConnections",
+    operation_id = "createConnection",
     request_body = CreateConnectionRequest,
     responses(
         (status = 201, description = "Connection created", body = ConnectionResponse),
@@ -181,7 +185,7 @@ pub async fn create_connection(
     get,
     path = "",
     tag = "connections",
-    operation_id = "getApiConnections",
+    operation_id = "listConnections",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("status" = Option<String>, Query, description = "Filter by status"),
@@ -225,7 +229,7 @@ pub async fn list_connections(
     get,
     path = "/{id}",
     tag = "connections",
-    operation_id = "getApiConnectionsById",
+    operation_id = "getConnection",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -256,7 +260,7 @@ pub async fn get_connection(
     put,
     path = "/{id}",
     tag = "connections",
-    operation_id = "putApiConnectionsById",
+    operation_id = "updateConnection",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -322,7 +326,7 @@ pub async fn update_connection(
     delete,
     path = "/{id}",
     tag = "connections",
-    operation_id = "deleteApiConnectionsById",
+    operation_id = "deleteConnection",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -361,7 +365,7 @@ pub async fn delete_connection(
     post,
     path = "/{id}/pause",
     tag = "connections",
-    operation_id = "postApiConnectionsByIdPause",
+    operation_id = "pauseConnection",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -408,7 +412,7 @@ pub async fn pause_connection(
     post,
     path = "/{id}/activate",
     tag = "connections",
-    operation_id = "postApiConnectionsByIdActivate",
+    operation_id = "activateConnection",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),

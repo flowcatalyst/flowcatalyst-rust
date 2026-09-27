@@ -19,6 +19,7 @@ use crate::{ContextData, Event, EventRead};
 /// Context data for event filtering/searching
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ContextEntryDTO)]
 pub struct ContextDataDto {
     pub key: String,
     pub value: String,
@@ -90,6 +91,7 @@ pub struct CreateEventRequest {
 pub struct CreateEventResponse {
     pub event: EventResponse,
     /// Number of dispatch jobs created for matching subscriptions
+    #[schema(value_type = i64)]
     pub dispatch_job_count: usize,
     /// True if this was a deduplicated request (event already existed)
     pub is_duplicate: bool,
@@ -98,6 +100,7 @@ pub struct CreateEventResponse {
 /// Event response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CreatedEvent)]
 pub struct EventResponse {
     pub id: String,
     pub spec_version: String,
@@ -105,6 +108,7 @@ pub struct EventResponse {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[schema(format = DateTime)]
     pub time: String,
     pub data: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,6 +123,7 @@ pub struct EventResponse {
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_data: Vec<ContextDataDto>,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -196,18 +201,12 @@ impl From<EventRead> for EventReadResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct EventsQuery {
-    /// Result size (the SPA's; wins over `limit`). Default 100, max 1000.
-    pub size: Option<i64>,
-
-    /// Result size (the SDK's).
-    pub limit: Option<i64>,
-
-    /// Rows to skip.
-    pub offset: Option<i64>,
-
     /// Exact event type
     #[serde(rename = "type")]
     pub event_type: Option<String>,
+
+    /// Exact source
+    pub source: Option<String>,
 
     /// Exact subject
     pub subject: Option<String>,
@@ -218,17 +217,26 @@ pub struct EventsQuery {
     /// Accepted and ignored, as Go (no backing column on the projection).
     pub principal_id: Option<String>,
 
+    /// Filter by correlation ID
+    pub correlation_id: Option<String>,
+
     /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
     pub since: Option<String>,
 
     /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
     pub until: Option<String>,
 
+    /// Result size (the SDK's).
+    pub limit: Option<i64>,
+
+    /// Rows to skip.
+    pub offset: Option<i64>,
+
+    /// Result size (the SPA's; wins over `limit`). Default 100, max 1000.
+    pub size: Option<i64>,
+
     /// Filter by client IDs (comma-separated)
     pub client_ids: Option<String>,
-
-    /// Filter by event types (comma-separated)
-    pub types: Option<String>,
 
     /// Filter by application codes (comma-separated)
     pub applications: Option<String>,
@@ -239,11 +247,8 @@ pub struct EventsQuery {
     /// Filter by aggregates (comma-separated)
     pub aggregates: Option<String>,
 
-    /// Filter by correlation ID
-    pub correlation_id: Option<String>,
-
-    /// Exact source
-    pub source: Option<String>,
+    /// Filter by event types (comma-separated)
+    pub types: Option<String>,
 }
 
 fn split_csv(input: Option<&str>) -> Vec<String> {
@@ -276,7 +281,7 @@ pub struct EventsState {
     post,
     path = "",
     tag = "events",
-    operation_id = "postApiEvents",
+    operation_id = "createEvent",
     request_body = CreateEventRequest,
     responses(
         (status = 201, description = "Event created", body = CreateEventResponse),
@@ -398,7 +403,7 @@ pub async fn create_event(
     get,
     path = "/{id}",
     tag = "events",
-    operation_id = "getApiEventsById",
+    operation_id = "getEvent",
     params(
         ("id" = String, Path, description = "Event ID")
     ),
@@ -439,6 +444,7 @@ pub async fn get_event(
 /// read projection. Absent members stay absent.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventResponse)]
 pub struct EventDetailResponse {
     pub id: String,
     pub spec_version: String,
@@ -446,9 +452,10 @@ pub struct EventDetailResponse {
     pub event_type: String,
     pub source: String,
     pub subject: String,
+    #[schema(format = DateTime)]
     pub time: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub data: Option<serde_json::Value>,
     pub deduplication_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -466,7 +473,9 @@ pub struct EventDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub projected_at: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -503,6 +512,7 @@ impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
 /// absent, `projectedAt` always).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventRead)]
 pub struct EventListItem {
     pub id: String,
     #[serde(rename = "type")]
@@ -510,6 +520,7 @@ pub struct EventListItem {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[schema(format = DateTime)]
     pub time: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application: Option<String>,
@@ -523,6 +534,7 @@ pub struct EventListItem {
     pub correlation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[schema(format = DateTime)]
     pub projected_at: String,
 }
 
@@ -551,7 +563,7 @@ impl From<EventRead> for EventListItem {
     get,
     path = "",
     tag = "events",
-    operation_id = "getApiEvents",
+    operation_id = "listEvents",
     params(EventsQuery),
     responses(
         (status = 200, description = "List of events", body = Vec<EventListItem>)
@@ -835,7 +847,7 @@ pub struct PaginatedEventsResponse {
     get,
     path = "/raw",
     tag = "events",
-    operation_id = "getApiEventsRaw",
+    operation_id = "listEventsRawAlias",
     params(EventsQuery),
     responses(
         (status = 200, description = "Events", body = Vec<EventListItem>)
@@ -872,7 +884,7 @@ pub struct EventFilterOptionsResponse {
     get,
     path = "/filter-options",
     tag = "events",
-    operation_id = "getApiEventsFilterOptions",
+    operation_id = "eventFilterOptions",
     responses((status = 200, body = EventFilterOptionsResponse)),
     security(("bearer_auth" = []))
 )]

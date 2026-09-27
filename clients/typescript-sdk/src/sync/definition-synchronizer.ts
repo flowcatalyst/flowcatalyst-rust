@@ -11,6 +11,7 @@ import type { Result } from "neverthrow";
 import type { FlowCatalystClient } from "../client.js";
 import type { PartialFailureError, SdkError } from "../errors.js";
 import { partialFailureError } from "../errors.js";
+import { toSyncEventTypeInput } from "../resources/event-types.js";
 import type {
 	ConnectionDefinition,
 	DefinitionSet,
@@ -720,10 +721,13 @@ export class DefinitionSynchronizer {
 			eventTypes.map((e) => e.code),
 		);
 		if (duplicateResult) return okAsync(duplicateResult);
+		// The platform's SyncEventTypeInputRequest is strict: send only the
+		// members it accepts, so an extra field on a definition object
+		// (e.g. `schema`) cannot fail the whole category.
 		return this.post(
 			applicationCode,
 			"event-types",
-			{ eventTypes },
+			{ eventTypes: eventTypes.map(toSyncEventTypeInput) },
 			removeUnlisted,
 		);
 	}

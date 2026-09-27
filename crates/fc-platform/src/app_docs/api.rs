@@ -37,6 +37,7 @@ pub struct DocsState {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(as = DocSummary)]
 pub struct DocEntry {
     pub slug: String,
     pub title: String,
@@ -44,6 +45,7 @@ pub struct DocEntry {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AppDocsGroup)]
 pub struct ApplicationDocs {
     pub application_code: String,
     pub application_name: String,

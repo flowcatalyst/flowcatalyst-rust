@@ -33,7 +33,17 @@ public final class ConnectionsResource {
         return transport.post("/api/connections", data, ConnectionResponse.class);
     }
 
+    /**
+     * Update a connection. The platform answers 204.
+     *
+     * <p>The platform requires {@code name} on every update. When
+     * {@code data.getName()} is null the connection's current name is read
+     * first and set on {@code data}, so it is sent unchanged.
+     */
     public void update(String id, UpdateConnectionRequest data) {
+        if (data.getName() == null) {
+            data.setName(get(id).getName());
+        }
         transport.put("/api/connections/" + Transport.enc(id), data, Void.class);
     }
 

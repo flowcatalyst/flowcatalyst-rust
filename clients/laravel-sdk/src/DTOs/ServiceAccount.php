@@ -6,7 +6,9 @@ namespace FlowCatalyst\DTOs;
 
 /**
  * A service-account principal — the non-human credential attached to an
- * application. Provisioned via Applications::provisionServiceAccount.
+ * application, as returned by `GET /api/service-accounts/{id}` (and so by
+ * Applications::getServiceAccount). Provisioning returns a different shape:
+ * see Applications::provisionServiceAccount.
  */
 final class ServiceAccount
 {
@@ -18,6 +20,8 @@ final class ServiceAccount
         public readonly string $createdAt,
         public readonly ?string $description = null,
         public readonly ?string $applicationId = null,
+        public readonly ?string $principalId = null,
+        public readonly ?string $oauthClientId = null,
     ) {}
 
     /**
@@ -33,6 +37,8 @@ final class ServiceAccount
             createdAt: (string) ($data['createdAt'] ?? ''),
             description: isset($data['description']) ? (string) $data['description'] : null,
             applicationId: isset($data['applicationId']) ? (string) $data['applicationId'] : null,
+            principalId: isset($data['principalId']) ? (string) $data['principalId'] : null,
+            oauthClientId: isset($data['oauthClientId']) ? (string) $data['oauthClientId'] : null,
         );
     }
 
@@ -49,6 +55,8 @@ final class ServiceAccount
             'active' => $this->active,
             'applicationId' => $this->applicationId,
             'createdAt' => $this->createdAt,
+            'principalId' => $this->principalId,
+            'oauthClientId' => $this->oauthClientId,
         ];
     }
 }

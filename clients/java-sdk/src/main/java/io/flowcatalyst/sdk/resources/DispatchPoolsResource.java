@@ -47,6 +47,11 @@ public final class DispatchPoolsResource {
         transport.delete("/api/dispatch-pools/" + Transport.enc(id), Void.class);
     }
 
+    /** Archive a dispatch pool: {@code POST /api/dispatch-pools/{id}/archive} (204). */
+    public void archive(String id) {
+        transport.post("/api/dispatch-pools/" + Transport.enc(id) + "/archive", null, Void.class);
+    }
+
     public void suspend(String id) {
         transport.post("/api/dispatch-pools/" + Transport.enc(id) + "/suspend", null, Void.class);
     }

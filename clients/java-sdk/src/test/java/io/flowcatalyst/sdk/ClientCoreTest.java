@@ -156,7 +156,7 @@ class ClientCoreTest {
     }
 
     @Test
-    void queryParametersAreEncodedAndListsRepeated() {
+    void queryParametersAreEncodedAndRoleListsCommaSeparated() {
         server.stubToken("tok");
         server.on("GET", "/api/principals", 200, "{\"principals\":[],\"total\":0}");
 
@@ -165,7 +165,8 @@ class ClientCoreTest {
 
         String path = server.requests.getLast().pathAndQuery();
         assertTrue(path.contains("q=a+b"), path);
-        assertTrue(path.contains("roles=r1&roles=r2"), path);
+        // The platform reads `roles` as one comma-separated value.
+        assertTrue(path.contains("roles=r1%2Cr2"), path);
         assertTrue(path.contains("active=true"), path);
     }
 

@@ -120,3 +120,34 @@ func TestSynchronizerPrincipalsCarryPasswordHashAndReportIgnored(t *testing.T) {
 	require.Len(t, body["principals"], 1)
 	assert.Equal(t, "$2y$10$hash", body["principals"][0]["passwordHash"])
 }
+
+// The platform's sync items are strict: an event type carries only
+// code/name/description, a process only code/name/description/body/
+// diagramType/tags.
+func TestSynchronizerSendsStrictEventTypeAndProcessItems(t *testing.T) {
+	bodies := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var raw json.RawMessage
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		bodies[r.URL.Path] = string(raw)
+		_ = json.NewEncoder(w).Encode(client.SyncResult{ApplicationCode: "orders"})
+	}))
+	defer srv.Close()
+
+	set := sync.ForApplication("orders").
+		AddEventType(sync.MakeEventType("orders:fulfilment:order:shipped", "Shipped")).
+		AddProcess(sync.MakeProcess("orders:fulfilment:ship", "Ship").
+			WithDescription("How an order ships").
+			WithBody("graph TD; A-->B").
+			WithDiagramType("mermaid").
+			WithTags("core", "fulfilment"))
+	out := sync.NewSynchronizer(client.New(srv.URL)).Sync(context.Background(), set, sync.DefaultOptions())
+	require.False(t, out.HasErrors(), out.Errors())
+
+	assert.JSONEq(t,
+		`{"eventTypes":[{"code":"orders:fulfilment:order:shipped","name":"Shipped"}]}`,
+		bodies["/api/applications/orders/event-types/sync"])
+	assert.JSONEq(t,
+		`{"processes":[{"code":"orders:fulfilment:ship","name":"Ship","description":"How an order ships","body":"graph TD; A-->B","diagramType":"mermaid","tags":["core","fulfilment"]}]}`,
+		bodies["/api/applications/orders/processes/sync"])
+}

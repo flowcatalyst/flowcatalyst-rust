@@ -17,6 +17,7 @@ import type {
 	ResetPrincipalPasswordData,
 	ListPrincipalRolesResponse,
 	ListPrincipalClientAccessResponse,
+	StatusChangeResponse,
 	SyncPrincipalsData,
 	SyncPrincipalsResponse as SyncPrincipalsResponseType,
 	SyncUsersData,
@@ -32,6 +33,8 @@ export type RoleListResponse = ListPrincipalRolesResponse;
 export type ClientAccessListResponse = ListPrincipalClientAccessResponse;
 export type SyncPrincipalsResponse = SyncPrincipalsResponseType;
 export type SyncUsersResponse = SyncUsersResponseType;
+/** `{ message }`, the platform's answer to activate / deactivate. */
+export type PrincipalStatusChangeResponse = StatusChangeResponse;
 
 // Derived from the generated query type so it stays in sync with the platform
 // spec automatically — adding a query param upstream surfaces here on regen.
@@ -149,10 +152,11 @@ export class PrincipalsResource {
 	}
 
 	/**
-	 * Activate a principal.
+	 * Activate a principal. The platform answers `{ message }`; call `get(id)` for
+	 * the principal.
 	 */
-	activate(id: string): ResultAsync<PrincipalDto, SdkError> {
-		return this.client.request<PrincipalDto>((httpClient, headers) =>
+	activate(id: string): ResultAsync<PrincipalStatusChangeResponse, SdkError> {
+		return this.client.request<PrincipalStatusChangeResponse>((httpClient, headers) =>
 			sdk.activatePrincipal({
 				client: httpClient,
 				headers,
@@ -162,10 +166,11 @@ export class PrincipalsResource {
 	}
 
 	/**
-	 * Deactivate a principal.
+	 * Deactivate a principal. The platform answers `{ message }`; call `get(id)` for
+	 * the principal.
 	 */
-	deactivate(id: string): ResultAsync<PrincipalDto, SdkError> {
-		return this.client.request<PrincipalDto>((httpClient, headers) =>
+	deactivate(id: string): ResultAsync<PrincipalStatusChangeResponse, SdkError> {
+		return this.client.request<PrincipalStatusChangeResponse>((httpClient, headers) =>
 			sdk.deactivatePrincipal({
 				client: httpClient,
 				headers,

@@ -42,6 +42,7 @@ pub struct CreateRoleRequest {
 
     /// Whether clients can manage this role
     #[serde(default)]
+    #[schema(required = true)]
     pub client_managed: bool,
 }
 
@@ -87,7 +88,9 @@ pub struct RoleResponse {
     pub permissions: Vec<String>,
     pub source: String,
     pub client_managed: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -116,6 +119,7 @@ impl From<AuthRole> for RoleResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RoleListResponse {
     pub roles: Vec<RoleResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -125,6 +129,7 @@ pub struct RoleListResponse {
 #[into_params(parameter_in = Query)]
 pub struct RolesQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by application code
@@ -184,6 +189,7 @@ impl From<crate::role::permission_catalog::CatalogPermission> for PermissionResp
 #[serde(rename_all = "camelCase")]
 pub struct PermissionListResponse {
     pub permissions: Vec<PermissionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -212,7 +218,7 @@ async fn resolve_role(repo: &RoleRepository, id_or_name: &str) -> Result<AuthRol
     post,
     path = "",
     tag = "roles",
-    operation_id = "postApiRoles",
+    operation_id = "createRole",
     request_body = CreateRoleRequest,
     responses(
         (status = 201, description = "Role created", body = crate::shared::api_common::CreatedResponse),
@@ -264,7 +270,7 @@ pub async fn create_role(
     get,
     path = "/{roleName}",
     tag = "roles",
-    operation_id = "getApiRolesByName",
+    operation_id = "getRole",
     params(
         ("roleName" = String, Path, description = "Role id or name")
     ),
@@ -290,7 +296,7 @@ pub async fn get_role(
     get,
     path = "/by-code/{code}",
     tag = "roles",
-    operation_id = "getApiRolesByCodeByCode",
+    operation_id = "getRoleByCode",
     params(
         ("code" = String, Path, description = "Role code")
     ),
@@ -321,7 +327,7 @@ pub async fn get_role_by_code(
     get,
     path = "",
     tag = "roles",
-    operation_id = "getApiRoles",
+    operation_id = "listRoles",
     params(RolesQuery),
     responses(
         (status = 200, description = "List of roles", body = RoleListResponse)
@@ -357,7 +363,7 @@ pub async fn list_roles(
     put,
     path = "/{roleName}",
     tag = "roles",
-    operation_id = "putApiRolesByName",
+    operation_id = "updateRole",
     params(
         ("roleName" = String, Path, description = "Role id or name")
     ),
@@ -411,7 +417,7 @@ pub async fn update_role(
     delete,
     path = "/{roleName}",
     tag = "roles",
-    operation_id = "deleteApiRolesByName",
+    operation_id = "deleteRole",
     params(
         ("roleName" = String, Path, description = "Role id or name")
     ),
@@ -453,7 +459,7 @@ pub async fn delete_role(
     get,
     path = "/filters/applications",
     tag = "roles",
-    operation_id = "getApiRolesFiltersApplications",
+    operation_id = "getRoleApplicationFilters",
     responses(
         (status = 200, description = "Application codes", body = ApplicationFilterListResponse)
     ),
@@ -475,7 +481,7 @@ pub async fn get_filter_applications(
     get,
     path = "/permissions",
     tag = "roles",
-    operation_id = "getApiRolesPermissions",
+    operation_id = "listPermissions",
     responses(
         (status = 200, description = "List of permissions", body = PermissionListResponse)
     ),
@@ -503,7 +509,7 @@ pub async fn list_permissions(
     get,
     path = "/permissions/{permission}",
     tag = "roles",
-    operation_id = "getApiRolesPermissionsByPermission",
+    operation_id = "getPermission",
     params(
         ("permission" = String, Path, description = "Permission string")
     ),
@@ -534,7 +540,7 @@ pub async fn get_permission(
     get,
     path = "/by-source/{source}",
     tag = "roles",
-    operation_id = "getApiRolesBySourceBySource",
+    operation_id = "getRolesBySource",
     params(
         ("source" = String, Path, description = "Role source (CODE, DATABASE, SDK)")
     ),
@@ -573,7 +579,7 @@ pub async fn get_roles_by_source(
     get,
     path = "/by-application/{applicationId}",
     tag = "roles",
-    operation_id = "getApiRolesByApplicationByApplicationId",
+    operation_id = "getRolesByApplication",
     params(
         ("applicationId" = String, Path, description = "Application ID")
     ),

@@ -18,7 +18,8 @@ class DispatchPools
     ) {}
 
     /**
-     * List dispatch pools. The platform returns a bare array (no total).
+     * List dispatch pools. The platform returns `{pools, total}`; older
+     * platforms returned a bare array. Either way the pools come back as a list.
      *
      * @return DispatchPool[]
      */
@@ -89,33 +90,30 @@ class DispatchPools
     }
 
     /**
-     * Archive a dispatch pool (soft status transition).
+     * Archive a dispatch pool (soft status transition). The platform responds with
+     * 204 No Content; call `get($id)` if you need the updated record.
      */
-    public function archive(string $id): DispatchPool
+    public function archive(string $id): void
     {
-        $response = $this->client->request('POST', "/api/dispatch-pools/{$id}/archive");
-
-        return DispatchPool::fromArray($response);
+        $this->client->request('POST', "/api/dispatch-pools/{$id}/archive");
     }
 
     /**
-     * Suspend a dispatch pool.
+     * Suspend a dispatch pool. The platform responds with
+     * 204 No Content; call `get($id)` if you need the updated record.
      */
-    public function suspend(string $id): DispatchPool
+    public function suspend(string $id): void
     {
-        $response = $this->client->request('POST', "/api/dispatch-pools/{$id}/suspend");
-
-        return DispatchPool::fromArray($response);
+        $this->client->request('POST', "/api/dispatch-pools/{$id}/suspend");
     }
 
     /**
-     * Activate a dispatch pool (return it to the ACTIVE state).
+     * Activate a dispatch pool (return it to the ACTIVE state). The platform responds with
+     * 204 No Content; call `get($id)` if you need the updated record.
      */
-    public function activate(string $id): DispatchPool
+    public function activate(string $id): void
     {
-        $response = $this->client->request('POST', "/api/dispatch-pools/{$id}/activate");
-
-        return DispatchPool::fromArray($response);
+        $this->client->request('POST', "/api/dispatch-pools/{$id}/activate");
     }
 
     /**

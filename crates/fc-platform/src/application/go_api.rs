@@ -36,8 +36,10 @@ pub struct ApplicationGoState {
 #[serde(rename_all = "camelCase")]
 pub struct AttachServiceAccountRequest {
     #[serde(default)]
+    #[schema(required = true)]
     pub service_account_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub service_account_code: String,
 }
 
@@ -45,12 +47,15 @@ pub struct AttachServiceAccountRequest {
 /// or the config JSON, so neither appears).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigResponse)]
 pub struct GoClientConfigResponse {
     pub id: String,
     pub application_id: String,
     pub client_id: String,
     pub enabled: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 

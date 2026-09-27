@@ -38,8 +38,9 @@ class ScheduledJobs
     }
 
     /**
-     * List scheduled jobs. Returns the raw paginated payload (data + page +
-     * size + total + totalPages); typed DTOs are exposed via `data`.
+     * List scheduled jobs. Returns the paginated payload (data + page + size +
+     * total + totalPages; the platform sends the last as `total_pages`); typed
+     * DTOs are exposed via `data`.
      *
      * @return array{
      *   data: ScheduledJob[],
@@ -73,7 +74,7 @@ class ScheduledJobs
             'page' => (int) ($response['page'] ?? 0),
             'size' => (int) ($response['size'] ?? $size),
             'total' => (int) ($response['total'] ?? 0),
-            'totalPages' => (int) ($response['totalPages'] ?? 0),
+            'totalPages' => (int) ($response['total_pages'] ?? $response['totalPages'] ?? 0),
         ];
     }
 
@@ -135,6 +136,11 @@ class ScheduledJobs
     // ── Instance reads ────────────────────────────────────────────────────
 
     /**
+     * List a job's instances, newest first.
+     *
+     * The platform filters on `status` only. `$triggerKind`, `$from` and `$to`
+     * are sent for older platforms but have no effect on the current one.
+     *
      * @return array{
      *   data: ScheduledJobInstance[],
      *   page: int,
@@ -173,7 +179,7 @@ class ScheduledJobs
             'page' => (int) ($response['page'] ?? 0),
             'size' => (int) ($response['size'] ?? $size),
             'total' => (int) ($response['total'] ?? 0),
-            'totalPages' => (int) ($response['totalPages'] ?? 0),
+            'totalPages' => (int) ($response['total_pages'] ?? $response['totalPages'] ?? 0),
         ];
     }
 
