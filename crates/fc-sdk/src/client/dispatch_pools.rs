@@ -1,5 +1,6 @@
 //! Dispatch pool management operations.
 
+use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,8 @@ pub struct DispatchPoolResponse {
     pub description: Option<String>,
     #[serde(default)]
     pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_identifier: Option<String>,
     pub status: String,
     #[serde(default)]
     pub rate_limit: Option<u32>,
@@ -58,6 +61,15 @@ pub struct DispatchPoolResponse {
     pub concurrency: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Dispatch pool list — `GET /api/dispatch-pools` answers `{pools, total}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchPoolListResponse {
+    pub pools: Vec<DispatchPoolResponse>,
+    #[serde(default)]
+    pub total: u64,
 }
 
 /// Request body for the per-resource sync endpoint.
@@ -75,8 +87,8 @@ pub struct SyncDispatchPoolsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct SyncDispatchPoolItem {
     pub code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    /// Required by Go's platform.
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<u32>,
     /// Messages per minute. The backend's camelCase field is `rateLimit`.
@@ -93,24 +105,18 @@ pub struct DispatchPools<'a> {
 
 impl DispatchPools<'_> {
     /// List dispatch pools with optional filters.
-    ///
-    /// The platform returns a bare JSON array — no `{ pools, total }` envelope.
     pub async fn list(
         &self,
         filters: &DispatchPoolFilters,
-    ) -> Result<Vec<DispatchPoolResponse>, ClientError> {
+    ) -> Result<DispatchPoolListResponse, ClientError> {
         let mut params = Vec::new();
-        if let Some(ref cid) = filters.client_id {
-            params.push(format!("clientId={}", cid));
-        }
         if let Some(ref s) = filters.status {
-            params.push(format!("status={}", s));
+            params.push(("status", s.clone()));
         }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        if let Some(ref cid) = filters.client_id {
+            params.push(("clientId", cid.clone()));
+        }
+        let query = FlowCatalystClient::query_string(&params);
         self.client
             .get(&format!("/api/dispatch-pools{}", query))
             .await
@@ -124,21 +130,23 @@ impl DispatchPools<'_> {
     }
 
     /// Create a new dispatch pool.
+    ///
+    /// Returns `{ id }` only. Call `get(&id)` if you need the full record.
     pub async fn create(
         &self,
         req: &CreateDispatchPoolRequest,
-    ) -> Result<DispatchPoolResponse, ClientError> {
+    ) -> Result<CreatedResponse, ClientError> {
         self.client.post("/api/dispatch-pools", req).await
     }
 
-    /// Update a dispatch pool.
+    /// Update a dispatch pool (204). Call `get(id)` for the updated record.
     pub async fn update(
         &self,
         id: &str,
         req: &UpdateDispatchPoolRequest,
-    ) -> Result<DispatchPoolResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/dispatch-pools/{}", id), req)
+            .put_empty(&format!("/api/dispatch-pools/{}", id), req)
             .await
     }
 
@@ -202,5 +210,103 @@ impl DispatchPools<'_> {
                 req,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    const POOL: &str = r#"{"id":"dpl_1","code":"fast","name":"Fast","status":"ARCHIVED",
+        "concurrency":10,"createdAt":"t","updatedAt":"t"}"#;
+
+    #[tokio::test]
+    async fn list_reads_pools() {
+        let list = format!(r#"{{"pools":[{POOL}],"total":1}}"#);
+        let stub = MockPlatform::start(&[("GET", "/api/dispatch-pools", 200, &list)]).await;
+        let resp = stub
+            .client()
+            .dispatch_pools()
+            .list(&DispatchPoolFilters {
+                status: Some("ACTIVE".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(resp.pools.len(), 1);
+        assert_eq!(resp.total, 1);
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![("status".to_string(), "ACTIVE".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_reads_the_id_and_update_accepts_204() {
+        let stub = MockPlatform::start(&[
+            ("POST", "/api/dispatch-pools", 201, r#"{"id":"dpl_1"}"#),
+            ("PUT", "/api/dispatch-pools/dpl_1", 204, ""),
+        ])
+        .await;
+        let c = stub.client();
+        let created = c
+            .dispatch_pools()
+            .create(&CreateDispatchPoolRequest {
+                code: "fast".into(),
+                name: "Fast".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.id, "dpl_1");
+        c.dispatch_pools()
+            .update(
+                "dpl_1",
+                &UpdateDispatchPoolRequest {
+                    concurrency: Some(5),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.requests()[1].json(),
+            serde_json::json!({"concurrency": 5})
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_posts_to_the_archive_route() {
+        let stub = MockPlatform::start(&[
+            ("POST", "/api/dispatch-pools/dpl_1/archive", 204, ""),
+            ("GET", "/api/dispatch-pools/dpl_1", 200, POOL),
+        ])
+        .await;
+        let pool = stub
+            .client()
+            .dispatch_pools()
+            .archive("dpl_1")
+            .await
+            .unwrap();
+        assert_eq!(pool.status, "ARCHIVED");
+        let reqs = stub.requests();
+        assert_eq!(reqs[0].method, "POST");
+        assert_eq!(reqs[0].path, "/api/dispatch-pools/dpl_1/archive");
+    }
+
+    #[test]
+    fn sync_item_always_sends_name() {
+        let item = SyncDispatchPoolItem {
+            code: "fast".into(),
+            name: "Fast".into(),
+            concurrency: None,
+            rate_limit: None,
+            description: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&item).unwrap(),
+            serde_json::json!({"code": "fast", "name": "Fast"})
+        );
     }
 }

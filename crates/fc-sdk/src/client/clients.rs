@@ -1,6 +1,6 @@
 //! Client (tenant) management operations.
 
-use super::applications::{CreatedResponse, SuccessResponse};
+use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
 use serde::{Deserialize, Serialize};
 
@@ -60,8 +60,21 @@ pub struct ClientResponse {
     pub status_reason: Option<String>,
     #[serde(default)]
     pub status_changed_at: Option<String>,
+    #[serde(default)]
+    pub notes: Vec<NoteResponse>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// A note on a client (Go's `NoteResponse`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteResponse {
+    pub category: String,
+    pub text: String,
+    #[serde(default)]
+    pub added_by: Option<String>,
+    pub added_at: String,
 }
 
 /// Client list response.
@@ -120,38 +133,14 @@ pub struct Clients<'a> {
 
 impl Clients<'_> {
     /// Create a new client (tenant).
-    pub async fn create(
-        &self,
-        req: &CreateClientRequest,
-    ) -> Result<CreatedResponse, ClientError> {
+    pub async fn create(&self, req: &CreateClientRequest) -> Result<CreatedResponse, ClientError> {
         self.client.post("/api/clients", req).await
     }
 
-    /// List clients with optional pagination and status filter.
-    pub async fn list(
-        &self,
-        status: Option<&str>,
-        page: Option<u32>,
-        page_size: Option<u32>,
-    ) -> Result<ClientListResponse, ClientError> {
-        let mut params = Vec::new();
-        if let Some(s) = status {
-            params.push(format!("status={}", s));
-        }
-        if let Some(p) = page {
-            params.push(format!("page={}", p));
-        }
-        if let Some(ps) = page_size {
-            params.push(format!("pageSize={}", ps));
-        }
-
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
-
-        self.client.get(&format!("/api/clients{}", query)).await
+    /// List all clients. Go's platform takes no filters or paging here;
+    /// use [`Self::search`] to narrow by name or identifier.
+    pub async fn list(&self) -> Result<ClientListResponse, ClientError> {
+        self.client.get("/api/clients").await
     }
 
     /// Get a client by ID.
@@ -160,10 +149,7 @@ impl Clients<'_> {
     }
 
     /// Get a client by identifier (slug/domain).
-    pub async fn get_by_identifier(
-        &self,
-        identifier: &str,
-    ) -> Result<ClientResponse, ClientError> {
+    pub async fn get_by_identifier(&self, identifier: &str) -> Result<ClientResponse, ClientError> {
         self.client
             .get(&format!("/api/clients/by-identifier/{}", identifier))
             .await
@@ -171,23 +157,25 @@ impl Clients<'_> {
 
     /// Search clients by name or identifier.
     pub async fn search(&self, query: &str) -> Result<ClientListResponse, ClientError> {
+        let query = FlowCatalystClient::query_string(&[("q", query.to_string())]);
         self.client
-            .get(&format!("/api/clients/search?q={}", query))
+            .get(&format!("/api/clients/search{}", query))
             .await
     }
 
-    /// Update a client.
-    pub async fn update(
-        &self,
-        id: &str,
-        req: &UpdateClientRequest,
-    ) -> Result<ClientResponse, ClientError> {
-        self.client.put(&format!("/api/clients/{}", id), req).await
+    /// Update a client. The platform answers 204; call `get(id)` for the
+    /// updated record.
+    pub async fn update(&self, id: &str, req: &UpdateClientRequest) -> Result<(), ClientError> {
+        self.client
+            .put_empty(&format!("/api/clients/{}", id), req)
+            .await
     }
 
     /// Delete (deactivate) a client.
     pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
-        self.client.delete_req(&format!("/api/clients/{}", id)).await
+        self.client
+            .delete_req(&format!("/api/clients/{}", id))
+            .await
     }
 
     /// Activate a client.
@@ -240,42 +228,138 @@ impl Clients<'_> {
             .await
     }
 
-    /// Enable an application for a client.
+    /// Enable an application for a client (204).
     pub async fn enable_application(
         &self,
         client_id: &str,
         application_id: &str,
-    ) -> Result<SuccessResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!(
+            .post_empty(&format!(
                 "/api/clients/{}/applications/{}/enable",
                 client_id, application_id
             ))
             .await
     }
 
-    /// Disable an application for a client.
+    /// Disable an application for a client (204).
     pub async fn disable_application(
         &self,
         client_id: &str,
         application_id: &str,
-    ) -> Result<SuccessResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .post_action(&format!(
+            .post_empty(&format!(
                 "/api/clients/{}/applications/{}/disable",
                 client_id, application_id
             ))
             .await
     }
 
-    /// Bulk update which applications are enabled for a client.
+    /// Bulk update which applications are enabled for a client (204).
     pub async fn update_applications(
         &self,
         client_id: &str,
         req: &UpdateClientApplicationsRequest,
-    ) -> Result<SuccessResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/clients/{}/applications", client_id), req)
+            .put_empty(&format!("/api/clients/{}/applications", client_id), req)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    #[tokio::test]
+    async fn list_sends_no_filters_and_get_reads_notes() {
+        let client = r#"{"id":"clt_1","name":"Acme","identifier":"acme","status":"ACTIVE",
+            "notes":[{"category":"ops","text":"hi","addedAt":"t"}],
+            "createdAt":"t","updatedAt":"t"}"#;
+        let list = format!(r#"{{"clients":[{client}],"total":1}}"#);
+        let stub = MockPlatform::start(&[
+            ("GET", "/api/clients", 200, &list),
+            ("GET", "/api/clients/clt_1", 200, client),
+        ])
+        .await;
+        let c = stub.client();
+        let listed = c.clients().list().await.unwrap();
+        assert_eq!(listed.clients.len(), 1);
+        let got = c.clients().get("clt_1").await.unwrap();
+        assert_eq!(got.notes[0].text, "hi");
+        assert_eq!(stub.requests()[0].query, "");
+    }
+
+    #[tokio::test]
+    async fn search_encodes_q() {
+        let stub = MockPlatform::start(&[(
+            "GET",
+            "/api/clients/search",
+            200,
+            r#"{"clients":[],"total":0}"#,
+        )])
+        .await;
+        stub.client().clients().search("a&b c").await.unwrap();
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![("q".to_string(), "a&b c".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn no_content_writes_accept_204() {
+        let stub = MockPlatform::start(&[
+            ("PUT", "/api/clients/clt_1", 204, ""),
+            (
+                "POST",
+                "/api/clients/clt_1/applications/app_1/enable",
+                204,
+                "",
+            ),
+            (
+                "POST",
+                "/api/clients/clt_1/applications/app_1/disable",
+                204,
+                "",
+            ),
+            ("PUT", "/api/clients/clt_1/applications", 204, ""),
+        ])
+        .await;
+        let c = stub.client();
+        c.clients()
+            .update(
+                "clt_1",
+                &UpdateClientRequest {
+                    name: Some("New".into()),
+                },
+            )
+            .await
+            .unwrap();
+        c.clients()
+            .enable_application("clt_1", "app_1")
+            .await
+            .unwrap();
+        c.clients()
+            .disable_application("clt_1", "app_1")
+            .await
+            .unwrap();
+        c.clients()
+            .update_applications(
+                "clt_1",
+                &UpdateClientApplicationsRequest {
+                    enabled_application_ids: vec!["app_1".into()],
+                },
+            )
+            .await
+            .unwrap();
+        let reqs = stub.requests();
+        assert_eq!(reqs.len(), 4);
+        assert_eq!(reqs[0].json(), serde_json::json!({"name": "New"}));
+        assert_eq!(
+            reqs[3].json(),
+            serde_json::json!({"enabledApplicationIds": ["app_1"]})
+        );
     }
 }

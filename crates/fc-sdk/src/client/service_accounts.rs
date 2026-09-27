@@ -29,7 +29,8 @@ pub struct CreateServiceAccountRequest {
     pub all_applications: bool,
 }
 
-/// A service account as the `/api/service-accounts` routes return it.
+/// A service account as the `/api/service-accounts` routes return it
+/// (Go's `ServiceAccountResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccount {
@@ -51,6 +52,12 @@ pub struct ServiceAccount {
     pub roles: Vec<String>,
     #[serde(default)]
     pub last_used_at: Option<String>,
+    /// The service account's principal.
+    #[serde(default)]
+    pub principal_id: Option<String>,
+    /// The OAuth client's `client_id` (never its secret).
+    #[serde(default)]
+    pub oauth_client_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

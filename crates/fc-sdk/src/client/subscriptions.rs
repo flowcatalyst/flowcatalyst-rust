@@ -1,5 +1,6 @@
 //! Subscription management operations.
 
+use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
 use serde::{Deserialize, Serialize};
 
@@ -195,10 +196,12 @@ pub struct Subscriptions<'a> {
 
 impl Subscriptions<'_> {
     /// Create a new subscription.
+    ///
+    /// Returns `{ id }` only. Call `get(&id)` if you need the full record.
     pub async fn create(
         &self,
         req: &CreateSubscriptionRequest,
-    ) -> Result<SubscriptionResponse, ClientError> {
+    ) -> Result<CreatedResponse, ClientError> {
         self.client.post("/api/subscriptions", req).await
     }
 
@@ -214,32 +217,26 @@ impl Subscriptions<'_> {
         status: Option<&str>,
     ) -> Result<SubscriptionListResponse, ClientError> {
         let mut params = Vec::new();
-        if let Some(cid) = client_id {
-            params.push(format!("client_id={}", cid));
-        }
         if let Some(s) = status {
-            params.push(format!("status={}", s));
+            params.push(("status", s.to_string()));
         }
-
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
-
+        if let Some(cid) = client_id {
+            params.push(("clientId", cid.to_string()));
+        }
+        let query = FlowCatalystClient::query_string(&params);
         self.client
             .get(&format!("/api/subscriptions{}", query))
             .await
     }
 
-    /// Update a subscription.
+    /// Update a subscription (204). Call `get(id)` for the updated record.
     pub async fn update(
         &self,
         id: &str,
         req: &UpdateSubscriptionRequest,
-    ) -> Result<SubscriptionResponse, ClientError> {
+    ) -> Result<(), ClientError> {
         self.client
-            .put(&format!("/api/subscriptions/{}", id), req)
+            .put_empty(&format!("/api/subscriptions/{}", id), req)
             .await
     }
 
@@ -279,10 +276,7 @@ impl Subscriptions<'_> {
         };
         self.client
             .post(
-                &format!(
-                    "/api/applications/{}/subscriptions/sync{}",
-                    app_code, query
-                ),
+                &format!("/api/applications/{}/subscriptions/sync{}", app_code, query),
                 req,
             )
             .await
@@ -312,5 +306,56 @@ mod tests {
 
         let sub: SubscriptionResponse = serde_json::from_str(json).unwrap();
         assert_eq!(sub.source.as_deref(), Some("FUNCTION"));
+    }
+
+    #[tokio::test]
+    async fn create_reads_the_id_update_accepts_204_and_list_sends_client_id() {
+        use crate::client::test_support::MockPlatform;
+        let stub = MockPlatform::start(&[
+            ("POST", "/api/subscriptions", 201, r#"{"id":"sub_1"}"#),
+            ("PUT", "/api/subscriptions/sub_1", 204, ""),
+            (
+                "GET",
+                "/api/subscriptions",
+                200,
+                r#"{"subscriptions":[],"total":0}"#,
+            ),
+        ])
+        .await;
+        let c = stub.client();
+        let created = c
+            .subscriptions()
+            .create(&CreateSubscriptionRequest {
+                code: "ship".into(),
+                name: "Ship".into(),
+                endpoint: "https://example.com/hook".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.id, "sub_1");
+        c.subscriptions()
+            .update(
+                "sub_1",
+                &UpdateSubscriptionRequest {
+                    max_retries: Some(3),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        c.subscriptions()
+            .list(Some("clt_1"), Some("ACTIVE"))
+            .await
+            .unwrap();
+        let reqs = stub.requests();
+        assert_eq!(reqs[1].json(), serde_json::json!({"maxRetries": 3}));
+        assert_eq!(
+            reqs[2].query_pairs(),
+            vec![
+                ("status".to_string(), "ACTIVE".to_string()),
+                ("clientId".to_string(), "clt_1".to_string())
+            ]
+        );
     }
 }

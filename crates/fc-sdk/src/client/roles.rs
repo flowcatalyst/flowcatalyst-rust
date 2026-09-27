@@ -47,6 +47,9 @@ pub struct UpdateRoleRequest {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_managed: Option<bool>,
+    /// Replaces the role's permissions when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<Vec<String>>,
 }
 
 /// Request body for `grant_permission` — `{ "permission": "..." }`.
@@ -70,6 +73,8 @@ pub struct RoleResponse {
     #[serde(default)]
     pub description: Option<String>,
     pub application_code: String,
+    #[serde(default)]
+    pub application_id: Option<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
     pub source: String,
@@ -126,24 +131,15 @@ impl Roles<'_> {
     /// Create a new role.
     ///
     /// Returns `{ id }` only. Call `get(name)` if you need the full record.
-    pub async fn create(
-        &self,
-        req: &CreateRoleRequest,
-    ) -> Result<CreatedResponse, ClientError> {
+    pub async fn create(&self, req: &CreateRoleRequest) -> Result<CreatedResponse, ClientError> {
         self.client.post("/api/roles", req).await
     }
 
     /// Update an existing role by name. The platform responds with 204.
-    pub async fn update(
-        &self,
-        name: &str,
-        req: &UpdateRoleRequest,
-    ) -> Result<(), ClientError> {
-        let _: serde_json::Value = self
-            .client
-            .put(&format!("/api/roles/{}", name), req)
-            .await?;
-        Ok(())
+    pub async fn update(&self, name: &str, req: &UpdateRoleRequest) -> Result<(), ClientError> {
+        self.client
+            .put_empty(&format!("/api/roles/{}", name), req)
+            .await
     }
 
     /// Delete a role by name.
@@ -153,11 +149,12 @@ impl Roles<'_> {
             .await
     }
 
-    /// List roles scoped to an application.
+    /// List roles scoped to an application. The platform answers a bare
+    /// array.
     pub async fn list_for_application(
         &self,
         application_id: &str,
-    ) -> Result<RoleListResponse, ClientError> {
+    ) -> Result<Vec<RoleResponse>, ClientError> {
         self.client
             .get(&format!("/api/roles/by-application/{}", application_id))
             .await
@@ -210,5 +207,71 @@ impl Roles<'_> {
                 req,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    const ROLE: &str = r#"{"id":"rol_1","name":"orders:admin","displayName":"Admin",
+        "applicationCode":"orders","applicationId":"app_1","permissions":["p"],
+        "source":"CODE","clientManaged":false,"createdAt":"t","updatedAt":"t"}"#;
+
+    #[tokio::test]
+    async fn update_accepts_204() {
+        let stub = MockPlatform::start(&[("PUT", "/api/roles/orders:admin", 204, "")]).await;
+        stub.client()
+            .roles()
+            .update(
+                "orders:admin",
+                &UpdateRoleRequest {
+                    display_name: Some("Admins".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.single().json(),
+            serde_json::json!({"displayName": "Admins"})
+        );
+    }
+
+    #[tokio::test]
+    async fn list_for_application_reads_a_bare_array() {
+        let body = format!("[{ROLE}]");
+        let stub =
+            MockPlatform::start(&[("GET", "/api/roles/by-application/app_1", 200, &body)]).await;
+        let roles = stub
+            .client()
+            .roles()
+            .list_for_application("app_1")
+            .await
+            .unwrap();
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].application_id.as_deref(), Some("app_1"));
+    }
+
+    #[tokio::test]
+    async fn create_always_sends_client_managed() {
+        let stub = MockPlatform::start(&[("POST", "/api/roles", 201, r#"{"id":"rol_1"}"#)]).await;
+        let created = stub
+            .client()
+            .roles()
+            .create(&CreateRoleRequest {
+                application_code: "orders".into(),
+                role_name: "admin".into(),
+                display_name: "Admin".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.id, "rol_1");
+        assert_eq!(
+            stub.single().json()["clientManaged"],
+            serde_json::json!(false)
+        );
     }
 }
