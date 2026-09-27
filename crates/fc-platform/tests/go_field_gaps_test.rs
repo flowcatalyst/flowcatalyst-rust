@@ -604,13 +604,12 @@ async fn service_account_update_replaces_the_webhook_credentials() {
         std::sync::Arc::new(fc_platform::ServiceAccountRepository::new(&app.pool)),
         Some(std::sync::Arc::new(enc)),
     );
-    match resolver.by_service_account_id(&id).await.unwrap() {
-        ById::Found(creds) => {
-            assert_eq!(creds.token.as_deref(), Some("tok-123"));
-            assert_eq!(creds.signing_secret.as_deref(), Some("sig-789"));
-        }
-        other => panic!("expected credentials, got {other:?}"),
-    }
+    let resolved = resolver.by_service_account_id(&id).await.unwrap();
+    let ById::Found(creds) = resolved else {
+        panic!("expected credentials, got {resolved:?}");
+    };
+    assert_eq!(creds.token.as_deref(), Some("tok-123"));
+    assert_eq!(creds.signing_secret.as_deref(), Some("sig-789"));
 
     // The audit row keeps the shape and masks the secrets.
     let (audited,): (Value,) = sqlx::query_as(
