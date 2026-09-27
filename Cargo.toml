@@ -12,6 +12,7 @@ members = [
     "crates/fc-function-abi",
     "crates/fc-function-model",
     "crates/fc-fnhost-core",
+    "crates/fc-fnhost-js",
     "crates/fc-function-signing",
     "crates/fc-http-listener",
     "bin/fc-dev",
