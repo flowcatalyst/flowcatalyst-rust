@@ -42,6 +42,12 @@ pub struct EngineSettings {
     /// Cranelift's optimisation level. Changing it changes the
     /// fingerprint: `.cwasm` files compiled at another level are not reused.
     pub opt_level: OptLevel,
+    /// wasmtime fuel metering (owner decision #13): every invocation's fuel
+    /// is counted, and `limits.maxFuel` enforced. On in production; the
+    /// switch exists for the overhead measurement
+    /// (`docs/function-runner-density.md` §9). Metered code is compiled
+    /// differently, so this is part of the fingerprint.
+    pub consume_fuel: bool,
 }
 
 impl Default for EngineSettings {
@@ -49,6 +55,7 @@ impl Default for EngineSettings {
         Self {
             max_instances: 64,
             opt_level: OptLevel::Speed,
+            consume_fuel: true,
         }
     }
 }
@@ -71,6 +78,7 @@ pub fn config(settings: &EngineSettings) -> Config {
     config
         .allocation_strategy(InstanceAllocationStrategy::Pooling(pool))
         .epoch_interruption(true)
+        .consume_fuel(settings.consume_fuel)
         .wasm_component_model(true)
         .cranelift_opt_level(settings.opt_level);
     config
@@ -160,6 +168,15 @@ mod tests {
             a,
             fingerprint(&engine(&size).unwrap()),
             "a codegen setting is part of the fingerprint"
+        );
+        let unmetered = EngineSettings {
+            consume_fuel: false,
+            ..speed.clone()
+        };
+        assert_ne!(
+            a,
+            fingerprint(&engine(&unmetered).unwrap()),
+            "fuel-metered code is not interchangeable with unmetered code"
         );
         let bigger_pool = EngineSettings {
             max_instances: 128,

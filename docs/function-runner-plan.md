@@ -51,6 +51,21 @@ backward-compatible with the SPA, `fc-dev fn`, the SDKs and JVM hosts:
 - `functions.openapi.json` and `function-manifest.schema.json` are now supersets of Java's, and their tests check
   that.
 
+Fuel and memory metering (owner decision #13, 2026-09-27, branch `feat/fn-fuel-db`):
+- **Every invocation is metered.** The engine meters wasmtime fuel (`consume_fuel`) and a `ResourceLimiter`
+  wrapper records the peak linear memory; the runtime writes both into the invocation's `UsageMeter`
+  (`InvocationContext::usage`), and the listener exports them when the invocation really ends:
+  `fc_fn_fuel_total`, `fc_fn_invocation_fuel` and `fc_fn_invocation_peak_memory_bytes`, labelled
+  `address` and `client` (`PLATFORM` for a platform function), swept with the address's other series.
+- **`limits.maxFuel`** (optional, positive `int64`; `wasm`/`component` only, else `LIMIT_NOT_APPLICABLE`;
+  no default or client ceiling) in `fc-function-model`, the manifest schema and the OpenAPI document. Past
+  it the guest traps `OutOfFuel` and the call answers `500 FUNCTION_FUEL_EXHAUSTED` (`InvokeError::
+  FuelExhausted`, outcome `fuel_exhausted`), as the deadline answers 504. Epoch interruption still does
+  wall-clock time. A Rust extension: Java's parser refuses the key.
+- **Overhead** (`docs/function-runner-density.md` §9): ≤ 2% on real handlers, ~20% on a tight arithmetic
+  loop, +12% compiled code. Not material, so metering is always on.
+- Author docs: `docs/developers/functions.md`.
+
 Not done:
 - **H6:** a separate black-box conformance harness. It's largely covered by the end-to-end and `wasm_*` host tests.
 - **H7:** benchmarks on Linux. The F0 numbers are macOS only.
@@ -63,7 +78,7 @@ Not done:
 2. ~~An explicit manifest runtime value such as `component`.~~ Done in Rust (owner decision 5): `runtime:
    component`, while `wasm` plus the alias still work. Java's schema and DB CHECK don't have it.
 3. The guest DB connection model, before Java W4 lands (§4 decision 3).
-4. Fuel metering, per-tenant pools and quotas (§7).
+4. ~~Fuel metering~~ (done, owner decision #13: see the Status above); per-tenant pools and quotas (§7).
 
 **Auth and wire**
 5. **JWT `scope` vs `tier`.** Java puts permissions in `scope` and the tier in `tier`. The Rust platform still puts
@@ -651,7 +666,7 @@ and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
 
 | Extension | Why (density and granularity) | Notes |
 |---|---|---|
-| Fuel and memory metering per call | Per-customer cost attribution, fair shares, and billing | wasmtime fuel; export as `fc_fn_fuel_total{address}` |
+| Fuel and memory metering per call | Per-customer cost attribution, fair shares, and billing | **Done** (#13): `fc_fn_fuel_total{address,client}`, per-invocation fuel and peak-memory histograms, `limits.maxFuel` |
 | Per-tenant pools and quotas | Limit the blast radius per customer | Manifest `pool` already exists; add a policy ceiling per client |
 | Per-endpoint deploy units | Finer granularity than a function | Would need manifest and ABI changes, so coordinate with Java |
 | WASI 0.2 Component Model host | Standard, typed interfaces; edge portability | Decision 2 |

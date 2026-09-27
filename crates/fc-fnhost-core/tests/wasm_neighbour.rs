@@ -141,6 +141,7 @@ async fn neighbour_run(
                 max_executing,
                 max_instances: 64,
                 host_max_concurrency: 64,
+                ..Options::default()
             },
         )
         .await,

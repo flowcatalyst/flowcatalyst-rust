@@ -130,6 +130,8 @@ pub struct Options {
     pub max_executing: usize,
     pub max_instances: u32,
     pub host_max_concurrency: i32,
+    /// `EngineSettings::consume_fuel` (on in production).
+    pub consume_fuel: bool,
 }
 
 impl Default for Options {
@@ -138,6 +140,7 @@ impl Default for Options {
             max_executing: 4,
             max_instances: 32,
             host_max_concurrency: 64,
+            consume_fuel: true,
         }
     }
 }
@@ -147,6 +150,7 @@ pub struct WasmHarness {
     pub reconciler: Arc<Reconciler>,
     pub listener: Arc<FnListener>,
     pub runtime: Arc<WasmRuntime>,
+    pub metrics: Arc<FnMetrics>,
     pub client: reqwest::Client,
     pub base: String,
     /// Holds the artifact and `.cwasm` caches.
@@ -170,6 +174,7 @@ impl WasmHarness {
         let runtime = WasmRuntime::new(WasmSettings {
             engine: EngineSettings {
                 max_instances: options.max_instances,
+                consume_fuel: options.consume_fuel,
                 ..EngineSettings::default()
             },
             max_executing: options.max_executing,
@@ -202,13 +207,17 @@ impl WasmHarness {
             trusted_proxies: TrustedProxies::default_list(),
             clock,
         }));
-        listener.start(reconciler.clone(), metrics).await.unwrap();
+        listener
+            .start(reconciler.clone(), metrics.clone())
+            .await
+            .unwrap();
         let base = format!("http://127.0.0.1:{}", listener.port().unwrap());
         Self {
             control,
             reconciler,
             listener,
             runtime,
+            metrics,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()

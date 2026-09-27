@@ -98,6 +98,8 @@ pub struct WasmRuntime {
     /// The runtime the host itself runs on, for control-plane calls made on
     /// a guest's behalf.
     host_runtime: Option<tokio::runtime::Handle>,
+    /// Whether the engine meters fuel (`EngineSettings::consume_fuel`).
+    consume_fuel: bool,
     _ticker: engine::EpochTicker,
 }
 
@@ -130,6 +132,7 @@ impl WasmRuntime {
             linker,
             guests: GuestRuntime(Some(guests)),
             host_runtime: tokio::runtime::Handle::try_current().ok(),
+            consume_fuel: settings.engine.consume_fuel,
             _ticker: ticker,
         }))
     }
@@ -276,6 +279,13 @@ impl FunctionLoader for WasmLoader {
             }
         };
         tracing::debug!(address = %entry.address, version = entry.version, source = ?source, "wasm function prepared");
+        if entry.manifest.limits.max_fuel.is_some() && !self.runtime.consume_fuel {
+            tracing::warn!(
+                address = %entry.address,
+                version = entry.version,
+                "limits.maxFuel is not enforced: this host's engine does not meter fuel"
+            );
+        }
         // The keys the manifest declares, as the platform's reader keeps them
         // (`config` / `secrets` entries that are setting keys, `httpAllow`
         // entries that are non-blank).
@@ -299,6 +309,7 @@ impl FunctionLoader for WasmLoader {
             )),
             memory_limit: declared_max.map_or(cap_bytes, |max| max.min(cap_bytes)) as usize,
             response_cap: cap_bytes as usize,
+            max_fuel: manifest.limits.max_fuel.map(|fuel| fuel as u64),
             emitter: Emitter {
                 control_plane: request.control_plane.clone(),
                 host_id: request.host_id.to_owned(),

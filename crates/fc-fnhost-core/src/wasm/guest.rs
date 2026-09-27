@@ -66,7 +66,78 @@ pub struct FunctionShared {
     pub memory_limit: usize,
     /// The response body's cap, in bytes: `limits.wasmMemoryMb`.
     pub response_cap: usize,
+    /// `limits.maxFuel`: the fuel one invocation may spend (`None`:
+    /// metered, never stopped for fuel).
+    pub max_fuel: Option<u64>,
     pub emitter: Emitter,
+}
+
+/// The store's [`ResourceLimiter`](wasmtime::ResourceLimiter): the memory
+/// cap ([`StoreLimits`]), plus the invocation's linear-memory high-water
+/// mark for the usage meter (owner decision #13). Every memory's size is
+/// summed (a Rust component has one); wasmtime reports a memory's initial
+/// size here too, so an instance that never grows still reports it.
+pub struct MeteredLimits {
+    pub limits: StoreLimits,
+    pub usage: crate::invoke::UsageMeter,
+    in_use: u64,
+}
+
+impl MeteredLimits {
+    pub fn new(limits: StoreLimits, usage: crate::invoke::UsageMeter) -> Self {
+        Self {
+            limits,
+            usage,
+            in_use: 0,
+        }
+    }
+}
+
+impl wasmtime::ResourceLimiter for MeteredLimits {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let granted = self.limits.memory_growing(current, desired, maximum)?;
+        if granted {
+            self.in_use = self
+                .in_use
+                .saturating_add(desired.saturating_sub(current) as u64);
+            self.usage.observe_memory(self.in_use);
+        }
+        Ok(granted)
+    }
+
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.limits.memory_grow_failed(error)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.limits.table_growing(current, desired, maximum)
+    }
+
+    fn table_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.limits.table_grow_failed(error)
+    }
+
+    fn instances(&self) -> usize {
+        self.limits.instances()
+    }
+
+    fn tables(&self) -> usize {
+        self.limits.tables()
+    }
+
+    fn memories(&self) -> usize {
+        self.limits.memories()
+    }
 }
 
 /// Why the host did not publish an event: its own refusal before the
@@ -176,7 +247,7 @@ pub struct GuestState {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub table: ResourceTable,
-    pub limits: StoreLimits,
+    pub limits: MeteredLimits,
     pub hooks: EgressHooks,
     pub function: Arc<FunctionShared>,
     pub invocation: InvocationData,
