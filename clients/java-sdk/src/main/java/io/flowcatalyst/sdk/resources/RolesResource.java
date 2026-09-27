@@ -35,7 +35,15 @@ public final class RolesResource {
         return transport.get("/api/roles/by-code/" + Transport.enc(code), null, RoleResponse.class);
     }
 
+    /**
+     * Create a role. Returns the new role's id. The platform requires
+     * {@code clientManaged}; when it is null it is set to {@code false} on
+     * {@code data} before sending.
+     */
     public CreatedResponse create(CreateRoleRequest data) {
+        if (data.getClientManaged() == null) {
+            data.setClientManaged(false);
+        }
         return transport.post("/api/roles", data, CreatedResponse.class);
     }
 

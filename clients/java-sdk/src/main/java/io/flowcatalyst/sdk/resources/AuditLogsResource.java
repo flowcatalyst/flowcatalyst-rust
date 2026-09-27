@@ -40,10 +40,15 @@ public final class AuditLogsResource {
             query.put("entityId", filters.entityId());
             query.put("principalId", filters.principalId());
             query.put("operation", filters.operation());
-            query.put("applicationIds", filters.applicationIds());
-            query.put("clientIds", filters.clientIds());
+            // The platform reads each as one comma-separated value.
+            query.put("applicationIds", csv(filters.applicationIds()));
+            query.put("clientIds", csv(filters.clientIds()));
         }
         return transport.get("/api/audit-logs", query, AuditLogListResponse.class);
+    }
+
+    private static String csv(List<String> values) {
+        return values == null || values.isEmpty() ? null : String.join(",", values);
     }
 
     public AuditLogResponse get(String id) {

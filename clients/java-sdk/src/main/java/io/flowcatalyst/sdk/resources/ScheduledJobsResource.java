@@ -40,7 +40,12 @@ public final class ScheduledJobsResource {
         }
     }
 
-    /** Optional filters for {@link #listInstances}. */
+    /**
+     * Optional filters for {@link #listInstances}. The platform filters on
+     * {@code status} and pages with {@code page} / {@code size};
+     * {@code triggerKind}, {@code from} and {@code to} are sent for older
+     * platforms but have no effect on the current one.
+     */
     public record InstanceFilters(
             String status, String triggerKind, String from, String to, Integer page, Integer size) {
         public static InstanceFilters none() {
@@ -48,7 +53,18 @@ public final class ScheduledJobsResource {
         }
     }
 
+    /**
+     * Create a scheduled job. Returns the new job's id. The platform requires
+     * {@code concurrent} and {@code tracksCompletion}; a null one is set to
+     * {@code false} on {@code data} before sending.
+     */
     public CreatedResponse create(CreateScheduledJobRequest data) {
+        if (data.getConcurrent() == null) {
+            data.setConcurrent(false);
+        }
+        if (data.getTracksCompletion() == null) {
+            data.setTracksCompletion(false);
+        }
         return transport.post(PATH, data, CreatedResponse.class);
     }
 
@@ -69,8 +85,18 @@ public final class ScheduledJobsResource {
     }
 
     public ScheduledJobResponse getByCode(String code) {
+        return getByCode(code, null);
+    }
+
+    /**
+     * Get a scheduled job by code within a client's scope; a null
+     * {@code clientId} looks among platform-wide jobs.
+     */
+    public ScheduledJobResponse getByCode(String code, String clientId) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("clientId", clientId);
         return transport.get(
-                PATH + "/by-code/" + Transport.enc(code), null, ScheduledJobResponse.class);
+                PATH + "/by-code/" + Transport.enc(code), query, ScheduledJobResponse.class);
     }
 
     public void update(String id, UpdateScheduledJobRequest data) {

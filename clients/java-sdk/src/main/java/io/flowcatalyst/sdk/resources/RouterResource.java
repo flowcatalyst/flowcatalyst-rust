@@ -42,9 +42,34 @@ public final class RouterResource {
             long elapsedTimeMs,
             String addedToInPipelineAt) {}
 
+    /**
+     * The router's answer for one message id. The router puts {@code poolCode}
+     * and {@code queueId} at the top level; when it sends no {@code detail}
+     * object, {@link #detail()} is built from them (messageId, queueId and
+     * poolCode set, the rest empty), so callers that read {@code detail} keep
+     * working. {@code detail} is null when the message is not in the pipeline.
+     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record InPipelineCheckResponse(
-            String messageId, boolean inPipeline, InPipelineDetail detail) {}
+            String messageId,
+            boolean inPipeline,
+            InPipelineDetail detail,
+            String poolCode,
+            String queueId) {
+
+        public InPipelineCheckResponse {
+            if (detail == null && (poolCode != null || queueId != null)) {
+                detail = new InPipelineDetail(messageId, null, queueId, poolCode, 0L, null);
+            }
+        }
+
+        /** The pre-{@code poolCode} component list, kept for existing callers. */
+        public InPipelineCheckResponse(String messageId, boolean inPipeline, InPipelineDetail detail) {
+            this(messageId, inPipeline, detail,
+                    detail != null ? detail.poolCode() : null,
+                    detail != null ? detail.queueId() : null);
+        }
+    }
 
     /**
      * Check whether a single application message ID is currently held in the
