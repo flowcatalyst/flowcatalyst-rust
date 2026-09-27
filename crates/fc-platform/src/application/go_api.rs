@@ -97,8 +97,9 @@ pub async fn attach_application_service_account(
         .run(
             AttachServiceAccountToApplicationCommand {
                 application_id: id,
-                service_account_id: principal_id,
+                service_account_id: sa_id,
                 service_account_code: req.service_account_code,
+                service_principal_id: principal_id,
             },
             ExecutionContext::from_auth(&auth.0),
         )

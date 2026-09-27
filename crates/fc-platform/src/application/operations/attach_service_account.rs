@@ -21,8 +21,16 @@ use crate::ApplicationRepository;
 #[serde(rename_all = "camelCase")]
 pub struct AttachServiceAccountToApplicationCommand {
     pub application_id: String,
+    /// The account's own id (`sac_…`), as sent: what the event and the
+    /// audited command carry (Go `AttachServiceAccountCommand`).
     pub service_account_id: String,
     pub service_account_code: String,
+    /// The account's SERVICE principal (`prn_…`), which the application
+    /// stores (`app_applications.service_account_id` is a foreign key to
+    /// `iam_principals`, as in Go: `app.ServiceAccountID = &saPrincipal.ID`).
+    /// Resolved by the caller; not part of Go's command, so not audited.
+    #[serde(skip)]
+    pub service_principal_id: String,
 }
 
 impl crate::usecase::AuditMasked for AttachServiceAccountToApplicationCommand {}
@@ -95,7 +103,7 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
             ));
         }
 
-        application.service_account_id = Some(command.service_account_id.clone());
+        application.service_account_id = Some(command.service_principal_id.clone());
         application.updated_at = chrono::Utc::now();
 
         let event = ApplicationServiceAccountProvisioned::new(

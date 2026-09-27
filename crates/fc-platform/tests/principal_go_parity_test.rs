@@ -360,3 +360,167 @@ async fn provision_service_account_records_one_command() {
         audits + 3
     );
 }
+
+/// Every event a service account's lifecycle writes names the account's own
+/// id (`sac_…`), as Go's `subjectFor(sa.ID)` does, never its SERVICE
+/// principal's (`prn_…`): subject, message group, `serviceAccountId` and the
+/// audit row's `entity_id`. Provisioning names the account too, while the
+/// application and the OAuth client still point at the principal.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_events_carry_the_account_id() {
+    std::env::set_var(
+        "FLOWCATALYST_APP_KEY",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    );
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/service-accounts",
+            &token,
+            json!({"code": "orders-bot", "name": "Orders bot"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let sac = body["serviceAccount"]["id"].as_str().unwrap().to_string();
+    let prn = body["principalId"].as_str().unwrap().to_string();
+    assert!(sac.starts_with("sac_"), "{body}");
+    assert!(prn.starts_with("prn_"), "{body}");
+
+    let path = format!("/api/service-accounts/{sac}");
+    let resp = app
+        .put(&path, &token, json!({"name": "Orders bot 2"}))
+        .await;
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let resp = app
+        .put(
+            &format!("{path}/roles"),
+            &token,
+            json!({"roles": ["platform:viewer"]}),
+        )
+        .await;
+    assert!(resp.status().is_success(), "{}", resp.status());
+    for suffix in [
+        "regenerate-auth-token",
+        "regenerate-signing-secret",
+        "deactivate",
+    ] {
+        let resp = app
+            .post(&format!("{path}/{suffix}"), &token, json!({}))
+            .await;
+        assert!(resp.status().is_success(), "{suffix}: {}", resp.status());
+    }
+    let resp = app.delete(&path, &token).await;
+    assert!(resp.status().is_success(), "{}", resp.status());
+
+    let rows: Vec<(String, String, String, Value)> = sqlx::query_as(
+        "SELECT type, subject, message_group, data FROM msg_events \
+         WHERE type LIKE 'platform:iam:serviceaccount:%' ORDER BY id",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    let types: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    for kind in [
+        "created",
+        "updated",
+        "roles-assigned",
+        "token-regenerated",
+        "secret-regenerated",
+        "deactivated",
+        "deleted",
+    ] {
+        assert!(
+            types.contains(&format!("platform:iam:serviceaccount:{kind}").as_str()),
+            "{kind} missing from {types:?}"
+        );
+    }
+    for (event_type, subject, group, data) in &rows {
+        assert_eq!(
+            subject,
+            &format!("platform.serviceaccount.{sac}"),
+            "{event_type}"
+        );
+        assert_eq!(
+            group,
+            &format!("platform:serviceaccount:{sac}"),
+            "{event_type}"
+        );
+        assert_eq!(data["serviceAccountId"], sac.as_str(), "{event_type}");
+    }
+    let audit_ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT entity_id FROM aud_logs WHERE entity_type = 'Serviceaccount'",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_ids, vec![(sac.clone(),)]);
+
+    // Provisioning: the created and provisioned events name the account; the
+    // application and the OAuth client point at the principal.
+    let application = create_app(&app, "mailer").await;
+    let (status, body) = read_json(
+        app.post(
+            &format!(
+                "/api/applications/{}/provision-service-account",
+                application.id
+            ),
+            &token,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let principal_id = body["serviceAccount"]["principalId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{body}"))
+        .to_string();
+    assert!(principal_id.starts_with("prn_"), "{body}");
+    let (account_id,): (String,) =
+        sqlx::query_as("SELECT service_account_id FROM iam_principals WHERE id = $1")
+            .bind(&principal_id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert!(account_id.starts_with("sac_"));
+    let (created,): (Value,) = sqlx::query_as(
+        "SELECT data FROM msg_events WHERE type = 'platform:iam:serviceaccount:created' \
+         AND data->>'code' = 'app:mailer'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(created["serviceAccountId"], account_id.as_str());
+    let (provisioned,): (Value,) = sqlx::query_as(
+        "SELECT data FROM msg_events WHERE type LIKE '%:application:service-account-provisioned'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(provisioned["serviceAccountId"], account_id.as_str());
+    let stored = app
+        .repos
+        .application_repo
+        .find_by_id(&application.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.service_account_id.as_deref(),
+        Some(principal_id.as_str())
+    );
+    let (oauth_principal,): (Option<String>,) = sqlx::query_as(
+        "SELECT service_account_principal_id FROM oauth_clients \
+         WHERE service_account_principal_id = $1",
+    )
+    .bind(&principal_id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(oauth_principal.as_deref(), Some(principal_id.as_str()));
+}
