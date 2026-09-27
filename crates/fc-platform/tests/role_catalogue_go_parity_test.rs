@@ -10,7 +10,9 @@
 //! Rust additions are listed in `RUST_ADDITIONS` and nothing else may
 //! differ: the function-runner roles and the function grants on
 //! `platform:messaging-admin`, which Java added for functions (Go has no
-//! function runner), and owner ruling 13's service-account grants.
+//! function runner), owner ruling 13's service-account grants, and owner
+//! ruling 2's router permissions (`platform:router-operator`, and
+//! `router:view` on `viewer` and `application-service`; Java ad4231be).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -328,7 +330,21 @@ const RUST_ADDITIONS: &[(&str, &[&str])] = &[
         ],
     ),
     ("iam-readonly", &["platform:iam:service-account:view"]),
-    ("viewer", &["platform:iam:service-account:view"]),
+    (
+        "viewer",
+        &[
+            "platform:iam:service-account:view",
+            "platform:messaging:router:view",
+        ],
+    ),
+    ("application-service", &["platform:messaging:router:view"]),
+    (
+        "router-operator",
+        &[
+            "platform:messaging:router:view",
+            "platform:messaging:router:operate",
+        ],
+    ),
     (
         "messaging-admin",
         &[
@@ -372,7 +388,7 @@ fn built_in_roles_match_go() {
 
     // The role names: Go's, plus the Rust-only function roles.
     let mut expected_names: BTreeSet<&str> = GO_ROLES.iter().map(|r| r.0).collect();
-    expected_names.extend(["function-publisher", "function-host"]);
+    expected_names.extend(["function-publisher", "function-host", "router-operator"]);
     let rust_names: BTreeSet<&str> = rust.keys().map(String::as_str).collect();
     assert_eq!(rust_names, expected_names, "built-in role names");
 
@@ -395,7 +411,7 @@ fn built_in_roles_match_go() {
         assert_eq!(actual, expected, "{name}: permissions");
     }
 
-    for name in ["function-publisher", "function-host"] {
+    for name in ["function-publisher", "function-host", "router-operator"] {
         let actual: BTreeSet<&str> = rust[name].permissions.iter().map(String::as_str).collect();
         assert_eq!(actual, additions[name], "{name}: permissions");
     }
