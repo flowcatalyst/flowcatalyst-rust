@@ -1,7 +1,9 @@
-//! The function-host role (`FC_FUNCTION_HOST_ENABLED`): the WASM function
-//! host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`) that
-//! polls the platform's `/control/functions/*` for its pool's desired
-//! state, loads the functions and serves them. It reads its own `FC_FN_*`
+//! The function-host role (`FC_FUNCTION_HOST_ENABLED`): the function host
+//! (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`) that polls
+//! the platform's `/control/functions/*` for its pool's desired state,
+//! loads the functions and serves them: WASI 0.2 components (`component`,
+//! `wasm`), and with the default `js` feature JS bundles in V8 isolates
+//! (`js`, `crates/fc-fnhost-js`). It reads its own `FC_FN_*`
 //! environment (`fc_fnhost_core::env::HostEnv`): `FC_FN_PLATFORM_URL`,
 //! `FC_FN_CLIENT_ID` and `FC_FN_CLIENT_SECRET` are required, `FC_FN_POOL`,
 //! `FC_FN_SIGNATURES`, `FC_FN_TRUST_ROOT`, `FC_FN_CACHE_DIR`,
@@ -28,7 +30,8 @@
 
 use anyhow::{anyhow, Result};
 use fc_fnhost_core::env::{EnvReader, HostEnv, PublicPort};
-use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
+use fc_fnhost_core::host::{function_listener, FnHost};
+use fc_fnhost_core::loader::Loaders;
 use tracing::info;
 
 /// The ports a host beside other roles defaults to (`fc-dev`'s).
@@ -37,13 +40,28 @@ const SHARED_FN_PORT: &str = "8095";
 const SHARED_FN_PUBLIC_PORT: &str = "8096";
 const SHARED_FN_METRICS_PORT: &str = "9091";
 
+/// The runtimes this build loads: WASI components, plus JS with the `js`
+/// feature.
+pub fn loaders(env: &HostEnv) -> Result<Loaders, String> {
+    #[cfg(feature = "js")]
+    {
+        fc_fnhost_js::loaders(env)
+    }
+    #[cfg(not(feature = "js"))]
+    {
+        fc_fnhost_core::host::wasm_loaders(env)
+    }
+}
+
 /// Host only: the former `fc-fnhost` daemon on the process environment.
 /// Returns the exit code.
 pub async fn run_host_only() -> i32 {
     let mut stderr = std::io::stderr();
-    fc_fnhost_core::host::run_wasm_host(
+    fc_fnhost_core::host::run(
         EnvReader::system(),
         &mut stderr,
+        loaders,
+        |env| Some(function_listener(env)),
         fc_fnhost_core::host::shutdown_signal(),
     )
     .await
@@ -120,11 +138,11 @@ impl SharedHost {
         Ok(Self { env })
     }
 
-    /// Starts the host: the WASM runtime, the first reconcile, the
-    /// listeners. A host that cannot start is an error.
+    /// Starts the host: the runtimes, the first reconcile, the listeners. A
+    /// host that cannot start is an error.
     pub async fn start(self) -> Result<FnHost> {
-        let loaders = wasm_loaders(&self.env)
-            .map_err(|e| anyhow!("cannot start the function runtime: {e}"))?;
+        let loaders =
+            loaders(&self.env).map_err(|e| anyhow!("cannot start the function runtime: {e}"))?;
         let listener = function_listener(&self.env);
         let mut host = FnHost::new(self.env, loaders, Some(listener))
             .map_err(|e| anyhow!("cannot create the function cache directory: {e}"))?;

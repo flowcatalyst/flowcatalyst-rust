@@ -1,0 +1,13 @@
+{
+  "name": "{{project-name}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A FlowCatalyst function in JavaScript (runtime: js). See README.md.",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --format=esm --platform=neutral --main-fields=module,main --target=es2023 --external:flowcatalyst:* --outfile=dist/function.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

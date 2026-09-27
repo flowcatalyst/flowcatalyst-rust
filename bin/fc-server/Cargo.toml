@@ -20,6 +20,10 @@ fc-mcp = { path = "../../crates/fc-mcp" }
 # The function-host role. `ecr`: ECR registry auth for oci:// artifacts
 # (owner decision #14), as the former fc-fnhost binary had it.
 fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr"] }
+# The function host's JS runtime (runtime: js, V8 isolates), behind the
+# default `js` feature: off, the host loads WASI components only and the
+# binary carries no V8.
+fc-fnhost-js = { path = "../../crates/fc-fnhost-js", optional = true }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -58,7 +62,9 @@ hex = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
-default = []
+default = ["js"]
+# The function host's JS runtime (fc-fnhost-js, V8 through deno_core).
+js = ["dep:fc-fnhost-js"]
 # The router role's optional extras (formerly the standalone fc-router's):
 # ALB self-registration, e-mail notifications, the OIDC-flow router UI auth.
 alb = ["fc-router/alb"]

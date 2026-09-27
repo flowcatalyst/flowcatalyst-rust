@@ -36,7 +36,8 @@ use super::{parse_duration, print_json, AddressOpts, CliError, Ctx, Io, OutputMo
 
 #[derive(clap::Args, Debug)]
 pub struct PublishArgs {
-    /// The function's artifact: a WASM component (`.wasm`).
+    /// The function's artifact: a WASM component (`.wasm`) or a JS bundle
+    /// (one ES module, `.mjs`/`.js`).
     pub artifact: PathBuf,
 
     /// Full function address, app.service.name.

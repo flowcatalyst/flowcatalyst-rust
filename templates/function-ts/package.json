@@ -1,0 +1,15 @@
+{
+  "name": "{{project-name}}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A FlowCatalyst function in TypeScript (runtime: js). See README.md.",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=neutral --main-fields=module,main --target=es2023 --external:flowcatalyst:* --outfile=dist/function.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

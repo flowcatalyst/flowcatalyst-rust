@@ -22,6 +22,8 @@ fc-platform = { path = "../../crates/fc-platform" }
 fc-mcp = { path = "../../crates/fc-mcp" }
 # The in-process function host `fc-dev` runs beside the platform (plan H8).
 fc-fnhost-core = { path = "../../crates/fc-fnhost-core" }
+# Its JS runtime (runtime: js, V8 isolates), behind the default `js` feature.
+fc-fnhost-js = { path = "../../crates/fc-fnhost-js", optional = true }
 # Server-rendered admin UI trial (Topcoat), behind the `web` feature.
 fc-web = { path = "../../crates/fc-web", optional = true }
 tokio = { workspace = true }
@@ -93,7 +95,9 @@ libc = "0.2"
 tempfile = { workspace = true }
 
 [features]
-default = ["embedded-db"]
+default = ["embedded-db", "js"]
+# The in-process function host's JS runtime (fc-fnhost-js, V8).
+js = ["dep:fc-fnhost-js"]
 embedded-db = ["dep:postgresql_embedded"]
 # Mount the Topcoat UI trial (`crates/fc-web`) at /ui, in front of the SPA.
 web = ["dep:fc-web"]

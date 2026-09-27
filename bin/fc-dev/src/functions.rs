@@ -13,8 +13,9 @@
 //!   `platform:messaging-admin`), each a SERVICE principal with anchor
 //!   scope, with a fresh secret every start;
 //! - starts an in-process function host ([`start_host`]: fc-fnhost-core's
-//!   `FnHost` with the WASM runtime and both listeners, the assembly
-//!   `fc-server`'s function-host role runs) for pool `default`,
+//!   `FnHost` with the WASM runtime, the JS runtime (`js` feature, on by
+//!   default) and both listeners, the assembly `fc-server`'s function-host
+//!   role runs) for pool `default`,
 //!   authenticating as `fcdev-fn-host` against the local platform;
 //! - writes the CLI's credentials to `<data dir>/fn-cli.json` (owner-only),
 //!   so `fc-dev fn …` needs no flags, and removes it at shutdown;
@@ -38,7 +39,7 @@ use rand::Rng;
 use tracing::info;
 
 use fc_fnhost_core::env::{EnvReader, HostEnv};
-use fc_fnhost_core::host::{function_listener, wasm_loaders, FnHost};
+use fc_fnhost_core::host::{function_listener, FnHost};
 use fc_platform::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
 use fc_platform::repository::Repositories;
 use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
@@ -373,8 +374,8 @@ pub fn host_env_pairs(
     pairs
 }
 
-/// Starts the in-process host: the WASM runtime, the private and public
-/// listeners and the observability listener, then the first reconcile
+/// Starts the in-process host: the WASM and JS runtimes, the private and
+/// public listeners and the observability listener, then the first reconcile
 /// against `platform_url` (which must already be accepting connections).
 pub async fn start_host(
     args: &FunctionArgs,
@@ -390,7 +391,12 @@ pub async fn start_host(
     )))
     .map_err(|e| anyhow!("{e}"))?;
     // The deployed host's assembly (fc-server's function-host role).
-    let loaders = wasm_loaders(&env).map_err(|e| anyhow!("cannot start the WASM runtime: {e}"))?;
+    // WASI components, plus JS with the default `js` feature.
+    #[cfg(feature = "js")]
+    let loaders = fc_fnhost_js::loaders(&env);
+    #[cfg(not(feature = "js"))]
+    let loaders = fc_fnhost_core::host::wasm_loaders(&env);
+    let loaders = loaders.map_err(|e| anyhow!("cannot start the function runtimes: {e}"))?;
     let listener = function_listener(&env);
     let mut host = FnHost::new(env, loaders, Some(listener))
         .map_err(|e| anyhow!("cannot create the function cache directory: {e}"))?;

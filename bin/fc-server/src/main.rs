@@ -41,7 +41,7 @@
 //! | `FC_STREAM_PROCESSOR_ENABLED` / `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
 //! | `FC_OUTBOX_ENABLED` / `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the outbox processor |
 //! | `FC_MCP_ENABLED` | `false` | Run the read-only MCP server on its own listener (see `mcp.rs`) |
-//! | `FC_FUNCTION_HOST_ENABLED` | `false` | Run the WASM function host; alone, fc-server is exactly the former `fc-fnhost` daemon (see `function_host.rs`) |
+//! | `FC_FUNCTION_HOST_ENABLED` | `false` | Run the function host (WASI components, and JS with the default `js` feature); alone, fc-server is exactly the former `fc-fnhost` daemon (see `function_host.rs`) |
 //!
 //! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
 //! | Variable | Default | Description |

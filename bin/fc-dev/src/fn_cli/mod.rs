@@ -3,8 +3,8 @@
 //!
 //! | Command | Does |
 //! |---|---|
-//! | `init <dir>` | scaffolds a Rust WASM function from `templates/function-rust` (local only) |
-//! | `build [<dir>]` | `cargo build --release --target wasm32-wasip2`, and prints the component's path |
+//! | `init <dir> [--lang rust\|ts\|js]` | scaffolds a function from `templates/function-{rust,ts,js}` (local only) |
+//! | `build [<dir>]` | Rust: `cargo build --release --target wasm32-wasip2`; TypeScript/JS: `npm run build` (esbuild); prints the artifact's path |
 //! | `publish <artifact> [<address>]` | uploads the artifact, then publishes a version with the manifest; creates the function when its address is unknown |
 //! | `deploy <artifact> [<address>]` | publish, wait for `READY`, promote `live` |
 //! | `promote [<address>] --version <n>` | wait for `READY`, promote an alias |
@@ -77,7 +77,8 @@ pub enum OutputMode {
 pub enum FnCommand {
     /// Scaffold a function project (local only; never contacts the platform).
     Init(init::InitArgs),
-    /// Build the function's WASM component (cargo, wasm32-wasip2).
+    /// Build the function: its WASM component (cargo, wasm32-wasip2) or its
+    /// JS bundle (npm run build).
     Build(build::BuildArgs),
     /// Publish a new version of a function.
     Publish(deploy::PublishArgs),
