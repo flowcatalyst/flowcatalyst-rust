@@ -20,6 +20,7 @@ final class AuditLog
         public readonly ?string $principalName = null,
         public readonly ?string $applicationId = null,
         public readonly ?string $clientId = null,
+        public readonly ?string $operationJson = null,
     ) {}
 
     /**
@@ -37,6 +38,7 @@ final class AuditLog
             principalName: isset($data['principalName']) ? (string) $data['principalName'] : null,
             applicationId: isset($data['applicationId']) ? (string) $data['applicationId'] : null,
             clientId: isset($data['clientId']) ? (string) $data['clientId'] : null,
+            operationJson: isset($data['operationJson']) ? (string) $data['operationJson'] : null,
         );
     }
 }

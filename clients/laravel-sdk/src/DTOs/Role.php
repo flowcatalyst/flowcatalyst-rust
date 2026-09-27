@@ -39,7 +39,7 @@ final class Role
         return new self(
             id: (string) ($data['id'] ?? ''),
             name: (string) $data['name'],
-            shortName: (string) ($data['shortName'] ?? ''),
+            shortName: (string) ($data['shortName'] ?? self::shortNameOf((string) $data['name'])),
             displayName: (string) ($data['displayName'] ?? ''),
             applicationCode: (string) ($data['applicationCode'] ?? ''),
             source: (string) ($data['source'] ?? ''),
@@ -85,5 +85,16 @@ final class Role
     public function isFromCode(): bool
     {
         return $this->source === 'CODE';
+    }
+
+    /**
+     * The role name without its application prefix (`app:role` -> `role`).
+     * The platform does not send `shortName`; it is derived from `name`.
+     */
+    private static function shortNameOf(string $name): string
+    {
+        $pos = strpos($name, ':');
+
+        return $pos === false ? $name : substr($name, $pos + 1);
     }
 }

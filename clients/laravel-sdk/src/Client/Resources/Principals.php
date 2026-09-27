@@ -24,14 +24,17 @@ class Principals
     /**
      * List principals with optional filters.
      *
-     * `email` is an exact (case-insensitive) match. `q` is a name/email
-     * substring search — use `email` when you know the address.
+     * `$q` is a case-insensitive substring search across name and email.
+     * The platform has no exact email filter: `$email` is sent as `q` (and as
+     * `email`, for older platforms), so it matches as a substring. Use
+     * findByEmail() for an exact match.
      */
     public function list(
         ?string $clientId = null,
         ?string $type = null,
         ?bool $active = null,
         ?string $email = null,
+        ?string $q = null,
     ): PrincipalList {
         $queryParams = [];
 
@@ -43,6 +46,9 @@ class Principals
         }
         if ($active !== null) {
             $queryParams['active'] = $active ? 'true' : 'false';
+        }
+        if ($q !== null || $email !== null) {
+            $queryParams['q'] = $q ?? $email;
         }
         if ($email !== null) {
             $queryParams['email'] = $email;
@@ -67,10 +73,9 @@ class Principals
     /**
      * Find a principal by email address.
      *
-     * Returns null if no principal exists with the given email. We
-     * defensively verify the row we return actually matches the requested
-     * email — older platform builds silently ignored unknown query params
-     * and returned an unfiltered list.
+     * Returns null if no principal exists with the given email. The
+     * platform's `q` search is a substring match, so the result is narrowed
+     * here to the principal whose email equals `$email` (case-insensitive).
      */
     public function findByEmail(string $email): ?Principal
     {

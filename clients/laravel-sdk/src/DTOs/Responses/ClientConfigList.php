@@ -8,7 +8,8 @@ use FlowCatalyst\DTOs\ClientConfig;
 
 /**
  * Wraps `GET /api/applications/{id}/clients` — the list of per-client
- * configurations for an application.
+ * configurations for an application. The platform returns `{items: [...]}`;
+ * `$clientConfigs` holds them (older platforms sent `clientConfigs`).
  */
 final class ClientConfigList
 {
@@ -26,7 +27,7 @@ final class ClientConfigList
     public static function fromArray(array $data): self
     {
         /** @var array<int, array<string, mixed>> $rows */
-        $rows = $data['clientConfigs'] ?? [];
+        $rows = $data['items'] ?? $data['clientConfigs'] ?? [];
         $configs = array_map(static fn(array $row) => ClientConfig::fromArray($row), $rows);
         return new self(
             clientConfigs: $configs,

@@ -20,23 +20,26 @@ class EventTypes
     ) {}
 
     /**
-     * List event types.
+     * List event types. With no filter at all the platform returns only
+     * CURRENT event types.
      */
     public function list(
         ?string $application = null,
         ?string $clientId = null,
         ?string $status = null,
+        ?string $subdomain = null,
+        ?string $aggregate = null,
     ): EventTypeList {
-        $queryParams = [];
-        if ($application !== null) {
-            $queryParams['application'] = $application;
-        }
-        if ($clientId !== null) {
-            $queryParams['clientId'] = $clientId;
-        }
-        if ($status !== null) {
-            $queryParams['status'] = $status;
-        }
+        $queryParams = array_filter(
+            [
+                'application' => $application,
+                'clientId' => $clientId,
+                'status' => $status,
+                'subdomain' => $subdomain,
+                'aggregate' => $aggregate,
+            ],
+            static fn($v) => $v !== null,
+        );
         $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
         $response = $this->client->request('GET', "/api/event-types{$query}");
 
@@ -80,11 +83,19 @@ class EventTypes
 
     /**
      * Update an event type. The platform responds with 204 No Content.
+     *
+     * The platform requires `name` on every update. When `$request->name` is
+     * null the event type's current name is read first and sent unchanged.
      */
     public function update(string $id, UpdateEventTypeRequest $request): void
     {
+        $payload = $request->toArray();
+        if (!isset($payload['name'])) {
+            $payload = ['name' => $this->get($id)->name] + $payload;
+        }
+
         $this->client->request('PUT', "/api/event-types/{$id}", [
-            'json' => $request->toArray(),
+            'json' => $payload,
         ]);
     }
 
@@ -104,10 +115,21 @@ class EventTypes
     }
 
     /**
-     * Archive (soft-delete) an event type. The server's DELETE is a soft
-     * archive — the row is retained with status flipped to ARCHIVED.
+     * Archive an event type.
+     *
+     * @deprecated The platform has no archive route for event types. This
+     *             sends `DELETE /api/event-types/{id}`, which the Go platform
+     *             treats as a delete (the Rust platform archived). Use delete().
      */
     public function archive(string $id): void
+    {
+        $this->delete($id);
+    }
+
+    /**
+     * Delete an event type: `DELETE /api/event-types/{id}`.
+     */
+    public function delete(string $id): void
     {
         $this->client->request('DELETE', "/api/event-types/{$id}");
     }

@@ -7,7 +7,11 @@ namespace FlowCatalyst\DTOs\Responses;
 use FlowCatalyst\DTOs\AuditLog;
 
 /**
- * Wraps `GET /api/audit-logs` — paginated list of audit log entries.
+ * Wraps `GET /api/audit-logs` — a page of audit log entries.
+ *
+ * The platform pages with a cursor: while `$hasMore` is true, pass
+ * `$nextCursor` as `after` to fetch the next page. `$total`, `$page` and
+ * `$pageSize` are only filled by older platforms that paged by number.
  */
 final class AuditLogList
 {
@@ -19,6 +23,8 @@ final class AuditLogList
         public readonly int $total = 0,
         public readonly int $page = 0,
         public readonly int $pageSize = 0,
+        public readonly bool $hasMore = false,
+        public readonly ?string $nextCursor = null,
     ) {}
 
     /**
@@ -33,6 +39,10 @@ final class AuditLogList
             total: (int) ($data['total'] ?? 0),
             page: (int) ($data['page'] ?? 0),
             pageSize: (int) ($data['pageSize'] ?? 0),
+            hasMore: (bool) ($data['hasMore'] ?? false),
+            nextCursor: isset($data['nextCursor']) && $data['nextCursor'] !== ''
+                ? (string) $data['nextCursor']
+                : null,
         );
     }
 }

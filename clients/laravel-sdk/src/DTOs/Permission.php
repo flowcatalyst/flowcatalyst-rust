@@ -8,7 +8,9 @@ namespace FlowCatalyst\DTOs;
  * A granted permission as seen in the platform's permissions catalogue.
  *
  * `permission` is the full string (`application:context:aggregate:action`)
- * and the parsed segments are exposed individually.
+ * and the parsed segments are exposed individually. The platform returns
+ * `{permission, name, description, category}`; the segments are parsed from
+ * `permission` when the response does not carry them.
  */
 final class Permission
 {
@@ -19,6 +21,8 @@ final class Permission
         public readonly string $aggregate,
         public readonly string $action,
         public readonly string $description,
+        public readonly ?string $name = null,
+        public readonly ?string $category = null,
     ) {}
 
     /**
@@ -26,18 +30,23 @@ final class Permission
      */
     public static function fromArray(array $data): self
     {
+        $permission = (string) $data['permission'];
+        $segments = array_pad(explode(':', $permission, 4), 4, '');
+
         return new self(
-            permission: (string) $data['permission'],
-            application: (string) ($data['application'] ?? ''),
-            context: (string) ($data['context'] ?? ''),
-            aggregate: (string) ($data['aggregate'] ?? ''),
-            action: (string) ($data['action'] ?? ''),
+            permission: $permission,
+            application: (string) ($data['application'] ?? $segments[0]),
+            context: (string) ($data['context'] ?? $segments[1]),
+            aggregate: (string) ($data['aggregate'] ?? $segments[2]),
+            action: (string) ($data['action'] ?? $segments[3]),
             description: (string) ($data['description'] ?? ''),
+            name: isset($data['name']) ? (string) $data['name'] : null,
+            category: isset($data['category']) ? (string) $data['category'] : null,
         );
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, string|null>
      */
     public function toArray(): array
     {
@@ -48,6 +57,8 @@ final class Permission
             'aggregate' => $this->aggregate,
             'action' => $this->action,
             'description' => $this->description,
+            'name' => $this->name,
+            'category' => $this->category,
         ];
     }
 }

@@ -20,6 +20,10 @@ class Connections
 
     /**
      * List connections with optional filters.
+     *
+     * The platform filters on `clientId` and `status` only, so
+     * `$serviceAccountId` is applied to the returned connections here (it is
+     * still sent, for older platforms); `total` is then the filtered count.
      */
     public function list(
         ?string $clientId = null,
@@ -39,7 +43,17 @@ class Connections
         $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
         $response = $this->client->request('GET', "/api/connections{$query}");
 
-        return ConnectionList::fromArray($response);
+        $list = ConnectionList::fromArray($response);
+        if ($serviceAccountId === null) {
+            return $list;
+        }
+
+        $connections = array_values(array_filter(
+            $list->connections,
+            static fn(Connection $c) => $c->serviceAccountId === $serviceAccountId,
+        ));
+
+        return new ConnectionList(connections: $connections, total: count($connections));
     }
 
     /**
@@ -68,15 +82,22 @@ class Connections
     }
 
     /**
-     * Update a connection.
+     * Update a connection. The platform responds with 204 No Content; call
+     * `get($id)` if you need the updated record.
+     *
+     * The platform requires `name` on every update. When `$request->name` is
+     * null the connection's current name is read first and sent unchanged.
      */
-    public function update(string $id, UpdateConnectionRequest $request): Connection
+    public function update(string $id, UpdateConnectionRequest $request): void
     {
-        $response = $this->client->request('PUT', "/api/connections/{$id}", [
-            'json' => $request->toArray(),
-        ]);
+        $payload = $request->toArray();
+        if (!isset($payload['name'])) {
+            $payload = ['name' => $this->get($id)->name] + $payload;
+        }
 
-        return Connection::fromArray($response);
+        $this->client->request('PUT', "/api/connections/{$id}", [
+            'json' => $payload,
+        ]);
     }
 
     /**

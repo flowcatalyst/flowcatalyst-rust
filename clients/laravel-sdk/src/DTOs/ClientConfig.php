@@ -7,8 +7,12 @@ namespace FlowCatalyst\DTOs;
 /**
  * Per-client configuration for an application — the row that says "client X
  * has application Y enabled, with this base-URL override and these config
- * extras." Returned by `GET /api/applications/{id}/clients` and the
- * enable/disable/update-config endpoints.
+ * extras." Returned by `GET /api/applications/{id}/clients` and
+ * `GET /api/applications/{id}/clients/{clientId}`.
+ *
+ * The platform sends the config extras as `configJson`; `$config` holds them
+ * (older platforms sent `config`). `clientName`, `clientIdentifier` and
+ * `effectiveBaseUrl` are only filled by platforms that send them.
  */
 final class ClientConfig
 {
@@ -25,6 +29,8 @@ final class ClientConfig
         public readonly ?string $baseUrlOverride = null,
         public readonly ?string $effectiveBaseUrl = null,
         public readonly ?array $config = null,
+        public readonly ?string $createdAt = null,
+        public readonly ?string $updatedAt = null,
     ) {}
 
     /**
@@ -33,7 +39,8 @@ final class ClientConfig
     public static function fromArray(array $data): self
     {
         /** @var array<string, mixed>|null $config */
-        $config = isset($data['config']) && is_array($data['config']) ? $data['config'] : null;
+        $raw = $data['configJson'] ?? $data['config'] ?? null;
+        $config = is_array($raw) ? $raw : null;
         return new self(
             id: (string) $data['id'],
             applicationId: (string) $data['applicationId'],
@@ -44,6 +51,8 @@ final class ClientConfig
             baseUrlOverride: isset($data['baseUrlOverride']) ? (string) $data['baseUrlOverride'] : null,
             effectiveBaseUrl: isset($data['effectiveBaseUrl']) ? (string) $data['effectiveBaseUrl'] : null,
             config: $config,
+            createdAt: isset($data['createdAt']) ? (string) $data['createdAt'] : null,
+            updatedAt: isset($data['updatedAt']) ? (string) $data['updatedAt'] : null,
         );
     }
 }
