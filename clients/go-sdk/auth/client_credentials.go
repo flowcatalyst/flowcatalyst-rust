@@ -20,7 +20,10 @@ type ClientCredentialsConfig struct {
 	ClientID string
 	// ClientSecret is the matching secret.
 	ClientSecret string
-	// Scopes requested. May be empty.
+	// Scopes requested. May be empty: the token then carries every
+	// permission the service account holds. A narrowed list used for the
+	// router's in-flight checks (client.Router) must include
+	// "platform:messaging:router:view".
 	Scopes []string
 	// Audience requested. May be empty.
 	Audience string

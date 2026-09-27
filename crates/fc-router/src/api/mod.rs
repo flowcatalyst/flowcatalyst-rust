@@ -19,7 +19,9 @@
 //! [`warnings`], [`mutations`] (pool config, broker-stats refresh, breaker
 //! reset, in-flight force-ACK), [`config`] (reload, local config,
 //! standby/traffic status), [`dashboard`] (embedded HTML), [`messages`]
-//! (publish/seed), [`test_endpoints`] (`/api/test/*` mocks).
+//! (publish/seed), [`test_endpoints`] (`/api/test/*` mocks, dev mode only),
+//! [`platform_auth`] (the platform-bearer guard, owner ruling 2) and
+//! [`dashboard_sign_in`] (the dashboard's PKCE sign-in helpers).
 //! This file stays the assembly point: shared [`AppState`], the cached
 //! broker-stats helper, the router builders, and the OpenAPI doc.
 
@@ -42,6 +44,7 @@ pub mod auth;
 pub(crate) mod config;
 pub use config::ConfigReloader;
 pub(crate) mod dashboard;
+pub mod dashboard_sign_in;
 pub(crate) mod group_monitoring;
 pub(crate) mod health;
 pub(crate) mod messages;
@@ -50,6 +53,7 @@ pub(crate) mod monitoring;
 pub(crate) mod mutations;
 #[cfg(feature = "oidc-flow")]
 pub mod oidc_flow;
+pub mod platform_auth;
 pub(crate) mod test_endpoints;
 pub(crate) mod warnings;
 
@@ -57,6 +61,8 @@ pub use auth::{
     auth_middleware, create_auth_state, is_public_path, AuthConfig, AuthMode, AuthState,
     OidcValidator, TokenClaims,
 };
+pub use dashboard_sign_in::DashboardSignIn;
+pub use platform_auth::{PlatformAuth, ROUTER_OPERATE, ROUTER_VIEW};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -82,6 +88,9 @@ pub struct AppState {
     /// `POST /config/reload` (Go: `ConfigReloader`). `None` when the router
     /// has no config source.
     pub config_reloader: Option<Arc<dyn config::ConfigReloader>>,
+    /// Shown on the health and monitoring output while the API is open
+    /// outside dev mode (decision #43's transitional `AUTH_MODE=NONE`).
+    pub auth_warning: Option<Arc<str>>,
 }
 
 /// Cumulative per-queue counters captured at a point in time; used to compute
@@ -342,8 +351,8 @@ pub struct RouterDeps {
     pub circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
 }
 
-/// Optional router API features. `Default` is what [`create_router`] uses:
-/// no standby, instance id `"default"`, no auth, no prefix.
+/// Optional router API features. `Default`: no standby, instance id
+/// `"default"`, no auth, no prefix, and no dev-only routes.
 pub struct RouterOptions {
     pub standby_enabled: bool,
     pub instance_id: String,
@@ -352,8 +361,20 @@ pub struct RouterOptions {
     pub traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
     /// Prometheus handle for rendering `/metrics`.
     pub metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
-    /// Authentication; `None` (or mode `None`) leaves every route open.
+    /// The dev-mode guards (§9.7 Basic, the OIDC modes); `None` (or mode
+    /// `None`) leaves every route open. Ignored when `platform_auth` is set.
     pub auth_state: Option<AuthState>,
+    /// The platform-bearer guard (owner ruling 2). Takes precedence over
+    /// `auth_state`; the dashboard page is public under it.
+    pub platform_auth: Option<PlatformAuth>,
+    /// The dashboard's sign-in helpers; `None` mounts them answering "off".
+    pub dashboard_sign_in: Option<Arc<DashboardSignIn>>,
+    /// Mount the mock, test, benchmark and seed routes (`/api/test/*`,
+    /// `/api/benchmark/*`, `/api/seed/messages`). Dev mode only: elsewhere
+    /// they are absent, not merely protected.
+    pub dev_routes: bool,
+    /// See [`AppState::auth_warning`].
+    pub auth_warning: Option<String>,
     /// Additionally nest the whole route tree under this path prefix.
     pub router_http_prefix: Option<String>,
     /// Config source behind `POST /config/reload`.
@@ -369,13 +390,18 @@ impl Default for RouterOptions {
             traffic_strategy: None,
             metrics_handle: None,
             auth_state: None,
+            platform_auth: None,
+            dashboard_sign_in: None,
+            dev_routes: false,
+            auth_warning: None,
             router_http_prefix: None,
             config_reloader: None,
         }
     }
 }
 
-/// Create the full router with all endpoints (no auth)
+/// Create the full router with all endpoints, the dev-only ones included,
+/// and no auth: fc-dev's embedded router and tests.
 pub fn create_router(
     publisher: Arc<dyn QueuePublisher>,
     queue_manager: Arc<QueueManager>,
@@ -391,7 +417,10 @@ pub fn create_router(
             health_service,
             circuit_breaker_registry,
         },
-        RouterOptions::default(),
+        RouterOptions {
+            dev_routes: true,
+            ..RouterOptions::default()
+        },
     )
 }
 
@@ -432,6 +461,10 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         traffic_strategy,
         metrics_handle,
         auth_state,
+        platform_auth,
+        dashboard_sign_in,
+        dev_routes,
+        auth_warning,
         router_http_prefix,
         config_reloader,
     } = options;
@@ -470,6 +503,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         metrics_handle,
         cached_broker_stats,
         config_reloader,
+        auth_warning: auth_warning.map(Arc::from),
     };
 
     // Public routes — no authentication required
@@ -488,6 +522,24 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         // Prometheus metrics
         .route("/metrics", get(health::metrics_handler))
         .route("/q/metrics", get(health::metrics_handler))
+        .with_state(state.clone())
+        // The dashboard's sign-in helpers: a signed-out browser needs them.
+        .merge(
+            dashboard_sign_in
+                .unwrap_or_else(|| Arc::new(DashboardSignIn::off()))
+                .routes(),
+        );
+
+    // The dashboard page carries no data. Under the platform-bearer guard it
+    // is public, since a signed-out browser has to load it to sign in (Java
+    // rule 4); under the dev-mode guards it stays where it was.
+    let dashboard_routes = Router::new()
+        .route(
+            "/monitoring/dashboard",
+            get(dashboard::dashboard_html_handler),
+        )
+        // Java-compatible dashboard path alias
+        .route("/dashboard.html", get(dashboard::dashboard_html_handler))
         .with_state(state.clone());
 
     // Protected routes — auth middleware applied when configured
@@ -586,10 +638,6 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             post(group_monitoring::clear_group_flush_handler),
         )
         .route(
-            "/monitoring/dashboard",
-            get(dashboard::dashboard_html_handler),
-        )
-        .route(
             "/monitoring/consumer-health",
             get(health::consumer_health_handler),
         )
@@ -601,8 +649,6 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             "/monitoring/traffic-status",
             get(config::get_traffic_status),
         )
-        // Java-compatible dashboard path alias
-        .route("/dashboard.html", get(dashboard::dashboard_html_handler))
         // Stream processor health endpoints
         .route(
             "/monitoring/stream-health",
@@ -638,6 +684,13 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             get(warnings::get_unacknowledged_warnings),
         )
         .route("/warnings/old", delete(warnings::clear_old_warnings))
+        // Message publishing
+        .route("/messages", post(messages::publish_message))
+        .with_state(state.clone());
+
+    // Dev mode only (owner ruling 2, Java rule 7): the mock targets, their
+    // benchmark aliases and seeding. A deployed router does not have them.
+    let dev_only_routes = Router::new()
         // Message seeding (test)
         .route("/api/seed/messages", post(messages::seed_messages))
         // Test response endpoints (development)
@@ -674,13 +727,28 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             "/api/benchmark/reset",
             post(test_endpoints::reset_test_stats),
         )
-        // Message publishing
-        .route("/messages", post(messages::publish_message))
         .with_state(state);
+    let protected_routes = if dev_routes {
+        protected_routes.merge(dev_only_routes)
+    } else {
+        protected_routes
+    };
 
     // Apply auth middleware to protected routes when configured
     #[allow(unused_mut)]
-    let mut router = if let Some(ref auth) = auth_state {
+    let mut router = if let Some(ref guard) = platform_auth {
+        info!(
+            verifying = guard.is_verifying(),
+            "Router API: platform bearer tokens required"
+        );
+        public_routes
+            .merge(dashboard_routes)
+            .merge(protected_routes.layer(axum::middleware::from_fn_with_state(
+                guard.clone(),
+                platform_auth::platform_auth_middleware,
+            )))
+    } else if let Some(ref auth) = auth_state {
+        let protected_routes = protected_routes.merge(dashboard_routes);
         if auth.config.mode != AuthMode::None {
             info!(mode = ?auth.config.mode, "Authentication enabled for router API");
             public_routes.merge(protected_routes.layer(axum::middleware::from_fn_with_state(
@@ -691,7 +759,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             public_routes.merge(protected_routes)
         }
     } else {
-        public_routes.merge(protected_routes)
+        public_routes.merge(protected_routes.merge(dashboard_routes))
     };
 
     // Merge OIDC flow routes when feature enabled and mode is OidcFlow

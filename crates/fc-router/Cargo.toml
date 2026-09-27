@@ -9,6 +9,9 @@ fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue" }
 fc-standby = { path = "../fc-standby" }
 fc-stream = { path = "../fc-stream" }
+# The router API's platform bearer tokens (owner ruling 2): the verifier the
+# function host uses.
+fc-platform-jwks = { path = "../fc-platform-jwks" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
@@ -69,6 +72,8 @@ backends = [
 ]
 
 [dev-dependencies]
+# A fake platform (discovery + JWKS) minting real RS256 tokens.
+fc-platform-jwks = { path = "../fc-platform-jwks", features = ["test-support"] }
 tokio-test = { workspace = true }
 wiremock = { workspace = true }
 tempfile = { workspace = true }

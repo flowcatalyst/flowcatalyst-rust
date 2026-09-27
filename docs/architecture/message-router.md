@@ -319,9 +319,10 @@ Important consequence: **the router can be reconfigured without restart**. A pla
 | `GET /health`, `/q/health` | none | Liveness with cheap latency probe |
 | `GET /health/live`, `/health/ready`, `/health/startup` | none | Kubernetes probes |
 | `GET /metrics`, `/q/metrics` | none | Prometheus scrape |
-| `GET /monitoring` | configurable (NONE / API-KEY / OIDC) | Overview JSON |
+| `GET /dashboard.html`, `/monitoring/dashboard`, `GET /dashboard/auth-config`, `POST /dashboard/token` | none | The dashboard page and its platform sign-in helpers (no router data) |
+| `GET /monitoring` | platform bearer, `platform:messaging:router:view` | Overview JSON |
 | `GET /monitoring/health` | as above | Detailed health report |
-| `GET /monitoring/pools`, `PUT /monitoring/pools/:code` | as above | List pools; update concurrency at runtime |
+| `GET /monitoring/pools` / `PUT /monitoring/pools/:code` | `:view` / `:operate` | List pools; update concurrency at runtime |
 | `GET /monitoring/queues` | as above | Queue depths / consumer stats |
 | `GET /monitoring/circuit-breakers` | as above | Per-endpoint state + recent failure rate |
 | `GET /monitoring/pool-stats` | as above | HdrHistogram-backed p50/p95/p99 per pool |
@@ -330,7 +331,25 @@ Important consequence: **the router can be reconfigured without restart**. A pla
 | `GET /monitoring/standby-status` | as above | Leader / standby state |
 | `GET /monitoring/traffic-status` | as above | ALB target-group registration state |
 
-There is **no `POST /publish` route**. Messages come from SQS only. Dev-mode endpoints (`/api/seed/messages`, `/test/fast` etc.) are guarded by a build flag and exist for integration tests.
+**Auth (owner ruling 2, decision #21; `api/platform_auth.rs`).** Outside dev mode every route
+but the public ones above needs `Authorization: Bearer <platform JWT>`, verified against the
+platform's JWKS (`FC_ROUTER_PLATFORM_URL`, else the platform in the same `fc-server`) with the
+verifier the function host uses (`fc-platform-jwks`): issuer, expiry, RS256 signature,
+`token_use=api`. `GET`/`HEAD` and `POST /monitoring/in-flight-messages/check-batch` need
+`platform:messaging:router:view`; every other method (publish, breaker resets, in-flight ACK,
+group-flush clear, pool update, config reload, warning acknowledge/clear, broker-stats refresh)
+needs `platform:messaging:router:operate`. A missing or bad token is 401 (`WWW-Authenticate:
+Bearer`, `X-Auth-Mode: BEARER`); a token without the permission is 403 `PERMISSION_REQUIRED`.
+`platform:router-operator` holds both, `platform:viewer` and `platform:application-service` hold
+`:view`, and super-admin holds both through its wildcard. Dev mode keeps `AUTH_MODE` (Basic, the
+OIDC modes, open), and `AUTH_MODE=BEARER` opts into platform tokens there. Decision #43: outside
+dev mode `AUTH_MODE=NONE` is still honoured for now, with a WARN at startup and an `authWarning`
+on the health and monitoring output. The dashboard signs in through the platform (authorization
+code + PKCE, the public client `FC_ROUTER_DASHBOARD_CLIENT_ID`), holding the access token in
+memory only.
+
+The mock, benchmark and seed endpoints (`/api/test/*`, `/api/benchmark/*`, `/api/seed/messages`)
+are mounted in dev mode (`FLOWCATALYST_DEV_MODE`, fc-dev) only; elsewhere they are absent.
 
 ### Standby
 

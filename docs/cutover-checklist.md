@@ -59,11 +59,32 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       must match
 
 ## Rulings adopted from the Java session, not yet built
-- [ ] Router auth (ruling 2): platform bearer tokens, `router:view`/`operate`, the `router-operator` role,
-      dev-only mocks, the PKCE dashboard. **The SDK releases that send the bearer must reach
-      integral/hr/rfp first** (laravel-sdk 0.10.27; hr is pinned to `^0.8` and must move to `^0.10`).
-      Rust's role catalogue doesn't have `router:view`/`operate` yet: add them, and grant `:view` to
-      `application-service` and `viewer`, when router auth is built.
+- [x] Router auth (ruling 2), built (`feat/router-auth`): platform bearer tokens verified against the
+      platform's JWKS (`fc-platform-jwks`, shared with the function host), `router:view`/`operate`,
+      the `platform:router-operator` role, `:view` on `viewer` and `application-service`, dev-only
+      mocks, the PKCE dashboard (`FC_ROUTER_DASHBOARD_CLIENT_ID`). Production's `AUTH_MODE=NONE` is
+      still honoured, loudly (decision #43), so nothing changes until the owner steps below.
+- [ ] **Owner: switch router auth on** (decision #43), in this order:
+      1. Release laravel-sdk 0.10.27 (and the TS SDK) with the router bearer; move integral, hr
+         (from `^0.8` to `^0.10`) and rfp to it and deploy them. Their service accounts get
+         `router:view` through `platform:application-service` once the Rust platform is deployed
+         (the code-role sync applies it on start); a Go platform does not grant it.
+      2. Assign `platform:router-operator` to the people and service accounts that operate the
+         router (super-admins already hold it).
+      3. Dashboard sign-in: `POST /api/oauth-clients` with `clientType: PUBLIC`,
+         `grantTypes: ["authorization_code"]`, `pkceRequired: true`, `apiAccess: true`,
+         `applicationIds: [<the platform application's id>]`,
+         `defaultScopes: ["platform:messaging:router:view", "platform:messaging:router:operate"]`,
+         `redirectUris: ["https://{routerDomain}/router/dashboard.html",
+         "https://{routerDomain}/router/monitoring/dashboard"]`; put its client id on the router task
+         as `FC_ROUTER_DASHBOARD_CLIENT_ID`.
+      4. IaC (`inhance/iac/compute/fc-router.ts`): remove `AUTH_MODE=NONE`; keep
+         `FC_ROUTER_PLATFORM_URL=http://fc-platform:8080` (tokens are verified against its discovery
+         and `/.well-known/jwks.json`). After the deploy: the router logs "Router API
+         authentication: platform bearer tokens", `/router/health` carries no `authWarning`, and an
+         unauthenticated `GET /router/monitoring/pools` answers 401.
+      5. Code: delete decision #43's `NONE` exception (`platform_auth::resolve`), so `NONE` is dev-only
+         as the ruling says.
 - [x] SDKs: single-flight refresh (ruling 5), webhook `check()` (ruling 11), bearer on router calls; licences as published (TS Apache-2.0, Laravel MIT, Go/Rust Apache-2.0)
 - [x] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results (Java SDK: not done)
 

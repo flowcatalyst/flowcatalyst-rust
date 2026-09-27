@@ -229,17 +229,18 @@ impl Listener for FnListener {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(std::io::Error::other)?;
+        let verifier_clock = bearer::verifier_clock(&config.clock);
         let keys = Arc::new(JwksKeySource::new(
             http,
             config.platform_url.clone(),
-            config.clock.clone(),
+            verifier_clock.clone(),
         ));
         let shared = Arc::new(Shared {
             reconciler,
             metrics,
             permits,
             pinned,
-            bearer: BearerAuthenticator::new(keys, config.clock.clone()),
+            bearer: BearerAuthenticator::new(keys, verifier_clock),
             clock: config.clock.clone(),
             trusted_proxies: config.trusted_proxies.clone(),
             draining: self.draining.clone(),

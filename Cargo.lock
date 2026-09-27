@@ -2896,6 +2896,7 @@ dependencies = [
  "fc-function-model",
  "fc-function-signing",
  "fc-http-listener",
+ "fc-platform-jwks",
  "futures",
  "gethostname",
  "hex",
@@ -3106,6 +3107,7 @@ dependencies = [
  "fc-function-model",
  "fc-function-signing",
  "fc-http-listener",
+ "fc-platform-jwks",
  "fc-queue",
  "fc-stream",
  "flate2",
@@ -3152,6 +3154,26 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "webauthn-rs",
+]
+
+[[package]]
+name = "fc-platform-jwks"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "fc-function-model",
+ "fc-platform-jwks",
+ "parking_lot 0.12.5",
+ "rand_core 0.6.4",
+ "reqwest",
+ "rsa",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3202,6 +3224,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "fc-common",
+ "fc-platform-jwks",
  "fc-queue",
  "fc-standby",
  "fc-stream",

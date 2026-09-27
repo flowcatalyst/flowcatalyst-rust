@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::answer::{outcome_for, HttpAnswer};
-use super::bearer::{TokenClaims, SCOPE_WILDCARD};
+use super::bearer::{self, TokenClaims, SCOPE_WILDCARD};
 use super::public_routes::{self, LIVE};
 use super::route_path::RoutePath;
 use super::{cors, latin1, webhook, Shared};
@@ -382,7 +382,7 @@ async fn authenticate(
             .bearer
             .authenticate(call.header("authorization").as_deref())
             .await
-            .map(|claims| Caller::Principal(claims.principal()))
+            .map(|claims| Caller::Principal(bearer::principal(&claims)))
             .map_err(|reason| unauthorized_bearer(&reason)),
         EndpointAuth::None => Ok(Caller::Anonymous),
     }
@@ -457,7 +457,7 @@ async fn handle_versioned(
         function_path,
         params,
         body,
-        Caller::Principal(claims.principal()),
+        Caller::Principal(bearer::principal(&claims)),
         true,
         true,
         None,

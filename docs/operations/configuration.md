@@ -129,8 +129,11 @@ The complete contract, Go vs Rust, is [../parity/router-env-vs-go.md](../parity/
 | `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | LocalStack endpoint (dev only) |
 | `LOCALSTACK_SQS_HOST` | `http://sqs.eu-west-1.localhost.localstack.cloud:4566` | LocalStack SQS host (dev only) |
 | `AWS_REGION` | (AWS default chain) | SQS region |
-| `AUTH_MODE` | `NONE` | `NONE`, `API_KEY`, or `OIDC` — auth for the router's monitoring API |
-| `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | When `AUTH_MODE=OIDC` |
+| `AUTH_MODE` | unset | Auth for the router's API (owner ruling 2). Outside dev mode: unset, `BEARER` or `OIDC` require a platform bearer token holding `platform:messaging:router:view` (reads) or `:operate` (everything else); `NONE` leaves the API open **for now**, with a WARN (decision #43); anything else is ignored with a WARN. In dev mode: `NONE`/unset open, `BASIC` (or a user set) Basic auth, `OIDC`/`OIDC_FLOW` the external-IdP modes, `BEARER` platform tokens. |
+| `FC_ROUTER_PLATFORM_URL` | — | The platform whose JWKS verifies router API tokens (and the router's own config credential's origin). Without it, `fc-server` with the platform role verifies against itself; with neither, every protected route answers 401. |
+| `FC_ROUTER_DASHBOARD_CLIENT_ID` | — | The public OAuth client the router dashboard signs in through (authorization code + PKCE). Unset: dashboard sign-in off. |
+| `FC_ROUTER_AUTH_USER` / `FC_ROUTER_AUTH_PASS` | — | Basic auth for the router's API, dev mode only (ignored with a WARN elsewhere) |
+| `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | Dev mode's `AUTH_MODE=OIDC`/`OIDC_FLOW` (an external IdP) |
 
 Standby is fc-server's own election (`FC_STANDBY_*` above), shared by every role in the process. (The removed standalone router also read `FLOWCATALYST_STANDBY_*`; fc-server does not, as Go does not.)
 
