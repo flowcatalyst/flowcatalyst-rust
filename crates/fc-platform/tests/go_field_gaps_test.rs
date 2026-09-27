@@ -150,3 +150,90 @@ async fn client_config_keeps_and_answers_the_base_url_override_and_document() {
         2
     );
 }
+
+// ── 2. Event types: clientScoped ─────────────────────────────────────────
+
+/// Go honours `clientScoped` on event-type create and update (`/api`) and on
+/// the BFF create; absent on update leaves it as it is. The BFF read answers
+/// it (the SPA's subscription editor filters on it); Go's `/api` response
+/// does not carry it, and neither does this platform's.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn event_type_client_scoped_is_stored_on_create_and_update() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    let stored = |id: String| {
+        let repo = app.repos.event_type_repo.clone();
+        async move {
+            repo.find_by_id(&id)
+                .await
+                .unwrap()
+                .expect("event type")
+                .client_scoped
+        }
+    };
+
+    let created = assert_status(
+        app.post(
+            "/api/event-types",
+            &token,
+            json!({"code": "gaps:orders:order:placed", "name": "Placed", "clientScoped": true}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let id = created["id"].as_str().unwrap().to_string();
+    assert!(stored(id.clone()).await);
+    let read = get_json(&app, &format!("/api/event-types/{id}"), &token).await;
+    assert!(
+        read.get("clientScoped").is_none(),
+        "Go's /api shape: {read}"
+    );
+
+    // Absent leaves it; false clears it.
+    let path = format!("/api/event-types/{id}");
+    let (s, _) = read_json(app.put(&path, &token, json!({"name": "Placed 2"})).await).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(stored(id.clone()).await);
+    let (s, _) = read_json(
+        app.put(
+            &path,
+            &token,
+            json!({"name": "Placed 3", "clientScoped": false}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert!(!stored(id.clone()).await);
+
+    // Absent on create is false.
+    let plain = assert_status(
+        app.post(
+            "/api/event-types",
+            &token,
+            json!({"code": "gaps:orders:order:shipped", "name": "Shipped"}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert!(!stored(plain["id"].as_str().unwrap().to_string()).await);
+
+    // The BFF create honours it and its answer carries it.
+    let bff = assert_status(
+        app.post(
+            "/bff/event-types",
+            &token,
+            json!({"code": "gaps:orders:order:returned", "name": "Returned", "clientScoped": true}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(bff["clientScoped"], true, "{bff}");
+    let bff_id = bff["id"].as_str().unwrap().to_string();
+    let bff_read = get_json(&app, &format!("/bff/event-types/{bff_id}"), &token).await;
+    assert_eq!(bff_read["clientScoped"], true);
+}

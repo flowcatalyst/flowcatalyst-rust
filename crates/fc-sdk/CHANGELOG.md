@@ -45,6 +45,10 @@ before.
   gained public fields, so a struct literal of either without
   `..Default::default()` (or `CreateDispatchJobDto::new`) needs the two
   fields added.
+- `CreateEventTypeRequest::client_scoped` (Go's `clientScoped` on
+  `POST /api/event-types`): events of the type are carried per client. Left
+  out when `None`. The struct gained a public field, so a struct literal
+  without `..Default::default()` needs it added.
 
 ### Changed
 - `Applications::get_service_account` reads `GET /api/applications/{id}` and

@@ -139,6 +139,10 @@ pub struct BffCreateEventTypeRequest {
     /// Client ID (optional, null = anchor-level)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Events of this type are per-client: honoured on create exactly as
+    /// `/api/event-types` does (Go's BFF, ruling 2026-09-06 #7).
+    #[serde(default)]
+    pub client_scoped: bool,
 }
 
 /// Update event type request (metadata only)
@@ -403,6 +407,7 @@ pub async fn create_event_type(
         name: req.name,
         description: req.description,
         client_id: req.client_id,
+        client_scoped: req.client_scoped,
         schema: None,
     };
 
@@ -473,6 +478,8 @@ pub async fn update_event_type(
         event_type_id: id.clone(),
         name: req.name,
         description: req.description,
+        // Go's BFF update takes name and description only.
+        client_scoped: None,
     };
 
     let use_case =

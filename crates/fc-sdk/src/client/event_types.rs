@@ -31,6 +31,12 @@ pub struct CreateEventTypeRequest {
     /// Client ID for multi-tenant scoping
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Events of this type are carried per client: the subscription editor
+    /// offers client-scoped types only to client-scoped subscriptions.
+    /// Distinct from `client_id`, which scopes the type itself. `None` (not
+    /// sent) is `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_scoped: Option<bool>,
 }
 
 /// Request to update an event type. Go's platform replaces the record, so
@@ -261,11 +267,20 @@ mod tests {
             .create(&CreateEventTypeRequest {
                 code: "orders:f:shipment:shipped".into(),
                 name: "Shipped".into(),
+                client_scoped: Some(true),
                 ..Default::default()
             })
             .await
             .unwrap();
         assert_eq!(created.id, "et_1");
+        assert_eq!(
+            stub.requests()[0].json(),
+            serde_json::json!({
+                "code": "orders:f:shipment:shipped",
+                "name": "Shipped",
+                "clientScoped": true
+            })
+        );
         c.event_types()
             .update(
                 "et_1",

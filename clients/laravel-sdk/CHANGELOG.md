@@ -59,6 +59,9 @@ before, so no working call breaks.
   `queue`. At most 255 characters (`CreateDispatchJobDto::MAX_DESCRIPTOR_LENGTH`);
   a longer one throws `InvalidArgumentException`, where the platform would
   answer 400 `VALIDATION`.
+- `CreateEventTypeRequest` takes an optional trailing `clientScoped`
+  (Go's `clientScoped` on `POST /api/event-types`): events of the type are
+  carried per client. Sent only when set, like `UpdateEventTypeRequest`'s.
 
 ### Changed
 - The OIDC session refresh (`TokenRefresher`, used by the refresh route and

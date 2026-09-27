@@ -9,7 +9,9 @@ namespace FlowCatalyst\DTOs\Requests;
  *
  * `code` is formatted `{application}:{subdomain}:{aggregate}:{event}`.
  * `schema` (optional) seeds the first schema version as JSON Schema.
- * Omit `clientId` for anchor-level event types.
+ * Omit `clientId` for anchor-level event types. `clientScoped: true` marks
+ * events of this type as carried per client (the subscription editor offers
+ * client-scoped types only to client-scoped subscriptions); omitted is false.
  */
 final class CreateEventTypeRequest
 {
@@ -22,6 +24,7 @@ final class CreateEventTypeRequest
         public readonly ?string $description = null,
         public readonly ?array $schema = null,
         public readonly ?string $clientId = null,
+        public readonly ?bool $clientScoped = null,
     ) {}
 
     /**
@@ -41,6 +44,9 @@ final class CreateEventTypeRequest
         }
         if ($this->clientId !== null) {
             $payload['clientId'] = $this->clientId;
+        }
+        if ($this->clientScoped !== null) {
+            $payload['clientScoped'] = $this->clientScoped;
         }
         return $payload;
     }
