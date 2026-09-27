@@ -95,7 +95,9 @@ impl From<EventReadRow> for EventRead {
 }
 
 /// One `msg_events_read` row in full: Go's `FindByID` reads every column
-/// (event/repository.go), for `GET /api/events/{id}`.
+/// (event/repository.go), for `GET /api/events/{id}`, plus the event's
+/// context data from its `msg_events` row (the projection has no column for
+/// it; Go documents `contextData` on this read but never fills it).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EventReadDetail {
     pub id: String,
@@ -116,6 +118,20 @@ pub struct EventReadDetail {
     pub subdomain: Option<String>,
     pub aggregate: Option<String>,
     pub projected_at: Option<DateTime<Utc>>,
+    /// `msg_events.context_data` as stored (`[{key, value}]`); `None` when the
+    /// write-side row is gone or carries none.
+    pub context_data: Option<serde_json::Value>,
+}
+
+impl EventReadDetail {
+    /// The context entries, read leniently as the write-side read does: a
+    /// document that is not `[{key, value}]` reads as none.
+    pub fn context_entries(&self) -> Vec<ContextData> {
+        self.context_data
+            .clone()
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
 }
 
 /// Go's event list filters (`event.FilterParams`): singular equality
@@ -443,10 +459,16 @@ impl EventRepository {
 
     /// One read-projection row in full (Go `FindByID`).
     pub async fn find_read_detail_by_id(&self, id: &str) -> Result<Option<EventReadDetail>> {
+        // The projection keeps the source row's `created_at` (its partition
+        // key), so the join reaches one partition of `msg_events`.
         Ok(sqlx::query_as::<_, EventReadDetail>(
-            "SELECT id, spec_version, type, source, subject, time, data, deduplication_id, \
-             client_id, message_group, correlation_id, causation_id, created_at, application, \
-             subdomain, aggregate, projected_at FROM msg_events_read WHERE id = $1",
+            "SELECT r.id, r.spec_version, r.type, r.source, r.subject, r.time, r.data, \
+             r.deduplication_id, r.client_id, r.message_group, r.correlation_id, \
+             r.causation_id, r.created_at, r.application, r.subdomain, r.aggregate, \
+             r.projected_at, e.context_data \
+             FROM msg_events_read r \
+             LEFT JOIN msg_events e ON e.id = r.id AND e.created_at = r.created_at \
+             WHERE r.id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)

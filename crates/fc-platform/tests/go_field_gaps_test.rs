@@ -237,3 +237,76 @@ async fn event_type_client_scoped_is_stored_on_create_and_update() {
     let bff_read = get_json(&app, &format!("/bff/event-types/{bff_id}"), &token).await;
     assert_eq!(bff_read["clientScoped"], true);
 }
+
+// ── 3. Events: contextData on the detail read ────────────────────────────
+
+/// Run the event projector for a moment.
+async fn project_events(pool: &sqlx::PgPool) {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let projector = tokio::spawn(fc_stream::event_projection::run(
+        pool.clone(),
+        200,
+        std::sync::Arc::new(fc_stream::health::StreamHealth::new(
+            "event-projection".into(),
+        )),
+        cancel.clone(),
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    cancel.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(10), projector)
+        .await
+        .expect("projector stops")
+        .unwrap();
+}
+
+/// Go documents `contextData` on `GET /api/events/{id}` but reads only the
+/// projection, which has no column for it. The detail answers the event's
+/// stored context entries; an event without any leaves the member out.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn event_detail_answers_the_events_context_data() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    let entries = json!([{"key": "orderId", "value": "ord_42"}, {"key": "region", "value": "eu"}]);
+    let with = assert_status(
+        app.post(
+            "/api/events",
+            &token,
+            json!({
+                "eventType": "gaps:orders:order:placed",
+                "source": "urn:gaps",
+                "subject": "orders.order.ord_42",
+                "data": {"total": 12},
+                "contextData": entries
+            }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let without = assert_status(
+        app.post(
+            "/api/events",
+            &token,
+            json!({
+                "eventType": "gaps:orders:order:placed",
+                "source": "urn:gaps",
+                "subject": "orders.order.ord_43",
+                "data": {"total": 13}
+            }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    project_events(&app.pool).await;
+
+    let id = with["event"]["id"].as_str().expect("event id");
+    let detail = get_json(&app, &format!("/api/events/{id}"), &token).await;
+    assert_eq!(detail["contextData"], entries, "{detail}");
+    assert_eq!(detail["type"], "gaps:orders:order:placed");
+
+    let id = without["event"]["id"].as_str().expect("event id");
+    let detail = get_json(&app, &format!("/api/events/{id}"), &token).await;
+    assert!(detail.get("contextData").is_none(), "{detail}");
+}
