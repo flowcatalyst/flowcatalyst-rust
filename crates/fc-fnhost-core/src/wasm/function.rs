@@ -57,6 +57,10 @@ pub struct WasmFunction {
     runtime: Arc<WasmRuntime>,
     pre: ProxyPre<GuestState>,
     shared: Arc<FunctionShared>,
+    /// The version's database pool memberships; released at close, so the
+    /// pools it alone used close with it (the last invocation holding a
+    /// clone has drained by then).
+    databases: parking_lot::Mutex<Option<Arc<crate::db::DbBindings>>>,
     closed: AtomicBool,
 }
 
@@ -65,11 +69,13 @@ impl WasmFunction {
         runtime: Arc<WasmRuntime>,
         pre: ProxyPre<GuestState>,
         shared: Arc<FunctionShared>,
+        databases: Option<Arc<crate::db::DbBindings>>,
     ) -> Self {
         Self {
             runtime,
             pre,
             shared,
+            databases: parking_lot::Mutex::new(databases),
             closed: AtomicBool::new(false),
         }
     }
@@ -102,6 +108,7 @@ impl WasmFunction {
             },
             function: self.shared.clone(),
             invocation: InvocationData::from(context),
+            db: crate::db::DbSession::new(self.databases.lock().clone(), context.deadline),
         }
     }
 
@@ -546,6 +553,7 @@ fn to_request(c: &InvocationContext) -> Result<hyper::Request<Full<Bytes>>, Stri
 impl FunctionInstance for WasmFunction {
     async fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.databases.lock().take();
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

@@ -132,6 +132,7 @@ pub struct Options {
     pub host_max_concurrency: i32,
     /// `EngineSettings::consume_fuel` (on in production).
     pub consume_fuel: bool,
+    pub db: fc_fnhost_core::db::DbSettings,
 }
 
 impl Default for Options {
@@ -141,6 +142,7 @@ impl Default for Options {
             max_instances: 32,
             host_max_concurrency: 64,
             consume_fuel: true,
+            db: fc_fnhost_core::db::DbSettings::default(),
         }
     }
 }
@@ -179,6 +181,7 @@ impl WasmHarness {
             },
             max_executing: options.max_executing,
             cache_dir: dir.path().to_owned(),
+            db: options.db.clone(),
         })
         .unwrap();
         let cache = ArtifactCache::new(dir.path(), DEFAULT_MAX_BYTES).unwrap();

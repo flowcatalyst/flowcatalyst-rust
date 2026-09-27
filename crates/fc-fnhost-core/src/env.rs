@@ -221,9 +221,17 @@ pub struct HostEnv {
     pub metrics_port: u16,
     /// `FC_EXIT_AFTER_START` (default false): exit 0 right after start-up.
     pub exit_after_start: bool,
-    /// `FC_FN_MAX_DB_POOLS` (default 16). Read for parity; the Rust host has
-    /// no database access yet (Java W4, owner decision 3).
+    /// `FC_FN_MAX_DB_POOLS` (default 16): distinct function database pools
+    /// (one per connection); one more is the load failure `DB_POOL_LIMIT`.
     pub max_db_pools: i32,
+    /// `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION` (default 2): connections
+    /// one invocation may hold at once on one database (never more than
+    /// its function's `db[].poolSize`). Rust host only.
+    pub db_max_connections_per_invocation: usize,
+    /// `FC_FN_DB_SECRET_REFRESH_SECONDS` (default 300; 0 off): how often a
+    /// secret-manager reference (`aws-sm://…`) naming a function database
+    /// is re-read. Rust host only.
+    pub db_secret_refresh_seconds: u64,
     /// `FC_FN_PUBLIC_PORT` (default 8081, `off` disables, `0` ephemeral).
     pub public_port: PublicPort,
     /// `FC_FN_TRUSTED_PROXIES` (default RFC 1918 + loopback + ULA).
@@ -248,6 +256,11 @@ impl fmt::Debug for HostEnv {
             .field("metrics_port", &self.metrics_port)
             .field("exit_after_start", &self.exit_after_start)
             .field("max_db_pools", &self.max_db_pools)
+            .field(
+                "db_max_connections_per_invocation",
+                &self.db_max_connections_per_invocation,
+            )
+            .field("db_secret_refresh_seconds", &self.db_secret_refresh_seconds)
             .field("public_port", &self.public_port)
             .field("trusted_proxies", &self.trusted_proxies)
             .finish()
@@ -309,6 +322,27 @@ impl HostEnv {
                 env.get("FC_FN_MAX_EXECUTING")
             ));
         }
+        let max_db_pools = env.integer("FC_FN_MAX_DB_POOLS", 16);
+        if max_db_pools < 1 {
+            bad.push(format!(
+                "FC_FN_MAX_DB_POOLS (must be at least 1: '{}')",
+                env.get("FC_FN_MAX_DB_POOLS")
+            ));
+        }
+        let db_per_invocation = env.integer("FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION", 2);
+        if db_per_invocation < 1 {
+            bad.push(format!(
+                "FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION (must be at least 1: '{}')",
+                env.get("FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION")
+            ));
+        }
+        let db_secret_refresh = env.integer("FC_FN_DB_SECRET_REFRESH_SECONDS", 300);
+        if db_secret_refresh < 0 {
+            bad.push(format!(
+                "FC_FN_DB_SECRET_REFRESH_SECONDS (must be 0 or more: '{}')",
+                env.get("FC_FN_DB_SECRET_REFRESH_SECONDS")
+            ));
+        }
         let function_port = port(env, "FC_FN_PORT", 8080, &mut bad);
         let metrics_port = port(env, "FC_METRICS_PORT", 9090, &mut bad);
         let drain_timeout = env.integer("FC_DRAIN_TIMEOUT_SECONDS", 60).max(0);
@@ -358,7 +392,9 @@ impl HostEnv {
             drain_timeout_seconds: drain_timeout as u64,
             metrics_port,
             exit_after_start: env.bool("FC_EXIT_AFTER_START", false),
-            max_db_pools: env.integer("FC_FN_MAX_DB_POOLS", 16),
+            max_db_pools,
+            db_max_connections_per_invocation: db_per_invocation.max(1) as usize,
+            db_secret_refresh_seconds: db_secret_refresh.max(0) as u64,
             public_port,
             trusted_proxies,
         })
