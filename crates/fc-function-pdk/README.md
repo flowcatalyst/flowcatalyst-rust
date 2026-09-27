@@ -113,6 +113,13 @@ cargo test --target wasm32-wasip2             # the same tests, in wasmtime
 
 To publish, in dependency order: `crates/fc-function-abi`, then
 `crates/fc-function-pdk/macros`, then this crate, each at the same version.
+The crate is self-contained (the WIT is vendored, the package includes it),
+and `just pdk-publish-dry-run` proves it without uploading: a
+`cargo publish --dry-run` of the abi from the root workspace, then of this
+workspace (macros and PDK, in order) with the abi patched in from its path,
+since it is not on crates.io until it is published. Packaging drops the
+`path` of each dependency and keeps its `version`, so the git and path
+dependencies keep working unchanged.
 
 ## Licence
 

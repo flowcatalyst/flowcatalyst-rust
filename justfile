@@ -276,6 +276,15 @@ test-platform:
 test-sdk:
     cargo test --package fc-sdk --all-features
 
+# Prove the function PDK can go to crates.io (owner decision #15), without
+# uploading anything: fc-function-abi on its own, then fc-function-pdk-macros
+# and fc-function-pdk (the PDK's workspace) verified against that abi. The
+# owner publishes, in this order, with `cargo publish` in place of the
+# dry runs (and no `--config` patch: by then the abi is on crates.io).
+pdk-publish-dry-run:
+    cargo publish --dry-run -p fc-function-abi
+    cd crates/fc-function-pdk && cargo publish --dry-run --workspace --config 'patch.crates-io.fc-function-abi.path="../fc-function-abi"'
+
 # Run tests with output
 test-verbose:
     cargo test --all-targets -- --nocapture

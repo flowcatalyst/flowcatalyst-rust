@@ -97,6 +97,11 @@ Function database access (owner decision #7, Java W4's author contract, 2026-09-
   `tests/wasm_db.rs` (the committed PDK guest `pdk_db` through the listener; load failures without a
   database).
 
+PDK publishable (owner decision #15, 2026-09-27): `crates/fc-function-pdk` is self-contained (its WIT vendored and
+packaged, kept in step by `tests/pdk_wit_sync.rs`); `just pdk-publish-dry-run` runs `cargo publish --dry-run` for
+`fc-function-abi`, then the PDK workspace (`fc-function-pdk-macros`, `fc-function-pdk`) against it. Both verify; nothing
+is uploaded (the owner publishes, in that order). Licences stay MPL-2.0 (#10); git and path dependencies are unchanged.
+
 Not done:
 - **H6:** a separate black-box conformance harness. It's largely covered by the end-to-end and `wasm_*` host tests.
 - **H7:** benchmarks on Linux. The F0 numbers are macOS only.
@@ -138,8 +143,8 @@ Not done:
 **Housekeeping**
 17. Licence: `fc-function-model` uses the workspace AGPL. Guests don't link it, but it would need MPL if they ever do.
 18. The dev-only `hyper` pin in fc-router moved from 1.8.1 to 1.9.0 (wasmtime-wasi-http needs it).
-19. Publishing the PDK: it reads `../../wit` at build time, which works for git and path dependencies but not
-    crates.io. The template's git dependency only resolves after a push.
+19. ~~Publishing the PDK~~: the WIT is vendored and `just pdk-publish-dry-run` verifies it (owner decision #15). The
+    template's git dependency only resolves after a push.
 20. CLAUDE.md's infrastructure-exception list should gain "function host heartbeat".
 21. Rust's role catalogue differs from Java's outside functions. `client-admin`, `portal-administrator` and
     `router` are missing, and `messaging-admin` lacks connection-sync.
