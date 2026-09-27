@@ -664,6 +664,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "058_app_client_config_overrides",
             include_str!("../../../../migrations/058_app_client_config_overrides.sql"),
         ),
+        // Who assigned a role, which Go documents on a service account's
+        // role assignments but never stores.
+        (
+            "059_principal_role_assigned_by",
+            include_str!("../../../../migrations/059_principal_role_assigned_by.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -948,6 +954,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'app_client_configs' \
                AND column_name = 'config_json')",
+        ),
+        (
+            "059_principal_role_assigned_by",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_principal_roles' \
+               AND column_name = 'assigned_by')",
         ),
     ];
 

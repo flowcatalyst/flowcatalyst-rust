@@ -107,6 +107,7 @@ struct PrincipalRoleRow {
     role_name: String,
     assignment_source: Option<String>,
     assigned_at: DateTime<Utc>,
+    assigned_by: Option<String>,
 }
 
 impl TryFrom<PrincipalRoleRow> for RoleAssignment {
@@ -123,7 +124,7 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
             client_id: None,
             assignment_source,
             assigned_at: r.assigned_at,
-            assigned_by: None,
+            assigned_by: r.assigned_by,
         })
     }
 }
@@ -692,15 +693,20 @@ impl PrincipalRepository {
             .map(|r| r.assignment_source.map(|s| s.as_str()))
             .collect();
         let assigned_ats: Vec<DateTime<Utc>> = roles.iter().map(|r| r.assigned_at).collect();
+        let assigned_bys: Vec<Option<&str>> =
+            roles.iter().map(|r| r.assigned_by.as_deref()).collect();
 
         sqlx::query(
-            "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
-             SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::timestamptz[])"
+            "INSERT INTO iam_principal_roles \
+             (principal_id, role_name, assignment_source, assigned_at, assigned_by)
+             SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], \
+             $4::timestamptz[], $5::varchar[])",
         )
         .bind(&pids)
         .bind(&role_names)
         .bind(&sources as &[Option<&str>])
         .bind(&assigned_ats)
+        .bind(&assigned_bys)
         .execute(&self.pool)
         .await?;
 
@@ -715,7 +721,7 @@ impl PrincipalRepository {
 
         // Load roles
         let role_rows = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at
+            "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by
              FROM iam_principal_roles WHERE principal_id = $1 ORDER BY assigned_at",
         )
         .bind(&id)
@@ -795,7 +801,7 @@ impl PrincipalRepository {
 
         // Batch-load roles
         let all_roles = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at
+            "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by
              FROM iam_principal_roles WHERE principal_id = ANY($1) ORDER BY assigned_at",
         )
         .bind(&principal_ids)
@@ -1016,24 +1022,29 @@ impl crate::usecase::Persist<crate::principal::entity::PrincipalSyncBatch> for P
         let mut role_names: Vec<&str> = Vec::new();
         let mut role_sources: Vec<Option<&str>> = Vec::new();
         let mut role_ats: Vec<DateTime<Utc>> = Vec::new();
+        let mut role_bys: Vec<Option<&str>> = Vec::new();
         for p in ps {
             for r in &p.roles {
                 role_pids.push(&p.id);
                 role_names.push(&r.role);
                 role_sources.push(r.assignment_source.map(|s| s.as_str()));
                 role_ats.push(r.assigned_at);
+                role_bys.push(r.assigned_by.as_deref());
             }
         }
         if !role_pids.is_empty() {
             sqlx::query(
-                "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
-                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::timestamptz[])
+                "INSERT INTO iam_principal_roles \
+                 (principal_id, role_name, assignment_source, assigned_at, assigned_by)
+                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], \
+                 $4::timestamptz[], $5::varchar[])
                  ON CONFLICT DO NOTHING",
             )
             .bind(&role_pids)
             .bind(&role_names)
             .bind(&role_sources)
             .bind(&role_ats)
+            .bind(&role_bys)
             .execute(&mut **tx.inner)
             .await?;
         }
@@ -1143,16 +1154,20 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
                 .map(|r| r.assignment_source.map(|s| s.as_str()))
                 .collect();
             let assigned_ats: Vec<DateTime<Utc>> = p.roles.iter().map(|r| r.assigned_at).collect();
+            let assigned_bys: Vec<Option<&str>> =
+                p.roles.iter().map(|r| r.assigned_by.as_deref()).collect();
             sqlx::query(
-                "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
-                 SELECT $1, r.role_name, r.source, r.assigned_at
-                 FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[])
-                      AS r(role_name, source, assigned_at)",
+                "INSERT INTO iam_principal_roles \
+                 (principal_id, role_name, assignment_source, assigned_at, assigned_by)
+                 SELECT $1, r.role_name, r.source, r.assigned_at, r.assigned_by
+                 FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[], $5::varchar[])
+                      AS r(role_name, source, assigned_at, assigned_by)",
             )
             .bind(&p.id)
             .bind(&role_names)
             .bind(&sources)
             .bind(&assigned_ats)
+            .bind(&assigned_bys)
             .execute(&mut **tx.inner)
             .await?;
         }

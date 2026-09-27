@@ -113,11 +113,14 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
             .cloned()
             .collect();
 
-        // Replace roles with new assignments
+        // Replace roles with new assignments, recording who made them.
         principal.roles = command
             .roles
             .iter()
-            .map(|r| RoleAssignment::with_source(r, AssignmentSource::AdminAssigned))
+            .map(|r| {
+                RoleAssignment::with_source(r, AssignmentSource::AdminAssigned)
+                    .assigned_by(&ctx.principal_id)
+            })
             .collect();
         principal.updated_at = chrono::Utc::now();
 

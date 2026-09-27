@@ -40,10 +40,16 @@ async fn get_json(app: &TestApp, path: &str, token: &str) -> Value {
 #[ignore = "requires Docker"]
 async fn field_gap_migrations_rerun_as_no_ops_and_are_recognised_when_applied() {
     let app = setup().await;
-    let migrations: &[(&str, &str)] = &[(
-        "058_app_client_config_overrides",
-        include_str!("../../../migrations/058_app_client_config_overrides.sql"),
-    )];
+    let migrations: &[(&str, &str)] = &[
+        (
+            "058_app_client_config_overrides",
+            include_str!("../../../migrations/058_app_client_config_overrides.sql"),
+        ),
+        (
+            "059_principal_role_assigned_by",
+            include_str!("../../../migrations/059_principal_role_assigned_by.sql"),
+        ),
+    ];
     for (id, sql) in migrations {
         sqlx::raw_sql(sql)
             .execute(&app.pool)
@@ -420,4 +426,74 @@ async fn oauth_client_create_links_the_service_principal_it_names() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "PRINCIPAL_NOT_SERVICE_ACCOUNT");
+}
+
+// ── 5. Service-account role assignments: assignedBy, clientId ────────────
+
+/// An anchor admin (ADMIN_ALL) whose principal id the test knows.
+async fn known_admin(app: &TestApp) -> (String, String) {
+    app.anchor_admin_token().await; // seeds `platform:test-admin`
+    let mut admin = fc_platform::domain::Principal::new_user(
+        "gaps-admin@flowcatalyst.test",
+        fc_platform::domain::UserScope::Anchor,
+    );
+    admin.roles = vec![fc_platform::service_account::entity::RoleAssignment::new(
+        "platform:test-admin",
+    )];
+    let token = app
+        .auth_service
+        .generate_access_token(&admin)
+        .expect("token");
+    (token, admin.id)
+}
+
+/// Go documents `assignedBy` and `clientId` on a service account's role
+/// assignments and fills neither. `assignedBy` is the administrator who
+/// assigned the roles; `clientId` stays absent because role grants are not
+/// client-scoped (a role applies wherever the account reaches).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_role_assignments_record_who_assigned_them() {
+    let app = setup().await;
+    let (token, admin_id) = known_admin(&app).await;
+    let sa = assert_status(
+        app.post(
+            "/api/service-accounts",
+            &token,
+            json!({"code": "gaps-roles-sa", "name": "Gaps Roles SA"}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let id = sa["serviceAccount"]["id"].as_str().unwrap().to_string();
+    let roles_path = format!("/api/service-accounts/{id}/roles");
+
+    let assigned = assert_status(
+        app.put(
+            &roles_path,
+            &token,
+            json!({"roles": ["platform:test-admin"]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    let row = &assigned["roles"][0];
+    assert_eq!(row["roleName"], "platform:test-admin");
+    assert_eq!(row["assignedBy"], admin_id.as_str(), "{assigned}");
+    assert_eq!(row["assignmentSource"], "ADMIN_ASSIGNED");
+    assert!(row.get("clientId").is_none());
+
+    let listed = get_json(&app, &roles_path, &token).await;
+    assert_eq!(listed["roles"][0]["assignedBy"], admin_id.as_str());
+
+    // A row written without it (Go, a sync, or before the column) reads
+    // without the member.
+    sqlx::query("UPDATE iam_principal_roles SET assigned_by = NULL")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let listed = get_json(&app, &roles_path, &token).await;
+    assert!(listed["roles"][0].get("assignedBy").is_none(), "{listed}");
 }

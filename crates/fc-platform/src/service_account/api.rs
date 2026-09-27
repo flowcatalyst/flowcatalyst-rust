@@ -260,11 +260,33 @@ pub struct RegenerateSecretResponse {
 #[schema(as = RoleAssignmentDTO)]
 pub struct RoleAssignmentResponse {
     pub role_name: String,
+    /// The client the role is confined to. Role grants here are not
+    /// client-scoped (a role applies wherever the account reaches), so it is
+    /// always absent; Go never fills it either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_source: Option<String>,
     #[schema(format = DateTime)]
     pub assigned_at: String,
+    /// The principal who assigned the role. Go documents it but never
+    /// stores it; here it is recorded for roles an administrator assigns or
+    /// provisioning grants, and absent for synced roles and older rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_by: Option<String>,
+}
+
+impl From<&crate::service_account::entity::RoleAssignment> for RoleAssignmentResponse {
+    fn from(r: &crate::service_account::entity::RoleAssignment) -> Self {
+        Self {
+            role_name: r.role.clone(),
+            client_id: r.client_id.clone(),
+            assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
+            assigned_at: r.assigned_at.to_rfc3339(),
+            assigned_by: r.assigned_by.clone(),
+        }
+    }
 }
 
 /// Roles response
@@ -853,11 +875,7 @@ pub async fn get_roles<U: UnitOfWork>(
     let roles: Vec<RoleAssignmentResponse> = account
         .roles
         .iter()
-        .map(|r| RoleAssignmentResponse {
-            role_name: r.role.clone(),
-            assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
-            assigned_at: r.assigned_at.to_rfc3339(),
-        })
+        .map(RoleAssignmentResponse::from)
         .collect();
 
     Ok(Json(RolesResponse { roles }))
@@ -920,11 +938,7 @@ pub async fn assign_roles<U: UnitOfWork>(
             let roles: Vec<RoleAssignmentResponse> = account
                 .roles
                 .iter()
-                .map(|r| RoleAssignmentResponse {
-                    role_name: r.role.clone(),
-                    assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
-                    assigned_at: r.assigned_at.to_rfc3339(),
-                })
+                .map(RoleAssignmentResponse::from)
                 .collect();
 
             Ok(Json(AssignRolesResponse {

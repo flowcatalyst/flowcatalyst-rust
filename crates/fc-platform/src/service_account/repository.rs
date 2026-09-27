@@ -91,6 +91,7 @@ struct PrincipalRoleRow {
     role_name: String,
     assignment_source: Option<String>,
     assigned_at: DateTime<Utc>,
+    assigned_by: Option<String>,
 }
 
 impl TryFrom<PrincipalRoleRow> for RoleAssignment {
@@ -107,7 +108,7 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
             client_id: None,
             assignment_source,
             assigned_at: r.assigned_at,
-            assigned_by: None,
+            assigned_by: r.assigned_by,
         })
     }
 }
@@ -698,7 +699,7 @@ impl ServiceAccountRepository {
     ) -> Result<std::collections::HashMap<String, Grants>> {
         let (roles, clients, applications) = tokio::try_join!(
             sqlx::query_as::<_, PrincipalRoleRow>(
-                "SELECT principal_id, role_name, assignment_source, assigned_at \
+                "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by \
                  FROM iam_principal_roles WHERE principal_id = ANY($1)",
             )
             .bind(principal_ids)
@@ -878,16 +879,30 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
             .bind(&sa.id)
             .execute(&mut **tx.inner)
             .await?;
-        for r in &sa.roles {
+        if !sa.roles.is_empty() {
+            let role_names: Vec<&str> = sa.roles.iter().map(|r| r.role.as_str()).collect();
+            let sources: Vec<Option<&str>> = sa
+                .roles
+                .iter()
+                .map(|r| r.assignment_source.map(|s| s.as_str()))
+                .collect();
+            let assigned_ats: Vec<DateTime<Utc>> = sa.roles.iter().map(|r| r.assigned_at).collect();
+            let assigned_bys: Vec<Option<&str>> =
+                sa.roles.iter().map(|r| r.assigned_by.as_deref()).collect();
             sqlx::query(
-                "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
-                 VALUES ($1, $2, $3, $4)"
+                "INSERT INTO iam_principal_roles \
+                 (principal_id, role_name, assignment_source, assigned_at, assigned_by)
+                 SELECT $1, r.role_name, r.source, r.assigned_at, r.assigned_by
+                 FROM UNNEST($2::varchar[], $3::varchar[], $4::timestamptz[], $5::varchar[])
+                      AS r(role_name, source, assigned_at, assigned_by)",
             )
             .bind(&sa.id)
-            .bind(&r.role)
-            .bind(r.assignment_source.map(|s| s.as_str()))
-            .bind(r.assigned_at)
-            .execute(&mut **tx.inner).await?;
+            .bind(&role_names)
+            .bind(&sources)
+            .bind(&assigned_ats)
+            .bind(&assigned_bys)
+            .execute(&mut **tx.inner)
+            .await?;
         }
 
         Ok(())
