@@ -144,7 +144,7 @@ async fn the_entrypoint_names_the_export_a_function_or_an_object_with_fetch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_function_sees_the_web_subset_and_no_node_deno_or_wasm() {
+async fn a_function_sees_the_web_subset_and_no_node_deno_wasm_or_atomics_wait() {
     let h = guest(json!({}), json!({})).await;
     let globals = h.guest_json("/globals").await;
     assert_eq!(
@@ -160,6 +160,7 @@ async fn a_function_sees_the_web_subset_and_no_node_deno_or_wasm() {
             "base64": "aGk=hi",
             "url": "https://example.test/b?x=1#h",
             "cloned": {"a": [1, 2]},
+            "atomicsWait": "TypeError",
         })
     );
     h.close().await;

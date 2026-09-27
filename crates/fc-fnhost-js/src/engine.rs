@@ -40,12 +40,18 @@ pub fn init_v8() -> Result<&'static [u8], String> {
 
 /// The process's **base snapshot**: deno_core's own JavaScript plus the
 /// bootstrap (`js/bootstrap.js`), built once, before any other isolate
-/// exists. Every version's snapshot is created from it, never from
-/// scratch: a snapshot creator that bootstraps a heap from scratch writes
-/// the read-only space V8 shares between all isolates of the process, and
-/// isolates running meanwhile crash (seen: a request isolate allocating
-/// into the read-only space, and `StringForwardingTable` checks failing).
-/// Created from the base, a snapshot creator only reads that space.
+/// exists; every function isolate is created from it. It is the only
+/// snapshot the host ever makes: a snapshot creator writes the read-only
+/// space V8 shares between all isolates of the process, and isolates
+/// running meanwhile crash (seen: a request isolate allocating into the
+/// read-only space, `StringForwardingTable` checks failing, and a
+/// protection fault in `ReadOnlySpace::RepairFreeSpacesBeforeSerialization`
+/// for a creator started from this very snapshot).
+///
+/// Before it is taken, [`WARM_UP`] runs one request through the dispatcher,
+/// so the bootstrap's `Request`, `Response`, `Headers`, `URL` and friends
+/// are compiled and their bytecode is in the snapshot (deno_core keeps
+/// function code): a request's isolate does not parse them again.
 pub fn base_snapshot() -> Result<&'static [u8], String> {
     static BASE: OnceLock<Result<Box<[u8]>, String>> = OnceLock::new();
     BASE.get_or_init(|| {
@@ -55,6 +61,10 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
             .name("fn-js-base".into())
             .stack_size(WORKER_STACK_BYTES)
             .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("no runtime for the base snapshot: {e}"))?;
                 let mut js = JsRuntimeForSnapshot::try_new(RuntimeOptions {
                     extensions: vec![fc_function::init()],
                     ..Default::default()
@@ -62,6 +72,16 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
                 .map_err(|e| format!("the base snapshot's isolate did not start: {e}"))?;
                 js.execute_script("[fc:bootstrap]", BOOTSTRAP.to_owned())
                     .map_err(|e| format!("the bootstrap failed: {e}"))?;
+                let warmed = js
+                    .execute_script("[fc:warm-up]", WARM_UP.to_owned())
+                    .map_err(|e| format!("the warm-up failed: {e}"))?;
+                let settled = js.resolve(warmed);
+                runtime
+                    .block_on(js.with_event_loop_promise(
+                        Box::pin(settled),
+                        deno_core::PollEventLoopOptions::default(),
+                    ))
+                    .map_err(|e| format!("the warm-up failed: {e}"))?;
                 Ok(js.snapshot())
             })
             .map_err(|e| format!("no thread for the base snapshot: {e}"))?
@@ -72,6 +92,34 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
     .map(|snapshot| &**snapshot)
     .map_err(Clone::clone)
 }
+
+/// One request through the dispatcher and the web subset, before the base
+/// snapshot is taken (see [`base_snapshot`]). No host API: there is no
+/// function behind it.
+const WARM_UP: &str = r#"
+(async () => {
+  const invoke = globalThis.__fcHost.dispatcher({
+    default: async (request) => {
+      const url = new URL(request.url);
+      url.searchParams.get("q");
+      request.headers.get("content-type");
+      const body = request.method === "POST" ? await request.json() : await request.text();
+      const headers = new Headers({ "x-a": "b" });
+      headers.append("set-cookie", "a=1");
+      return Response.json({ path: url.pathname, body }, { status: 201, headers });
+    },
+  }, "default");
+  await invoke("POST", "http://localhost/warm/up?q=1", [["content-type", "application/json"]],
+    new TextEncoder().encode(JSON.stringify({ n: 1 })));
+  await invoke("GET", "http://localhost/", [], new Uint8Array(0));
+  new Response("text").text();
+  new Request("http://localhost/", { method: "POST", body: "x" }).arrayBuffer();
+  new TextDecoder().decode(new Uint8Array([104, 105]));
+  btoa("hi");
+  atob("aGk=");
+  new URLSearchParams("a=1&b=2").toString();
+})()
+"#;
 
 struct Worker {
     jobs: mpsc::UnboundedSender<Job>,

@@ -101,6 +101,8 @@ pub struct Options {
     pub max_executing: usize,
     pub host_max_concurrency: i32,
     pub init_timeout: Duration,
+    /// `FC_FN_MAX_LOADED`.
+    pub max_loaded: usize,
 }
 
 impl Default for Options {
@@ -109,6 +111,7 @@ impl Default for Options {
             max_executing: 2,
             host_max_concurrency: 64,
             init_timeout: Duration::from_secs(2),
+            max_loaded: 50,
         }
     }
 }
@@ -163,7 +166,7 @@ impl JsHarness {
         .unwrap();
         let cache = ArtifactCache::new(dir.path(), DEFAULT_MAX_BYTES).unwrap();
         let artifacts = ArtifactStores::new(cache).with_source("file", Arc::new(FileSource));
-        let registry = Arc::new(FunctionRegistry::new(50, clock.clone()));
+        let registry = Arc::new(FunctionRegistry::new(options.max_loaded, clock.clone()));
         let reconciler = Arc::new(Reconciler::new(
             "default",
             "host-1",

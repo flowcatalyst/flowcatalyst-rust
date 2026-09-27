@@ -117,6 +117,14 @@ async function handle(request) {
         base64: btoa("hi") + atob("aGk="),
         url: new URL("../b?x=1#h", "https://example.test/a/c").href,
         cloned: structuredClone({ a: [1, 2] }),
+        atomicsWait: (() => {
+          try {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+            return "allowed";
+          } catch (e) {
+            return e.name;
+          }
+        })(),
       });
     case "/top-level-api":
       return new Response("ok");

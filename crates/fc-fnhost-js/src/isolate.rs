@@ -166,6 +166,9 @@ impl Isolate {
             });
         }
         js.op_state().borrow_mut().put(host);
+        // `Atomics.wait` would block the worker thread (and every isolate
+        // sharing it): off, it throws.
+        js.v8_isolate().set_allow_atomics_wait(false);
         // SAFETY: the pointer is only used while `js` lives (the `Isolate`
         // owns both).
         let raw = unsafe { js.v8_isolate().as_raw_isolate_ptr() };

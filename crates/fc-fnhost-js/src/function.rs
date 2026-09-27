@@ -21,7 +21,8 @@
 //!   host's WARN line;
 //! - the deadline (the endpoint's `timeoutMs`) stops the isolate wherever
 //!   it is: [`InvokeError::Timeout`] (504), and the call's permits are held
-//!   until the isolate is gone.
+//!   until the isolate has stopped running JavaScript. (Its teardown, a
+//!   bounded fraction of a millisecond, happens after the answer.)
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -161,9 +162,17 @@ struct Job {
     slot: Slot,
 }
 
-async fn run(job: Job) -> Outcome {
+/// Runs the request, answers through `answer`, then tears the isolate down:
+/// the caller has its response before the isolate's teardown.
+async fn run(job: Job, answer: oneshot::Sender<Outcome>) {
+    let (outcome, isolate) = run_isolate(job).await;
+    let _ = answer.send(outcome);
+    drop(isolate);
+}
+
+async fn run_isolate(job: Job) -> (Outcome, Option<Isolate>) {
     if job.stop.is_cancelled() {
-        return Outcome::Timeout;
+        return (Outcome::Timeout, None);
     }
     let at_start = Rc::new(HostState {
         version: job.version.clone(),
@@ -172,13 +181,13 @@ async fn run(job: Job) -> Outcome {
     let modules = FunctionModules::new(job.code);
     let mut isolate = match Isolate::from_base(job.base, job.limits, at_start, modules) {
         Ok(isolate) => isolate,
-        Err(why) => return Outcome::Failed(why),
+        Err(why) => return (Outcome::Failed(why), None),
     };
     *job.slot.lock() = Some(isolate.terminator());
     // The watchdog may have fired before the isolate was in the slot.
     if job.stop.is_cancelled() {
         job.slot.lock().take();
-        return Outcome::Timeout;
+        return (Outcome::Timeout, Some(isolate));
     }
     let r = &job.request;
     let during = Rc::new(HostState {
@@ -197,8 +206,7 @@ async fn run(job: Job) -> Outcome {
     job.slot.lock().take();
     let out_of_memory = isolate.stops().out_of_memory.load(Ordering::Acquire);
     let stopped = isolate.stops().stopped.load(Ordering::Acquire) || job.stop.is_cancelled();
-    drop(isolate);
-    match result {
+    let outcome = match result {
         _ if stopped && !out_of_memory => Outcome::Timeout,
         None => Outcome::Timeout,
         Some(Err(why)) if out_of_memory => Outcome::OutOfMemory(why),
@@ -207,7 +215,8 @@ async fn run(job: Job) -> Outcome {
             Outcome::OutOfMemory("the heap reached its limit after the response".into())
         }
         Some(Ok((status, headers, body))) => Outcome::Answer(status, headers, body),
-    }
+    };
+    (outcome, Some(isolate))
 }
 
 /// Stops the isolate if the invocation future is dropped early, or when
@@ -262,7 +271,7 @@ impl Invoker for JsFunction {
         let span = tracing::Span::current();
         let sent = self.workers.run(move || {
             async move {
-                let _ = sender.send(run(job).await);
+                run(job, sender).await;
             }
             .instrument(span)
         });
