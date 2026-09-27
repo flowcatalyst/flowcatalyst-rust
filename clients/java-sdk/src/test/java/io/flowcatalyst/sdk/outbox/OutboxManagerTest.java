@@ -103,6 +103,42 @@ class OutboxManagerTest {
     }
 
     @Test
+    void dispatchJobPayloadCarriesDescriptorAndQueueOnlyWhenSet() throws Exception {
+        CapturingDriver driver = new CapturingDriver();
+        OutboxManager outbox = new OutboxManager(driver, "clt_TEST123456789");
+        CreateDispatchJobDto base = CreateDispatchJobDto
+                .create("svc", "app:sub:agg:act", "https://example.com/hook", "{}", "pool-1");
+
+        outbox.createDispatchJob(base
+                .withDescriptor("Notify Value of user logins")
+                .withQueue("HIGH_PRIORITY")
+                .withMessageGroup("group-1"));
+        outbox.createDispatchJobs(List.of(base));
+
+        JsonNode set = MAPPER.readTree(driver.inserted.get(0).payload());
+        assertEquals("Notify Value of user logins", set.get("descriptor").asText());
+        assertEquals("HIGH_PRIORITY", set.get("queue").asText());
+
+        JsonNode unset = MAPPER.readTree(driver.inserted.get(1).payload());
+        assertFalse(unset.has("descriptor"), "an unset descriptor must be omitted");
+        assertFalse(unset.has("queue"), "an unset queue must be omitted, never defaulted");
+    }
+
+    @Test
+    void dispatchJobDescriptorIsAtMost255Characters() throws Exception {
+        CreateDispatchJobDto base = CreateDispatchJobDto
+                .create("svc", "app:sub:agg:act", "https://example.com/hook", "{}", "pool-1");
+
+        // Characters, not UTF-16 units: 255 supplementary characters fit.
+        String longest = "\uD83D\uDE80".repeat(255);
+        assertEquals(longest, base.withDescriptor(longest).toPayload().get("descriptor"));
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> base.withDescriptor("x".repeat(256)));
+        assertTrue(e.getMessage().contains("at most 255 characters"));
+    }
+
+    @Test
     void auditLogDefaultsPerformedAtAndStringifiesOperationData() throws Exception {
         CapturingDriver driver = new CapturingDriver();
         OutboxManager outbox = new OutboxManager(driver, "clt_TEST123456789");

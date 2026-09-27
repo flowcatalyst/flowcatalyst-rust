@@ -18,6 +18,17 @@ published, plus the additions below.
 - `CreateAuditLogDto.withOperationData(Map, Set<String> maskedFields)`: an
   overload for extra top-level fields to mask. The one-argument form is
   unchanged.
+- `CreateDispatchJobDto.withQueue(String)`: the job's own dispatch priority,
+  `DEFAULT` or `HIGH_PRIORITY` (any case; the platform answers 400
+  `INVALID_QUEUE` for anything else). Unset stays absent, never defaulted.
+- `CreateDispatchJobDto.withDescriptor(String)`: what the job is, in words
+  (e.g. "Notify Value of user logins"), shown in the platform's
+  dispatch-jobs grid. At most 255 characters
+  (`CreateDispatchJobDto.MAX_DESCRIPTOR_LENGTH`); a longer one throws
+  `IllegalArgumentException`, where the platform would answer 400
+  `VALIDATION`.
+- Both travel in the outbox payload as `queue` / `descriptor` and are left
+  out when unset.
 
 ### Changed
 - `client.router().inPipeline()` / `inPipelineBatch()` send the platform

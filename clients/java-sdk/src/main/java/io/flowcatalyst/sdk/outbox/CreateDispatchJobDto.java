@@ -18,6 +18,9 @@ import java.util.Map;
  */
 public final class CreateDispatchJobDto {
 
+    /** The longest descriptor the platform accepts, in characters. */
+    public static final int MAX_DESCRIPTOR_LENGTH = 255;
+
     /**
      * Ordering behavior within a message group.
      * IMMEDIATE: no ordering, jobs dispatch concurrently (platform default).
@@ -53,6 +56,8 @@ public final class CreateDispatchJobDto {
     private String idempotencyKey;
     private String externalId;
     private String connectionId;
+    private String queue;
+    private String descriptor;
 
     private CreateDispatchJobDto() {}
 
@@ -81,6 +86,8 @@ public final class CreateDispatchJobDto {
         c.idempotencyKey = idempotencyKey;
         c.externalId = externalId;
         c.connectionId = connectionId;
+        c.queue = queue;
+        c.descriptor = descriptor;
         return c;
     }
 
@@ -218,6 +225,38 @@ public final class CreateDispatchJobDto {
         return c;
     }
 
+    /**
+     * The job's own dispatch priority: {@code DEFAULT} or {@code HIGH_PRIORITY},
+     * matched ignoring case. Unset stays absent, never defaulted, so "not asked
+     * for" stays distinguishable from an explicit {@code DEFAULT}. Not validated
+     * here: the platform answers 400 {@code INVALID_QUEUE} for anything else.
+     */
+    public CreateDispatchJobDto withQueue(String queue) {
+        CreateDispatchJobDto c = copy();
+        c.queue = queue;
+        return c;
+    }
+
+    /**
+     * What the job is, in words (e.g. "Notify Value of user logins"), shown in
+     * the platform's dispatch-jobs grid. Unset stays absent.
+     *
+     * @throws IllegalArgumentException if longer than {@link #MAX_DESCRIPTOR_LENGTH}
+     *         (255) characters; the platform would answer 400 {@code VALIDATION}
+     */
+    public CreateDispatchJobDto withDescriptor(String descriptor) {
+        if (descriptor != null) {
+            int length = descriptor.codePointCount(0, descriptor.length());
+            if (length > MAX_DESCRIPTOR_LENGTH) {
+                throw new IllegalArgumentException("Dispatch job descriptor must be at most "
+                        + MAX_DESCRIPTOR_LENGTH + " characters, got " + length);
+            }
+        }
+        CreateDispatchJobDto c = copy();
+        c.descriptor = descriptor;
+        return c;
+    }
+
     public String messageGroup() {
         return messageGroup;
     }
@@ -248,6 +287,8 @@ public final class CreateDispatchJobDto {
         putIfNotNull(payload, "idempotencyKey", idempotencyKey);
         putIfNotNull(payload, "externalId", externalId);
         putIfNotNull(payload, "connectionId", connectionId);
+        putIfNotNull(payload, "queue", queue);
+        putIfNotNull(payload, "descriptor", descriptor);
         return payload;
     }
 
