@@ -248,7 +248,7 @@ The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). I
 | `FC_FN_HOST_ID` | `<hostname>-<random>` | The id its heartbeats carry |
 | `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` | Artifact signature policy (`off` only with `FLOWCATALYST_DEV_MODE=true`) |
 | `FC_FN_CACHE_DIR` | `<tmp>/fc-fn-cache` | Artifact and compiled-module cache |
-| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits. `FC_FN_MAX_EXECUTING` sizes each runtime's own threads: the WASM guests' runtime and the JS workers (so a host busy with both kinds can execute up to twice that many at once) |
+| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits. `FC_FN_MAX_EXECUTING` is one host-wide budget: at most that many guests execute on a CPU at once, WASM and JS together. A guest holds a permit only while it runs, never while it awaits I/O (outbound HTTP, a database query, an emit, a timer), and queues for one (FIFO, across both runtimes) before it resumes; one still queued at its deadline answers 504 as any timeout. Each runtime keeps that many threads of its own, so either alone can use the whole budget |
 | `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
 | `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown |
 | `FC_FN_PORT` | `8080` host only / `8095` beside other roles | Private function listener (`/functions/<address>/…`) |
@@ -263,6 +263,8 @@ The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). I
 **Function databases** (`docs/developers/functions.md#database-access`): a manifest's `db[]` connections are opened by the host, not the platform — so the host needs network reach to them, and, for `aws-sm://` secrets, `secretsmanager:GetSecretValue` on those secrets for its own IAM role. Each pool is sqlx, lazily connected (nothing at load), sized to the largest `poolSize` of the functions sharing it, idle connections closed after 60 s and every connection replaced after 30 min; a connection is reset (`ROLLBACK` if needed, `DISCARD ALL`) each time it goes back. An unreachable database is logged at WARN (throttled, 10 s) with the `db` name and SQLSTATE, never SQL or a secret.
 
 **Metering** (owner decision #13): `/metrics` also exports `fc_fn_fuel_total`, `fc_fn_invocation_fuel` and `fc_fn_invocation_peak_memory_bytes`, labelled `address` and `client`; `fc_fn_invocations_total{outcome="fuel_exhausted"}` counts calls stopped by `limits.maxFuel`.
+
+**Executing budget** (`FC_FN_MAX_EXECUTING`): `/metrics` exports `fc_fn_executing` (guests executing now, every runtime together), `fc_fn_executing_waiting` (guests ready to run, queued for a permit) and `fc_fn_executing_limit`. A waiting count that stays above zero means the host's CPUs, not the listener's permits, are the bottleneck. Loads are outside the budget: compiling a component and running a bundle's top-level code at load happen on the reconciler's blocking threads.
 
 **Host only** (this flag on, every other role off — `FC_PLATFORM_ENABLED=false` too): `fc-server` is exactly the former `fc-fnhost` daemon — no database, none of `fc-server`'s own listeners, exit 2 naming every bad variable. **Beside other roles** the host runs in the process on its own ports (a port another listener of the process holds refuses the boot), starts once the API listener is bound, and drains first at shutdown.
 
