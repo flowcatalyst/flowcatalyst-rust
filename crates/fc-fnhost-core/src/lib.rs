@@ -22,6 +22,7 @@
 //! | [`artifact`] | `platform/function/artifact/*Store*.java`, `fnhost/reconcile/PlatformArtifactStore.java` |
 //! | [`signature`], [`digest`] | `platform/function/artifact/{Signatures,SignatureVerifier,TrustRoot}.java`, `platform/function/{Digest,SignerIdentity}.java` — re-exported from `fc-function-signing` (the digest types being `fc-function-model`'s), which the platform also depends on |
 //! | [`loader`], [`registry`] | `fnhost/load/{FunctionLoader,LoadedFunction,FunctionRegistry}.java` |
+//! | [`exec`] | none: `FC_FN_MAX_EXECUTING`, the executing permits every runtime shares (Rust host only) |
 //! | [`invoke`] | `LoadedFunction.invoke`, `fnhost/http/InvocationRunner.java` (the runtime-agnostic seam) |
 //! | [`listener`] | `fnhost/http/*`, `fnhost/route/PublicRouteTable.java` |
 //! | `fc_function_model` | `platform/function/{Manifest,EndpointAuth,HttpMethod,RoutePattern}.java`: the platform's own model, not a copy |
@@ -37,6 +38,7 @@ pub mod db;
 pub mod desired;
 pub mod emit;
 pub mod env;
+pub mod exec;
 pub mod fingerprint;
 pub mod heartbeat;
 pub mod host;

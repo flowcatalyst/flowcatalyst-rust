@@ -12,7 +12,9 @@
 //! **The call.** The listener's [`InvocationContext`] becomes a
 //! `wasi:http` incoming request (method, path and raw query, headers,
 //! body, the original `Host` as authority). The handler runs in its own
-//! task on the guest runtime; this future awaits the response-outparam,
+//! task on the guest runtime, holding one of the host's executing permits
+//! only while it is polled ([`crate::exec`]); this future awaits the
+//! response-outparam,
 //! then buffers the body (capped at `limits.wasmMemoryMb`), then waits for
 //! the handler to return. Running the handler in its own task and awaiting
 //! the outparam, rather than polling both in one future, is the F0
@@ -321,6 +323,12 @@ impl Invoker for WasmFunction {
                 stop.clone(),
                 self.runtime.consume_fuel.then_some(self.shared.max_fuel),
             );
+            // The guest holds an executing permit only while it is polled:
+            // it gives it back at every suspension (a host call that is not
+            // ready, an epoch tick, a fuel yield) and queues for one before
+            // it resumes. A guest still queued at its deadline is stopped
+            // here like any other, without running again.
+            let run = self.runtime.budget.run(run);
             self.runtime.spawn(
                 async move {
                     tokio::select! {
