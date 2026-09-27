@@ -511,6 +511,7 @@ pub fn build_platform_routes(
         portal_apps: Arc::new(crate::portal::repository::PortalAppRepository::new(
             &repos.pool,
         )),
+        principal_repo: repos.principal_repo.clone(),
         create_oauth_client_use_case,
         update_oauth_client_use_case,
         delete_oauth_client_use_case,

@@ -77,6 +77,14 @@ pub struct CreateOAuthClientRequest {
     /// `portalAppId`); its client becomes the portal owner.
     #[serde(default)]
     pub portal_app_id: Option<String>,
+
+    /// The SERVICE principal this client authenticates as on the
+    /// `client_credentials` grant (Go `principalId`, stored as the client's
+    /// `serviceAccountPrincipalId`). It must name a service account's
+    /// principal: an unknown id is a 404 `Principal_NOT_FOUND`, a user's a
+    /// 400 `PRINCIPAL_NOT_SERVICE_ACCOUNT`.
+    #[serde(default)]
+    pub principal_id: Option<String>,
 }
 
 /// Update OAuth client request
@@ -302,6 +310,8 @@ pub struct OAuthClientsState {
     pub application_repo: Arc<crate::ApplicationRepository>,
     /// Resolves `portalAppId` to its owning client (Go `State.PortalApps`).
     pub portal_apps: Arc<crate::portal::repository::PortalAppRepository>,
+    /// Checks a create's `principalId` names a service account's principal.
+    pub principal_repo: Arc<crate::PrincipalRepository>,
     pub create_oauth_client_use_case:
         Arc<crate::auth::operations::CreateOAuthClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_oauth_client_use_case:
@@ -407,6 +417,30 @@ pub async fn create_oauth_client(
     // Go stores the grant types as sent: none sent is none stored.
     let grant_types = parse_grant_types(&req.grant_types)?;
 
+    // Go links the client to the principal as sent (only the foreign key
+    // checks it, so an unknown id is a 500 there). A client authenticates as
+    // a service account on `client_credentials`, never as a user, which the
+    // token endpoint refuses; the link is checked here so the refusal comes
+    // at create time rather than at every token request.
+    let service_account_principal_id =
+        match crate::portal::trimmed_or_none(req.principal_id.as_deref()) {
+            None => None,
+            Some(principal_id) => {
+                let principal = state
+                    .principal_repo
+                    .find_by_id(&principal_id)
+                    .await?
+                    .ok_or_else(|| PlatformError::not_found_code("Principal", &principal_id))?;
+                if principal.principal_type != crate::PrincipalType::Service {
+                    return Err(PlatformError::bad_request_code(
+                        "PRINCIPAL_NOT_SERVICE_ACCOUNT",
+                        "principalId must name a service account's principal",
+                    ));
+                }
+                Some(principal.id)
+            }
+        };
+
     let oauth_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
 
     let cmd = CreateOAuthClientCommand {
@@ -423,7 +457,7 @@ pub async fn create_oauth_client(
         pkce_required: req.pkce_required.unwrap_or(true),
         application_ids: req.application_ids,
         allowed_origins: req.allowed_origins,
-        service_account_principal_id: None,
+        service_account_principal_id,
         created_by: Some(auth.0.principal_id.clone()),
         portal_client_id,
         portal_app_id: req.portal_app_id,

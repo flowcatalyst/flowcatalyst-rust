@@ -310,3 +310,114 @@ async fn event_detail_answers_the_events_context_data() {
     let detail = get_json(&app, &format!("/api/events/{id}"), &token).await;
     assert!(detail.get("contextData").is_none(), "{detail}");
 }
+
+// ── 4. OAuth client create: principalId ──────────────────────────────────
+
+async fn client_credentials(app: &TestApp, client_id: &str, secret: &str) -> (StatusCode, Value) {
+    use axum::body::Body;
+    use axum::http::{Method, Request};
+    use tower::ServiceExt;
+    let body = format!(
+        "grant_type=client_credentials&client_id={client_id}&client_secret={}",
+        urlencoding::encode(secret)
+    );
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/oauth/token")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    read_json(resp).await
+}
+
+/// Go's `principalId` links the new client to the principal it
+/// authenticates as on `client_credentials` (`serviceAccountPrincipalId` on
+/// reads). It must be a service account's principal: Go takes any id the
+/// foreign key accepts (an unknown one is a 500 there), and a user's would be
+/// refused at every token request anyway.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn oauth_client_create_links_the_service_principal_it_names() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    let sa = assert_status(
+        app.post(
+            "/api/service-accounts",
+            &token,
+            json!({"code": "gaps-oauth-sa", "name": "Gaps OAuth SA"}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let principal_id = sa["principalId"].as_str().expect("principalId").to_string();
+
+    let created = assert_status(
+        app.post(
+            "/api/oauth-clients",
+            &token,
+            json!({
+                "clientName": "Gaps machine client",
+                "clientType": "CONFIDENTIAL",
+                "grantTypes": ["client_credentials"],
+                "principalId": principal_id
+            }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(
+        created["client"]["serviceAccountPrincipalId"],
+        principal_id.as_str()
+    );
+    let id = created["client"]["id"].as_str().unwrap();
+    let read = get_json(&app, &format!("/api/oauth-clients/{id}"), &token).await;
+    assert_eq!(read["serviceAccountPrincipalId"], principal_id.as_str());
+
+    // The link is what the client_credentials grant authenticates as.
+    let (s, body) = client_credentials(
+        &app,
+        created["client"]["clientId"].as_str().unwrap(),
+        created["clientSecret"].as_str().unwrap(),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(body["access_token"].is_string());
+
+    let (s, body) = read_json(
+        app.post(
+            "/api/oauth-clients",
+            &token,
+            json!({"clientName": "X", "clientType": "CONFIDENTIAL", "principalId": "prn_nobody"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"], "Principal_NOT_FOUND");
+
+    let user = fc_platform::domain::Principal::new_user(
+        "gaps-user@flowcatalyst.test",
+        fc_platform::domain::UserScope::Anchor,
+    );
+    app.repos.principal_repo.insert(&user).await.unwrap();
+    let (s, body) = read_json(
+        app.post(
+            "/api/oauth-clients",
+            &token,
+            json!({"clientName": "X", "clientType": "CONFIDENTIAL", "principalId": user.id}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "PRINCIPAL_NOT_SERVICE_ACCOUNT");
+}
