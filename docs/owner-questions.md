@@ -399,7 +399,7 @@ Counts: **Part A** 27 rulings already taken · **Part B** ~290 open questions in
   Ruling: closed by X-07 — idempotent, no event on a no-op.
 - **APP-2** Attach answers `APPLICATION_HAS_SERVICE_ACCOUNT`, provision `ALREADY_PROVISIONED` (both 409) for the same state.
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
-- **APP-3** `hasLoginClient` always `false`; `baseUrlOverride` / `configJson` never populated.
+- **APP-3** `hasLoginClient` always `false`; `baseUrlOverride` / `configJson` never populated. *(`baseUrlOverride` / `configJson`: implemented in Rust, owner decision #46.)*
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
 - **APP-4** `active=<anything but "true">` lists inactive applications.
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
@@ -433,7 +433,7 @@ Counts: **Part A** 27 rulings already taken · **Part B** ~290 open questions in
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
 - **DJ-9** `list-raw` / `{id}/raw` return the same shapes as non-raw (only the gate differs).
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
-- **DJ-10** `attempts` never present on `DispatchJobResponse`; `clientIdentifier` / `priority` never emitted on `DispatchJobRead`.
+- **DJ-10** `attempts` never present on `DispatchJobResponse`; `clientIdentifier` / `priority` never emitted on `DispatchJobRead`. *(`priority`: implemented in Rust, owner decision #46.)*
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
 - **DJ-11** Lenient reads (`status` → `PENDING`, `protocol` ignored, legacy object `metadata` → empty) (→ X-06).
   Ruling: closed by X-06 — fail loudly (legacy object-shaped `metadata` needs a one-off migration first).

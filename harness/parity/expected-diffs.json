@@ -1187,27 +1187,27 @@
     "step": "assign-router-role",
     "pointer": "**/assignedBy",
     "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
-    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+    "ruling": "owner decisions 2026-09-25, #46: members Go documents but never fills are implemented in Rust"
   },
   {
     "scenario": "service-accounts*",
     "step": "assign-roles",
     "pointer": "**/assignedBy",
     "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
-    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+    "ruling": "owner decisions 2026-09-25, #46: members Go documents but never fills are implemented in Rust"
   },
   {
     "scenario": "service-accounts*",
     "step": "list-roles",
     "pointer": "**/assignedBy",
     "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
-    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+    "ruling": "owner decisions 2026-09-25, #46: members Go documents but never fills are implemented in Rust"
   },
   {
     "scenario": "functions*",
     "step": "assign-host-role",
     "pointer": "**/assignedBy",
     "reason": "Go documents RoleAssignmentDTO.assignedBy but iam_principal_roles has no column for it, so Go never answers it; Rust stores the assigning principal (migration 059) and answers it on a service account's role assignments",
-    "ruling": "owner decisions 2026-09-25, #31: where Go loses or refuses work because of its own defect and Rust does not, Rust keeps the correct behaviour"
+    "ruling": "owner decisions 2026-09-25, #46: members Go documents but never fills are implemented in Rust"
   }
 ]
