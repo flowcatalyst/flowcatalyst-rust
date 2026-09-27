@@ -1097,5 +1097,89 @@
     "pointer": "/version",
     "reason": "The stored platform spec version is the document's info.version, the platform build version (see /spec/info/version).",
     "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "client-credentials",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "client-credentials",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "introspect-client-credentials-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "api-me-with-client-credentials-token",
+    "pointer": "/permissions/24",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "authz: permissions come from roles*",
+    "step": "service-account-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "authz: permissions come from roles*",
+    "step": "service-account-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "profile-only gate*",
+    "step": "service-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "profile-only gate*",
+    "step": "service-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "plain-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "plain-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
   }
 ]
