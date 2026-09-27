@@ -103,6 +103,7 @@ pub struct UpdatePrincipalRequest {
 /// Assign role request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddRoleRequest)]
 pub struct AssignRoleRequest {
     /// Role code
     pub role: String,
@@ -115,6 +116,7 @@ pub struct AssignRoleRequest {
 /// Batch assign roles request (for PUT /roles - declarative update)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AssignPrincipalRolesRequest)]
 pub struct BatchAssignRolesRequest {
     /// List of role codes to assign (replaces existing roles)
     pub roles: Vec<String>,
@@ -123,6 +125,7 @@ pub struct BatchAssignRolesRequest {
 /// Batch assign roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RolesAssignedResponse)]
 pub struct BatchAssignRolesResponse {
     /// Current role assignments after update
     pub roles: Vec<RoleAssignmentDto>,
@@ -179,6 +182,7 @@ pub struct CheckEmailDomainResponse {
 /// Set application access request (batch replace)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AssignApplicationAccessRequest)]
 pub struct SetApplicationAccessRequest {
     /// Application IDs to grant access to (replaces existing)
     pub application_ids: Vec<String>,
@@ -225,6 +229,7 @@ pub struct SetApplicationAccessResponse {
 /// Available application response (slim DTO)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalAvailableApplication)]
 pub struct AvailableApplicationResponse {
     pub id: String,
     pub code: String,
@@ -244,6 +249,7 @@ impl From<Application> for AvailableApplicationResponse {
 /// Available applications list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalAvailableApplicationsResponse)]
 pub struct AvailableApplicationsResponse {
     pub applications: Vec<AvailableApplicationResponse>,
 }
@@ -286,6 +292,7 @@ impl From<crate::principal::entity::ClientAccessGrant> for ClientAccessGrantResp
 /// Client access list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientAccessGrantListResponse)]
 pub struct ClientAccessListResponse {
     pub grants: Vec<ClientAccessGrantResponse>,
 }
@@ -334,6 +341,7 @@ impl From<&RoleAssignment> for RoleAssignmentResponse {
 /// Role assignment DTO (for GET /roles)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalRoleAssignmentDTO)]
 pub struct RoleAssignmentDto {
     pub id: String,
     pub role_name: String,
@@ -352,6 +360,7 @@ pub(super) fn assignment_source_label(r: &RoleAssignment) -> String {
 /// Roles list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalRoleListResponse)]
 pub struct RolesListResponse {
     pub roles: Vec<RoleAssignmentDto>,
 }

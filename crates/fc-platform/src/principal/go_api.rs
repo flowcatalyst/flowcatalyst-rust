@@ -72,6 +72,7 @@ pub struct BulkImportUser {
 /// Go `BulkImportRowResult`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = BulkImportResult)]
 pub struct BulkImportRowResult {
     pub row: usize,
     pub email: String,

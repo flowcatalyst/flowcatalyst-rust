@@ -37,6 +37,7 @@ pub struct EventTypeGoState {
 /// handler.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddSchemaRequest)]
 pub struct AddEventTypeSchemaRequest {
     pub version: String,
     #[schema(value_type = Object)]

@@ -64,6 +64,7 @@ impl From<LoginAttempt> for LoginAttemptResponse {
 /// unbounded so we never count.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = LoginAttemptListResponse)]
 pub struct LoginAttemptsListResponse {
     pub items: Vec<LoginAttemptResponse>,
     pub has_more: bool,

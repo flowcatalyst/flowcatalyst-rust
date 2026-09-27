@@ -19,6 +19,7 @@ use crate::{ContextData, Event, EventRead};
 /// Context data for event filtering/searching
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ContextEntryDTO)]
 pub struct ContextDataDto {
     pub key: String,
     pub value: String,
@@ -98,6 +99,7 @@ pub struct CreateEventResponse {
 /// Event response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CreatedEvent)]
 pub struct EventResponse {
     pub id: String,
     pub spec_version: String,
@@ -439,6 +441,7 @@ pub async fn get_event(
 /// read projection. Absent members stay absent.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventResponse)]
 pub struct EventDetailResponse {
     pub id: String,
     pub spec_version: String,
@@ -503,6 +506,7 @@ impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
 /// absent, `projectedAt` always).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventRead)]
 pub struct EventListItem {
     pub id: String,
     #[serde(rename = "type")]

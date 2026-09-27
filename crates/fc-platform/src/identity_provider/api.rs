@@ -126,6 +126,7 @@ fn parse_idp_type(value: &str) -> Result<crate::IdentityProviderType, PlatformEr
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = IdentityProviderListResponse)]
 pub struct IdentityProvidersListResponse {
     pub identity_providers: Vec<IdentityProviderResponse>,
     pub total: usize,

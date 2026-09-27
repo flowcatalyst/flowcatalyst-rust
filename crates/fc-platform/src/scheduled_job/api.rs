@@ -133,6 +133,7 @@ pub struct FireNowResponse {
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = FireNowRequest)]
 pub struct FireRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -140,6 +141,7 @@ pub struct FireRequest {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = WriteInstanceLogRequest)]
 pub struct InstanceLogRequest {
     /// Required, as Go's `WriteInstanceLogRequest` (huma: no `omitempty`).
     pub level: LogLevelDto,
@@ -173,6 +175,7 @@ impl From<LogLevelDto> for LogLevel {
 /// `{status: <instance status>, completionStatus, completionResult}`.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CompleteInstanceRequest)]
 pub struct InstanceCompleteRequest {
     #[serde(default)]
     pub status: Option<String>,
@@ -366,6 +369,7 @@ impl From<ScheduledJobInstance> for ScheduledJobInstanceResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 /// Go's `ScheduledJobInstanceLogResponse`.
+#[schema(as = ScheduledJobInstanceLogResponse)]
 pub struct InstanceLogResponse {
     pub id: String,
     pub instance_id: String,

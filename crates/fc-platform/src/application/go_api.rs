@@ -45,6 +45,7 @@ pub struct AttachServiceAccountRequest {
 /// or the config JSON, so neither appears).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigResponse)]
 pub struct GoClientConfigResponse {
     pub id: String,
     pub application_id: String,

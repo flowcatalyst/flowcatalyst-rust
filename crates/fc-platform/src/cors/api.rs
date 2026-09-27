@@ -16,6 +16,7 @@ use crate::shared::middleware::Authenticated;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddOriginRequest)]
 pub struct CreateCorsOriginRequest {
     pub origin: String,
     pub description: Option<String>,
@@ -23,6 +24,7 @@ pub struct CreateCorsOriginRequest {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AllowedOriginResponse)]
 pub struct CorsOriginResponse {
     pub id: String,
     pub origin: String,
@@ -50,6 +52,7 @@ impl From<CorsAllowedOrigin> for CorsOriginResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CorsOriginListResponse)]
 pub struct CorsOriginsListResponse {
     pub cors_origins: Vec<CorsOriginResponse>,
     pub total: usize,
@@ -57,6 +60,7 @@ pub struct CorsOriginsListResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PublicAllowedResponse)]
 pub struct AllowedOriginsResponse {
     pub origins: Vec<String>,
 }

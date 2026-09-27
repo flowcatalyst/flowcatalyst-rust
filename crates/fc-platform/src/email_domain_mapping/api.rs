@@ -17,6 +17,7 @@ use crate::shared::middleware::Authenticated;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CreateMappingRequest)]
 pub struct CreateEmailDomainMappingRequest {
     pub email_domain: String,
     pub identity_provider_id: String,
@@ -38,6 +39,7 @@ pub struct CreateEmailDomainMappingRequest {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = UpdateMappingRequest)]
 pub struct UpdateEmailDomainMappingRequest {
     /// Not in Go's update (the provider moves through `move-provider`);
     /// still honoured here.
@@ -75,6 +77,7 @@ where
 /// absent when unset. Role sync lives on the identity provider (Go's 040).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = MappingResponse)]
 pub struct EmailDomainMappingResponse {
     pub id: String,
     pub email_domain: String,
@@ -131,6 +134,7 @@ impl From<EmailDomainMapping> for EmailDomainMappingResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = MappingListResponse)]
 pub struct EmailDomainMappingsListResponse {
     pub mappings: Vec<EmailDomainMappingResponse>,
     pub total: usize,

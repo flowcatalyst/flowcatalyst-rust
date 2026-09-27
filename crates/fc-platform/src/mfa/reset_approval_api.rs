@@ -32,6 +32,7 @@ pub struct ResetApprovalsState {
 /// Go `RequestDTO`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RequestDTO)]
 pub struct ResetApprovalDto {
     pub id: String,
     pub principal_id: String,
@@ -44,6 +45,7 @@ pub struct ResetApprovalDto {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(as = ListOutputBody)]
 pub struct ResetApprovalListResponse {
     pub requests: Vec<ResetApprovalDto>,
 }

@@ -60,6 +60,7 @@ pub struct GoPlatformConfigState {
 /// Go `ConfigResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigResponse)]
 pub struct GoConfigResponse {
     pub id: String,
     pub application_code: String,
@@ -78,6 +79,7 @@ pub struct GoConfigResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigListResponse)]
 pub struct GoConfigListResponse {
     pub items: Vec<GoConfigResponse>,
 }
@@ -85,6 +87,7 @@ pub struct GoConfigListResponse {
 /// Go `SetPropertyRequest`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = SetPropertyRequest)]
 pub struct GoSetPropertyRequest {
     pub value: String,
     pub value_type: Option<String>,
@@ -95,6 +98,7 @@ pub struct GoSetPropertyRequest {
 /// Go `GrantAccessRequest`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = GrantAccessRequest)]
 pub struct GoGrantAccessRequest {
     pub role_code: String,
     pub can_write: bool,

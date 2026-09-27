@@ -67,6 +67,7 @@ impl From<AnchorDomain> for AnchorDomainResponse {
 /// Create client auth config request
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CreateAuthConfigRequest)]
 pub struct CreateClientAuthConfigRequest {
     /// Email domain this config applies to
     pub email_domain: String,
@@ -110,6 +111,7 @@ pub struct CreateClientAuthConfigRequest {
 /// Update client auth config request
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = UpdateAuthConfigRequest)]
 pub struct UpdateClientAuthConfigRequest {
     /// Primary client ID
     pub primary_client_id: Option<String>,
@@ -206,6 +208,7 @@ pub struct UpdateGrantedClientsRequest {
 /// secret is its reference or `encrypted:` form, never a plaintext.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuthConfigResponse)]
 pub struct ClientAuthConfigResponse {
     pub id: String,
     pub email_domain: String,

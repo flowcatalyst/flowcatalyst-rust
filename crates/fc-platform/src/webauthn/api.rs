@@ -123,6 +123,7 @@ pub struct AuthenticateCompleteRequest {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = WebauthnAuthenticateCompleteResponse)]
 pub struct AuthenticateCompleteResponse {
     pub principal_id: String,
     pub email: Option<String>,
@@ -132,6 +133,7 @@ pub struct AuthenticateCompleteResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = WebauthnCredentialSummary)]
 pub struct CredentialSummary {
     pub id: String,
     pub name: Option<String>,

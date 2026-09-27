@@ -89,6 +89,7 @@ impl From<Connection> for ConnectionResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConnectionListResponse)]
 pub struct ConnectionsListResponse {
     pub connections: Vec<ConnectionResponse>,
     pub total: usize,

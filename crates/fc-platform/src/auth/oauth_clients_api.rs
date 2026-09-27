@@ -618,6 +618,7 @@ pub async fn delete_oauth_client(
 /// Regenerate secret response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RotateOAuthClientSecretResponse)]
 pub struct RegenerateSecretResponse {
     /// The public client_id (Go's shape).
     pub client_id: String,

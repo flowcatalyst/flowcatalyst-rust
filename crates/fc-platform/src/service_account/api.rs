@@ -81,6 +81,7 @@ pub struct CreateServiceAccountRequest {
 /// Go `WebhookCredentialsDTO`: only `authType` is read.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = WebhookCredentialsDTO)]
 pub struct WebhookCredentialsRequest {
     #[serde(default)]
     pub auth_type: String,
@@ -199,6 +200,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
 /// OAuth credentials (one-time, shown only at creation)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountOAuthSecrets)]
 pub struct OAuthCredentials {
     pub client_id: String,
     pub client_secret: String,
@@ -207,6 +209,7 @@ pub struct OAuthCredentials {
 /// Webhook credentials (one-time, shown only at creation)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountWebhookSecrets)]
 pub struct WebhookCredentialsResponse {
     pub auth_token: String,
     pub signing_secret: String,
@@ -226,6 +229,7 @@ pub struct CreateServiceAccountResponse {
 /// Regenerate token response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RegenerateAuthTokenResponse)]
 pub struct RegenerateTokenResponse {
     /// The service account's id (Go `RegenerateTokenResponse.id`)
     pub id: String,
@@ -236,6 +240,7 @@ pub struct RegenerateTokenResponse {
 /// Regenerate secret response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RegenerateSigningSecretResponse)]
 pub struct RegenerateSecretResponse {
     /// The service account's id (Go `RegenerateSecretResponse.id`)
     pub id: String,
@@ -246,6 +251,7 @@ pub struct RegenerateSecretResponse {
 /// Role assignment response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RoleAssignmentDTO)]
 pub struct RoleAssignmentResponse {
     pub role_name: String,
     /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
@@ -257,6 +263,7 @@ pub struct RoleAssignmentResponse {
 /// Roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountRoleListResponse)]
 pub struct RolesResponse {
     pub roles: Vec<RoleAssignmentResponse>,
 }
@@ -264,6 +271,7 @@ pub struct RolesResponse {
 /// Assign roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ServiceAccountRolesAssignedResponse)]
 pub struct AssignRolesResponse {
     pub roles: Vec<RoleAssignmentResponse>,
     pub added_roles: Vec<String>,

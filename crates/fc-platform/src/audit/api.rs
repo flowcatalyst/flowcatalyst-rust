@@ -128,6 +128,7 @@ pub struct AuditLogListResponse {
 /// Entity types response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogEntityTypesResponse)]
 pub struct EntityTypesResponse {
     pub entity_types: Vec<String>,
 }
@@ -135,6 +136,7 @@ pub struct EntityTypesResponse {
 /// Operations response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogOperationsResponse)]
 pub struct OperationsResponse {
     pub operations: Vec<String>,
 }
@@ -142,6 +144,7 @@ pub struct OperationsResponse {
 /// Application IDs response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogApplicationIDsResponse)]
 pub struct ApplicationIdsResponse {
     pub application_ids: Vec<String>,
 }
@@ -149,6 +152,7 @@ pub struct ApplicationIdsResponse {
 /// Client IDs response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogClientIDsResponse)]
 pub struct ClientIdsResponse {
     pub client_ids: Vec<String>,
 }

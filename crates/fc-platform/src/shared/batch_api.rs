@@ -155,6 +155,7 @@ fn context_entries(value: Option<serde_json::Value>) -> Vec<ContextData> {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = BatchRequest)]
 pub struct BatchEventsRequest {
     pub items: Vec<BatchEventItem>,
 }

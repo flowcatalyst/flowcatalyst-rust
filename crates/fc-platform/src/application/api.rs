@@ -195,6 +195,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
 /// returns it again. Rotate via `POST /api/oauth-clients/{id}/regenerate-secret`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationOAuthClientCredentials)]
 pub struct OAuthClientCredentials {
     /// OAuth client row id (`oac_…`).
     pub id: String,
@@ -211,6 +212,7 @@ pub struct OAuthClientCredentials {
 /// page can display the freshly-minted credentials in one modal.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationServiceAccountCredentials)]
 pub struct ServiceAccountCredentialsResponse {
     /// Principal id of the service account (`sac_…`).
     pub principal_id: String,
@@ -224,6 +226,7 @@ pub struct ServiceAccountCredentialsResponse {
 /// Wrapper response from `POST /api/applications/{id}/provision-service-account`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionServiceAccountResponse)]
 pub struct ProvisionServiceAccountResponse {
     pub message: String,
     pub service_account: ServiceAccountCredentialsResponse,
@@ -249,6 +252,7 @@ pub struct ProvisionLoginClientRequest {
 /// Response from `POST /api/applications/{id}/provision-login-client`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionLoginClientResponse)]
 pub struct ProvisionLoginClientResponse {
     pub message: String,
     pub login_client: LoginClientCredentialsResponse,
@@ -258,6 +262,7 @@ pub struct ProvisionLoginClientResponse {
 /// populated only for CONFIDENTIAL clients.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationLoginClientCredentials)]
 pub struct LoginClientCredentialsResponse {
     pub client_type: String,
     pub oauth_client: OAuthClientCredentials,
@@ -1337,6 +1342,7 @@ pub struct ClientConfigResponse {
 /// Client configs list response: Go's `{items}` of `ClientConfigResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigListResponse)]
 pub struct ClientConfigsResponse {
     pub items: Vec<crate::application::go_api::GoClientConfigResponse>,
 }

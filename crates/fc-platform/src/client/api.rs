@@ -73,6 +73,7 @@ pub struct ClientResponse {
 /// Go's `NoteResponse` (client/api/dto.go).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = NoteResponse)]
 pub struct ClientNoteResponse {
     pub category: String,
     pub text: String,
@@ -149,6 +150,7 @@ pub struct AddNoteRequest {
 /// Add note response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = StatusChangeResponse)]
 pub struct AddNoteResponse {
     pub message: String,
 }

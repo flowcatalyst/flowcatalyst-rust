@@ -18,6 +18,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use super::entity::{micros, normalize_app_code, LinkedOAuthClient, PortalApp, PortalIdentity};
 use super::operations::{
@@ -122,8 +123,39 @@ fn huma_check(bytes: &Bytes, required: &[&str], enums: &[(&str, &[&str])]) -> Ap
     })
 }
 
+/// A portal identity's state (documentation of the `state` members; the
+/// handlers carry it as text).
+#[derive(ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms)]
+enum PortalIdentityState {
+    INVITED,
+    #[allow(non_camel_case_types)]
+    INVITE_EXPIRED,
+    ACTIVE,
+    SUSPENDED,
+}
+
+/// A portal app's OAuth client type (documentation of `clientType`).
+#[derive(ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms)]
+enum PortalClientType {
+    CONFIDENTIAL,
+    PUBLIC,
+}
+
+/// Go `LinkedOAuthClient` (documentation of [`LinkedOAuthClient`]).
+#[derive(ToSchema)]
+#[schema(as = LinkedOAuthClient, rename_all = "camelCase")]
+#[allow(dead_code)]
+struct LinkedOAuthClientDoc {
+    id: String,
+    client_id: String,
+    client_name: String,
+}
+
 /// `{message}` (Go `apicommon.StatusChangeResponse`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(as = StatusChangeResponse)]
 pub struct MessageResponse {
     pub message: String,
 }
@@ -152,12 +184,14 @@ fn require_client_id(client_id: &str) -> ApiResult<()> {
 // ── ensure / invite ───────────────────────────────────────────────────────
 
 /// Go `PortalUserRequest`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalUserRequest {
     #[serde(default)]
+    #[schema(required = true)]
     pub client_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub email: String,
     pub name: Option<String>,
     /// The portal app (code) the calling portal is.
@@ -171,7 +205,7 @@ pub struct PortalUserRequest {
 }
 
 /// Go `PortalUserResponse`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalUserResponse {
     pub identity_id: String,
@@ -184,6 +218,7 @@ pub struct PortalUserResponse {
     pub has_password: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub portal_app_code: Option<String>,
+    #[schema(inline, value_type = PortalIdentityState)]
     pub state: String,
 }
 
@@ -194,7 +229,8 @@ pub struct PortalUserResponse {
     path = "",
     tag = "portal-users",
     operation_id = "ensurePortalUser",
-    responses((status = 200, description = "Idempotent outcome")),
+    request_body = PortalUserRequest,
+    responses((status = 200, description = "Idempotent outcome", body = PortalUserResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn ensure_portal_user(
@@ -392,7 +428,7 @@ pub(crate) fn origin_of(raw: &str) -> Option<String> {
 // ── search / status / delete ──────────────────────────────────────────────
 
 /// One portal app an identity is granted (Go `PortalUserAppRef`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalUserAppRef {
     pub id: String,
@@ -403,13 +439,14 @@ pub struct PortalUserAppRef {
 }
 
 /// One row of `GET /api/portal-users` (Go `PortalUserListItem`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalUserListItem {
     pub identity_id: String,
     pub email: String,
     pub name: String,
     pub status: String,
+    #[schema(inline, value_type = PortalIdentityState)]
     pub state: String,
     pub source: String,
     pub has_password: bool,
@@ -425,7 +462,7 @@ pub struct PortalUserListItem {
 }
 
 /// Go `PortalUserListResponse`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalUserListResponse {
     pub portal_users: Vec<PortalUserListItem>,
@@ -434,14 +471,24 @@ pub struct PortalUserListResponse {
     pub size: i64,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
 pub struct ListQuery {
+    /// Tenant client whose portal identities to list
     pub client_id: Option<String>,
+    /// Prefix (TERM%) matched case-insensitively against email and name
     pub q: Option<String>,
+    /// Only identities granted this portal app
     pub portal_app_code: Option<String>,
+    /// Only identities granted no portal app
+    #[param(value_type = Option<bool>)]
     pub unassigned: Option<String>,
+    /// Page number (0-based)
+    #[param(value_type = Option<i64>)]
     pub page: Option<String>,
+    /// Page size
+    #[param(value_type = Option<i64>)]
     pub size: Option<String>,
 }
 
@@ -460,7 +507,8 @@ fn int_param(v: Option<&str>) -> ApiResult<i64> {
     path = "",
     tag = "portal-users",
     operation_id = "listPortalUsers",
-    responses((status = 200, description = "A page of the client's portal identities")),
+    params(ListQuery),
+    responses((status = 200, description = "A page of the client's portal identities", body = PortalUserListResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn list_portal_users(
@@ -561,16 +609,30 @@ fn list_item(
 }
 
 /// The tenant client an id-addressed mutation targets.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PortalUserClientBody)]
 pub struct ClientBody {
     #[serde(default)]
+    #[schema(required = true)]
     pub client_id: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Go `AssignUnassignedBody`: the same member as [`ClientBody`], documented
+/// under Go's name for `assign-unassigned`.
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct AssignUnassignedBody {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub client_id: String,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
 pub struct ClientQuery {
+    /// Tenant client
     pub client_id: Option<String>,
 }
 
@@ -613,7 +675,9 @@ async fn set_status(
     path = "/{id}/activate",
     tag = "portal-users",
     operation_id = "activatePortalUser",
-    responses((status = 200, description = "Activated")),
+    params(("id" = String, Path)),
+    request_body = ClientBody,
+    responses((status = 200, description = "Activated", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn activate_portal_user(
@@ -632,7 +696,9 @@ pub async fn activate_portal_user(
     path = "/{id}/deactivate",
     tag = "portal-users",
     operation_id = "deactivatePortalUser",
-    responses((status = 200, description = "Deactivated")),
+    params(("id" = String, Path)),
+    request_body = ClientBody,
+    responses((status = 200, description = "Deactivated", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn deactivate_portal_user(
@@ -651,7 +717,8 @@ pub async fn deactivate_portal_user(
     path = "/{id}",
     tag = "portal-users",
     operation_id = "deletePortalUser",
-    responses((status = 200, description = "Deleted")),
+    params(("id" = String, Path), ClientQuery),
+    responses((status = 200, description = "Deleted", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn delete_portal_user(
@@ -682,12 +749,15 @@ pub async fn delete_portal_user(
 
 // ── app grants ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PortalUserAppGrantBody)]
 pub struct GrantBody {
     #[serde(default)]
+    #[schema(required = true)]
     pub client_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub portal_app_code: String,
 }
 
@@ -697,7 +767,9 @@ pub struct GrantBody {
     path = "/{id}/apps",
     tag = "portal-users",
     operation_id = "grantPortalUserApp",
-    responses((status = 200, description = "Granted")),
+    params(("id" = String, Path)),
+    request_body = GrantBody,
+    responses((status = 200, description = "Granted", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn grant_portal_user_app(
@@ -740,7 +812,8 @@ pub async fn grant_portal_user_app(
     path = "/{id}/apps/{portalAppCode}",
     tag = "portal-users",
     operation_id = "revokePortalUserApp",
-    responses((status = 200, description = "Revoked")),
+    params(("id" = String, Path), ("portalAppCode" = String, Path), ClientQuery),
+    responses((status = 200, description = "Revoked", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn revoke_portal_user_app(
@@ -774,7 +847,7 @@ pub async fn revoke_portal_user_app(
 
 /// One portal app with its OAuth clients and user count (Go
 /// `PortalAppResponse`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalAppResponse {
     pub id: String,
@@ -784,6 +857,7 @@ pub struct PortalAppResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub active: bool,
+    #[schema(value_type = Vec<LinkedOAuthClientDoc>)]
     pub oauth_clients: Vec<LinkedOAuthClient>,
     pub user_count: i64,
     pub created_at: String,
@@ -791,7 +865,7 @@ pub struct PortalAppResponse {
 }
 
 /// Go `PortalAppListResponse`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalAppListResponse {
     pub portal_apps: Vec<PortalAppResponse>,
@@ -845,7 +919,8 @@ async fn app_out(state: &PortalState, id: &str) -> ApiResult<PortalAppResponse> 
     path = "",
     tag = "portal-apps",
     operation_id = "listPortalApps",
-    responses((status = 200, description = "Portal apps")),
+    params(ClientQuery),
+    responses((status = 200, description = "Portal apps", body = PortalAppListResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn list_portal_apps(
@@ -878,24 +953,28 @@ pub async fn list_portal_apps(
 }
 
 /// Go `CreatePortalAppRequest`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePortalAppRequest {
     #[serde(default)]
+    #[schema(required = true)]
     pub client_id: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub code: String,
     #[serde(default)]
+    #[schema(required = true)]
     pub name: String,
     pub description: Option<String>,
     #[serde(default)]
     pub redirect_uris: Vec<String>,
+    #[schema(inline, value_type = Option<PortalClientType>)]
     pub client_type: Option<String>,
 }
 
 /// Go `CreatePortalAppResponse`: the app plus its provisioned OAuth client.
 /// `clientSecret` (CONFIDENTIAL only) is shown exactly once.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePortalAppResponse {
     pub portal_app: PortalAppResponse,
@@ -912,7 +991,8 @@ pub struct CreatePortalAppResponse {
     path = "",
     tag = "portal-apps",
     operation_id = "createPortalApp",
-    responses((status = 201, description = "Created")),
+    request_body = CreatePortalAppRequest,
+    responses((status = 201, description = "Created", body = CreatePortalAppResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn create_portal_app(
@@ -989,10 +1069,11 @@ pub async fn create_portal_app(
 }
 
 /// Go `UpdatePortalAppRequest`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePortalAppRequest {
     #[serde(default)]
+    #[schema(required = true)]
     pub client_id: String,
     pub name: Option<String>,
     pub description: Option<String>,
@@ -1005,7 +1086,9 @@ pub struct UpdatePortalAppRequest {
     path = "/{id}",
     tag = "portal-apps",
     operation_id = "updatePortalApp",
-    responses((status = 200, description = "Updated")),
+    params(("id" = String, Path)),
+    request_body = UpdatePortalAppRequest,
+    responses((status = 200, description = "Updated", body = PortalAppResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn update_portal_app(
@@ -1039,7 +1122,8 @@ pub async fn update_portal_app(
     path = "/{id}",
     tag = "portal-apps",
     operation_id = "deletePortalApp",
-    responses((status = 200, description = "Deleted")),
+    params(("id" = String, Path), ClientQuery),
+    responses((status = 200, description = "Deleted", body = MessageResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn delete_portal_app(
@@ -1078,7 +1162,7 @@ pub async fn delete_portal_app(
 }
 
 /// Go `AssignUnassignedResponse`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AssignUnassignedResponse {
     pub portal_app_code: String,
@@ -1092,7 +1176,9 @@ pub struct AssignUnassignedResponse {
     path = "/{id}/assign-unassigned",
     tag = "portal-apps",
     operation_id = "assignUnassignedPortalUsers",
-    responses((status = 200, description = "Assigned")),
+    params(("id" = String, Path)),
+    request_body = AssignUnassignedBody,
+    responses((status = 200, description = "Assigned", body = AssignUnassignedResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn assign_unassigned_portal_users(

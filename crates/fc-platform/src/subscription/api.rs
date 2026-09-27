@@ -21,6 +21,7 @@ use crate::{EventTypeBinding, Subscription};
 /// Event type binding request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventTypeBindingDTO)]
 pub struct EventTypeBindingRequest {
     /// Event type code (with optional wildcards)
     pub event_type_code: String,
@@ -52,6 +53,7 @@ impl EventTypeBindingRequest {
 /// Config entry request (Go `ConfigEntryDTO`)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigEntryDTO)]
 pub struct ConfigEntryRequest {
     pub key: String,
     pub value: String,
@@ -202,6 +204,7 @@ pub struct UpdateSubscriptionRequest {
 /// Event type binding response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventTypeBindingDTO)]
 pub struct EventTypeBindingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_type_id: Option<String>,
@@ -226,6 +229,7 @@ impl From<&EventTypeBinding> for EventTypeBindingResponse {
 /// Config entry response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigEntryDTO)]
 pub struct ConfigEntryResponse {
     pub key: String,
     pub value: String,

@@ -137,6 +137,7 @@ impl From<DispatchJob> for DispatchJobResponse {
 /// binds.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = DispatchJobRead)]
 pub struct DispatchJobReadResponse {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -410,6 +411,7 @@ pub struct BatchCreateDispatchJobsResponse {
 /// Dispatch attempt response DTO: Go's `AttemptDTO`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AttemptDTO)]
 pub struct DispatchAttemptResponse {
     pub attempt_number: u32,
     pub attempted_at: String,

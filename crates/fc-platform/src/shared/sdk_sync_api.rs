@@ -942,6 +942,7 @@ async fn sync_processes(
 /// human-readable change notes.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = SyncOpenapiRequest)]
 pub struct SyncOpenApiSpecRequest {
     /// The OpenAPI document (OpenAPI 3.x or Swagger 2.x).
     pub spec: serde_json::Value,
