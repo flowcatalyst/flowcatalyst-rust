@@ -268,11 +268,11 @@ pub async fn create_role(
 /// Get a role by id, or by name (Go `getByID` with `resolveRole`).
 #[utoipa::path(
     get,
-    path = "/{roleName}",
+    path = "/{id}",
     tag = "roles",
     operation_id = "getRole",
     params(
-        ("roleName" = String, Path, description = "Role id or name")
+        ("id" = String, Path, description = "Role id or name")
     ),
     responses(
         (status = 200, description = "Role found", body = RoleResponse),
@@ -361,11 +361,11 @@ pub async fn list_roles(
 /// Update role
 #[utoipa::path(
     put,
-    path = "/{roleName}",
+    path = "/{id}",
     tag = "roles",
     operation_id = "updateRole",
     params(
-        ("roleName" = String, Path, description = "Role id or name")
+        ("id" = String, Path, description = "Role id or name")
     ),
     request_body = UpdateRoleRequest,
     responses(
@@ -415,11 +415,11 @@ pub async fn update_role(
 /// Delete role
 #[utoipa::path(
     delete,
-    path = "/{roleName}",
+    path = "/{id}",
     tag = "roles",
     operation_id = "deleteRole",
     params(
-        ("roleName" = String, Path, description = "Role id or name")
+        ("id" = String, Path, description = "Role id or name")
     ),
     responses(
         (status = 204, description = "Role deleted"),
