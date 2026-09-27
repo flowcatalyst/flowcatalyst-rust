@@ -42,6 +42,10 @@ pub struct MonitoringResponse {
     pub active_warnings: u32,
     /// Number of critical warnings
     pub critical_warnings: u32,
+    /// Present while the router's API is open outside dev mode (decision
+    /// #43's transitional `AUTH_MODE=NONE`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_warning: Option<String>,
 }
 
 /// Response for queue metrics endpoint
@@ -89,6 +93,7 @@ pub(crate) async fn monitoring_handler(State(state): State<AppState>) -> Json<Mo
         pool_stats,
         active_warnings,
         critical_warnings,
+        auth_warning: state.auth_warning.as_deref().map(str::to_owned),
     })
 }
 
@@ -134,6 +139,10 @@ pub(crate) struct DashboardHealthResponse {
     #[serde(rename = "uptimeMillis")]
     uptime_millis: u64,
     details: Option<DashboardHealthDetails>,
+    /// Present while the router's API is open outside dev mode (decision
+    /// #43); the dashboard shows it as a banner.
+    #[serde(rename = "authWarning", skip_serializing_if = "Option::is_none")]
+    auth_warning: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -210,6 +219,7 @@ pub(crate) async fn dashboard_health_handler(
             circuit_breakers_open,
             degradation_reason,
         }),
+        auth_warning: state.auth_warning.as_deref().map(str::to_owned),
     })
 }
 

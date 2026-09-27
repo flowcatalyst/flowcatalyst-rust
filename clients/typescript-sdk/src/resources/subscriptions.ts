@@ -13,6 +13,7 @@ import type {
 	ListSubscriptionsData,
 	GetSubscriptionResponse,
 	CreateSubscriptionData,
+	CreatedResponse,
 	UpdateSubscriptionData,
 	SyncSubscriptionsData,
 	SyncSubscriptionsResponse as SyncSubscriptionsResponseType,
@@ -23,13 +24,19 @@ export type SubscriptionDto = GetSubscriptionResponse;
 export type CreateSubscriptionRequest = CreateSubscriptionData["body"];
 export type UpdateSubscriptionRequest = UpdateSubscriptionData["body"];
 export type SyncSubscriptionsResponse = SyncSubscriptionsResponseType;
+export type CreateSubscriptionResponse = CreatedResponse;
 
 export interface SubscriptionFilters {
 	clientId?: string;
 	status?: string;
 }
 
-/** Pagination params (page/size). Mirrors the previous generated shape. */
+/**
+ * Pagination params (page/size).
+ *
+ * @deprecated The platform's `GET /api/subscriptions` does not paginate; it
+ * returns every matching subscription and ignores `page` / `size`.
+ */
 export type PaginationParams = {
 	page?: number;
 	size?: number;
@@ -79,12 +86,13 @@ export class SubscriptionsResource {
 	}
 
 	/**
-	 * Create a new subscription.
+	 * Create a new subscription. The platform answers `201 { id }`; call
+	 * `get(id)` for the full entity.
 	 */
 	create(
 		data: CreateSubscriptionRequest,
-	): ResultAsync<SubscriptionDto, SdkError> {
-		return this.client.request<SubscriptionDto>((httpClient, headers) =>
+	): ResultAsync<CreateSubscriptionResponse, SdkError> {
+		return this.client.request<CreateSubscriptionResponse>((httpClient, headers) =>
 			sdk.createSubscription({
 				client: httpClient,
 				headers,
@@ -94,20 +102,23 @@ export class SubscriptionsResource {
 	}
 
 	/**
-	 * Update a subscription.
+	 * Update a subscription. The platform answers `204 No Content`; call
+	 * `get(id)` to read the result.
 	 */
 	update(
 		id: string,
 		data: UpdateSubscriptionRequest,
-	): ResultAsync<SubscriptionDto, SdkError> {
-		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.updateSubscription({
-				client: httpClient,
-				headers,
-				path: { id },
-				body: data,
-			}),
-		);
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.updateSubscription({
+					client: httpClient,
+					headers,
+					path: { id },
+					body: data,
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**
@@ -124,29 +135,35 @@ export class SubscriptionsResource {
 	}
 
 	/**
-	 * Pause a subscription.
+	 * Pause a subscription. The platform answers `204 No Content`; call `get(id)`
+	 * to read the result.
 	 */
-	pause(id: string): ResultAsync<SubscriptionDto, SdkError> {
-		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.pauseSubscription({
-				client: httpClient,
-				headers,
-				path: { id },
-			}),
-		);
+	pause(id: string): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.pauseSubscription({
+					client: httpClient,
+					headers,
+					path: { id },
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**
-	 * Resume a paused subscription.
+	 * Resume a paused subscription. The platform answers `204 No Content`; call `get(id)`
+	 * to read the result.
 	 */
-	resume(id: string): ResultAsync<SubscriptionDto, SdkError> {
-		return this.client.request<SubscriptionDto>((httpClient, headers) =>
-			sdk.resumeSubscription({
-				client: httpClient,
-				headers,
-				path: { id },
-			}),
-		);
+	resume(id: string): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.resumeSubscription({
+					client: httpClient,
+					headers,
+					path: { id },
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**

@@ -10,6 +10,7 @@ export { CreateEventDto } from "./create-event-dto.js";
 export {
 	CreateDispatchJobDto,
 	type DispatchMode,
+	MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH,
 } from "./create-dispatch-job-dto.js";
 export { CreateAuditLogDto } from "./create-audit-log-dto.js";
 export { assertQualifiedCode } from "./qualified-code.js";

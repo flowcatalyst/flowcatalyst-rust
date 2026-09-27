@@ -8,7 +8,7 @@
 //! | one [`Engine`], pooling allocator, epoch ticker, `.cwasm` fingerprint | [`engine`] |
 //! | load-time checks and their refusal codes | [`inspect`] |
 //! | the `.cwasm` cache and its invariant | [`cwasm`] |
-//! | a store's WASI, `wasi:http` and `flowcatalyst:function` host side | `guest` |
+//! | a store's WASI, `wasi:http` and `flowcatalyst:function` host side (`db` over [`crate::db`]) | `guest` |
 //! | `httpAllow` for outbound calls | [`egress`] |
 //! | guest log lines on `fn.<address>` | [`output`] |
 //! | the invoker: instance per request, deadline, outcomes | `function` |
@@ -25,7 +25,13 @@
 //!
 //! **Load refusals** (the heartbeat's `LOAD:<code>`): `WASM_INVALID`,
 //! `WASM_CORE_MODULE_UNSUPPORTED`, `WASM_IMPORT_NOT_ALLOWED`,
-//! `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_MEMORY_OVER_CAP`.
+//! `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_MEMORY_OVER_CAP`. **Load failures**
+//! (the code verbatim) from the manifest's `db[]` ([`crate::db`]):
+//! `DB_UNSUPPORTED`, `DB_SECRET_UNRESOLVED`, `DB_POOL_LIMIT`.
+//!
+//! **Metering** (owner decision #13): the engine meters fuel; each store
+//! starts with `limits.maxFuel` (or unlimited), and the invocation's fuel
+//! and peak linear memory go to its [`crate::invoke::UsageMeter`].
 
 pub mod cwasm;
 pub mod egress;
@@ -69,6 +75,10 @@ pub struct WasmSettings {
     /// The artifact cache root (`FC_FN_CACHE_DIR`); `.cwasm` files go in
     /// its `cwasm/` directory.
     pub cache_dir: PathBuf,
+    /// The function database pools (`FC_FN_MAX_DB_POOLS`,
+    /// `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION`,
+    /// `FC_FN_DB_SECRET_REFRESH_SECONDS`).
+    pub db: crate::db::DbSettings,
 }
 
 impl WasmSettings {
@@ -85,6 +95,11 @@ impl WasmSettings {
             },
             max_executing: env.max_executing,
             cache_dir: env.cache_dir.clone(),
+            db: crate::db::DbSettings {
+                max_pools: env.max_db_pools.max(1) as usize,
+                max_connections_per_invocation: env.db_max_connections_per_invocation,
+                secret_refresh: std::time::Duration::from_secs(env.db_secret_refresh_seconds),
+            },
         }
     }
 }
@@ -98,13 +113,26 @@ pub struct WasmRuntime {
     /// The runtime the host itself runs on, for control-plane calls made on
     /// a guest's behalf.
     host_runtime: Option<tokio::runtime::Handle>,
+    /// Whether the engine meters fuel (`EngineSettings::consume_fuel`).
+    consume_fuel: bool,
+    /// The function database pools every loaded version shares.
+    db_pools: Arc<crate::db::DbPools>,
     _ticker: engine::EpochTicker,
 }
 
 impl WasmRuntime {
     /// Builds the engine, the linker and the guest runtime, and starts the
-    /// epoch ticker. Call it inside the host's tokio runtime.
+    /// epoch ticker. Call it inside the host's tokio runtime. Database
+    /// secret references are resolved by [`crate::db::default_resolver`].
     pub fn new(settings: WasmSettings) -> Result<Arc<Self>, String> {
+        Self::with_resolver(settings, crate::db::default_resolver())
+    }
+
+    /// [`WasmRuntime::new`] with the given database secret resolver.
+    pub fn with_resolver(
+        settings: WasmSettings,
+        resolver: Arc<dyn crate::db::SecretResolver>,
+    ) -> Result<Arc<Self>, String> {
         let engine = engine::engine(&settings.engine)
             .map_err(|e| format!("the wasm engine did not start: {e:#}"))?;
         let linker =
@@ -130,12 +158,54 @@ impl WasmRuntime {
             linker,
             guests: GuestRuntime(Some(guests)),
             host_runtime: tokio::runtime::Handle::try_current().ok(),
+            consume_fuel: settings.engine.consume_fuel,
+            db_pools: crate::db::DbPools::new(settings.db.clone(), resolver),
             _ticker: ticker,
         }))
     }
 
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// The function database pools.
+    pub fn db_pools(&self) -> &Arc<crate::db::DbPools> {
+        &self.db_pools
+    }
+
+    /// Joins the pool of every `db[]` entry of `entry`'s manifest, the
+    /// connection being the value of the secret its `secretRef` names. A
+    /// failure is the load failure: `DB_UNSUPPORTED` (no value, or not a
+    /// PostgreSQL connection), `DB_SECRET_UNRESOLVED` or `DB_POOL_LIMIT`.
+    async fn join_databases(
+        &self,
+        entry: &crate::desired::Entry,
+    ) -> Result<Option<Arc<crate::db::DbBindings>>, crate::db::JoinFailure> {
+        if entry.manifest.db.is_empty() {
+            return Ok(None);
+        }
+        let mut bindings = crate::db::DbBindings::new();
+        for db in &entry.manifest.db {
+            let name = db.name.value().to_owned();
+            let secret = entry
+                .secrets
+                .get(&db.secret_ref)
+                .filter(|v| !v.trim().is_empty())
+                .ok_or_else(|| crate::db::JoinFailure {
+                    code: crate::db::dsn::DB_UNSUPPORTED,
+                    detail: format!("db '{name}': the secret '{}' has no value", db.secret_ref),
+                })?;
+            let lease = self
+                .db_pools
+                .join(&entry.address, secret, db.pool_size.max(1) as u32)
+                .await
+                .map_err(|failure| crate::db::JoinFailure {
+                    code: failure.code,
+                    detail: format!("db '{name}': {}", failure.detail),
+                })?;
+            bindings.insert(name, Arc::new(lease));
+        }
+        Ok(Some(Arc::new(bindings)))
     }
 
     /// Where this engine's `.cwasm` files live.
@@ -276,6 +346,13 @@ impl FunctionLoader for WasmLoader {
             }
         };
         tracing::debug!(address = %entry.address, version = entry.version, source = ?source, "wasm function prepared");
+        if entry.manifest.limits.max_fuel.is_some() && !self.runtime.consume_fuel {
+            tracing::warn!(
+                address = %entry.address,
+                version = entry.version,
+                "limits.maxFuel is not enforced: this host's engine does not meter fuel"
+            );
+        }
         // The keys the manifest declares, as the platform's reader keeps them
         // (`config` / `secrets` entries that are setting keys, `httpAllow`
         // entries that are non-blank).
@@ -299,16 +376,27 @@ impl FunctionLoader for WasmLoader {
             )),
             memory_limit: declared_max.map_or(cap_bytes, |max| max.min(cap_bytes)) as usize,
             response_cap: cap_bytes as usize,
+            max_fuel: manifest.limits.max_fuel.map(|fuel| fuel as u64),
             emitter: Emitter {
                 control_plane: request.control_plane.clone(),
                 host_id: request.host_id.to_owned(),
                 host_runtime: self.runtime.host_runtime.clone(),
             },
         });
+        let databases = match self.runtime.join_databases(entry).await {
+            Ok(databases) => databases,
+            Err(failure) => {
+                return LoadOutcome::Failed {
+                    code: failure.code.to_owned(),
+                    detail: failure.detail,
+                }
+            }
+        };
         LoadOutcome::Loaded(Arc::new(WasmFunction::new(
             self.runtime.clone(),
             pre,
             shared,
+            databases,
         )))
     }
 }

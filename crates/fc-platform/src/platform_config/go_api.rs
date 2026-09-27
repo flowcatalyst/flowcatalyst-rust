@@ -60,6 +60,7 @@ pub struct GoPlatformConfigState {
 /// Go `ConfigResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigResponse)]
 pub struct GoConfigResponse {
     pub id: String,
     pub application_code: String,
@@ -72,12 +73,15 @@ pub struct GoConfigResponse {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigListResponse)]
 pub struct GoConfigListResponse {
     pub items: Vec<GoConfigResponse>,
 }
@@ -85,6 +89,7 @@ pub struct GoConfigListResponse {
 /// Go `SetPropertyRequest`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = SetPropertyRequest)]
 pub struct GoSetPropertyRequest {
     pub value: String,
     pub value_type: Option<String>,
@@ -95,6 +100,7 @@ pub struct GoSetPropertyRequest {
 /// Go `GrantAccessRequest`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = GrantAccessRequest)]
 pub struct GoGrantAccessRequest {
     pub role_code: String,
     pub can_write: bool,
@@ -215,7 +221,7 @@ impl GoPlatformConfigState {
     get,
     path = "/api/platform-config/{app}",
     tag = "platform-config",
-    operation_id = "listPlatformConfig",
+    operation_id = "listPlatformConfigProperties",
     params(("app" = String, Path, description = "Application code")),
     responses((status = 200, description = "Properties", body = GoConfigListResponse)),
     security(("bearer_auth" = []))
@@ -244,7 +250,7 @@ pub async fn list_platform_config(
     get,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "getConfigProperty",
+    operation_id = "getPlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
@@ -281,7 +287,7 @@ pub async fn get_config_property(
     put,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "setConfigProperty",
+    operation_id = "setPlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),
@@ -341,7 +347,7 @@ pub async fn set_config_property(
     delete,
     path = "/api/config/{appCode}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "deleteConfigProperty",
+    operation_id = "deletePlatformConfigProperty",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Section"),

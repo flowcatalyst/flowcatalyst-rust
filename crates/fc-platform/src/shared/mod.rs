@@ -36,6 +36,7 @@ pub mod health_api;
 pub mod me_api;
 pub mod monitoring_api;
 pub mod openapi_api;
+pub mod openapi_contract;
 pub mod platform_config_api;
 pub mod public_api;
 pub mod router_config_api;
@@ -56,6 +57,7 @@ pub mod rate_limit_store;
 
 // Services
 pub mod authorization_service;
+pub mod branding;
 pub mod email_service;
 pub mod encryption_service;
 pub mod integrity_scan;

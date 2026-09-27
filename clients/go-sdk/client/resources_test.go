@@ -43,15 +43,13 @@ type seenRequest struct {
 }
 
 func TestAuditLogsListBuildsQuery(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"auditLogs":[],"total":0,"page":1,"pageSize":50}`)
+	srv, seen := newMockSrv(t, `{"auditLogs":[],"hasMore":false}`)
 	c := client.New(srv.URL)
 
-	page := uint32(2)
 	pageSize := uint32(25)
 	_, err := c.AuditLogs().List(context.Background(), &client.AuditLogFilters{
 		EntityType: "Principal",
 		Operation:  "ROLE_ASSIGNED",
-		Page:       &page,
 		PageSize:   &pageSize,
 	})
 	require.NoError(t, err)
@@ -59,8 +57,8 @@ func TestAuditLogsListBuildsQuery(t *testing.T) {
 	assert.Equal(t, "/api/audit-logs", seen.path)
 	assert.Equal(t, "Principal", seen.query.Get("entityType"))
 	assert.Equal(t, "ROLE_ASSIGNED", seen.query.Get("operation"))
-	assert.Equal(t, "2", seen.query.Get("page"))
 	assert.Equal(t, "25", seen.query.Get("pageSize"))
+	assert.Empty(t, seen.query.Get("page"))
 }
 
 func TestAuditLogsGetDeserializes(t *testing.T) {
@@ -75,7 +73,7 @@ func TestAuditLogsGetDeserializes(t *testing.T) {
 }
 
 func TestPermissionsListDeserializes(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"permissions":[{"permission":"orders:read","application":"orders","context":"client","aggregate":"Order","action":"read","description":"Read orders"}],"total":1}`)
+	srv, seen := newMockSrv(t, `{"permissions":[{"permission":"orders:read","name":"Read orders","category":"orders","description":"Read orders"}],"total":1}`)
 	c := client.New(srv.URL)
 
 	r, err := c.Permissions().List(context.Background())
@@ -83,6 +81,8 @@ func TestPermissionsListDeserializes(t *testing.T) {
 	assert.Equal(t, "/api/roles/permissions", seen.path)
 	require.Len(t, r.Permissions, 1)
 	assert.Equal(t, "orders:read", r.Permissions[0].Permission)
+	assert.Equal(t, "Read orders", r.Permissions[0].Name)
+	assert.Equal(t, "orders", r.Permissions[0].Category)
 }
 
 func TestMeClientApplicationsBuildsPath(t *testing.T) {
@@ -120,10 +120,10 @@ func TestClientsSearchEncodesQ(t *testing.T) {
 }
 
 func TestConnectionsListEncodesFilters(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"connections":[]}`)
+	srv, seen := newMockSrv(t, `{"connections":[],"total":0}`)
 	c := client.New(srv.URL)
 
-	_, err := c.Connections().List(context.Background(), "clt_1", "ACTIVE", "")
+	_, err := c.Connections().List(context.Background(), "clt_1", "ACTIVE")
 	require.NoError(t, err)
 	assert.Equal(t, "/api/connections", seen.path)
 	assert.Equal(t, "clt_1", seen.query.Get("clientId"))
@@ -190,12 +190,14 @@ func TestScheduledJobsCreateAndFire(t *testing.T) {
 }
 
 func TestScheduledJobsListPaginatedShape(t *testing.T) {
-	srv, _ := newMockSrv(t, `{"data":[{"id":"sjb_1","code":"x","name":"X","status":"ACTIVE","crons":["0 * * * *"],"timezone":"UTC","concurrent":false,"tracksCompletion":false,"deliveryMaxAttempts":3,"createdAt":"","updatedAt":"","version":1}],"page":1,"size":50,"total":1,"totalPages":1}`)
+	srv, _ := newMockSrv(t, `{"data":[{"id":"sjb_1","code":"x","name":"X","status":"ACTIVE","crons":["0 * * * *"],"timezone":"UTC","concurrent":false,"tracksCompletion":false,"deliveryMaxAttempts":3,"createdAt":"","updatedAt":"","version":1,"hasActiveInstance":false}],"page":1,"size":50,"total":51,"total_pages":2}`)
 	c := client.New(srv.URL)
 
 	r, err := c.ScheduledJobs().List(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), r.Page)
+	assert.Equal(t, uint64(51), r.Total)
+	assert.Equal(t, uint32(2), r.TotalPages)
 	require.Len(t, r.Data, 1)
 	assert.Equal(t, "sjb_1", r.Data[0].ID)
 }
@@ -218,35 +220,43 @@ func TestOpenAPISyncPostsSpec(t *testing.T) {
 // ─── B: deferred methods on existing resources ───────────────────────
 
 func TestApplicationsProvisionServiceAccount(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"id":"prn_svc","code":"svc","name":"Svc","active":true,"applicationId":"app_1","createdAt":""}`)
+	srv, seen := newMockSrv(t, `{"message":"provisioned","serviceAccount":{"principalId":"prn_svc","name":"Orders Service","oauthClient":{"id":"oac_1","clientId":"orders-svc","clientSecret":"s3cret"}}}`)
 	c := client.New(srv.URL)
 
 	r, err := c.Applications().ProvisionServiceAccount(context.Background(), "app_1")
 	require.NoError(t, err)
 	assert.Equal(t, "/api/applications/app_1/provision-service-account", seen.path)
 	assert.Equal(t, http.MethodPost, seen.method)
-	assert.Equal(t, "prn_svc", r.ID)
+	assert.Equal(t, "provisioned", r.Message)
+	assert.Equal(t, "prn_svc", r.ServiceAccount.PrincipalID)
+	assert.Equal(t, "Orders Service", r.ServiceAccount.Name)
+	assert.Equal(t, "oac_1", r.ServiceAccount.OAuthClient.ID)
+	assert.Equal(t, "orders-svc", r.ServiceAccount.OAuthClient.ClientID)
+	assert.Equal(t, "s3cret", r.ServiceAccount.OAuthClient.ClientSecret, "the one-time secret is kept")
 }
 
 func TestApplicationsListRolesUsesByID(t *testing.T) {
-	srv, seen := newMockSrv(t, `[{"id":"rol_1","code":"orders:admin","displayName":"Admin","applicationCode":"orders","source":"PLATFORM"}]`)
+	srv, seen := newMockSrv(t, `{"roles":["orders:admin","orders:viewer"]}`)
 	c := client.New(srv.URL)
 
 	r, err := c.Applications().ListRoles(context.Background(), "app_1")
 	require.NoError(t, err)
+	assert.Equal(t, http.MethodGet, seen.method)
 	assert.Equal(t, "/api/applications/by-id/app_1/roles", seen.path)
-	require.Len(t, r, 1)
-	assert.Equal(t, "orders:admin", r[0].Code)
+	assert.Equal(t, []string{"orders:admin", "orders:viewer"}, r)
 }
 
 func TestApplicationsEnableForClient(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"id":"cfg_1","applicationId":"app_1","clientId":"clt_1","enabled":true}`)
+	srv, seen := newStatusSrv(t, http.StatusNoContent, ``)
 	c := client.New(srv.URL)
 
-	r, err := c.Applications().EnableForClient(context.Background(), "app_1", "clt_1")
-	require.NoError(t, err)
+	require.NoError(t, c.Applications().EnableForClient(context.Background(), "app_1", "clt_1"))
+	assert.Equal(t, http.MethodPost, seen.method)
 	assert.Equal(t, "/api/applications/app_1/clients/clt_1/enable", seen.path)
-	assert.True(t, r.Enabled)
+
+	require.NoError(t, c.Applications().DisableForClient(context.Background(), "app_1", "clt_1"))
+	assert.Equal(t, http.MethodPost, seen.method)
+	assert.Equal(t, "/api/applications/app_1/clients/clt_1/disable", seen.path)
 }
 
 func TestPrincipalsAddRoleSendsRoleField(t *testing.T) {
@@ -354,12 +364,14 @@ func TestScheduledJobsListInstanceLogsReadsBareArray(t *testing.T) {
 }
 
 func TestScheduledJobsLogForInstanceDefaultsLevelToInfo(t *testing.T) {
-	srv, seen := newMockSrv(t, `{"id":"lg_1","instanceId":"sji_1","level":"INFO","message":"m","createdAt":""}`)
+	srv, seen := newStatusSrv(t, http.StatusNoContent, ``)
 	c := client.New(srv.URL)
 
 	req := &client.InstanceLogRequest{Message: "m"}
-	_, err := c.ScheduledJobs().LogForInstance(context.Background(), "sji_1", req)
+	err := c.ScheduledJobs().LogForInstance(context.Background(), "sji_1", req)
 	require.NoError(t, err)
+	assert.Equal(t, http.MethodPost, seen.method)
+	assert.Equal(t, "/api/scheduled-jobs/instances/sji_1/log", seen.path)
 	assert.Contains(t, seen.body, `"level":"INFO"`)
 	assert.Equal(t, client.LogLevel(""), req.Level, "the caller's request is not mutated")
 }

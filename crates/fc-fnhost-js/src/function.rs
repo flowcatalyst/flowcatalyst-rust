@@ -152,6 +152,9 @@ enum Outcome {
 type Slot = Arc<Mutex<Option<Terminator>>>;
 
 struct Job {
+    /// The invocation's usage meter: the isolate's peak memory (JS is not
+    /// fuel-metered).
+    usage: fc_fnhost_core::invoke::UsageMeter,
     base: Option<&'static [u8]>,
     code: VersionCode,
     limits: Limits,
@@ -204,6 +207,7 @@ async fn run_isolate(job: Job) -> (Outcome, Option<Isolate>) {
         } => Some(result),
     };
     job.slot.lock().take();
+    job.usage.observe_memory(isolate.memory_in_use());
     let out_of_memory = isolate.stops().out_of_memory.load(Ordering::Acquire);
     let stopped = isolate.stops().stopped.load(Ordering::Acquire) || job.stop.is_cancelled();
     let outcome = match result {
@@ -255,6 +259,7 @@ impl Invoker for JsFunction {
         let slot: Slot = Arc::new(Mutex::new(None));
         let (sender, answer) = oneshot::channel();
         let job = Job {
+            usage: context.usage.clone(),
             base: self.base,
             code: self.code.clone(),
             limits: self.limits,

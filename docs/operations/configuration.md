@@ -129,8 +129,11 @@ The complete contract, Go vs Rust, is [../parity/router-env-vs-go.md](../parity/
 | `LOCALSTACK_ENDPOINT` | `http://localhost:4566` | LocalStack endpoint (dev only) |
 | `LOCALSTACK_SQS_HOST` | `http://sqs.eu-west-1.localhost.localstack.cloud:4566` | LocalStack SQS host (dev only) |
 | `AWS_REGION` | (AWS default chain) | SQS region |
-| `AUTH_MODE` | `NONE` | `NONE`, `API_KEY`, or `OIDC` — auth for the router's monitoring API |
-| `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | When `AUTH_MODE=OIDC` |
+| `AUTH_MODE` | unset | Auth for the router's API (owner ruling 2). Outside dev mode: unset, `BEARER` or `OIDC` require a platform bearer token holding `platform:messaging:router:view` (reads) or `:operate` (everything else); `NONE` leaves the API open **for now**, with a WARN (decision #43); anything else is ignored with a WARN. In dev mode: `NONE`/unset open, `BASIC` (or a user set) Basic auth, `OIDC`/`OIDC_FLOW` the external-IdP modes, `BEARER` platform tokens. |
+| `FC_ROUTER_PLATFORM_URL` | — | The platform whose JWKS verifies router API tokens (and the router's own config credential's origin). Without it, `fc-server` with the platform role verifies against itself; with neither, every protected route answers 401. |
+| `FC_ROUTER_DASHBOARD_CLIENT_ID` | — | The public OAuth client the router dashboard signs in through (authorization code + PKCE). Unset: dashboard sign-in off. |
+| `FC_ROUTER_AUTH_USER` / `FC_ROUTER_AUTH_PASS` | — | Basic auth for the router's API, dev mode only (ignored with a WARN elsewhere) |
+| `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | — | Dev mode's `AUTH_MODE=OIDC`/`OIDC_FLOW` (an external IdP) |
 
 Standby is fc-server's own election (`FC_STANDBY_*` above), shared by every role in the process. (The removed standalone router also read `FLOWCATALYST_STANDBY_*`; fc-server does not, as Go does not.)
 
@@ -252,7 +255,14 @@ The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). I
 | `FC_FN_PUBLIC_PORT` | `8081` host only / `8096` beside other roles | Public listener for claimed hostnames (`off` disables) |
 | `FC_METRICS_PORT` (host only) / `FC_FN_METRICS_PORT` (beside other roles) | `9090` / `9091` | The host's `/health`, `/ready`, `/metrics` |
 | `FC_EXIT_AFTER_START` | `false` | Host only: exit 0 right after start-up |
-| `FC_FN_JS_SNAPSHOT` | `true` on Linux, `false` elsewhere | JS runtime: make each request's isolate from V8's base snapshot (≈0.7 ms) rather than from scratch (≈2.5 ms). Off by default outside Linux: on macOS, disposing thousands of snapshot-made isolates aborted the process (`docs/function-runner-density.md` §9.1) |
+| `FC_FN_MAX_DB_POOLS` | `16` | Distinct function database pools (one per connection a manifest `db[]` names); one more fails that load with `DB_POOL_LIMIT` |
+| `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION` | `2` | Open transactions one invocation may hold per database (never more than its `db[].poolSize`) |
+| `FC_FN_DB_SECRET_REFRESH_SECONDS` | `300` | How often an `aws-sm://` function database secret is re-read (a rotated password reaches its pool); `0` never |
+| `FC_FN_JS_SNAPSHOT` | `true` on Linux, `false` elsewhere | JS runtime: make each request's isolate from V8's base snapshot (≈0.7 ms) rather than from scratch (≈2.5 ms). Off by default outside Linux: on macOS, disposing thousands of snapshot-made isolates aborted the process (`docs/function-runner-density.md` §10.1) |
+
+**Function databases** (`docs/developers/functions.md#database-access`): a manifest's `db[]` connections are opened by the host, not the platform — so the host needs network reach to them, and, for `aws-sm://` secrets, `secretsmanager:GetSecretValue` on those secrets for its own IAM role. Each pool is sqlx, lazily connected (nothing at load), sized to the largest `poolSize` of the functions sharing it, idle connections closed after 60 s and every connection replaced after 30 min; a connection is reset (`ROLLBACK` if needed, `DISCARD ALL`) each time it goes back. An unreachable database is logged at WARN (throttled, 10 s) with the `db` name and SQLSTATE, never SQL or a secret.
+
+**Metering** (owner decision #13): `/metrics` also exports `fc_fn_fuel_total`, `fc_fn_invocation_fuel` and `fc_fn_invocation_peak_memory_bytes`, labelled `address` and `client`; `fc_fn_invocations_total{outcome="fuel_exhausted"}` counts calls stopped by `limits.maxFuel`.
 
 **Host only** (this flag on, every other role off — `FC_PLATFORM_ENABLED=false` too): `fc-server` is exactly the former `fc-fnhost` daemon — no database, none of `fc-server`'s own listeners, exit 2 naming every bad variable. **Beside other roles** the host runs in the process on its own ports (a port another listener of the process holds refuses the boot), starts once the API listener is bound, and drains first at shutdown.
 

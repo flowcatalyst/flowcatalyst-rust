@@ -46,12 +46,14 @@ pub struct DispatchJobActionsState {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RequeueRequest {
     #[serde(default)]
+    #[schema(required = true)]
     pub ids: Vec<String>,
 }
 
 /// Go `RequeueResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RequeueResponse {
+    #[schema(value_type = i64)]
     pub requeued: usize,
 }
 

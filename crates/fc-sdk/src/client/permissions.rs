@@ -16,16 +16,19 @@ pub struct PermissionListResponse {
     pub total: u64,
 }
 
-/// Permission response from the platform API.
+/// A permission catalogue row (Go's `PermissionResponse`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionResponse {
+    /// The permission string, e.g. `platform:iam:role:read`.
     pub permission: String,
-    pub application: String,
-    pub context: String,
-    pub aggregate: String,
-    pub action: String,
-    pub description: String,
+    /// Human-readable name.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 /// Permissions resource accessor — created via [`FlowCatalystClient::permissions`].
@@ -44,5 +47,33 @@ impl Permissions<'_> {
         self.client
             .get(&format!("/api/roles/permissions/{}", name))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::client::test_support::MockPlatform;
+
+    #[tokio::test]
+    async fn list_and_get_read_gos_permission_shape() {
+        let row = r#"{"permission":"platform:iam:role:read","name":"Read roles",
+            "description":"Read roles","category":"IAM"}"#;
+        let list = format!(r#"{{"permissions":[{row}],"total":1}}"#);
+        let stub = MockPlatform::start(&[
+            ("GET", "/api/roles/permissions", 200, &list),
+            (
+                "GET",
+                "/api/roles/permissions/platform:iam:role:read",
+                200,
+                row,
+            ),
+        ])
+        .await;
+        let c = stub.client();
+        let all = c.permissions().list().await.unwrap();
+        assert_eq!(all.permissions[0].name, "Read roles");
+        assert_eq!(all.permissions[0].category.as_deref(), Some("IAM"));
+        let one = c.permissions().get("platform:iam:role:read").await.unwrap();
+        assert_eq!(one.permission, "platform:iam:role:read");
     }
 }

@@ -14,20 +14,30 @@ import "context"
 // InPipelineCheckResponse — GET /monitoring/in-flight-messages/check.
 // InPipeline=true means the router currently holds the message; the
 // caller should not re-enqueue. InPipeline=false → safe to resend.
+// PoolCode and QueueID are set when InPipeline is true.
 type InPipelineCheckResponse struct {
-	MessageID  string             `json:"messageId"`
-	InPipeline bool               `json:"inPipeline"`
-	Detail     *InPipelineDetail  `json:"detail,omitempty"`
+	MessageID  string `json:"messageId"`
+	InPipeline bool   `json:"inPipeline"`
+	PoolCode   string `json:"poolCode,omitempty"`
+	QueueID    string `json:"queueId,omitempty"`
+
+	// Detail is the nested form an older router sent.
+	//
+	// Deprecated: the router reports PoolCode and QueueID at the top
+	// level; Detail is only populated by routers that still nest them.
+	Detail *InPipelineDetail `json:"detail,omitempty"`
 }
 
-// InPipelineDetail — populated when InPipeline=true.
+// InPipelineDetail — the nested detail object of older routers.
+//
+// Deprecated: read InPipelineCheckResponse.PoolCode / QueueID instead.
 type InPipelineDetail struct {
-	MessageID            string `json:"messageId"`
-	BrokerMessageID      string `json:"brokerMessageId,omitempty"`
-	QueueID              string `json:"queueId"`
-	PoolCode             string `json:"poolCode"`
-	ElapsedTimeMs        uint64 `json:"elapsedTimeMs"`
-	AddedToInPipelineAt  string `json:"addedToInPipelineAt"`
+	MessageID           string `json:"messageId"`
+	BrokerMessageID     string `json:"brokerMessageId,omitempty"`
+	QueueID             string `json:"queueId"`
+	PoolCode            string `json:"poolCode"`
+	ElapsedTimeMs       uint64 `json:"elapsedTimeMs"`
+	AddedToInPipelineAt string `json:"addedToInPipelineAt"`
 }
 
 // InPipelineBatchRequest — body for /check-batch. Capped at 5000 ids.
@@ -48,6 +58,16 @@ func (r *RouterResource) InPipeline(ctx context.Context, messageID string) (*InP
 	var out InPipelineCheckResponse
 	if err := r.c.GetRouter(ctx, "/monitoring/in-flight-messages/check"+q, &out); err != nil {
 		return nil, err
+	}
+	// An older router nests the location in detail; surface it at the
+	// top level too so callers read one place.
+	if out.Detail != nil {
+		if out.PoolCode == "" {
+			out.PoolCode = out.Detail.PoolCode
+		}
+		if out.QueueID == "" {
+			out.QueueID = out.Detail.QueueID
+		}
 	}
 	return &out, nil
 }

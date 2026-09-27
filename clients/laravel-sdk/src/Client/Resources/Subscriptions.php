@@ -82,23 +82,21 @@ class Subscriptions
     }
 
     /**
-     * Pause a subscription.
+     * Pause a subscription. The platform responds with 204 No Content; call
+     * `get($id)` if you need the updated record.
      */
-    public function pause(string $id): Subscription
+    public function pause(string $id): void
     {
-        $response = $this->client->request('POST', "/api/subscriptions/{$id}/pause");
-
-        return Subscription::fromArray($response);
+        $this->client->request('POST', "/api/subscriptions/{$id}/pause");
     }
 
     /**
-     * Resume a subscription.
+     * Resume a subscription. The platform responds with 204 No Content; call
+     * `get($id)` if you need the updated record.
      */
-    public function resume(string $id): Subscription
+    public function resume(string $id): void
     {
-        $response = $this->client->request('POST', "/api/subscriptions/{$id}/resume");
-
-        return Subscription::fromArray($response);
+        $this->client->request('POST', "/api/subscriptions/{$id}/resume");
     }
 
     /**

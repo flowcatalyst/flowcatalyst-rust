@@ -51,6 +51,57 @@ backward-compatible with the SPA, `fc-dev fn`, the SDKs and JVM hosts:
 - `functions.openapi.json` and `function-manifest.schema.json` are now supersets of Java's, and their tests check
   that.
 
+Fuel and memory metering (owner decision #13, 2026-09-27, branch `feat/fn-fuel-db`):
+- **Every invocation is metered.** The engine meters wasmtime fuel (`consume_fuel`) and a `ResourceLimiter`
+  wrapper records the peak linear memory; the runtime writes both into the invocation's `UsageMeter`
+  (`InvocationContext::usage`), and the listener exports them when the invocation really ends:
+  `fc_fn_fuel_total`, `fc_fn_invocation_fuel` and `fc_fn_invocation_peak_memory_bytes`, labelled
+  `address` and `client` (`PLATFORM` for a platform function), swept with the address's other series.
+- **`limits.maxFuel`** (optional, positive `int64`; `wasm`/`component` only, else `LIMIT_NOT_APPLICABLE`;
+  no default or client ceiling) in `fc-function-model`, the manifest schema and the OpenAPI document. Past
+  it the guest traps `OutOfFuel` and the call answers `500 FUNCTION_FUEL_EXHAUSTED` (`InvokeError::
+  FuelExhausted`, outcome `fuel_exhausted`), as the deadline answers 504. Epoch interruption still does
+  wall-clock time. A Rust extension: Java's parser refuses the key.
+- **Overhead** (`docs/function-runner-density.md` §9): ≤ 2% on real handlers, ~20% on a tight arithmetic
+  loop, +12% compiled code. Not material, so metering is always on.
+- Author docs: `docs/developers/functions.md`.
+
+Function database access (owner decision #7, Java W4's author contract, 2026-09-27, branch `feat/fn-fuel-db`):
+- **WIT `flowcatalyst:function@0.1.2`** adds `interface db` (additive: 0.1.0/0.1.1 components link
+  unchanged; only a component that imports `db` needs a 0.1.2 host): `open(name) -> result<database,
+  error>`; `resource database { query, execute, begin }`; `resource transaction { query, execute,
+  commit: static, rollback: static }`, dropping it rolls back; `variant param { null, boolean, integer,
+  float, decimal, text }`; `record rows { json, count, truncated }`; `enum error-code` = Java's
+  `DB_NOT_DECLARED, DB_BAD_REQUEST, DB_TX_UNKNOWN, DB_CONSTRAINT, DB_SYNTAX, DB_TIMEOUT, DB_UNAVAILABLE,
+  DB_ERROR`.
+- **Host** (`crates/fc-fnhost-core/src/db/`, runtime-agnostic; the WASM glue is `wasm/guest.rs`): Java's
+  semantics — `?` placeholders (`??` literal), 10 000 rows / 8 MiB with `truncated`, a statement timeout of
+  the time left before the deadline, Java's row→JSON table, SQL never logged, `DB_UNAVAILABLE` also a
+  throttled operator WARN. Text and `NULL` parameters are untyped (the server infers), the rest typed as
+  Java's `setLong`/`setBigDecimal`/`setBoolean`.
+- **Pools** (`db/pools.rs`): one shared bounded sqlx `PgPool` per connection identity, refcounted by loaded
+  version, sized to the largest `poolSize` (a resize replaces the pool), at most `FC_FN_MAX_DB_POOLS`
+  (`DB_POOL_LIMIT`); a per-(function, pool) share gate of the function's `poolSize`; a per-invocation cap
+  (`FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION`, 2); on release `ROLLBACK` when not idle + `DISCARD ALL`
+  (sqlx `after_release`; fixes Java's mid-transaction bug). `db[].secretRef` values are the host's
+  secrets; an `aws-sm://` reference (feature `aws-secrets`, on in `fc-server`) is re-read every
+  `FC_FN_DB_SECRET_REFRESH_SECONDS` and pushed into the pool's connect options (the per-pool
+  `start_secret_refresh` rule). Load failures: `DB_UNSUPPORTED`, `DB_SECRET_UNRESOLVED`, `DB_POOL_LIMIT`.
+- **PDK**: `ctx.db("name")?` → `Db::{query, execute, begin, transaction}`, `Transaction` a guard
+  (`commit`/`rollback`, drop rolls back), `params![…]`, `Rows::{json, values, parse}`, `DbError::code()`;
+  `TestHost::db(name, responder)` + `db_events()`. Only a function that calls `ctx.db` imports
+  `flowcatalyst:function/db`.
+- **Tests**: `tests/db_postgres.rs` (12, Docker: query/execute, the row mapping, typed and untyped
+  parameters, commit/rollback/drop, a connection returned mid-transaction, the caps, the deadline, every
+  code, the share limit, the per-invocation cap, the invocation's end, secret rotation) and
+  `tests/wasm_db.rs` (the committed PDK guest `pdk_db` through the listener; load failures without a
+  database).
+
+PDK publishable (owner decision #15, 2026-09-27): `crates/fc-function-pdk` is self-contained (its WIT vendored and
+packaged, kept in step by `tests/pdk_wit_sync.rs`); `just pdk-publish-dry-run` runs `cargo publish --dry-run` for
+`fc-function-abi`, then the PDK workspace (`fc-function-pdk-macros`, `fc-function-pdk`) against it. Both verify; nothing
+is uploaded (the owner publishes, in that order). Licences stay MPL-2.0 (#10); git and path dependencies are unchanged.
+
 Not done:
 - **H6:** a separate black-box conformance harness. It's largely covered by the end-to-end and `wasm_*` host tests.
 - **H7:** benchmarks on Linux. The F0 numbers are macOS only.
@@ -64,8 +115,8 @@ Not done:
    `feat/fn-v8` (H9 below).
 2. ~~An explicit manifest runtime value such as `component`.~~ Done in Rust (owner decision 5): `runtime:
    component`, while `wasm` plus the alias still work. Java's schema and DB CHECK don't have it.
-3. The guest DB connection model, before Java W4 lands (§4 decision 3).
-4. Fuel metering, per-tenant pools and quotas (§7).
+3. ~~The guest DB connection model~~ (done, owner decision #7: one shared pool per DSN; see the Status above).
+4. ~~Fuel metering~~ (done, owner decision #13: see the Status above); per-tenant pools and quotas (§7).
 
 **Auth and wire**
 5. **JWT `scope` vs `tier`.** Java puts permissions in `scope` and the tier in `tier`. The Rust platform still puts
@@ -94,8 +145,8 @@ Not done:
 **Housekeeping**
 17. Licence: `fc-function-model` uses the workspace AGPL. Guests don't link it, but it would need MPL if they ever do.
 18. The dev-only `hyper` pin in fc-router moved from 1.8.1 to 1.9.0 (wasmtime-wasi-http needs it).
-19. Publishing the PDK: it reads `../../wit` at build time, which works for git and path dependencies but not
-    crates.io. The template's git dependency only resolves after a push.
+19. ~~Publishing the PDK~~: the WIT is vendored and `just pdk-publish-dry-run` verifies it (owner decision #15). The
+    template's git dependency only resolves after a push.
 20. CLAUDE.md's infrastructure-exception list should gain "function host heartbeat".
 21. Rust's role catalogue differs from Java's outside functions. `client-admin`, `portal-administrator` and
     `router` are missing, and `messaging-admin` lacks connection-sync.
@@ -160,8 +211,9 @@ units per host (adapters, edge endpoints, customer custom code), at low cost.
                                           └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Everything is HTTP. The host never touches the database. Events and schedules reach functions as ordinary signed
-webhooks from the platform's dispatcher and scheduler.
+Everything is HTTP. The host never touches the platform's database. Events and schedules reach functions as ordinary
+signed webhooks from the platform's dispatcher and scheduler. (Since owner decision #7 the host does open the
+databases a function's manifest declares under `db[]`, on the function's behalf.)
 
 ## 3. The contract: what "matching" means
 
@@ -512,6 +564,7 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
     - `unavailable`.
   - `invocation.context()`: the invocation id, address, version, caller (platform / anonymous / principal),
     correlation and causation ids, original host and path, remote address, and path parameters.
+  - `db` (0.1.2, owner decision #7): the manifest's `db[]` databases (see the Status at the top).
 - **Tests**: `tests/wasm_{listener,loading,logging,neighbour}.rs`, end to end through the real listener,
   against ten committed Rust guests (`tests/fixtures/wasm/`, pinned by `SHA256SUMS`; rebuild with
   `tests/guests/build.sh`).
@@ -649,7 +702,7 @@ function-host role and fc-dev's in-process host load it behind a default `js` ca
   bundles (`tests/fixtures/js`, `SHA256SUMS`; `hello.mjs` is the TypeScript template built by esbuild,
   `build-hello.sh`); `fc-dev`'s `functions_e2e_test` deploys the template's bundle; the Docker
   `function_host_e2e_test` publishes, promotes and invokes a JS function and finds its event in `msg_events`.
-- **Measured**: `docs/function-runner-density.md` §9.
+- **Measured**: `docs/function-runner-density.md` §10.
 
 ### Track G: guests
 
@@ -698,14 +751,14 @@ and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
 ## 6. Following Java work that hasn't landed
 
 - **W3, the JS guest library `clients/function-js`.** The guest side only; no host change. When it lands in Java, JS guests run on the Rust host unchanged. Add its example to the H6 differential fixtures.
-- **W4, `fc_db_*` host functions** (`docs/spec/function-wasm-db.md`: query, execute, begin, commit and rollback, scoped to the invocation, at most 10k rows / 8 MiB). Implement it in H4 once Java lands it, after decision 3 above. Rust keeps `FC_FN_MAX_DB_POOLS` and the pool-per-DSN reference counting only if that's what the owner rules.
+- **W4, `fc_db_*` host functions** (`docs/spec/function-wasm-db.md`: query, execute, begin, commit and rollback, scoped to the invocation, at most 10k rows / 8 MiB). **Done** in Rust as WIT `flowcatalyst:function/db@0.1.2` over one shared pool per DSN (owner decision #7; see the Status).
 - **W5, where the SPA enables `wasm`.** Carry it through in P7.
 
 ## 7. Extensions beyond Java (owner decision; not part of drop-in)
 
 | Extension | Why (density and granularity) | Notes |
 |---|---|---|
-| Fuel and memory metering per call | Per-customer cost attribution, fair shares, and billing | wasmtime fuel; export as `fc_fn_fuel_total{address}` |
+| Fuel and memory metering per call | Per-customer cost attribution, fair shares, and billing | **Done** (#13): `fc_fn_fuel_total{address,client}`, per-invocation fuel and peak-memory histograms, `limits.maxFuel` |
 | Per-tenant pools and quotas | Limit the blast radius per customer | Manifest `pool` already exists; add a policy ceiling per client |
 | Per-endpoint deploy units | Finer granularity than a function | Would need manifest and ABI changes, so coordinate with Java |
 | WASI 0.2 Component Model host | Standard, typed interfaces; edge portability | Decision 2 |

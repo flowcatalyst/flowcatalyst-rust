@@ -1,0 +1,14 @@
+# JitPack (https://jitpack.io) builds the Java SDK, clients/java-sdk, from this
+# repository on the first request for a version (docs/sdks.md, "Java SDK on
+# JitPack"). Nothing else in the repository is built.
+#
+# Versions are git refs: the release tag java-sdk-vX.Y.Z (`just
+# release-java-sdk`), a commit hash, or <branch>-SNAPSHOT.
+#
+# The SDK compiles for Java 25 (maven.compiler.release); JitPack's default
+# JDK is older, so a Temurin 25 is installed with SDKMAN first.
+before_install:
+  - sdk install java 25.0.1-tem
+  - sdk use java 25.0.1-tem
+install:
+  - mvn -B -f clients/java-sdk/pom.xml -DskipTests install

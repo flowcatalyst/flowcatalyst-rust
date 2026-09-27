@@ -277,6 +277,27 @@ pub trait UnitOfWork: Send + Sync {
         E: DomainEvent + Send + 'static,
         C: Serialize + AuditMasked + Send + Sync;
 
+    /// Go's `usecasepgx.CommitSync`: a sync planned in full before anything
+    /// is written. Upserts every aggregate in `saves` and deletes every one in
+    /// `deletes` through `repository`, then writes the per-row events in
+    /// `rows` (each with its audit row) and the `rollup` with its own, all in
+    /// one transaction: a row that fails to write rolls the whole sync back,
+    /// so a sync either lands completely or not at all.
+    async fn commit_sync<A, R, E, C>(
+        &self,
+        repository: &R,
+        saves: &[A],
+        deletes: &[A],
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> Result<Committed<E>, UseCaseError>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync;
+
     /// A [`LockedRead`] on this unit of work's transaction. Only a
     /// transaction-scoped unit of work ([`PgUnitOfWork::run`]) has one that
     /// outlives the call, so only it holds the lock until its commit; any
@@ -494,6 +515,35 @@ impl PgUnitOfWork {
         Self::persist_audit_log(&mut *txn, event, command, recorded_as).await?;
         Ok(())
     }
+}
+
+/// A planned sync's row writes on `txn`: every save, then every delete. The
+/// events and audit rows follow in the caller.
+async fn write_sync_rows<A, R>(
+    txn: &mut Transaction<'static, Postgres>,
+    repository: &R,
+    saves: &[A],
+    deletes: &[A],
+) -> Result<(), UseCaseError>
+where
+    A: HasId + Send + Sync,
+    R: Persist<A>,
+{
+    for aggregate in saves {
+        let mut tx = DbTx { inner: &mut *txn };
+        if let Err(e) = repository.persist(aggregate, &mut tx).await {
+            error!("Failed to persist aggregate in sync: {}", e);
+            return Err(write_failure("persist", aggregate, e));
+        }
+    }
+    for aggregate in deletes {
+        let mut tx = DbTx { inner: &mut *txn };
+        if let Err(e) = repository.delete(aggregate, &mut tx).await {
+            error!("Failed to delete aggregate in sync: {}", e);
+            return Err(write_failure("delete", aggregate, e));
+        }
+    }
+    Ok(())
 }
 
 /// The command an orchestration records every audit row under, in place of
@@ -819,6 +869,45 @@ impl UnitOfWork for PgUnitOfWork {
         Ok(Committed::new(event))
     }
 
+    async fn commit_sync<A, R, E, C>(
+        &self,
+        repository: &R,
+        saves: &[A],
+        deletes: &[A],
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> Result<Committed<E>, UseCaseError>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut txn = self.begin().await?;
+
+        let written = match write_sync_rows(&mut txn, repository, saves, deletes).await {
+            Ok(()) => Self::persist_events_and_audits(&mut txn, &rows, &rollup, command).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
+            let _ = txn.rollback().await;
+            return Err(e);
+        }
+
+        finish(txn).await?;
+
+        debug!(
+            event_id = rollup.metadata().event_id.as_str(),
+            event_type = rollup.metadata().event_type.as_str(),
+            saved = saves.len(),
+            deleted = deletes.len(),
+            "Successfully committed sync transaction"
+        );
+
+        Ok(Committed::new(rollup))
+    }
+
     async fn read_locked<Q, R>(
         &self,
         _repository: &R,
@@ -1018,6 +1107,37 @@ impl UnitOfWork for TxScopedUnitOfWork {
         .await?;
 
         Ok(Committed::new(event))
+    }
+
+    async fn commit_sync<A, R, E, C>(
+        &self,
+        repository: &R,
+        saves: &[A],
+        deletes: &[A],
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> Result<Committed<E>, UseCaseError>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = guard.as_mut().ok_or_else(finalized)?;
+
+        write_sync_rows(txn, repository, saves, deletes).await?;
+        PgUnitOfWork::persist_events_and_audits_as(
+            txn,
+            &rows,
+            &rollup,
+            command,
+            self.recorded_as.as_ref(),
+        )
+        .await?;
+
+        Ok(Committed::new(rollup))
     }
 
     async fn read_locked<Q, R>(&self, repository: &R, query: &Q) -> Result<R::Output, UseCaseError>
@@ -1297,6 +1417,28 @@ impl UnitOfWork for InMemoryUnitOfWork {
         }
         self.record(&event, command);
         Ok(Committed::new(event))
+    }
+
+    async fn commit_sync<A, R, E, C>(
+        &self,
+        _repository: &R,
+        _saves: &[A],
+        _deletes: &[A],
+        rows: Vec<RecordedEvent>,
+        rollup: E,
+        command: &C,
+    ) -> Result<Committed<E>, UseCaseError>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: Serialize + AuditMasked + Send + Sync,
+    {
+        for row in &rows {
+            self.record(row, command);
+        }
+        self.record(&rollup, command);
+        Ok(Committed::new(rollup))
     }
 
     async fn read_locked<Q, R>(

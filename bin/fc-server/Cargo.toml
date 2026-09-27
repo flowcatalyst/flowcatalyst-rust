@@ -19,7 +19,7 @@ fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres",
 fc-mcp = { path = "../../crates/fc-mcp" }
 # The function-host role. `ecr`: ECR registry auth for oci:// artifacts
 # (owner decision #14), as the former fc-fnhost binary had it.
-fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr"] }
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr", "aws-secrets"] }
 # The function host's JS runtime (runtime: js, V8 isolates), behind the
 # default `js` feature: off, the host loads WASI components only and the
 # binary carries no V8.

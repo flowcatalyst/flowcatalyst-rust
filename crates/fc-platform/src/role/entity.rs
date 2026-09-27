@@ -345,6 +345,10 @@ pub mod permissions {
         pub const SCHEDULED_JOB_FIRE: &str = "platform:messaging:scheduled-job:fire";
         pub const SCHEDULED_JOB_MANAGE: &str = "platform:messaging:scheduled-job:manage";
         pub const SCHEDULED_JOB_SYNC: &str = "platform:messaging:scheduled-job:sync";
+        // The router's own API (owner ruling 2 of 2026-09-25, Java
+        // ad4231be): monitoring reads, and every operator action.
+        pub const ROUTER_VIEW: &str = "platform:messaging:router:view";
+        pub const ROUTER_OPERATE: &str = "platform:messaging:router:operate";
         pub const SCHEDULED_JOB_INSTANCE_READ: &str =
             "platform:messaging:scheduled-job-instance:view";
 
@@ -490,6 +494,8 @@ pub mod permissions {
             BATCH_EVENTS_WRITE,
             BATCH_DISPATCH_JOBS_WRITE,
             BATCH_AUDIT_LOGS_WRITE,
+            ROUTER_VIEW,
+            ROUTER_OPERATE,
         ];
     }
 
@@ -1026,12 +1032,15 @@ pub mod roles {
                 permissions::admin::CORS_ORIGIN_READ,
                 // Owner ruling 13 (Java 458ebf3a).
                 permissions::admin::SERVICE_ACCOUNT_READ,
+                // Owner ruling 2 (Java ad4231be): router monitoring reads.
+                permissions::admin::ROUTER_VIEW,
             ])
     }
 
     /// PLATFORM_ROUTER — the deployed message router's own role: it fetches
     /// its configuration document and nothing else (Go seed/roles.go:
-    /// 179-185).
+    /// 179-185). It does not grant calling the router's API: that is
+    /// [`router_operator`] (owner ruling 2).
     pub fn router() -> AuthRole {
         AuthRole::new("platform", "router", "Router")
             .with_description("Fetches the dispatch router configuration")
@@ -1091,6 +1100,10 @@ pub mod roles {
         for p in permissions::application_service::ALL {
             role.permissions.insert((*p).to_string());
         }
+        // Owner ruling 2 (Java ad4231be): the SDKs' stuck-message recovery
+        // asks the router whether a message is in flight.
+        role.permissions
+            .insert(permissions::admin::ROUTER_VIEW.to_string());
         role
     }
 
@@ -1118,6 +1131,21 @@ pub mod roles {
             .with_permission(permissions::function::FUNCTION_HOST_CONTROL)
     }
 
+    /// PLATFORM_ROUTER_OPERATOR — calls the router's own API: monitoring
+    /// reads and operator actions (owner ruling 2 of 2026-09-25, Java
+    /// ad4231be, appended as Java appends it).
+    pub fn router_operator() -> AuthRole {
+        AuthRole::new("platform", "router-operator", "Router Operator")
+            .with_description(
+                "Monitors and operates the message router: pools, breakers, in-flight messages, publishing",
+            )
+            .with_source(RoleSource::Code)
+            .with_permissions([
+                permissions::admin::ROUTER_VIEW,
+                permissions::admin::ROUTER_OPERATE,
+            ])
+    }
+
     /// Get all built-in roles
     pub fn all() -> Vec<AuthRole> {
         vec![
@@ -1138,6 +1166,7 @@ pub mod roles {
             application_service(),
             function_publisher(),
             function_host(),
+            router_operator(),
         ]
     }
 }
@@ -1246,7 +1275,7 @@ mod tests {
         // Bump this number whenever you add a built-in role in `roles::all()`.
         // The test is a tripwire against accidentally orphaning a new role
         // from `role_sync_service::seed_built_in_roles`'s consumption path.
-        assert_eq!(all_roles.len(), 17);
+        assert_eq!(all_roles.len(), 18);
 
         // Super admin has wildcard
         let super_admin = roles::super_admin();
@@ -1289,6 +1318,20 @@ mod tests {
                 .contains(permissions::admin::SERVICE_ACCOUNT_READ));
             assert!(!role.has_permission(permissions::admin::SERVICE_ACCOUNT_UPDATE));
         }
+
+        // Owner ruling 2: the router's API.
+        let view = permissions::admin::ROUTER_VIEW;
+        let operate = permissions::admin::ROUTER_OPERATE;
+        let operator = roles::router_operator();
+        assert!(operator.has_permission(view) && operator.has_permission(operate));
+        for role in [roles::viewer(), roles::application_service()] {
+            assert!(role.permissions.contains(view), "{}", role.name);
+            assert!(!role.has_permission(operate), "{}", role.name);
+        }
+        assert!(roles::super_admin().has_permission(operate));
+        // The router's own identity does not grant calling it.
+        let router = roles::router();
+        assert!(!router.has_permission(view) && !router.has_permission(operate));
 
         let ai_ro = roles::ai_agent_readonly();
         assert!(ai_ro.has_permission(permissions::admin::EVENT_TYPE_READ));

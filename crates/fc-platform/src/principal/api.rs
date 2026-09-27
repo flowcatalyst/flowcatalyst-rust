@@ -23,6 +23,15 @@ use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
 use crate::AuditService;
 
+/// Go's user `scope` values (documentation; the handler carries text).
+#[derive(ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms)]
+enum UserScopeDoc {
+    ANCHOR,
+    PARTNER,
+    CLIENT,
+}
+
 /// Create user request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +54,7 @@ pub struct CreateUserRequest {
     /// Requested tier: `ANCHOR`, `PARTNER` or `CLIENT` (the default). The
     /// email domain only confirms a privileged tier, never grants one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(inline, value_type = Option<UserScopeDoc>)]
     pub scope: Option<String>,
 
     /// When false, the platform skips its password complexity rules
@@ -103,6 +113,7 @@ pub struct UpdatePrincipalRequest {
 /// Assign role request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddRoleRequest)]
 pub struct AssignRoleRequest {
     /// Role code
     pub role: String,
@@ -115,6 +126,7 @@ pub struct AssignRoleRequest {
 /// Batch assign roles request (for PUT /roles - declarative update)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AssignPrincipalRolesRequest)]
 pub struct BatchAssignRolesRequest {
     /// List of role codes to assign (replaces existing roles)
     pub roles: Vec<String>,
@@ -123,6 +135,7 @@ pub struct BatchAssignRolesRequest {
 /// Batch assign roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = RolesAssignedResponse)]
 pub struct BatchAssignRolesResponse {
     /// Current role assignments after update
     pub roles: Vec<RoleAssignmentDto>,
@@ -164,8 +177,10 @@ pub struct CheckEmailDomainResponse {
     /// Whether the email already exists
     pub email_exists: bool,
     /// Display hint (none today: `null`, as Go)
+    #[schema(required = true)]
     pub info: Option<String>,
     /// Warning message
+    #[schema(required = true)]
     pub warning: Option<String>,
     /// Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
     pub derived_scope: String,
@@ -179,6 +194,7 @@ pub struct CheckEmailDomainResponse {
 /// Set application access request (batch replace)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AssignApplicationAccessRequest)]
 pub struct SetApplicationAccessRequest {
     /// Application IDs to grant access to (replaces existing)
     pub application_ids: Vec<String>,
@@ -205,6 +221,7 @@ pub struct ApplicationAccessResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationAccessListResponse {
     pub applications: Vec<ApplicationAccessResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
     /// Whether the principal reaches every application; when true the list
     /// is moot.
@@ -216,7 +233,9 @@ pub struct ApplicationAccessListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SetApplicationAccessResponse {
     pub applications: Vec<ApplicationAccessResponse>,
+    #[schema(value_type = i64)]
     pub added: usize,
+    #[schema(value_type = i64)]
     pub removed: usize,
     /// The principal's all-applications flag after the change.
     pub all_applications: bool,
@@ -225,6 +244,7 @@ pub struct SetApplicationAccessResponse {
 /// Available application response (slim DTO)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalAvailableApplication)]
 pub struct AvailableApplicationResponse {
     pub id: String,
     pub code: String,
@@ -244,6 +264,7 @@ impl From<Application> for AvailableApplicationResponse {
 /// Available applications list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalAvailableApplicationsResponse)]
 pub struct AvailableApplicationsResponse {
     pub applications: Vec<AvailableApplicationResponse>,
 }
@@ -262,8 +283,10 @@ pub struct GrantClientAccessRequest {
 pub struct ClientAccessGrantResponse {
     pub id: String,
     pub client_id: String,
+    #[schema(format = DateTime)]
     pub granted_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub expires_at: Option<String>,
 }
 
@@ -286,6 +309,7 @@ impl From<crate::principal::entity::ClientAccessGrant> for ClientAccessGrantResp
 /// Client access list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientAccessGrantListResponse)]
 pub struct ClientAccessListResponse {
     pub grants: Vec<ClientAccessGrantResponse>,
 }
@@ -334,10 +358,12 @@ impl From<&RoleAssignment> for RoleAssignmentResponse {
 /// Role assignment DTO (for GET /roles)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalRoleAssignmentDTO)]
 pub struct RoleAssignmentDto {
     pub id: String,
     pub role_name: String,
     pub assignment_source: String,
+    #[schema(format = DateTime)]
     pub assigned_at: String,
 }
 
@@ -352,6 +378,7 @@ pub(super) fn assignment_source_label(r: &RoleAssignment) -> String {
 /// Roles list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PrincipalRoleListResponse)]
 pub struct RolesListResponse {
     pub roles: Vec<RoleAssignmentDto>,
 }
@@ -405,13 +432,16 @@ pub struct PrincipalResponse {
     pub is_anchor_user: bool,
     /// Granted client IDs
     pub granted_client_ids: Vec<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     /// Whether a self-service developer credential is set (never the
     /// secret itself).
     pub has_developer_credential: bool,
     /// When the developer credential was last set.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub developer_credential_updated_at: Option<String>,
     /// The user's confirmed second factors (`TOTP`, `EMAIL_PIN`); only on
     /// the single-principal read, absent when none is enrolled (Go
@@ -474,6 +504,7 @@ impl From<Principal> for PrincipalResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalListResponse {
     pub principals: Vec<PrincipalResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -618,10 +649,10 @@ pub struct PrincipalsState {
     post,
     path = "/users",
     tag = "principals",
-    operation_id = "postApiPrincipalsUsers",
+    operation_id = "createUser",
     request_body = CreateUserRequest,
     responses(
-        (status = 201, description = "User created", body = PrincipalResponse),
+        (status = 200, description = "User created", body = PrincipalResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate email")
     ),
@@ -1192,7 +1223,7 @@ pub fn derive_user_scope(
     get,
     path = "/{id}",
     tag = "principals",
-    operation_id = "getApiPrincipalsById",
+    operation_id = "getPrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1219,17 +1250,19 @@ pub async fn get_principal(
     get,
     path = "",
     tag = "principals",
-    operation_id = "getApiPrincipals",
+    operation_id = "listPrincipals",
     params(
-        ("page" = Option<u32>, Query, description = "Page number"),
-        ("limit" = Option<u32>, Query, description = "Items per page"),
-        ("type" = Option<String>, Query, description = "Filter by type"),
-        ("scope" = Option<String>, Query, description = "Filter by scope"),
-        ("client_id" = Option<String>, Query, description = "Filter by client ID"),
-        ("email" = Option<String>, Query, description = "Exact email match (case-insensitive)"),
-        ("q" = Option<String>, Query, description = "Search by name or email (substring)"),
-        ("active" = Option<bool>, Query, description = "Filter by active status"),
-        ("roles" = Option<String>, Query, description = "Filter by roles (comma-separated)")
+        ("type" = Option<String>, Query, description = "Filter by principal type (USER or SERVICE)"),
+        ("clientId" = Option<String>, Query, description = "Filter to principals homed at, or granted access to, this client"),
+        ("active" = Option<String>, Query, description = "Filter by active status (true/false); absent = both"),
+        ("q" = Option<String>, Query, description = "Case-insensitive substring search across name and email"),
+        ("roles" = Option<String>, Query, description = "CSV of role names; matches principals holding any of them"),
+        ("page" = Option<i64>, Query, description = "0-based page index (default 0)"),
+        ("pageSize" = Option<i64>, Query, description = "Page size; <=0 returns all matches (default: all)"),
+        ("sortField" = Option<String>, Query, description = "Sort key: name | email | createdAt (default createdAt)"),
+        ("sortOrder" = Option<String>, Query, description = "Sort direction: asc | desc (default asc)"),
+        ("scope" = Option<String>, Query, description = "Filter by scope (Rust extension)"),
+        ("email" = Option<String>, Query, description = "Exact email match, case-insensitive (Rust extension)")
     ),
     responses(
         (status = 200, description = "List of principals", body = PrincipalListResponse)
@@ -1252,7 +1285,7 @@ pub async fn list_principals(
     put,
     path = "/{id}",
     tag = "principals",
-    operation_id = "putApiPrincipalsById",
+    operation_id = "updatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1280,7 +1313,7 @@ pub async fn update_principal(
     get,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdRoles",
+    operation_id = "listPrincipalRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1308,7 +1341,7 @@ pub async fn get_roles(
     post,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdRoles",
+    operation_id = "addPrincipalRole",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1338,7 +1371,7 @@ pub async fn assign_role(
     put,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "putApiPrincipalsByIdRoles",
+    operation_id = "assignPrincipalRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1368,7 +1401,7 @@ pub async fn batch_assign_roles(
     delete,
     path = "/{id}/roles/{role}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsByIdRolesByRoleName",
+    operation_id = "removePrincipalRole",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("role" = String, Path, description = "Role to remove")
@@ -1397,7 +1430,7 @@ pub async fn remove_role(
     get,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdClientAccess",
+    operation_id = "listPrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1425,13 +1458,13 @@ pub async fn get_client_access(
     post,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdClientAccess",
+    operation_id = "grantPrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
     request_body = GrantClientAccessRequest,
     responses(
-        (status = 201, description = "Client access granted", body = ClientAccessGrantResponse),
+        (status = 200, description = "Client access granted", body = ClientAccessGrantResponse),
         (status = 404, description = "Principal not found")
     ),
     security(("bearer_auth" = []))
@@ -1455,7 +1488,7 @@ pub async fn grant_client_access(
     delete,
     path = "/{id}/client-access/{clientId}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsByIdClientAccessByClientId",
+    operation_id = "revokePrincipalClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("clientId" = String, Path, description = "Client ID to revoke")
@@ -1484,7 +1517,7 @@ pub async fn revoke_client_access(
     delete,
     path = "/{id}",
     tag = "principals",
-    operation_id = "deleteApiPrincipalsById",
+    operation_id = "deletePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1516,8 +1549,27 @@ pub async fn delete_principal(
 #[serde(rename_all = "camelCase")]
 pub struct SyncUsersRequest {
     #[serde(default)]
-    #[schema(value_type = Vec<Object>)]
+    #[schema(required = true, value_type = Vec<SyncUserInputDoc>)]
     pub principals: Vec<crate::principal::operations::SyncUserInput>,
+}
+
+/// Go `SyncUserInput`: one user of `POST /api/principals/sync`
+/// (documentation of [`crate::principal::operations::SyncUserInput`]).
+#[derive(ToSchema)]
+#[schema(as = SyncUserInput, rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct SyncUserInputDoc {
+    /// User's email address (unique identifier for matching)
+    email: String,
+    /// Display name
+    name: String,
+    /// Role names to assign (SDK_SYNC source; replaces this source's prior set)
+    roles: Option<Vec<String>>,
+    /// Whether the user is active (default true)
+    active: Option<bool>,
+    /// Pre-hashed password (bcrypt/argon2i/argon2id), stored verbatim;
+    /// migrated on first login. Used only when the sync creates the user.
+    password_hash: Option<String>,
 }
 
 /// Platform-level user sync response (Go sync.go:30-35, 70-75).
@@ -1545,7 +1597,7 @@ pub struct SyncUsersResponse {
     post,
     path = "/sync",
     tag = "principals",
-    operation_id = "postApiPrincipalsSync",
+    operation_id = "syncUsers",
     request_body = SyncUsersRequest,
     responses(
         (status = 200, description = "Users synced", body = SyncUsersResponse),
@@ -1608,7 +1660,7 @@ pub async fn sync_users(
     post,
     path = "/{id}/activate",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdActivate",
+    operation_id = "activatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1637,7 +1689,7 @@ pub async fn activate_principal(
     post,
     path = "/{id}/deactivate",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdDeactivate",
+    operation_id = "deactivatePrincipal",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1666,7 +1718,7 @@ pub async fn deactivate_principal(
     post,
     path = "/{id}/reset-password",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdResetPassword",
+    operation_id = "resetPrincipalPassword",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1696,6 +1748,7 @@ pub async fn reset_password(
 /// Optional body of `send-password-reset` (Go `sendPasswordResetInput`).
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(default)]
+#[schema(as = SendPasswordResetInputBody)]
 pub struct SendPasswordResetRequest {
     /// Also clear the user's 2FA when they complete the reset.
     pub reset2fa: bool,
@@ -1713,7 +1766,7 @@ pub struct SendPasswordResetRequest {
     post,
     path = "/{id}/send-password-reset",
     tag = "principals",
-    operation_id = "postApiPrincipalsByIdSendPasswordReset",
+    operation_id = "sendPrincipalPasswordReset",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1755,9 +1808,9 @@ pub async fn send_password_reset(
     get,
     path = "/check-email-domain",
     tag = "principals",
-    operation_id = "getApiPrincipalsCheckEmailDomain",
+    operation_id = "checkPrincipalEmailDomain",
     params(
-        ("domain" = String, Query, description = "Email domain to check")
+        ("email" = Option<String>, Query)
     ),
     responses(
         (status = 200, description = "Domain check result", body = CheckEmailDomainResponse)
@@ -1788,7 +1841,7 @@ pub async fn check_email_domain(
     get,
     path = "/{id}/application-access",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdApplicationAccess",
+    operation_id = "listPrincipalApplicationAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1818,7 +1871,7 @@ pub async fn get_application_access(
     put,
     path = "/{id}/application-access",
     tag = "principals",
-    operation_id = "putApiPrincipalsByIdApplicationAccess",
+    operation_id = "assignPrincipalApplicationAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1851,7 +1904,7 @@ pub async fn set_application_access(
     get,
     path = "/{id}/available-applications",
     tag = "principals",
-    operation_id = "getApiPrincipalsByIdAvailableApplications",
+    operation_id = "listPrincipalAvailableApplications",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),

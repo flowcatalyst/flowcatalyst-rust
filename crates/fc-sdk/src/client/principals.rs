@@ -31,18 +31,18 @@ pub struct ResetPasswordRequest {
     pub enforce_password_complexity: Option<bool>,
 }
 
-/// Request to update a principal.
+/// Request to update a principal (Go's `UpdatePrincipalRequest`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePrincipalRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub first_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
+    /// Asserted against the stored email: a different value is rejected,
+    /// not treated as a rename.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 /// Filters for listing principals.
@@ -51,7 +51,8 @@ pub struct PrincipalFilters {
     pub client_id: Option<String>,
     pub r#type: Option<String>,
     pub active: Option<String>,
-    pub email: Option<String>,
+    /// Case-insensitive substring search across name and email (`q`).
+    pub q: Option<String>,
 }
 
 /// Principal response from the platform API.
@@ -204,23 +205,19 @@ impl Principals<'_> {
         filters: &PrincipalFilters,
     ) -> Result<PrincipalListResponse, ClientError> {
         let mut params = Vec::new();
-        if let Some(ref cid) = filters.client_id {
-            params.push(format!("clientId={}", cid));
-        }
         if let Some(ref t) = filters.r#type {
-            params.push(format!("type={}", t));
+            params.push(("type", t.clone()));
+        }
+        if let Some(ref cid) = filters.client_id {
+            params.push(("clientId", cid.clone()));
         }
         if let Some(ref a) = filters.active {
-            params.push(format!("active={}", a));
+            params.push(("active", a.clone()));
         }
-        if let Some(ref e) = filters.email {
-            params.push(format!("email={}", e));
+        if let Some(ref q) = filters.q {
+            params.push(("q", q.clone()));
         }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        let query = FlowCatalystClient::query_string(&params);
         self.client.get(&format!("/api/principals{}", query)).await
     }
 
@@ -231,18 +228,24 @@ impl Principals<'_> {
 
     /// Find principals by email.
     ///
-    /// The result still contains every principal the caller is authorised to
-    /// see whose email matches exactly (case-insensitive) — callers should
-    /// pick the expected one by `email` rather than assuming index 0.
-    pub async fn find_by_email(
-        &self,
-        email: &str,
-    ) -> Result<PrincipalListResponse, ClientError> {
-        self.list(&PrincipalFilters {
-            email: Some(email.to_string()),
-            ..Default::default()
-        })
-        .await
+    /// Searches with `q` (Go's substring search over name and email), then
+    /// keeps only the principals whose email equals `email`
+    /// (case-insensitive). More than one can match across clients, so pick
+    /// the expected one rather than assuming index 0.
+    pub async fn find_by_email(&self, email: &str) -> Result<PrincipalListResponse, ClientError> {
+        let mut resp = self
+            .list(&PrincipalFilters {
+                q: Some(email.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        resp.principals.retain(|p| {
+            p.email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(email))
+        });
+        resp.total = resp.principals.len() as u64;
+        Ok(resp)
     }
 
     /// Update a principal.
@@ -278,10 +281,7 @@ impl Principals<'_> {
     }
 
     /// Get roles assigned to a principal.
-    pub async fn roles(
-        &self,
-        id: &str,
-    ) -> Result<PrincipalRoleListResponse, ClientError> {
+    pub async fn roles(&self, id: &str) -> Result<PrincipalRoleListResponse, ClientError> {
         self.client
             .get(&format!("/api/principals/{}/roles", id))
             .await
@@ -404,5 +404,64 @@ impl Principals<'_> {
                 req,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    fn principal(id: &str, email: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","type":"USER","scope":"CLIENT","name":"N","active":true,
+            "email":"{email}","roles":[],"isAnchorUser":false,"grantedClientIds":[],
+            "hasDeveloperCredential":false,"createdAt":"t","updatedAt":"t"}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn find_by_email_sends_q_and_keeps_exact_matches() {
+        let list = format!(
+            r#"{{"principals":[{},{}],"total":2}}"#,
+            principal("prn_1", "Ann+x@Example.com"),
+            principal("prn_2", "joann+x@example.com")
+        );
+        let stub = MockPlatform::start(&[("GET", "/api/principals", 200, &list)]).await;
+        let found = stub
+            .client()
+            .principals()
+            .find_by_email("ann+x@example.com")
+            .await
+            .unwrap();
+        assert_eq!(found.principals.len(), 1);
+        assert_eq!(found.principals[0].id, "prn_1");
+        assert_eq!(found.total, 1);
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![("q".to_string(), "ann+x@example.com".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_sends_gos_members() {
+        let body = principal("prn_1", "a@example.com");
+        let stub = MockPlatform::start(&[("PUT", "/api/principals/prn_1", 200, &body)]).await;
+        stub.client()
+            .principals()
+            .update(
+                "prn_1",
+                &UpdatePrincipalRequest {
+                    name: Some("Ann".into()),
+                    active: Some(true),
+                    email: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.single().json(),
+            serde_json::json!({"name": "Ann", "active": true})
+        );
     }
 }

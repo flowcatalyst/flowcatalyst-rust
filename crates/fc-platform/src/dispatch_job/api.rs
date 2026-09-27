@@ -20,6 +20,25 @@ use crate::{
     DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, RetryStrategy,
 };
 
+/// Go `MetadataDTO`: one key/value tag of a dispatch job (documentation of
+/// [`DispatchMetadata`]).
+#[derive(ToSchema)]
+#[schema(as = MetadataDTO)]
+#[allow(dead_code)]
+struct MetadataDoc {
+    key: String,
+    value: String,
+}
+
+/// A directly created job's own dispatch priority (documentation of the
+/// `queue` member; matched ignoring case).
+#[derive(ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms, non_camel_case_types)]
+enum DispatchQueueDoc {
+    DEFAULT,
+    HIGH_PRIORITY,
+}
+
 /// Dispatch job response DTO: Go's `DispatchJobResponse`
 /// (dispatchjob/api/dto.go). Absent members stay absent (`omitempty`); the
 /// job row carries no attempts, so `attempts` is only ever absent here (the
@@ -70,19 +89,29 @@ pub struct DispatchJobResponse {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<DispatchAttemptResponse>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<MetadataDoc>)]
     pub metadata: Vec<DispatchMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// What the job is, in words: the raising subscription's name for a
+    /// fanned-out job, or the creator's own (Go's 057).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub scheduled_for: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_attempt_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
@@ -121,6 +150,7 @@ impl From<DispatchJob> for DispatchJobResponse {
             attempts: job.attempts.into_iter().map(Into::into).collect(),
             metadata: job.metadata,
             idempotency_key: job.idempotency_key,
+            descriptor: job.descriptor,
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
             scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
@@ -137,6 +167,7 @@ impl From<DispatchJob> for DispatchJobResponse {
 /// binds.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = DispatchJobRead)]
 pub struct DispatchJobReadResponse {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,18 +193,32 @@ pub struct DispatchJobReadResponse {
     pub kind: String,
     pub target_url: String,
     pub mode: String,
+    #[schema(required = false)]
     pub dispatch_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_group: Option<String>,
+    /// What the job is, in words (the raising subscription's name for a
+    /// fanned-out job), and its key/value tags: both on the list row so the
+    /// grid shows them (Go's 057).
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(value_type = Vec<MetadataDoc>)]
+    pub metadata: Vec<DispatchMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub scheduled_for: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_attempt_at: Option<String>,
     pub attempt_count: u32,
 }
@@ -214,6 +259,8 @@ impl From<DispatchJobRead> for DispatchJobReadResponse {
             mode,
             correlation_id: job.correlation_id,
             message_group: job.message_group,
+            descriptor: job.descriptor,
+            metadata: job.metadata,
             scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
@@ -380,9 +427,78 @@ pub struct CreateDispatchJobRequest {
     /// External reference ID
     pub external_id: Option<String>,
 
-    /// Custom metadata
+    /// Key/value tags. Go's single create takes a string map
+    /// (`{"k": "v"}`, stored key-sorted) and its batch the entity's
+    /// `[{"key", "value"}]` array; every create route accepts either.
+    #[serde(default, deserialize_with = "deserialize_metadata")]
+    #[schema(value_type = std::collections::HashMap<String, String>)]
+    pub metadata: Vec<DispatchMetadata>,
+
+    /// What the job is, in words, for the dispatch-jobs grid ("Notify Value
+    /// of user logins"). Optional, at most 255 characters; a fanned-out job
+    /// gets its subscription's name here.
     #[serde(default)]
-    pub metadata: std::collections::HashMap<String, String>,
+    #[schema(max_length = 255)]
+    pub descriptor: Option<String>,
+
+    /// The job's own dispatch priority: `DEFAULT` or `HIGH_PRIORITY`,
+    /// matched ignoring case (400 `INVALID_QUEUE` otherwise). Omitted or
+    /// blank leaves it unset, so the subscription's priority applies.
+    #[serde(default)]
+    #[schema(inline, value_type = Option<DispatchQueueDoc>)]
+    pub queue: Option<String>,
+}
+
+/// `metadata` as either wire shape: a string map (Go's single create,
+/// `metadataFromMap`: key-sorted) or a `[{key, value}]` array (Go's batch
+/// item, kept in order). `null` is none.
+fn deserialize_metadata<'de, D>(deserializer: D) -> Result<Vec<DispatchMetadata>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Metadata {
+        Map(std::collections::BTreeMap<String, String>),
+        List(Vec<DispatchMetadata>),
+    }
+    Ok(match Option::<Metadata>::deserialize(deserializer)? {
+        None => Vec::new(),
+        Some(Metadata::Map(map)) => map
+            .into_iter()
+            .map(|(key, value)| DispatchMetadata { key, value })
+            .collect(),
+        Some(Metadata::List(list)) => list,
+    })
+}
+
+/// A directly created job's own priority (Go `jobFromItem`:
+/// `dispatchqueue.Parse`): canonical `DEFAULT` / `HIGH_PRIORITY`, `None`
+/// when omitted or blank, 400 `INVALID_QUEUE` for anything else.
+pub(crate) fn job_queue(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => {
+            crate::subscription::operations::create::parse_queue(raw).map_err(PlatformError::from)
+        }
+    }
+}
+
+/// Width of `msg_dispatch_jobs.descriptor` (`VARCHAR(255)`).
+pub const DESCRIPTOR_MAX_CHARS: usize = 255;
+
+/// A directly created job's descriptor, stored as sent (Go's `jobFromItem`).
+/// Longer than the column is 400 `VALIDATION`; Go's insert fails with a 500.
+pub(crate) fn job_descriptor(raw: Option<String>) -> Result<Option<String>, PlatformError> {
+    match raw {
+        Some(d) if d.chars().count() > DESCRIPTOR_MAX_CHARS => {
+            Err(PlatformError::bad_request_code(
+                "VALIDATION",
+                format!("descriptor must be at most {DESCRIPTOR_MAX_CHARS} characters"),
+            ))
+        }
+        other => Ok(other),
+    }
 }
 
 /// Response for create dispatch job
@@ -410,14 +526,18 @@ pub struct BatchCreateDispatchJobsResponse {
 /// Dispatch attempt response DTO: Go's `AttemptDTO`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AttemptDTO)]
 pub struct DispatchAttemptResponse {
     pub attempt_number: u32,
+    #[schema(format = DateTime)]
     pub attempted_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i64>)]
     pub response_code: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
@@ -428,7 +548,7 @@ pub struct DispatchAttemptResponse {
     pub error_type: Option<String>,
     /// What the platform sent on this attempt (Go's `RequestSummary`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<crate::dispatch_job_actions::api::RequestSummary>)]
     pub request: Option<serde_json::Value>,
 }
 
@@ -467,7 +587,7 @@ fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), 
     get,
     path = "/{id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsById",
+    operation_id = "getDispatchJob",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -500,7 +620,7 @@ pub async fn get_dispatch_job(
     get,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobs",
+    operation_id = "listDispatchJobs",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobReadResponse>)
@@ -610,7 +730,7 @@ async fn with_client_identifiers(
     get,
     path = "/by-event/{eventId}",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByEventByEventId",
+    operation_id = "dispatchJobsByEventAlias",
     params(
         ("eventId" = String, Path, description = "Event ID")
     ),
@@ -770,10 +890,9 @@ pub async fn create_dispatch_job(
     job.retry_strategy = retry_strategy;
     job.data_only = req.data_only;
 
-    // Add metadata
-    for (key, value) in req.metadata {
-        job.metadata.push(DispatchMetadata { key, value });
-    }
+    job.metadata = req.metadata;
+    job.descriptor = job_descriptor(req.descriptor)?;
+    job.queue = job_queue(req.queue.as_deref())?;
 
     // Created PENDING (the entity's default), as Go inserts it: the
     // scheduler claims and queues it.
@@ -898,6 +1017,9 @@ pub async fn batch_create_dispatch_jobs(
         job.service_account_id = crate::shared::caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.data_only = job_req.data_only;
+        job.metadata = job_req.metadata;
+        job.descriptor = job_descriptor(job_req.descriptor)?;
+        job.queue = job_queue(job_req.queue.as_deref())?;
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;
         }
@@ -935,7 +1057,7 @@ pub async fn batch_create_dispatch_jobs(
     get,
     path = "/{id}/attempts",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByIdAttempts",
+    operation_id = "listDispatchJobAttempts",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -994,7 +1116,7 @@ pub struct DispatchJobFilterOptionsResponse {
     get,
     path = "/filter-options",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsFilterOptions",
+    operation_id = "dispatchJobFilterOptions",
     responses(
         (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse)
     ),
@@ -1037,7 +1159,7 @@ pub async fn get_filter_options(
     get,
     path = "/{id}/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsByIdRaw",
+    operation_id = "getDispatchJobRaw",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -1080,7 +1202,7 @@ pub struct PaginatedDispatchJobsResponse {
     get,
     path = "/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiDispatchJobsRaw",
+    operation_id = "listDispatchJobsRawAlias",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "Dispatch jobs", body = Vec<DispatchJobReadResponse>)

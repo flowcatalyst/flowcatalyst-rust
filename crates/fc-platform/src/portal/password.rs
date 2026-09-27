@@ -54,6 +54,8 @@ pub struct PortalPasswords {
     pub tokens: Arc<PortalResetTokenRepository>,
     pub identities: Arc<PortalIdentityRepository>,
     pub email_service: Arc<dyn EmailService>,
+    /// Platform config, for the login theme's colours on the emails.
+    pub brand: Option<Arc<crate::PlatformConfigRepository>>,
     pub password_service: Arc<PasswordService>,
     /// Base for the links (the SPA's `/auth/set-password` and
     /// `/auth/reset-password` pages).
@@ -61,6 +63,11 @@ pub struct PortalPasswords {
 }
 
 impl PortalPasswords {
+    /// The platform's email theme (Go `branding.LoadTheme`).
+    async fn theme(&self) -> crate::shared::branding::Theme {
+        crate::shared::branding::Theme::load(self.brand.as_ref()).await
+    }
+
     fn link(&self, page: &str, raw: &str) -> String {
         format!(
             "{}/auth/{page}?token={raw}",
@@ -114,7 +121,11 @@ impl PortalPasswords {
         let expires = Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS);
         let link = self.mint_invite_link(identity_id, redirect_uri).await?;
         self.email_service
-            .send(&super::email::invite_link(email, &link))
+            .send(&super::email::invite_link(
+                &self.theme().await,
+                email,
+                &link,
+            ))
             .await
             .map_err(PlatformError::internal)?;
         Ok(expires)
@@ -123,7 +134,11 @@ impl PortalPasswords {
     /// Email the SSO-org invite: no token, there is no password to set.
     pub async fn send_portal_sso_invite(&self, email: &str, portal_url: &str) -> Result<()> {
         self.email_service
-            .send(&super::email::sso_invite(email, portal_url))
+            .send(&super::email::sso_invite(
+                &self.theme().await,
+                email,
+                portal_url,
+            ))
             .await
             .map_err(PlatformError::internal)
     }
@@ -150,7 +165,7 @@ impl PortalPasswords {
             .await?;
         let link = self.link("reset-password", &raw);
         self.email_service
-            .send(&super::email::reset_link(email, &link))
+            .send(&super::email::reset_link(&self.theme().await, email, &link))
             .await
             .map_err(PlatformError::internal)
     }

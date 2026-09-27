@@ -155,6 +155,7 @@ export type {
 	ListJobsFilters,
 	ListInstancesFilters,
 	FireRequest,
+	FireResponse,
 	InstanceLogRequest,
 	InstanceCompleteRequest,
 	PaginatedJobs,
@@ -187,7 +188,11 @@ export type {
 	MessageType,
 } from "./outbox/index.js";
 export { CreateEventDto } from "./outbox/index.js";
-export { CreateDispatchJobDto, type DispatchMode } from "./outbox/index.js";
+export {
+	CreateDispatchJobDto,
+	type DispatchMode,
+	MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH,
+} from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export {
 	redactAuditData,

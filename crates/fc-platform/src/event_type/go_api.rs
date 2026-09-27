@@ -37,9 +37,10 @@ pub struct EventTypeGoState {
 /// handler.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddSchemaRequest)]
 pub struct AddEventTypeSchemaRequest {
     pub version: String,
-    #[schema(value_type = Object)]
+    #[schema(value_type = serde_json::Value)]
     pub schema: serde_json::Value,
 }
 

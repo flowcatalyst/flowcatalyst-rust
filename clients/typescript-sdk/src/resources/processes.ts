@@ -17,13 +17,19 @@ import type {
 	ListProcessesResponse,
 	GetProcessResponse,
 	CreateProcessData,
+	CreatedResponse,
 	UpdateProcessData,
 	SyncProcessesData,
 	SyncProcessesResponse as SyncProcessesResponseType,
 	ListProcessesData,
 } from "../generated/types.gen.js";
 
-/** Pagination params (page/size). Mirrors the previous generated shape. */
+/**
+ * Pagination params (page/size).
+ *
+ * @deprecated The platform's `GET /api/processes` does not paginate; it
+ * returns every matching process and ignores `page` / `size`.
+ */
 export type PaginationParams = {
 	page?: number;
 	size?: number;
@@ -34,11 +40,16 @@ export type ProcessResponse = GetProcessResponse;
 export type CreateProcessRequest = CreateProcessData["body"];
 export type UpdateProcessRequest = UpdateProcessData["body"];
 export type SyncProcessesResponse = SyncProcessesResponseType;
+export type CreateProcessResponse = CreatedResponse;
 
 export interface ProcessFilters {
 	status?: string;
 	application?: string;
 	subdomain?: string;
+	/**
+	 * @deprecated The platform's `GET /api/processes` has no `search`
+	 * filter and ignores it.
+	 */
 	search?: string;
 }
 
@@ -91,11 +102,14 @@ export class ProcessesResource {
 		);
 	}
 
-	/** Create a new process. */
+	/**
+	 * Create a new process. The platform answers `201 { id }`; call
+	 * `get(id)` for the full entity.
+	 */
 	create(
 		data: CreateProcessRequest,
-	): ResultAsync<ProcessResponse, SdkError> {
-		return this.client.request<ProcessResponse>((httpClient, headers) =>
+	): ResultAsync<CreateProcessResponse, SdkError> {
+		return this.client.request<CreateProcessResponse>((httpClient, headers) =>
 			sdk.createProcess({
 				client: httpClient,
 				headers,
@@ -104,30 +118,40 @@ export class ProcessesResource {
 		);
 	}
 
-	/** Update a process. */
+	/**
+	 * Update a process. The platform answers `204 No Content`; call
+	 * `get(id)` to read the result.
+	 */
 	update(
 		id: string,
 		data: UpdateProcessRequest,
-	): ResultAsync<ProcessResponse, SdkError> {
-		return this.client.request<ProcessResponse>((httpClient, headers) =>
-			sdk.updateProcess({
-				client: httpClient,
-				headers,
-				path: { id },
-				body: data,
-			}),
-		);
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.updateProcess({
+					client: httpClient,
+					headers,
+					path: { id },
+					body: data,
+				}),
+			)
+			.map((): void => undefined);
 	}
 
-	/** Archive a process (soft-delete). */
-	archive(id: string): ResultAsync<unknown, SdkError> {
-		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.archiveProcess({
-				client: httpClient,
-				headers,
-				path: { id },
-			}),
-		);
+	/**
+	 * Archive a process (soft-delete): `POST /api/processes/{id}/archive`,
+	 * answered `204 No Content`.
+	 */
+	archive(id: string): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.archiveProcess({
+					client: httpClient,
+					headers,
+					path: { id },
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/** Hard-delete a process. Only allowed once archived. */

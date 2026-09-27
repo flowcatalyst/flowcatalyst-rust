@@ -15,6 +15,14 @@ use crate::shared::encryption_service::EncryptionService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
+/// Go's `mappingScope` values (documentation; the handlers carry text).
+#[derive(utoipa::ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms)]
+enum MappingScopeDoc {
+    ANCHOR,
+    CLIENT,
+}
+
 /// Go `CreateIdentityProviderRequest` (identityprovider/api/dto.go).
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +42,7 @@ pub struct CreateIdentityProviderRequest {
     pub allowed_email_domains: Option<Vec<String>>,
     /// Scope for mappings this request creates: `ANCHOR`, or `CLIENT`
     /// (requires `primaryClientId`). Required when a new mapping is created.
+    #[schema(inline, value_type = Option<MappingScopeDoc>)]
     pub mapping_scope: Option<String>,
     /// Client linked on mappings that are new or have no primary client.
     pub primary_client_id: Option<String>,
@@ -59,6 +68,7 @@ pub struct UpdateIdentityProviderRequest {
     /// The desired set of routed domains: additions are mapped or claimed,
     /// removals fall back to internal authentication.
     pub allowed_email_domains: Option<Vec<String>>,
+    #[schema(inline, value_type = Option<MappingScopeDoc>)]
     pub mapping_scope: Option<String>,
     pub primary_client_id: Option<String>,
     pub sync_roles_from_idp: Option<bool>,
@@ -86,7 +96,9 @@ pub struct IdentityProviderResponse {
     pub allowed_email_domains: Vec<String>,
     pub sync_roles_from_idp: bool,
     pub allowed_role_ids: Vec<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -126,8 +138,10 @@ fn parse_idp_type(value: &str) -> Result<crate::IdentityProviderType, PlatformEr
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = IdentityProviderListResponse)]
 pub struct IdentityProvidersListResponse {
     pub identity_providers: Vec<IdentityProviderResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -196,7 +210,7 @@ pub(crate) fn seal_client_secret(
     post,
     path = "",
     tag = "identity-providers",
-    operation_id = "postApiIdentityProviders",
+    operation_id = "createIdentityProvider",
     request_body = CreateIdentityProviderRequest,
     responses(
         (status = 201, description = "Identity provider created", body = IdentityProviderResponse),
@@ -271,7 +285,7 @@ async fn create_identity_provider(
     get,
     path = "",
     tag = "identity-providers",
-    operation_id = "getApiIdentityProviders",
+    operation_id = "listIdentityProviders",
     responses(
         (status = 200, description = "List of identity providers", body = IdentityProvidersListResponse)
     ),
@@ -295,7 +309,7 @@ async fn list_identity_providers(
     get,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "getApiIdentityProvidersById",
+    operation_id = "getIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -324,7 +338,7 @@ async fn get_identity_provider(
     put,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "putApiIdentityProvidersById",
+    operation_id = "updateIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -405,7 +419,7 @@ async fn update_identity_provider(
     delete,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "deleteApiIdentityProvidersById",
+    operation_id = "deleteIdentityProvider",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),

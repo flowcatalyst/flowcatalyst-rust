@@ -153,8 +153,10 @@ pub struct SyncSubscriptionInputRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
     #[serde(default)]
     pub data_only: bool,
@@ -190,8 +192,10 @@ pub struct SyncDispatchPoolInputRequest {
     pub description: Option<String>,
     /// Optional. `None` / omitted = concurrency-only (no rate limit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub rate_limit: Option<u32>,
     #[serde(default = "default_concurrency")]
+    #[schema(value_type = i32)]
     pub concurrency: u32,
 }
 
@@ -358,7 +362,7 @@ pub struct SyncScheduledJobsResultResponse {
     post,
     path = "/{appCode}/roles/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeRolesSync",
+    operation_id = "syncRoles",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK roles not in list")
@@ -425,7 +429,7 @@ async fn sync_roles(
     post,
     path = "/{appCode}/event-types/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeEventTypesSync",
+    operation_id = "syncEventTypes",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced event types not in list")
@@ -491,7 +495,7 @@ async fn sync_event_types(
     post,
     path = "/{appCode}/subscriptions/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeSubscriptionsSync",
+    operation_id = "syncSubscriptions",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced subscriptions not in list")
@@ -602,7 +606,7 @@ async fn sync_subscriptions(
     post,
     path = "/{appCode}/dispatch-pools/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeDispatchPoolsSync",
+    operation_id = "syncDispatchPools",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Archive pools not in list")
@@ -687,7 +691,7 @@ async fn sync_dispatch_pools(
     post,
     path = "/{appCode}/principals/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodePrincipalsSync",
+    operation_id = "syncPrincipals",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK_SYNC roles from unlisted principals")
@@ -774,7 +778,7 @@ async fn sync_principals(
     post,
     path = "/{appCode}/scheduled-jobs/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeScheduledJobsSync",
+    operation_id = "syncScheduledJobs",
     params(("appCode" = String, Path, description = "Application code")),
     request_body = SyncScheduledJobsRequest,
     responses(
@@ -869,7 +873,7 @@ async fn sync_scheduled_jobs(
     post,
     path = "/{appCode}/processes/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeProcessesSync",
+    operation_id = "syncProcesses",
     params(
         ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced processes not in list")
@@ -942,6 +946,7 @@ async fn sync_processes(
 /// human-readable change notes.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = SyncOpenapiRequest)]
 pub struct SyncOpenApiSpecRequest {
     /// The OpenAPI document (OpenAPI 3.x or Swagger 2.x).
     pub spec: serde_json::Value,
@@ -969,7 +974,7 @@ pub struct SyncOpenApiSpecResponse {
     post,
     path = "/{appCode}/openapi/sync",
     tag = "sdk-sync",
-    operation_id = "postApiApplicationsByAppCodeOpenapiSync",
+    operation_id = "syncOpenapi",
     params(("appCode" = String, Path, description = "Application code")),
     request_body = SyncOpenApiSpecRequest,
     responses(

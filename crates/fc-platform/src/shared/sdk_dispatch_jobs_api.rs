@@ -20,7 +20,7 @@ use crate::shared::batch_api::{job_ids_taken, BatchResponse, BatchResultItem, Su
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::{DispatchJob, DispatchJobRepository, DispatchKind, DispatchMetadata, RetryStrategy};
+use crate::{DispatchJob, DispatchJobRepository, DispatchKind, RetryStrategy};
 
 #[derive(Clone)]
 pub struct SdkDispatchJobsState {
@@ -143,9 +143,9 @@ async fn sdk_batch_create_dispatch_jobs(
         job.retry_strategy = retry_strategy;
         job.data_only = job_req.data_only;
 
-        for (key, value) in job_req.metadata {
-            job.metadata.push(DispatchMetadata { key, value });
-        }
+        job.metadata = job_req.metadata;
+        job.descriptor = crate::dispatch_job::api::job_descriptor(job_req.descriptor)?;
+        job.queue = crate::dispatch_job::api::job_queue(job_req.queue.as_deref())?;
 
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;

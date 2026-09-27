@@ -36,11 +36,17 @@ pub struct LoginAttemptResponse {
     pub id: String,
     pub attempt_type: String,
     pub outcome: String,
+    #[schema(required = true)]
     pub failure_reason: Option<String>,
+    #[schema(required = true)]
     pub identifier: Option<String>,
+    #[schema(required = true)]
     pub principal_id: Option<String>,
+    #[schema(required = true)]
     pub ip_address: Option<String>,
+    #[schema(required = true)]
     pub user_agent: Option<String>,
+    #[schema(format = DateTime)]
     pub attempted_at: String,
 }
 
@@ -64,6 +70,7 @@ impl From<LoginAttempt> for LoginAttemptResponse {
 /// unbounded so we never count.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = LoginAttemptListResponse)]
 pub struct LoginAttemptsListResponse {
     pub items: Vec<LoginAttemptResponse>,
     pub has_more: bool,
@@ -81,18 +88,16 @@ pub struct LoginAttemptsState {
     get,
     path = "",
     tag = "login-attempts",
-    operation_id = "getApiLoginAttempts",
+    operation_id = "listLoginAttempts",
     params(
-        ("attempt_type" = Option<String>, Query, description = "Filter by attempt type"),
-        ("outcome" = Option<String>, Query, description = "Filter by outcome"),
-        ("identifier" = Option<String>, Query, description = "Filter by identifier"),
-        ("principal_id" = Option<String>, Query, description = "Filter by principal ID"),
-        ("date_from" = Option<String>, Query, description = "Filter from date"),
-        ("date_to" = Option<String>, Query, description = "Filter to date"),
-        ("page" = Option<u64>, Query, description = "Page number"),
-        ("page_size" = Option<i64>, Query, description = "Page size"),
-        ("sortField" = Option<String>, Query, description = "Sort field (attempted_at, identifier, outcome, attempt_type)"),
-        ("sortOrder" = Option<String>, Query, description = "Sort order (asc or desc, default: desc)"),
+        ("attemptType" = Option<String>, Query),
+        ("outcome" = Option<String>, Query),
+        ("identifier" = Option<String>, Query),
+        ("principalId" = Option<String>, Query),
+        ("dateFrom" = Option<String>, Query),
+        ("dateTo" = Option<String>, Query),
+        ("after" = Option<String>, Query),
+        ("pageSize" = Option<i64>, Query)
     ),
     responses(
         (status = 200, description = "Login attempts list", body = LoginAttemptsListResponse),

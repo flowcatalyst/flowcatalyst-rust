@@ -1027,5 +1027,159 @@
     "pointer": "/clients/**",
     "reason": "Go defect: Go's service-account delete (authz cleanup-service-account) removes the iam_service_accounts row only and leaves its SERVICE principal (active, still holding platform:application-service) and its OAuth client, whose credentials keep working. Rust deletes all three. Go's list therefore holds the deleted account's client ('Parity Authz <run> Service Account Client'); every other client is equal, and the extra row shifts the ones after it.",
     "ruling": "owner decisions 2026-09-25, #40: Go's app-scoped syncs answer 500 AUDIT_WRITE for application codes over 17 characters and Go's service-account delete leaves the principal and OAuth client behind; Rust stays correct and the harness allow-lists them"
+  },
+  {
+    "scenario": "me-public-config*",
+    "step": "openapi-json",
+    "pointer": "**/properties/$schema",
+    "reason": "Go's huma document gives every response schema a readOnly `$schema` member (the URL huma adds to response bodies); Rust does not emit `$schema`, so its document does not describe it. The rest of the platform OpenAPI document is aligned to Go's (operationIds, schema names, bodies, parameters: crates/fc-platform/tests/openapi_go_contract_test.rs); the differences that remain have no owner ruling and stay DIFFs (docs/sdks.md, \"Platform OpenAPI document\").",
+    "ruling": "owner decision #30 ($schema in responses: Rust does not emit it)"
+  },
+  {
+    "scenario": "me-public-config*",
+    "step": "openapi-json",
+    "pointer": "/info/version",
+    "reason": "The document's info.version is the platform build version, as `/version` reports it: Rust's real build version, Go's `dev` locally.",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "me-public-config*",
+    "step": "q-openapi-alias",
+    "pointer": "**/properties/$schema",
+    "reason": "Go's huma document gives every response schema a readOnly `$schema` member (the URL huma adds to response bodies); Rust does not emit `$schema`, so its document does not describe it. The rest of the platform OpenAPI document is aligned to Go's (operationIds, schema names, bodies, parameters: crates/fc-platform/tests/openapi_go_contract_test.rs); the differences that remain have no owner ruling and stay DIFFs (docs/sdks.md, \"Platform OpenAPI document\").",
+    "ruling": "owner decision #30 ($schema in responses: Rust does not emit it)"
+  },
+  {
+    "scenario": "me-public-config*",
+    "step": "q-openapi-alias",
+    "pointer": "/info/version",
+    "reason": "The document's info.version is the platform build version, as `/version` reports it: Rust's real build version, Go's `dev` locally.",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-current-spec",
+    "pointer": "**/properties/$schema",
+    "reason": "Go's huma document gives every response schema a readOnly `$schema` member (the URL huma adds to response bodies); Rust does not emit `$schema`, so its document does not describe it. The rest of the platform OpenAPI document is aligned to Go's (operationIds, schema names, bodies, parameters: crates/fc-platform/tests/openapi_go_contract_test.rs); the differences that remain have no owner ruling and stay DIFFs (docs/sdks.md, \"Platform OpenAPI document\").",
+    "ruling": "owner decision #30 ($schema in responses: Rust does not emit it)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-current-spec",
+    "pointer": "/spec/info/version",
+    "reason": "The document's info.version is the platform build version, as `/version` reports it: Rust's real build version, Go's `dev` locally.",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-current-spec",
+    "pointer": "/version",
+    "reason": "The stored platform spec version is the document's info.version, the platform build version (see /spec/info/version).",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-version",
+    "pointer": "**/properties/$schema",
+    "reason": "Go's huma document gives every response schema a readOnly `$schema` member (the URL huma adds to response bodies); Rust does not emit `$schema`, so its document does not describe it. The rest of the platform OpenAPI document is aligned to Go's (operationIds, schema names, bodies, parameters: crates/fc-platform/tests/openapi_go_contract_test.rs); the differences that remain have no owner ruling and stay DIFFs (docs/sdks.md, \"Platform OpenAPI document\").",
+    "ruling": "owner decision #30 ($schema in responses: Rust does not emit it)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-version",
+    "pointer": "/spec/info/version",
+    "reason": "The document's info.version is the platform build version, as `/version` reports it: Rust's real build version, Go's `dev` locally.",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "bff*",
+    "step": "developer-get-platform-version",
+    "pointer": "/version",
+    "reason": "The stored platform spec version is the document's info.version, the platform build version (see /spec/info/version).",
+    "ruling": "owner decision #33 (/version: Rust reports its real build version)"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "client-credentials",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "client-credentials",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "introspect-client-credentials-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "api-me-with-client-credentials-token",
+    "pointer": "/permissions/24",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "authz: permissions come from roles*",
+    "step": "service-account-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "authz: permissions come from roles*",
+    "step": "service-account-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "profile-only gate*",
+    "step": "service-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "profile-only gate*",
+    "step": "service-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "router-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "plain-token",
+    "pointer": "/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
+  },
+  {
+    "scenario": "router-config*",
+    "step": "plain-token",
+    "pointer": "/access_token/«jwt»/claims/scope",
+    "reason": "Rust's platform:application-service role also carries platform:messaging:router:view (owner ruling 2, from Java ad4231be): the SDKs' stuck-message recovery asks the router whether a message is in flight, and the router now enforces the platform bearer. Go's role lacks it; every Go permission is present.",
+    "ruling": "owner ruling 2 (router auth: router:view / router:operate); see #43"
   }
 ]

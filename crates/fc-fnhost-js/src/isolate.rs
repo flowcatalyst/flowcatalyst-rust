@@ -291,6 +291,14 @@ impl Isolate {
         self.budget.used()
     }
 
+    /// The memory the isolate uses now: its JavaScript heap in use plus its
+    /// `ArrayBuffer` storage (for the usage meter's peak).
+    pub fn memory_in_use(&mut self) -> u64 {
+        let _entered = Entered::new(self.raw);
+        let heap = self.js.v8_isolate().get_heap_statistics().used_heap_size();
+        (heap + self.budget.used()) as u64
+    }
+
     /// Calls the main module's `invoke` with the request, and drives the
     /// event loop until its promise settles. `Ok` is the dispatcher's
     /// `[status, headers, body]`. [`Isolate::start`] must have run.

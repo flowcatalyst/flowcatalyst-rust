@@ -41,6 +41,7 @@ pub struct AuditLogResponse {
     pub application_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[schema(format = DateTime)]
     pub performed_at: String,
 }
 
@@ -128,6 +129,7 @@ pub struct AuditLogListResponse {
 /// Entity types response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogEntityTypesResponse)]
 pub struct EntityTypesResponse {
     pub entity_types: Vec<String>,
 }
@@ -135,6 +137,7 @@ pub struct EntityTypesResponse {
 /// Operations response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogOperationsResponse)]
 pub struct OperationsResponse {
     pub operations: Vec<String>,
 }
@@ -142,6 +145,7 @@ pub struct OperationsResponse {
 /// Application IDs response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogApplicationIDsResponse)]
 pub struct ApplicationIdsResponse {
     pub application_ids: Vec<String>,
 }
@@ -149,6 +153,7 @@ pub struct ApplicationIdsResponse {
 /// Client IDs response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuditLogClientIDsResponse)]
 pub struct ClientIdsResponse {
     pub client_ids: Vec<String>,
 }
@@ -165,6 +170,7 @@ pub struct AuditLogsQuery {
 
     /// Page size (default 50; a value outside 1..=200 means 50).
     #[serde(default = "default_page_size")]
+    #[param(value_type = Option<i64>)]
     pub page_size: i32,
 
     /// Filter by entity type
@@ -173,11 +179,11 @@ pub struct AuditLogsQuery {
     /// Filter by entity ID
     pub entity_id: Option<String>,
 
-    /// Filter by operation (the command name)
-    pub operation: Option<String>,
-
     /// Filter by principal ID
     pub principal_id: Option<String>,
+
+    /// Filter by operation (the command name)
+    pub operation: Option<String>,
 
     /// CSV of application ids
     pub application_ids: Option<String>,
@@ -262,7 +268,7 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     get,
     path = "/entity-types",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsEntityTypes",
+    operation_id = "auditLogEntityTypes",
     responses(
         (status = 200, description = "List of distinct entity types", body = EntityTypesResponse)
     ),
@@ -284,7 +290,7 @@ pub async fn get_entity_types(
     get,
     path = "/operations",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsOperations",
+    operation_id = "auditLogOperations",
     responses(
         (status = 200, description = "List of distinct operations", body = OperationsResponse)
     ),
@@ -306,7 +312,7 @@ pub async fn get_operations(
     get,
     path = "/{id}",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsById",
+    operation_id = "getAuditLog",
     params(
         ("id" = String, Path, description = "Audit log ID")
     ),
@@ -339,7 +345,7 @@ pub async fn get_audit_log(
     get,
     path = "",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogs",
+    operation_id = "listAuditLogs",
     params(AuditLogsQuery),
     responses(
         (status = 200, description = "List of audit logs", body = AuditLogListResponse)
@@ -426,7 +432,7 @@ async fn unpaged(state: &AuditLogsState, mut logs: Vec<AuditLog>) -> AuditLogLis
     get,
     path = "/entity/{entityType}/{entityId}",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsEntityByEntityTypeByEntityId",
+    operation_id = "auditLogsByEntity",
     params(
         ("entityType" = String, Path, description = "Entity type"),
         ("entityId" = String, Path, description = "Entity ID")
@@ -456,7 +462,7 @@ pub async fn get_entity_audit_logs(
     get,
     path = "/principal/{principalId}",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsPrincipalByPrincipalId",
+    operation_id = "auditLogsByPrincipal",
     params(
         ("principalId" = String, Path, description = "Principal ID")
     ),
@@ -486,7 +492,7 @@ pub async fn get_principal_audit_logs(
     get,
     path = "/recent",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsRecent",
+    operation_id = "listAuditLogsRecent",
     params(AuditLogsQuery),
     responses(
         (status = 200, description = "Recent audit logs", body = AuditLogListResponse)
@@ -506,7 +512,7 @@ pub async fn get_recent_audit_logs(
     get,
     path = "/application-ids",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsApplicationIds",
+    operation_id = "auditLogApplicationIDs",
     responses(
         (status = 200, description = "List of distinct application IDs", body = ApplicationIdsResponse)
     ),
@@ -528,7 +534,7 @@ pub async fn get_application_ids(
     get,
     path = "/client-ids",
     tag = "audit-logs",
-    operation_id = "getApiAuditLogsClientIds",
+    operation_id = "auditLogClientIDs",
     responses(
         (status = 200, description = "List of distinct client IDs", body = ClientIdsResponse)
     ),

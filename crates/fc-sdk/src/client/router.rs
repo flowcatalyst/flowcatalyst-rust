@@ -24,7 +24,14 @@ use super::{ClientError, FlowCatalystClient};
 pub struct InPipelineCheckResponse {
     pub message_id: String,
     pub in_pipeline: bool,
-    /// Populated only when `in_pipeline = true`.
+    /// The pool holding the message; set only when `in_pipeline = true`.
+    /// Go's router answers this at the top level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_code: Option<String>,
+    /// The queue the message came from; set only when `in_pipeline = true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_id: Option<String>,
+    /// The Rust router's nested detail object; Go's router never sends it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<InPipelineDetail>,
 }
@@ -56,15 +63,11 @@ pub struct Router<'a> {
 
 impl Router<'_> {
     fn router_url(&self, path: &str) -> String {
-        let base = self
-            .client
-            .router_base_url
-            .as_deref()
-            .unwrap_or_else(|| {
-                // No public accessor for base_url, so reuse the platform helper.
-                // (router_url falls back to platform base_url when no override.)
-                ""
-            });
+        let base = self.client.router_base_url.as_deref().unwrap_or_else(|| {
+            // No public accessor for base_url, so reuse the platform helper.
+            // (router_url falls back to platform base_url when no override.)
+            ""
+        });
         if base.is_empty() {
             self.client.url(path)
         } else {
@@ -218,6 +221,27 @@ mod tests {
         assert_eq!(
             *seen.lock().unwrap(),
             vec!["Bearer tok-1".to_string(), "Bearer tok-1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn in_pipeline_reads_gos_top_level_fields() {
+        let stub = crate::client::test_support::MockPlatform::start(&[(
+            "GET",
+            "/monitoring/in-flight-messages/check",
+            200,
+            r#"{"messageId":"m1","inPipeline":true,"poolCode":"fast","queueId":"q1"}"#,
+        )])
+        .await;
+        let client = FlowCatalystClient::new("http://127.0.0.1:1").with_router_url(&stub.base_url);
+        let resp = client.router().in_pipeline("m1").await.unwrap();
+        assert!(resp.in_pipeline);
+        assert_eq!(resp.pool_code.as_deref(), Some("fast"));
+        assert_eq!(resp.queue_id.as_deref(), Some("q1"));
+        assert!(resp.detail.is_none());
+        assert_eq!(
+            stub.single().query_pairs(),
+            vec![("messageId".to_string(), "m1".to_string())]
         );
     }
 }

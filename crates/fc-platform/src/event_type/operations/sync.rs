@@ -126,97 +126,63 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         let mut schemas_created = 0u32;
         let mut schemas_updated = 0u32;
         let mut schemas_unchanged = 0u32;
+        let mut saves: Vec<EventType> = Vec::new();
+        let mut deletes: Vec<EventType> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
-        // Process each input event type
+        // Plan every row before anything is written, as Go's
+        // `usecaseop.Sync` does: a bad row fails the sync with nothing
+        // written, and the first bad row in the request is the error.
         for input in &command.event_types {
             synced_codes.push(input.code.clone());
 
-            let current_id: String = match existing.iter().find(|et| et.code == input.code) {
+            let mut et = match existing.iter().find(|et| et.code == input.code) {
                 Some(et) => {
                     // As Go (eventtype/operations/sync.go): a listed code
                     // that already exists has its name and description
                     // updated, whatever its source.
-                    {
-                        let mut updated = et.clone();
-                        updated.name = input.name.clone();
-                        updated.description = input.description.clone();
-                        updated.updated_at = chrono::Utc::now();
-                        if let Err(e) = self.event_type_repo.update(&updated).await {
-                            return Err(UseCaseError::commit(format!(
-                                "Failed to update event type '{}': {}",
-                                input.code, e
-                            )));
-                        }
-                        rows.push(RecordedEvent::of(&EventTypeUpdated::new(
-                            &ctx,
-                            &updated.id,
-                            &updated.name,
-                            updated.description.as_deref(),
-                        ))?);
-                        updated_count += 1;
-                    }
-                    et.id.clone()
+                    let mut updated = et.clone();
+                    updated.name = input.name.clone();
+                    updated.description = input.description.clone();
+                    updated.updated_at = chrono::Utc::now();
+                    rows.push(RecordedEvent::of(&EventTypeUpdated::new(
+                        &ctx,
+                        &updated.id,
+                        &updated.name,
+                        updated.description.as_deref(),
+                    ))?);
+                    updated_count += 1;
+                    updated
                 }
                 None => {
-                    // Create new event type
                     let code = EventTypeCode::parse(&input.code).map_err(invalid_sync_code)?;
                     let mut et = EventType::new(code, &input.name);
                     et.source = EventTypeSource::Api;
                     et.description = input.description.clone();
-                    if let Err(e) = self.event_type_repo.insert(&et).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to create event type '{}': {}",
-                            input.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&EventTypeCreated::new(&ctx, &et))?);
                     created_count += 1;
-                    et.id.clone()
+                    et
                 }
             };
 
-            // Sync schema as SpecVersion "1.0" if provided
-            if let Some(ref schema) = input.schema {
-                // Re-fetch to get current spec_versions (especially for just-created types)
-                let current = match self.event_type_repo.find_by_id(&current_id).await? {
-                    Some(et) => et,
-                    None => continue, // race: vanished between write and read; skip schema
-                };
-
-                match current.spec_versions.iter().find(|sv| sv.version == "1.0") {
-                    Some(existing_sv) => {
-                        if existing_sv.schema_content.as_ref() != Some(schema) {
-                            let mut updated_sv = existing_sv.clone();
-                            updated_sv.schema_content = Some(schema.clone());
-                            updated_sv.updated_at = chrono::Utc::now();
-                            if let Err(e) =
-                                self.event_type_repo.update_spec_version(&updated_sv).await
-                            {
-                                return Err(UseCaseError::commit(format!(
-                                    "Failed to update schema for '{}': {}",
-                                    input.code, e
-                                )));
-                            }
-                            schemas_updated += 1;
-                        } else {
-                            schemas_unchanged += 1;
-                        }
+            // The schema, if sent, is the type's spec version "1.0".
+            match &input.schema {
+                Some(schema) => match et.spec_versions.iter_mut().find(|sv| sv.version == "1.0") {
+                    Some(sv) if sv.schema_content.as_ref() != Some(schema) => {
+                        sv.schema_content = Some(schema.clone());
+                        sv.updated_at = chrono::Utc::now();
+                        schemas_updated += 1;
                     }
+                    Some(_) => schemas_unchanged += 1,
                     None => {
-                        let sv = SpecVersion::new(&current.id, "1.0", Some(schema.clone()));
-                        if let Err(e) = self.event_type_repo.insert_spec_version(&sv).await {
-                            return Err(UseCaseError::commit(format!(
-                                "Failed to insert schema for '{}': {}",
-                                input.code, e
-                            )));
-                        }
+                        let sv = SpecVersion::new(&et.id, "1.0", Some(schema.clone()));
+                        et.spec_versions.push(sv);
                         schemas_created += 1;
                     }
-                }
-            } else {
-                schemas_unchanged += 1;
+                },
+                None => schemas_unchanged += 1,
             }
+            saves.push(et);
         }
 
         // Remove unlisted API-sourced event types.
@@ -225,15 +191,10 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                 // As Go: only API-sourced rows are ever removed — UI- and
                 // CODE-managed rows (the platform's own catalogue) never.
                 if et.source == EventTypeSource::Api && !synced_codes.contains(&et.code) {
-                    if let Err(e) = self.event_type_repo.delete(&et.id).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to delete event type '{}': {}",
-                            et.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&EventTypeDeleted::new(
                         &ctx, &et.id, &et.code,
                     ))?);
+                    deletes.push(et.clone());
                     deleted_count += 1;
                 }
             }
@@ -251,9 +212,18 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
             schemas_unchanged,
         };
 
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // event type, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
+        // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
+        // synced event type, then the rollup, in one transaction.
+        self.unit_of_work
+            .commit_sync(
+                &*self.event_type_repo,
+                &saves,
+                &deletes,
+                rows,
+                event,
+                &command,
+            )
+            .await
     }
 }
 

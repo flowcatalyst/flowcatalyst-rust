@@ -82,7 +82,9 @@ pub struct DispatchPoolResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
     pub status: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -109,14 +111,15 @@ impl From<DispatchPool> for DispatchPoolResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct DispatchPoolsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    /// Filter by status
+    pub status: Option<String>,
 
     /// Filter by client ID
     pub client_id: Option<String>,
 
-    /// Filter by status
-    pub status: Option<String>,
+    #[serde(flatten)]
+    #[param(ignore)]
+    pub pagination: PaginationParams,
 }
 
 /// Dispatch pools list response (matches TS `{ pools, total }` shape)
@@ -124,6 +127,7 @@ pub struct DispatchPoolsQuery {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchPoolListResponse {
     pub pools: Vec<DispatchPoolResponse>,
+    #[schema(value_type = i64)]
     pub total: u32,
 }
 
@@ -144,7 +148,7 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     post,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPools",
+    operation_id = "createDispatchPool",
     request_body = CreateDispatchPoolRequest,
     responses(
         (status = 201, description = "Dispatch pool created", body = crate::shared::api_common::CreatedResponse),
@@ -191,7 +195,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "getApiDispatchPoolsById",
+    operation_id = "getDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -231,7 +235,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     get,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "getApiDispatchPools",
+    operation_id = "listDispatchPools",
     params(DispatchPoolsQuery),
     responses(
         (status = 200, description = "List of dispatch pools", body = DispatchPoolListResponse)
@@ -278,7 +282,7 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "putApiDispatchPoolsById",
+    operation_id = "updateDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -323,7 +327,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/archive",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdArchive",
+    operation_id = "archiveDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -367,7 +371,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/suspend",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdSuspend",
+    operation_id = "suspendDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -414,7 +418,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/activate",
     tag = "dispatch-pools",
-    operation_id = "postApiDispatchPoolsByIdActivate",
+    operation_id = "activateDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -466,7 +470,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "deleteApiDispatchPoolsById",
+    operation_id = "deleteDispatchPool",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),

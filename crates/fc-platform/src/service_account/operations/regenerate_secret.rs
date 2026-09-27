@@ -110,8 +110,7 @@ impl<U: UnitOfWork> UseCase for RegenerateSigningSecretUseCase<U> {
         service_account.updated_at = Utc::now();
 
         // Create domain event
-        let event =
-            ServiceAccountSecretRegenerated::new(&ctx, &service_account.id, &service_account.code);
+        let event = ServiceAccountSecretRegenerated::new(&ctx, &service_account);
 
         // Create result with one-time secret
         let result = RegenerateSigningSecretResult {

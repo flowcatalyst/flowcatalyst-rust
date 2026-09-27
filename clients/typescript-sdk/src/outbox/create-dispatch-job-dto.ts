@@ -21,6 +21,9 @@ import { assertQualifiedCode } from "./qualified-code.js";
  */
 export type DispatchMode = "IMMEDIATE" | "NEXT_ON_ERROR" | "BLOCK_ON_ERROR";
 
+/** The longest dispatch-job descriptor the platform accepts, in characters. */
+export const MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH = 255;
+
 export class CreateDispatchJobDto {
 	readonly source: string;
 	readonly code: string;
@@ -46,6 +49,7 @@ export class CreateDispatchJobDto {
 	readonly externalId: string | null;
 	readonly connectionId: string | null;
 	readonly queue: string | null;
+	readonly descriptor: string | null;
 
 	private constructor(params: {
 		source: string;
@@ -72,6 +76,7 @@ export class CreateDispatchJobDto {
 		externalId?: string | null;
 		connectionId?: string | null;
 		queue?: string | null;
+		descriptor?: string | null;
 	}) {
 		this.source = params.source;
 		this.code = params.code;
@@ -97,6 +102,7 @@ export class CreateDispatchJobDto {
 		this.externalId = params.externalId ?? null;
 		this.connectionId = params.connectionId ?? null;
 		this.queue = params.queue ?? null;
+		this.descriptor = params.descriptor ?? null;
 	}
 
 	/**
@@ -217,6 +223,24 @@ export class CreateDispatchJobDto {
 		return new CreateDispatchJobDto({ ...this.toParams(), queue });
 	}
 
+	/**
+	 * What the job is, in words (e.g. "Notify Value of user logins"), shown in
+	 * the platform's dispatch-jobs grid. At most
+	 * {@link MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH} characters; unset stays absent.
+	 *
+	 * @throws Error if `descriptor` is longer than 255 characters (the platform
+	 *   would answer 400 `VALIDATION`).
+	 */
+	withDescriptor(descriptor: string): CreateDispatchJobDto {
+		const length = [...descriptor].length;
+		if (length > MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH) {
+			throw new Error(
+				`Dispatch job descriptor must be at most ${MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH} characters, got ${length}`,
+			);
+		}
+		return new CreateDispatchJobDto({ ...this.toParams(), descriptor });
+	}
+
 	/** Build the dispatch job payload for the outbox. Filters out null values. */
 	toPayload(): Record<string, unknown> {
 		return filterNulls({
@@ -244,6 +268,7 @@ export class CreateDispatchJobDto {
 			externalId: this.externalId,
 			connectionId: this.connectionId,
 			queue: this.queue,
+			descriptor: this.descriptor,
 		});
 	}
 
@@ -273,6 +298,7 @@ export class CreateDispatchJobDto {
 			externalId: this.externalId,
 			connectionId: this.connectionId,
 			queue: this.queue,
+			descriptor: this.descriptor,
 		};
 	}
 }

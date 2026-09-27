@@ -57,7 +57,7 @@ Values are omitted; the task holds a webhook URL with a secret in it.
 | `FLOWCATALYST_CONFIG_INTERVAL` | Alias of `FC_ROUTER_CONFIG_INTERVAL_SECONDS`. `0`, unset or unparseable means 300s. | `fc-server`: ignored. Standalone: read, but `0` panicked the ticker. | Go: primary name first, then the alias. Non-positive means 300s. |
 | `FC_ROUTER_PLATFORM_URL` | The platform the router belongs to. Aliases `FC_API_BASE_URL`, `FLOWCATALYST_URL`. It names the only origin the credential may go to, and turns on settle reporting. | Ignored | As Go, sections D and E |
 | `FLOWCATALYST_STANDBY_ENABLED` | **Not read.** Go reads `FC_STANDBY_ENABLED`, else `STANDBY_ENABLED`, default off. | `fc-server`: ignored. Standalone: read. | `fc-server`: ignored, as Go. It uses its own leader election (`FC_STANDBY_ENABLED` / `STANDBY_ENABLED`). Standalone: read as a fallback after Go's names. The task's `false` means no standby either way. |
-| `AUTH_MODE` | `NONE` (trimmed, case-insensitive) turns off the router surface's basic auth, whatever credentials are set. | `NONE`/`BASIC`/`OIDC`/`OIDC_FLOW`, not trimmed; `fc-server` had no router surface. | The same modes, now trimmed. `NONE` leaves `/router/*` open, as Go. |
+| `AUTH_MODE` | `NONE` (trimmed, case-insensitive) turns off the router surface's basic auth, whatever credentials are set. | `NONE`/`BASIC`/`OIDC`/`OIDC_FLOW`, not trimmed; `fc-server` had no router surface. | **Deviation, owner ruling 2 (#21) and decision #43:** outside dev mode the router API needs a platform bearer token (`router:view` / `:operate`). The task's `NONE` is still honoured for now, leaving `/router/*` open as Go does, but with a WARN at startup and an `authWarning` on `/router/health` and the monitoring output. Drop it from the task once the SDK releases are out (cutover checklist). |
 | `NOTIFICATION_TEAMS_ENABLED` | **Not read.** | Standalone: read (it could only widen). `fc-server`: no notifications at all. | **Deviation, note 1:** gates the legacy webhook URL. Only an explicit `false` turns it off. |
 | `NOTIFICATION_TEAMS_WEBHOOK_URL` | **Not read.** Go notifies only to `FC_NOTIFY_WEBHOOK_URL`, so Go's production router sends **no** Teams notifications today. | Standalone: the Teams webhook. `fc-server`: none. | **Deviation, note 1:** the Teams webhook, after `FC_NOTIFY_WEBHOOK_URL`. |
 | `NOTIFICATION_MIN_SEVERITY` | **Not read.** Go reads `FC_NOTIFY_MIN_SEVERITY`: an unknown value keeps WARNING. | Standalone: read, with a deprecation warning | Read after `FC_NOTIFY_MIN_SEVERITY`. An unknown value keeps WARNING, as Go. The task's `WARNING` is Go's default anyway. |
@@ -78,14 +78,15 @@ Values are omitted; the task holds a webhook URL with a secret in it.
 | `FC_NOTIFY_MIN_SEVERITY` | The notification floor | Same |
 | `FC_NOTIFY_BATCH_INTERVAL_SECONDS` | Batch interval | Same |
 | `FC_ROUTER_HTTP_PREFIX` | Router surface prefix, default `/router` | `fc-server`: same. Standalone: unset means root only, as before. |
-| `FC_ROUTER_AUTH_USER` / `_PASS` (`AUTH_BASIC_USERNAME` / `_PASSWORD`) | Basic auth on the router surface | Same (unchanged) |
+| `FC_ROUTER_AUTH_USER` / `_PASS` (`AUTH_BASIC_USERNAME` / `_PASSWORD`) | Basic auth on the router surface | **Dev mode only** (owner ruling 2); ignored with a WARN elsewhere, where the platform bearer applies |
+| `FC_ROUTER_DASHBOARD_CLIENT_ID` | Not read (Go has no dashboard sign-in) | The public OAuth client the dashboard signs in through (Java's name, `7da64502`) |
 | `FC_STANDBY_ENABLED` / `STANDBY_ENABLED`, `FC_STANDBY_REDIS_URL` / `REDIS_URL`, `FC_STANDBY_LOCK_KEY` (default `fc:server:leader`) | Leader election | `fc-server`: same. Standalone: same names, plus its `FLOWCATALYST_STANDBY_*` fallbacks and its own default lock key `fc:router:leader`. |
 | `FC_DRAIN_TIMEOUT_SECONDS` | Shutdown drain, default 60; `0` means 60 | Same. `fc-server`'s router now drains on shutdown; before, it didn't drain. |
 | `FC_ROUTER_STRICT_ROUTING` | R-13/R-16 gate | Same |
 | `FC_ROUTER_SYNTH_POOL_IDLE_SECS` | Synthesised-pool idle TTL; `0` means 1h | Same (a negative value disables the sweep) |
 | `FC_ROUTER_DEFERRAL_BUDGET` | Deferral budget; `0` means 5000 | Same |
 | `FC_ROUTER_DEFERRAL_MAX_DELAY_SECONDS` | Longest capacity deferral, default 1h | **Not honoured.** Rust has no configurable deferral horizon. Not set in production. |
-| `FLOWCATALYST_DEV_MODE` | Go: an HTTP/1.1 mediator, nothing else | **Differs, unchanged:** Rust's dev mode swaps in a built-in LocalStack config. Not set in production. |
+| `FLOWCATALYST_DEV_MODE` | Go: an HTTP/1.1 mediator, nothing else | **Differs:** Rust's dev mode swaps in a built-in LocalStack config, and (owner ruling 2) it alone mounts the mock, benchmark and seed routes and allows Basic auth. Not set in production. |
 | `FC_ALB_*` | ALB self-registration | `fc-server` (feature `alb`): `FC_ALB_ENABLED`, `_TARGET_GROUP_ARN`, `_TARGET_ID`, `_TARGET_PORT`. It lacks Go's `FC_ALB_INSTANCE_IP`, `FC_ALB_REGION` and `FC_ALB_DEREGISTRATION_DELAY_SECONDS`. Not used in production (the ECS service registers targets). |
 | `FC_LOG_LEVEL` | Log level | Honoured when `RUST_LOG` is unset |
 

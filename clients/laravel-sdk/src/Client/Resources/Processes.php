@@ -19,6 +19,10 @@ class Processes
     /**
      * List processes. With no filters the platform defaults to
      * `status=CURRENT`, matching the event-types list.
+     *
+     * The platform filters on `application`, `subdomain` and `status`.
+     * `$search` is sent for older platforms but has no effect on the current
+     * one.
      */
     public function list(
         ?string $application = null,

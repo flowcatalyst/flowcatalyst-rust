@@ -50,6 +50,10 @@ use fc_function_model::FunctionLimits;
 pub use function::JsFunction;
 pub use prepare::{JS_ENTRYPOINT_NOT_EXPORTED, JS_IMPORT_NOT_ALLOWED, JS_INIT_FAILED, JS_INVALID};
 
+/// A `db[]` on a `js` function: the WASM runtime's load-failure code for a
+/// database it cannot serve.
+pub const DB_UNSUPPORTED: &str = "DB_UNSUPPORTED";
+
 /// How long a bundle's top-level code may run at load.
 pub const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -131,6 +135,18 @@ impl FunctionLoader for JsLoader {
     async fn load(&self, request: LoadRequest<'_>) -> LoadOutcome {
         let entry = request.entry;
         let manifest = &entry.manifest;
+        // Database access (`db[]`) is WASM-only for now; a JS module
+        // mirroring `flowcatalyst:function/db` slots in later. Refused, not
+        // ignored, so the function never runs without what it declared.
+        if !manifest.db.is_empty() {
+            return LoadOutcome::Failed {
+                code: DB_UNSUPPORTED.to_owned(),
+                detail:
+                    "the js runtime has no database access yet: db[] is for wasm and component \
+                         functions"
+                        .to_owned(),
+            };
+        }
         let memory_mb = manifest
             .limits
             .wasm_memory_mb

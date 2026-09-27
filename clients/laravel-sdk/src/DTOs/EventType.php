@@ -30,6 +30,8 @@ final class EventType
         public readonly string $createdAt,
         public readonly string $updatedAt,
         public readonly ?string $description = null,
+        public readonly ?string $source = null,
+        public readonly ?string $clientId = null,
     ) {}
 
     /**
@@ -48,7 +50,7 @@ final class EventType
             application: (string) ($data['application'] ?? ''),
             subdomain: (string) ($data['subdomain'] ?? ''),
             aggregate: (string) ($data['aggregate'] ?? ''),
-            event: (string) ($data['event'] ?? ''),
+            event: (string) ($data['eventName'] ?? $data['event'] ?? ''),
             specVersions: array_map(
                 fn(array $sv) => SpecVersion::fromArray($sv),
                 $specRows,
@@ -56,6 +58,8 @@ final class EventType
             createdAt: (string) ($data['createdAt'] ?? ''),
             updatedAt: (string) ($data['updatedAt'] ?? ''),
             description: isset($data['description']) ? (string) $data['description'] : null,
+            source: isset($data['source']) ? (string) $data['source'] : null,
+            clientId: isset($data['clientId']) ? (string) $data['clientId'] : null,
         );
     }
 

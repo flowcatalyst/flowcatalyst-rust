@@ -16,6 +16,10 @@ import type { SdkError } from "../errors.js";
 import { mapHttpStatusToError, httpError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 
+/**
+ * @deprecated The router returns `poolCode` / `queueId` at the top level of
+ * `InPipelineCheckResponse`; it sends no `detail` object.
+ */
 export interface InPipelineDetail {
 	messageId: string;
 	brokerMessageId: string | null;
@@ -28,7 +32,14 @@ export interface InPipelineDetail {
 export interface InPipelineCheckResponse {
 	messageId: string;
 	inPipeline: boolean;
-	/** Populated only when `inPipeline === true`. */
+	/** The pool holding the message. Set only when `inPipeline === true`. */
+	poolCode?: string;
+	/** The queue the message came from. Set only when `inPipeline === true`. */
+	queueId?: string;
+	/**
+	 * @deprecated Read `poolCode` / `queueId` from the top level. The router
+	 * does not send `detail`; it is set only by a router that still does.
+	 */
 	detail?: InPipelineDetail;
 }
 
@@ -73,7 +84,12 @@ export class RouterResource {
 					method: "GET",
 					headers: { Authorization: `Bearer ${token}` },
 				}),
-			);
+			)
+			.map((r) => ({
+				...r,
+				poolCode: r.poolCode ?? r.detail?.poolCode,
+				queueId: r.queueId ?? r.detail?.queueId,
+			}));
 	}
 
 	/**

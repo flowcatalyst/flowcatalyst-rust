@@ -20,6 +20,10 @@ class Roles
 
     /**
      * List roles.
+     *
+     * The platform's list has no filters, so `$applicationCode`, `$source`
+     * and `$clientManaged` are applied to the returned roles here (they are
+     * still sent, for older platforms); `total` is then the filtered count.
      */
     public function list(
         ?string $applicationCode = null,
@@ -39,7 +43,19 @@ class Roles
         $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
         $response = $this->client->request('GET', "/api/roles{$query}");
 
-        return RoleList::fromArray($response);
+        $list = RoleList::fromArray($response);
+        if ($applicationCode === null && $source === null && $clientManaged === null) {
+            return $list;
+        }
+
+        $roles = array_values(array_filter(
+            $list->roles,
+            static fn(Role $r) => ($applicationCode === null || $r->applicationCode === $applicationCode)
+                && ($source === null || strcasecmp($r->source, $source) === 0)
+                && ($clientManaged === null || $r->clientManaged === $clientManaged),
+        ));
+
+        return new RoleList(roles: $roles, total: count($roles));
     }
 
     /**

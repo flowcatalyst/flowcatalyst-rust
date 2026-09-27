@@ -6,11 +6,11 @@
 //! - flips the prior CURRENT to ARCHIVED + inserts a new CURRENT with
 //!   computed change_notes describing removals.
 //!
-//! Follows the same "direct repo writes + tail emit_event" shape as
-//! `event_type::operations::sync::SyncEventTypesUseCase`. Concurrent dual
-//! syncs are caught by the partial unique index
-//! `(application_id) WHERE status='CURRENT'` — one wins, the other returns
-//! an error that the caller can retry.
+//! The archive, the insert and the event are one unit-of-work commit, so a
+//! failed insert leaves the prior CURRENT in place (Go writes the two rows
+//! outside its event transaction). Concurrent dual syncs are caught by the
+//! partial unique index `(application_id) WHERE status='CURRENT'` — one wins,
+//! the other returns an error that the caller can retry.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use super::diff::{compute_change_notes, spec_hash};
 use super::events::ApplicationOpenApiSpecSynced;
-use crate::application_openapi_spec::entity::OpenApiSpec;
+use crate::application_openapi_spec::entity::{OpenApiSpec, OpenApiSpecStatus};
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
 use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
@@ -121,9 +121,16 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         command: SyncOpenApiSpecCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<ApplicationOpenApiSpecSynced>, UseCaseError> {
-        let event = self.prepare(&command, &ctx).await?;
+        let (writes, event) = self.prepare(&command, &ctx).await?;
 
-        self.unit_of_work.emit_event(event, &command).await
+        if writes.is_empty() {
+            return self.unit_of_work.emit_event(event, &command).await;
+        }
+        // The prior CURRENT is archived before the new one is written, so the
+        // one-CURRENT index holds at every step.
+        self.unit_of_work
+            .commit_all(&writes, &*self.repo, event, &command)
+            .await
     }
 }
 
@@ -132,7 +139,7 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         &self,
         command: &SyncOpenApiSpecCommand,
         ctx: &ExecutionContext,
-    ) -> Result<ApplicationOpenApiSpecSynced, UseCaseError> {
+    ) -> Result<(Vec<OpenApiSpec>, ApplicationOpenApiSpecSynced), UseCaseError> {
         let prior = self
             .repo
             .find_current_by_application(&command.application_id)
@@ -144,15 +151,18 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         // No-op short-circuit: byte-identical to existing CURRENT.
         if let Some(ref existing) = prior {
             if existing.spec_hash == new_hash {
-                return Ok(ApplicationOpenApiSpecSynced {
-                    unchanged: true,
-                    ..ApplicationOpenApiSpecSynced::new(
-                        ctx,
-                        &command.application_id,
-                        &command.application_code,
-                        existing,
-                    )
-                });
+                return Ok((
+                    Vec::new(),
+                    ApplicationOpenApiSpecSynced {
+                        unchanged: true,
+                        ..ApplicationOpenApiSpecSynced::new(
+                            ctx,
+                            &command.application_id,
+                            &command.application_code,
+                            existing,
+                        )
+                    },
+                ));
             }
         }
 
@@ -164,17 +174,13 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         let archived_prior_version = prior.as_ref().map(|p| p.version.clone());
 
         // 1) Demote prior CURRENT (if any) to ARCHIVED with computed change_notes.
-        if prior.is_some() {
-            if let Err(e) = self
-                .repo
-                .archive_current(&command.application_id, &change_notes, &change_notes_text)
-                .await
-            {
-                return Err(UseCaseError::commit(format!(
-                    "Failed to archive prior OpenAPI spec: {}",
-                    e
-                )));
-            }
+        let mut writes = Vec::with_capacity(2);
+        if let Some(mut archived) = prior {
+            archived.status = OpenApiSpecStatus::Archived;
+            archived.change_notes = Some(change_notes.clone());
+            archived.change_notes_text = Some(change_notes_text.clone());
+            archived.updated_at = now;
+            writes.push(archived);
         }
 
         // 2) Insert new CURRENT. The `version` column is `UNIQUE (application_id, version)`
@@ -202,14 +208,7 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         .with_synced_by(Some(ctx.principal_id.clone()));
         new_spec.synced_at = now;
 
-        if let Err(e) = self.repo.insert(&new_spec).await {
-            return Err(UseCaseError::commit(format!(
-                "Failed to insert OpenAPI spec: {}",
-                e
-            )));
-        }
-
-        Ok(ApplicationOpenApiSpecSynced {
+        let event = ApplicationOpenApiSpecSynced {
             archived_prior_version,
             has_breaking: change_notes.has_breaking,
             ..ApplicationOpenApiSpecSynced::new(
@@ -218,7 +217,9 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
                 &command.application_code,
                 &new_spec,
             )
-        })
+        };
+        writes.push(new_spec);
+        Ok((writes, event))
     }
 }
 

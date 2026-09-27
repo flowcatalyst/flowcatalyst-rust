@@ -20,6 +20,10 @@ pub struct SimpleHealthResponse {
     pub status: String,
     /// Application version
     pub version: String,
+    /// Present while the router's API is open outside dev mode (decision
+    /// #43's transitional `AUTH_MODE=NONE`).
+    #[serde(rename = "authWarning", skip_serializing_if = "Option::is_none")]
+    pub auth_warning: Option<String>,
 }
 
 /// Kubernetes probe response
@@ -56,6 +60,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
             Json(SimpleHealthResponse {
                 status: "STARTING".to_string(),
                 version: fc_common::BUILD_VERSION.to_string(),
+                auth_warning: state.auth_warning.as_deref().map(str::to_owned),
             }),
         )
             .into_response();
@@ -73,6 +78,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
     Json(SimpleHealthResponse {
         status: status.to_string(),
         version: fc_common::BUILD_VERSION.to_string(),
+        auth_warning: state.auth_warning.as_deref().map(str::to_owned),
     })
     .into_response()
 }
@@ -82,6 +88,7 @@ pub(crate) async fn simple_health_handler() -> Json<SimpleHealthResponse> {
     Json(SimpleHealthResponse {
         status: "UP".to_string(),
         version: fc_common::BUILD_VERSION.to_string(),
+        auth_warning: None,
     })
 }
 

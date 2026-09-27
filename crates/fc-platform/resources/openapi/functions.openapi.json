@@ -2702,6 +2702,10 @@
               },
               "wasmMemoryMb": {
                 "type": "integer"
+              },
+              "maxFuel": {
+                "type": "integer",
+                "format": "int64"
               }
             },
             "additionalProperties": false
@@ -2995,6 +2999,10 @@
           },
           "wasmMemoryMb": {
             "type": "integer"
+          },
+          "maxFuel": {
+            "type": "integer",
+            "format": "int64"
           }
         },
         "required": [

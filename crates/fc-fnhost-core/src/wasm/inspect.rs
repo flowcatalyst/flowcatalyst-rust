@@ -88,7 +88,8 @@ const WASI_INTERFACES: &[(&str, &[&str])] = &[
 ];
 
 /// The host's own interfaces (`wit/flowcatalyst-function`).
-const FLOWCATALYST_INTERFACES: &[&str] = &["config", "secrets", "log", "events", "invocation"];
+const FLOWCATALYST_INTERFACES: &[&str] =
+    &["config", "secrets", "log", "events", "invocation", "db"];
 const FLOWCATALYST_PACKAGE: &str = "flowcatalyst:function";
 
 /// What an accepted component declares.
@@ -313,6 +314,7 @@ mod tests {
             "wasi:sockets/tcp@0.2.0",
             "flowcatalyst:function/config@0.1.0",
             "flowcatalyst:function/events@0.1.3",
+            "flowcatalyst:function/db@0.1.2",
         ] {
             assert!(import_allowed(ok), "{ok}");
         }
@@ -322,7 +324,8 @@ mod tests {
             "wasi:http/handler@0.2.12",
             "wasi:keyvalue/store@0.2.0",
             "flowcatalyst:function/config@0.2.0",
-            "flowcatalyst:function/db@0.1.0",
+            "flowcatalyst:function/db@0.2.0",
+            "flowcatalyst:function/kv@0.1.2",
             "evil:thing/iface@1.0.0",
             "wasi_snapshot_preview1",
         ] {

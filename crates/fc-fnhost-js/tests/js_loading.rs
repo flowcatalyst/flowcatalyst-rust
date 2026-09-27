@@ -140,3 +140,17 @@ async fn the_host_reports_it_loads_js_beside_nothing_else_here() {
     assert_eq!(h.state_of(ADDR).as_deref(), Some("LOADED"));
     h.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_js_function_that_declares_a_database_fails_its_load() {
+    let h = load(
+        "guest.mjs",
+        json!({
+            "secrets": ["ORDERS_DB"],
+            "db": [{"name": "orders", "secretRef": "ORDERS_DB"}],
+        }),
+    )
+    .await;
+    assert_eq!(h.state_of(ADDR).as_deref(), Some("FAILED:DB_UNSUPPORTED"));
+    h.close().await;
+}

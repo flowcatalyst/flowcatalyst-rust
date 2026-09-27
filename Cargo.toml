@@ -15,6 +15,7 @@ members = [
     "crates/fc-fnhost-js",
     "crates/fc-function-signing",
     "crates/fc-http-listener",
+    "crates/fc-platform-jwks",
     "bin/fc-dev",
     "bin/fc-outbox-processor",
     "bin/fc-server",

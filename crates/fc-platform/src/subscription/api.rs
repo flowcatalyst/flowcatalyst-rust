@@ -21,6 +21,7 @@ use crate::{EventTypeBinding, Subscription};
 /// Event type binding request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventTypeBindingDTO)]
 pub struct EventTypeBindingRequest {
     /// Event type code (with optional wildcards)
     pub event_type_code: String,
@@ -52,6 +53,7 @@ impl EventTypeBindingRequest {
 /// Config entry request (Go `ConfigEntryDTO`)
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigEntryDTO)]
 pub struct ConfigEntryRequest {
     pub key: String,
     pub value: String,
@@ -113,10 +115,12 @@ pub struct CreateSubscriptionRequest {
 
     /// Timeout in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
 
     /// Maximum retry attempts
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
 
     /// Send raw event data only (absent: true, as Go's default)
@@ -157,9 +161,11 @@ pub struct UpdateSubscriptionRequest {
     pub connection_id: Option<String>,
 
     /// Timeout in seconds
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
 
     /// Maximum retry attempts
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
 
     /// Event types (replace the existing bindings when given)
@@ -202,6 +208,7 @@ pub struct UpdateSubscriptionRequest {
 /// Event type binding response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = EventTypeBindingDTO)]
 pub struct EventTypeBindingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_type_id: Option<String>,
@@ -226,6 +233,7 @@ impl From<&EventTypeBinding> for EventTypeBindingResponse {
 /// Config entry response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ConfigEntryDTO)]
 pub struct ConfigEntryResponse {
     pub key: String,
     pub value: String,
@@ -281,7 +289,9 @@ pub struct SubscriptionResponse {
     pub data_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -325,6 +335,7 @@ impl From<Subscription> for SubscriptionResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionListResponse {
     pub subscriptions: Vec<SubscriptionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -333,14 +344,15 @@ pub struct SubscriptionListResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct SubscriptionsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    /// Filter by status
+    pub status: Option<String>,
 
     /// Filter by client ID
     pub client_id: Option<String>,
 
-    /// Filter by status
-    pub status: Option<String>,
+    #[serde(flatten)]
+    #[param(ignore)]
+    pub pagination: PaginationParams,
 }
 
 /// Subscriptions service state
@@ -369,7 +381,7 @@ pub struct SubscriptionsState {
     post,
     path = "",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptions",
+    operation_id = "createSubscription",
     request_body = CreateSubscriptionRequest,
     responses(
         (status = 201, description = "Subscription created", body = crate::shared::api_common::CreatedResponse),
@@ -438,7 +450,7 @@ pub async fn create_subscription(
     get,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "getApiSubscriptionsById",
+    operation_id = "getSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -472,7 +484,7 @@ pub async fn get_subscription(
     get,
     path = "",
     tag = "subscriptions",
-    operation_id = "getApiSubscriptions",
+    operation_id = "listSubscriptions",
     params(SubscriptionsQuery),
     responses(
         (status = 200, description = "List of subscriptions", body = SubscriptionListResponse)
@@ -520,7 +532,7 @@ pub async fn list_subscriptions(
     put,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "putApiSubscriptionsById",
+    operation_id = "updateSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -582,7 +594,7 @@ pub async fn update_subscription(
     post,
     path = "/{id}/pause",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptionsByIdPause",
+    operation_id = "pauseSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -626,7 +638,7 @@ pub async fn pause_subscription(
     post,
     path = "/{id}/resume",
     tag = "subscriptions",
-    operation_id = "postApiSubscriptionsByIdResume",
+    operation_id = "resumeSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -670,7 +682,7 @@ pub async fn resume_subscription(
     delete,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "deleteApiSubscriptionsById",
+    operation_id = "deleteSubscription",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),

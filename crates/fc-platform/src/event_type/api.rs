@@ -76,7 +76,9 @@ pub struct EventTypeResponse {
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     pub spec_versions: Vec<SpecVersionResponse>,
 }
@@ -87,9 +89,10 @@ pub struct EventTypeResponse {
 pub struct SpecVersionResponse {
     pub version: String,
     /// The schema document (`null` when none).
-    #[schema(value_type = Option<Object>)]
+    #[schema(required = true, value_type = serde_json::Value)]
     pub schema: Option<serde_json::Value>,
     pub status: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -139,6 +142,7 @@ impl From<EventType> for EventTypeResponse {
 #[into_params(parameter_in = Query)]
 pub struct EventTypesQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by application
@@ -176,7 +180,7 @@ pub struct EventTypesState {
     post,
     path = "",
     tag = "event-types",
-    operation_id = "postApiEventTypes",
+    operation_id = "createEventType",
     request_body = CreateEventTypeRequest,
     responses(
         (status = 201, description = "Event type created", body = crate::shared::api_common::CreatedResponse),
@@ -230,7 +234,7 @@ pub async fn create_event_type(
     get,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "getApiEventTypesById",
+    operation_id = "getEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -268,7 +272,7 @@ pub async fn get_event_type(
     get,
     path = "/by-code/{code}",
     tag = "event-types",
-    operation_id = "getApiEventTypesByCodeByCode",
+    operation_id = "getEventTypeByCode",
     params(
         ("code" = String, Path, description = "Event type code")
     ),
@@ -306,7 +310,7 @@ pub async fn get_event_type_by_code(
     get,
     path = "",
     tag = "event-types",
-    operation_id = "getApiEventTypes",
+    operation_id = "listEventTypes",
     params(EventTypesQuery),
     responses(
         (status = 200, description = "List of event types", body = EventTypeListResponse)
@@ -367,7 +371,7 @@ pub async fn list_event_types(
     put,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "putApiEventTypesById",
+    operation_id = "updateEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -424,7 +428,7 @@ pub async fn update_event_type(
     post,
     path = "/{id}/versions",
     tag = "event-types",
-    operation_id = "postApiEventTypesByIdSchemas",
+    operation_id = "addEventTypeVersion",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -461,7 +465,7 @@ pub async fn add_schema_version(
     delete,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "deleteApiEventTypesById",
+    operation_id = "deleteEventType",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),

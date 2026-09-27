@@ -20,6 +20,8 @@ final class Connection
         public readonly ?string $clientIdentifier = null,
         public readonly string $createdAt = '',
         public readonly string $updatedAt = '',
+        public readonly ?string $applicationCode = null,
+        public readonly ?string $source = null,
     ) {}
 
     /**
@@ -40,6 +42,8 @@ final class Connection
             clientIdentifier: isset($data['clientIdentifier']) ? (string) $data['clientIdentifier'] : null,
             createdAt: (string) ($data['createdAt'] ?? ''),
             updatedAt: (string) ($data['updatedAt'] ?? ''),
+            applicationCode: isset($data['applicationCode']) ? (string) $data['applicationCode'] : null,
+            source: isset($data['source']) ? (string) $data['source'] : null,
         );
     }
 

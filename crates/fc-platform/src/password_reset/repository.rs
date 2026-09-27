@@ -106,6 +106,17 @@ impl PasswordResetTokenRepository {
         Ok(())
     }
 
+    /// Remove the tokens that expired before `cutoff`. The housekeeping
+    /// purge keeps an expired token for a grace period so a late click on the
+    /// link still answers "expired" rather than "not found".
+    pub async fn purge_expired_before(&self, cutoff: DateTime<Utc>) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM iam_password_reset_tokens WHERE expires_at <= $1")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn delete_expired(&self) -> Result<u64> {
         let result = sqlx::query("DELETE FROM iam_password_reset_tokens WHERE expires_at < NOW()")
             .execute(&self.pool)

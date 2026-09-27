@@ -61,7 +61,10 @@ public final class PrincipalsResource {
             query.put("clientId", filters.clientId());
             query.put("active", filters.active());
             query.put("q", filters.q());
-            query.put("roles", filters.roles());
+            // The platform reads roles as one comma-separated value.
+            query.put("roles", filters.roles() == null || filters.roles().isEmpty()
+                    ? null
+                    : String.join(",", filters.roles()));
             query.put("page", filters.page());
             query.put("pageSize", filters.pageSize());
             query.put("sortField", filters.sortField());

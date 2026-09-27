@@ -163,62 +163,6 @@ impl OpenApiSpecRepository {
         .await?;
         row.map(OpenApiSpec::try_from).transpose()
     }
-
-    /// Insert a fresh row. Used by the sync use case after the prior CURRENT
-    /// has been demoted; the partial unique index ensures only one CURRENT
-    /// per application.
-    pub async fn insert(&self, spec: &OpenApiSpec) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO app_application_openapi_specs \
-                (id, application_id, version, status, spec, spec_hash, \
-                 change_notes, change_notes_text, synced_at, synced_by, \
-                 created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-        )
-        .bind(&spec.id)
-        .bind(&spec.application_id)
-        .bind(&spec.version)
-        .bind(spec.status.as_str())
-        .bind(&spec.spec)
-        .bind(&spec.spec_hash)
-        .bind(
-            spec.change_notes
-                .as_ref()
-                .map(|cn| serde_json::to_value(cn).unwrap_or(serde_json::Value::Null)),
-        )
-        .bind(&spec.change_notes_text)
-        .bind(spec.synced_at)
-        .bind(&spec.synced_by)
-        .bind(spec.created_at)
-        .bind(spec.updated_at)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Flip the current CURRENT row to ARCHIVED, attaching the diff that
-    /// describes what the *new* spec is dropping vs. this one.
-    pub async fn archive_current(
-        &self,
-        application_id: &str,
-        change_notes: &ChangeNotes,
-        change_notes_text: &str,
-    ) -> Result<()> {
-        sqlx::query(
-            "UPDATE app_application_openapi_specs \
-             SET status = 'ARCHIVED', \
-                 change_notes = $2, \
-                 change_notes_text = $3, \
-                 updated_at = NOW() \
-             WHERE application_id = $1 AND status = 'CURRENT'",
-        )
-        .bind(application_id)
-        .bind(serde_json::to_value(change_notes).unwrap_or(serde_json::Value::Null))
-        .bind(change_notes_text)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
 }
 
 impl HasId for OpenApiSpec {

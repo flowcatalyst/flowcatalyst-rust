@@ -119,7 +119,9 @@ pub struct ApplicationResponse {
     /// the detail endpoint only; every other response carries `false`, as
     /// Go's does (no N+1 lookup across list rows).
     pub has_login_client: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -195,6 +197,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
 /// returns it again. Rotate via `POST /api/oauth-clients/{id}/regenerate-secret`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationOAuthClientCredentials)]
 pub struct OAuthClientCredentials {
     /// OAuth client row id (`oac_…`).
     pub id: String,
@@ -211,8 +214,10 @@ pub struct OAuthClientCredentials {
 /// page can display the freshly-minted credentials in one modal.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationServiceAccountCredentials)]
 pub struct ServiceAccountCredentialsResponse {
-    /// Principal id of the service account (`sac_…`).
+    /// The service account's SERVICE principal (`prn_…`, Go
+    /// `result.ServicePrincipalID`).
     pub principal_id: String,
     /// Service account display name (used in the credentials dialog).
     pub name: String,
@@ -224,6 +229,7 @@ pub struct ServiceAccountCredentialsResponse {
 /// Wrapper response from `POST /api/applications/{id}/provision-service-account`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionServiceAccountResponse)]
 pub struct ProvisionServiceAccountResponse {
     pub message: String,
     pub service_account: ServiceAccountCredentialsResponse,
@@ -249,6 +255,7 @@ pub struct ProvisionLoginClientRequest {
 /// Response from `POST /api/applications/{id}/provision-login-client`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionLoginClientResponse)]
 pub struct ProvisionLoginClientResponse {
     pub message: String,
     pub login_client: LoginClientCredentialsResponse,
@@ -258,6 +265,7 @@ pub struct ProvisionLoginClientResponse {
 /// populated only for CONFIDENTIAL clients.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationLoginClientCredentials)]
 pub struct LoginClientCredentialsResponse {
     pub client_type: String,
     pub oauth_client: OAuthClientCredentials,
@@ -327,7 +335,7 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     post,
     path = "",
     tag = "applications",
-    operation_id = "postApiApplications",
+    operation_id = "createApplication",
     request_body = CreateApplicationRequest,
     responses(
         (status = 201, description = "Application created", body = crate::shared::api_common::CreatedResponse),
@@ -376,7 +384,7 @@ pub async fn create_application<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "applications",
-    operation_id = "getApiApplicationsById",
+    operation_id = "getApplication",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -413,6 +421,7 @@ pub async fn get_application<U: UnitOfWork>(
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationListResponse {
     pub applications: Vec<ApplicationResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -421,7 +430,7 @@ pub struct ApplicationListResponse {
     get,
     path = "",
     tag = "applications",
-    operation_id = "getApiApplications",
+    operation_id = "listApplications",
     params(ApplicationsQuery),
     responses(
         (status = 200, description = "List of applications", body = ApplicationListResponse)
@@ -467,7 +476,7 @@ pub async fn list_applications<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "applications",
-    operation_id = "putApiApplicationsById",
+    operation_id = "updateApplication",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -511,7 +520,7 @@ pub async fn update_application<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "applications",
-    operation_id = "deleteApiApplicationsById",
+    operation_id = "deleteApplication",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -606,7 +615,7 @@ pub async fn delete_application_cascade(
     post,
     path = "/{id}/activate",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdActivate",
+    operation_id = "activateApplication",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -650,7 +659,7 @@ pub async fn activate_application<U: UnitOfWork>(
     post,
     path = "/{id}/deactivate",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdDeactivate",
+    operation_id = "deactivateApplication",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -780,7 +789,7 @@ pub async fn deactivate_application_cascade(
     get,
     path = "/by-code/{code}",
     tag = "applications",
-    operation_id = "getApiApplicationsByCodeByCode",
+    operation_id = "getApplicationByCode",
     params(
         ("code" = String, Path, description = "Application code")
     ),
@@ -823,7 +832,7 @@ pub async fn get_application_by_code<U: UnitOfWork>(
     post,
     path = "/{id}/provision-service-account",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdProvisionServiceAccount",
+    operation_id = "provisionApplicationServiceAccount",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -949,8 +958,8 @@ pub async fn provision_application_service_account(
 
             let ctx = crate::usecase::ExecutionContext::create(&principal_id);
 
-            // 1. Create the ServiceAccount (a Principal row is created
-            //    behind it; SA.id == Principal.id).
+            // 1. Create the ServiceAccount (a SERVICE principal is created
+            //    behind it, with an id of its own).
             let create_cmd = CreateServiceAccountCommand {
                 code: sa_code.clone(),
                 name: sa_name,
@@ -968,13 +977,18 @@ pub async fn provision_application_service_account(
                 .run(create_cmd, ctx.clone())
                 .await
                 .into_result()?;
-            let sa_id = created.event.service_account_id.clone();
+            // The event carries the account's id (`sac_…`), as Go's does; the
+            // application and the OAuth client point at its principal.
+            let sa_id = created.principal_id.clone();
 
-            // 2. Attach SA to Application — sets `application.service_account_id`.
+            // 2. Attach SA to Application — sets `application.service_account_id`
+            //    to the principal; the event names the account (Go
+            //    provision_service_account.go:175-182).
             let attach_cmd = AttachServiceAccountToApplicationCommand {
                 application_id: app_id.clone(),
-                service_account_id: sa_id.clone(),
+                service_account_id: created.event.service_account_id.clone(),
                 service_account_code: sa_code,
+                service_principal_id: sa_id.clone(),
             };
             attach_uc.run(attach_cmd, ctx.clone()).await.into_result()?;
 
@@ -1050,7 +1064,7 @@ pub async fn provision_application_service_account(
     post,
     path = "/{id}/provision-login-client",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdProvisionLoginClient",
+    operation_id = "provisionApplicationLoginClient",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -1282,7 +1296,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
     get,
     path = "/by-id/{id}/roles",
     tag = "applications",
-    operation_id = "getApiApplicationsByIdRoles",
+    operation_id = "listApplicationRoles",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -1337,6 +1351,7 @@ pub struct ClientConfigResponse {
 /// Client configs list response: Go's `{items}` of `ClientConfigResponse`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigListResponse)]
 pub struct ClientConfigsResponse {
     pub items: Vec<crate::application::go_api::GoClientConfigResponse>,
 }
@@ -1355,7 +1370,7 @@ pub struct ClientConfigRequest {
     get,
     path = "/{id}/clients",
     tag = "applications",
-    operation_id = "getApiApplicationsByIdClients",
+    operation_id = "listApplicationClientConfigs",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -1466,7 +1481,7 @@ pub async fn update_client_config<U: UnitOfWork>(
     post,
     path = "/{id}/clients/{clientId}/enable",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdClientsByClientIdEnable",
+    operation_id = "enableApplicationForClient",
     params(
         ("id" = String, Path, description = "Application ID"),
         ("clientId" = String, Path, description = "Client ID")
@@ -1509,7 +1524,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
     post,
     path = "/{id}/clients/{clientId}/disable",
     tag = "applications",
-    operation_id = "postApiApplicationsByIdClientsByClientIdDisable",
+    operation_id = "disableApplicationForClient",
     params(
         ("id" = String, Path, description = "Application ID"),
         ("clientId" = String, Path, description = "Client ID")

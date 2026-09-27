@@ -1,5 +1,5 @@
 //! Density and latency of JS functions: the measurements behind
-//! `docs/function-runner-density.md` §9. Ignored (measurement only); run in
+//! `docs/function-runner-density.md` §10. Ignored (measurement only); run in
 //! release, one at a time:
 //!
 //! ```text
@@ -438,6 +438,7 @@ async fn measure_invoke_without_http() {
         interrupted: tokio_util::sync::CancellationToken::new(),
         correlation_id: "inv".into(),
         causation_id: None,
+        usage: Default::default(),
     };
     let mut samples = Vec::new();
     for i in 0..2200 {

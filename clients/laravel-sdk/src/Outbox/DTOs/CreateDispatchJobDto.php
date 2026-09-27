@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace FlowCatalyst\Outbox\DTOs;
 
 use FlowCatalyst\Outbox\QualifiedCode;
+use InvalidArgumentException;
 
 /**
  * DTO for creating a dispatch job in the outbox.
  */
 class CreateDispatchJobDto
 {
+    /** The longest descriptor the platform accepts, in characters. */
+    public const MAX_DESCRIPTOR_LENGTH = 255;
+
     /**
      * @param array<string, string> $metadata Additional metadata
      * @param array<string, string> $headers HTTP headers for the webhook
@@ -40,8 +44,15 @@ class CreateDispatchJobDto
         public readonly ?string $externalId = null,
         public readonly ?string $connectionId = null,
         public readonly ?string $queue = null,
+        public readonly ?string $descriptor = null,
     ) {
         QualifiedCode::assert($this->code, 'Dispatch job code');
+        if ($this->descriptor !== null && mb_strlen($this->descriptor, 'UTF-8') > self::MAX_DESCRIPTOR_LENGTH) {
+            throw new InvalidArgumentException(
+                'Dispatch job descriptor must be at most ' . self::MAX_DESCRIPTOR_LENGTH
+                . ' characters, got ' . mb_strlen($this->descriptor, 'UTF-8')
+            );
+        }
     }
 
     /**
@@ -95,6 +106,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -128,6 +140,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -161,6 +174,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -194,6 +208,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -227,6 +242,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -261,6 +277,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -294,6 +311,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -327,6 +345,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -360,6 +379,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -393,6 +413,7 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $connectionId,
             queue: $this->queue,
+            descriptor: $this->descriptor,
         );
     }
 
@@ -432,6 +453,46 @@ class CreateDispatchJobDto
             externalId: $this->externalId,
             connectionId: $this->connectionId,
             queue: $queue,
+            descriptor: $this->descriptor,
+        );
+    }
+
+    /**
+     * Describe what the job is, in words (e.g. "Notify Value of user logins"),
+     * shown in the platform's dispatch-jobs grid. At most
+     * MAX_DESCRIPTOR_LENGTH (255) characters; unset stays absent.
+     *
+     * @throws InvalidArgumentException when longer than 255 characters (the
+     *   platform would answer 400 VALIDATION)
+     */
+    public function withDescriptor(string $descriptor): self
+    {
+        return new self(
+            source: $this->source,
+            code: $this->code,
+            targetUrl: $this->targetUrl,
+            payload: $this->payload,
+            dispatchPoolId: $this->dispatchPoolId,
+            subject: $this->subject,
+            correlationId: $this->correlationId,
+            eventId: $this->eventId,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            payloadContentType: $this->payloadContentType,
+            dataOnly: $this->dataOnly,
+            messageGroup: $this->messageGroup,
+            mode: $this->mode,
+            sequence: $this->sequence,
+            timeoutSeconds: $this->timeoutSeconds,
+            maxRetries: $this->maxRetries,
+            retryStrategy: $this->retryStrategy,
+            scheduledFor: $this->scheduledFor,
+            expiresAt: $this->expiresAt,
+            idempotencyKey: $this->idempotencyKey,
+            externalId: $this->externalId,
+            connectionId: $this->connectionId,
+            queue: $this->queue,
+            descriptor: $descriptor,
         );
     }
 
@@ -465,6 +526,7 @@ class CreateDispatchJobDto
             'externalId' => $this->externalId,
             'connectionId' => $this->connectionId,
             'queue' => $this->queue,
+            'descriptor' => $this->descriptor,
         ], fn($v) => $v !== null);
     }
 }

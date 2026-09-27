@@ -49,6 +49,77 @@ pub enum InvokeError {
     /// `Retry-After: 15`, outcome `unavailable`.
     #[error("the function is unavailable: {0}")]
     Unavailable(String),
+    /// The guest used up the fuel its manifest's `limits.maxFuel` allows
+    /// (owner decision #13): `500 FUNCTION_FUEL_EXHAUSTED`, outcome
+    /// `fuel_exhausted`. Like a timeout, the guest was stopped wherever it
+    /// was.
+    #[error("the invocation used up its fuel ({limit})")]
+    FuelExhausted { limit: u64 },
+}
+
+/// What one invocation consumed, as its runtime measured it (owner
+/// decision #13). `None` for what the runtime does not meter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Consumption {
+    /// wasmtime fuel spent (instantiation included).
+    pub fuel: Option<u64>,
+    /// The high-water mark of the guest's linear memory, in bytes (every
+    /// memory of the instance together).
+    pub peak_memory_bytes: Option<u64>,
+}
+
+/// Where a runtime records what an invocation consumes; the listener reads
+/// it once the invocation has really ended and exports it per function and
+/// per client. Shared (cheap to clone): a runtime may update it while the
+/// guest runs, so a guest stopped mid-run still reports what it used.
+#[derive(Clone, Default)]
+pub struct UsageMeter(std::sync::Arc<UsageCells>);
+
+#[derive(Default)]
+struct UsageCells {
+    fuel: std::sync::atomic::AtomicU64,
+    peak_memory: std::sync::atomic::AtomicU64,
+    /// Bit 0: fuel was metered; bit 1: memory was.
+    metered: std::sync::atomic::AtomicU8,
+}
+
+impl UsageMeter {
+    const FUEL: u8 = 1;
+    const MEMORY: u8 = 2;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The fuel spent so far (a running total, not an increment).
+    pub fn set_fuel(&self, fuel: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.0.fuel.store(fuel, Relaxed);
+        self.0.metered.fetch_or(Self::FUEL, Relaxed);
+    }
+
+    /// The memory in use now; the meter keeps the largest value seen.
+    pub fn observe_memory(&self, bytes: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.0.peak_memory.fetch_max(bytes, Relaxed);
+        self.0.metered.fetch_or(Self::MEMORY, Relaxed);
+    }
+
+    pub fn read(&self) -> Consumption {
+        use std::sync::atomic::Ordering::Relaxed;
+        let metered = self.0.metered.load(Relaxed);
+        Consumption {
+            fuel: (metered & Self::FUEL != 0).then(|| self.0.fuel.load(Relaxed)),
+            peak_memory_bytes: (metered & Self::MEMORY != 0)
+                .then(|| self.0.peak_memory.load(Relaxed)),
+        }
+    }
+}
+
+impl std::fmt::Debug for UsageMeter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.read().fmt(f)
+    }
 }
 
 /// One invocation, as the listener hands it to the runtime. The fields are
@@ -99,6 +170,8 @@ pub struct InvocationContext {
     pub correlation_id: String,
     /// The default `causationId` for events this invocation emits.
     pub causation_id: Option<String>,
+    /// What the runtime records the invocation's consumption in.
+    pub usage: UsageMeter,
 }
 
 impl InvocationContext {

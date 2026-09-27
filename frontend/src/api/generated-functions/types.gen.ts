@@ -97,6 +97,7 @@ export type PublishManifestRequest = {
         maxDurationMs?: number;
         maxConcurrency?: number;
         wasmMemoryMb?: number;
+        maxFuel?: number;
     };
     endpoints?: Array<{
         path: string;
@@ -170,6 +171,7 @@ export type ManifestLimits = {
     maxDurationMs: number;
     maxConcurrency: number;
     wasmMemoryMb?: number;
+    maxFuel?: number;
 };
 
 export type ManifestCors = {

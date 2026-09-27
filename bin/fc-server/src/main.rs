@@ -290,7 +290,13 @@ async fn main() -> Result<()> {
     // half-configured platform credential refuses to start, as Go's
     // newRouterServer does.
     let router_env = if router_enabled {
-        Some(fc_router::bootstrap::RouterEnv::from_env()?)
+        let mut env = fc_router::bootstrap::RouterEnv::from_env()?;
+        // The router API verifies platform bearer tokens (owner ruling 2):
+        // against FC_ROUTER_PLATFORM_URL, else the platform in this process.
+        if platform_enabled {
+            env.local_platform_url = Some(format!("http://127.0.0.1:{api_port}"));
+        }
+        Some(env)
     } else {
         None
     };
@@ -812,10 +818,14 @@ async fn init_platform(
         ));
     }
 
-    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
-    // purger does the same).
+    // Go's auth purger: every minute, drop expired OAuth payloads (codes,
+    // refresh tokens), OIDC login states, portal login flows, 2FA email PINs
+    // and trusted devices, long-expired reset/invite tokens and lapsed OAuth
+    // secret overlaps, and keep the login-attempts partitions. Wherever the
+    // platform runs, not leader-gated, as Go.
     if platform_enabled {
-        fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+        fc_platform::shared::server_setup::spawn_auth_purger(
+            pg_pool,
             repos.oauth_client_repo.clone(),
         );
     }

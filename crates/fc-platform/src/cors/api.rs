@@ -16,6 +16,7 @@ use crate::shared::middleware::Authenticated;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AddOriginRequest)]
 pub struct CreateCorsOriginRequest {
     pub origin: String,
     pub description: Option<String>,
@@ -23,6 +24,7 @@ pub struct CreateCorsOriginRequest {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AllowedOriginResponse)]
 pub struct CorsOriginResponse {
     pub id: String,
     pub origin: String,
@@ -31,7 +33,9 @@ pub struct CorsOriginResponse {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -50,13 +54,16 @@ impl From<CorsAllowedOrigin> for CorsOriginResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CorsOriginListResponse)]
 pub struct CorsOriginsListResponse {
     pub cors_origins: Vec<CorsOriginResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = PublicAllowedResponse)]
 pub struct AllowedOriginsResponse {
     pub origins: Vec<String>,
 }
@@ -74,8 +81,8 @@ pub struct CorsState {
 #[utoipa::path(
     post,
     path = "",
-    tag = "cors",
-    operation_id = "postApiPlatformCors",
+    tag = "cors-origins",
+    operation_id = "addCorsOrigin",
     request_body = CreateCorsOriginRequest,
     responses(
         (status = 201, description = "CORS origin created", body = crate::shared::api_common::CreatedResponse),
@@ -117,8 +124,8 @@ pub async fn create_cors_origin(
 #[utoipa::path(
     get,
     path = "",
-    tag = "cors",
-    operation_id = "getApiPlatformCors",
+    tag = "cors-origins",
+    operation_id = "listCorsOrigins",
     responses(
         (status = 200, description = "List of CORS origins", body = CorsOriginsListResponse)
     ),
@@ -142,8 +149,8 @@ pub async fn list_cors_origins(
 #[utoipa::path(
     get,
     path = "/allowed",
-    tag = "cors",
-    operation_id = "getApiPlatformCorsAllowed",
+    tag = "cors-origins",
+    operation_id = "publicAllowedOrigins",
     responses(
         (status = 200, description = "Allowed origins list", body = AllowedOriginsResponse)
     )
@@ -161,8 +168,8 @@ pub async fn get_allowed_origins(
 #[utoipa::path(
     get,
     path = "/{id}",
-    tag = "cors",
-    operation_id = "getApiPlatformCorsById",
+    tag = "cors-origins",
+    operation_id = "getCorsOrigin",
     params(
         ("id" = String, Path, description = "CORS origin ID")
     ),
@@ -191,8 +198,8 @@ pub async fn get_cors_origin(
 #[utoipa::path(
     delete,
     path = "/{id}",
-    tag = "cors",
-    operation_id = "deleteApiPlatformCorsById",
+    tag = "cors-origins",
+    operation_id = "deleteCorsOrigin",
     params(
         ("id" = String, Path, description = "CORS origin ID")
     ),

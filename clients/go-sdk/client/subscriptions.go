@@ -53,33 +53,33 @@ type UpdateSubscriptionRequest struct {
 
 // SubscriptionResponse is the platform's subscription representation.
 type SubscriptionResponse struct {
-	ID                string             `json:"id"`
-	Code              string             `json:"code"`
-	Name              string             `json:"name"`
-	Description       string             `json:"description,omitempty"`
-	ClientID          string             `json:"clientId,omitempty"`
-	ClientIdentifier  string             `json:"clientIdentifier,omitempty"`
-	EventTypes        []EventTypeBinding `json:"eventTypes,omitempty"`
-	Endpoint          string             `json:"endpoint"`
-	ConnectionID      string             `json:"connectionId,omitempty"`
-	Queue             string             `json:"queue,omitempty"`
-	Source            string             `json:"source,omitempty"`
-	Status            string             `json:"status"`
-	MaxAgeSeconds     uint32             `json:"maxAgeSeconds,omitempty"`
-	DispatchPoolID    string             `json:"dispatchPoolId,omitempty"`
-	DispatchPoolCode  string             `json:"dispatchPoolCode,omitempty"`
-	DelaySeconds      uint32             `json:"delaySeconds,omitempty"`
-	Sequence          int32              `json:"sequence,omitempty"`
-	Mode              string             `json:"mode"`
-	TimeoutSeconds    uint32             `json:"timeoutSeconds,omitempty"`
-	MaxRetries        uint32             `json:"maxRetries,omitempty"`
-	ServiceAccountID  string             `json:"serviceAccountId,omitempty"`
-	DataOnly          bool               `json:"dataOnly,omitempty"`
-	ApplicationCode   string             `json:"applicationCode,omitempty"`
-	ClientScoped      bool               `json:"clientScoped,omitempty"`
-	CustomConfig      []ConfigEntry      `json:"customConfig,omitempty"`
-	CreatedAt         string             `json:"createdAt"`
-	UpdatedAt         string             `json:"updatedAt"`
+	ID               string             `json:"id"`
+	Code             string             `json:"code"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description,omitempty"`
+	ClientID         string             `json:"clientId,omitempty"`
+	ClientIdentifier string             `json:"clientIdentifier,omitempty"`
+	EventTypes       []EventTypeBinding `json:"eventTypes,omitempty"`
+	Endpoint         string             `json:"endpoint"`
+	ConnectionID     string             `json:"connectionId,omitempty"`
+	Queue            string             `json:"queue,omitempty"`
+	Source           string             `json:"source,omitempty"`
+	Status           string             `json:"status"`
+	MaxAgeSeconds    uint32             `json:"maxAgeSeconds,omitempty"`
+	DispatchPoolID   string             `json:"dispatchPoolId,omitempty"`
+	DispatchPoolCode string             `json:"dispatchPoolCode,omitempty"`
+	DelaySeconds     uint32             `json:"delaySeconds,omitempty"`
+	Sequence         int32              `json:"sequence,omitempty"`
+	Mode             string             `json:"mode"`
+	TimeoutSeconds   uint32             `json:"timeoutSeconds,omitempty"`
+	MaxRetries       uint32             `json:"maxRetries,omitempty"`
+	ServiceAccountID string             `json:"serviceAccountId,omitempty"`
+	DataOnly         bool               `json:"dataOnly,omitempty"`
+	ApplicationCode  string             `json:"applicationCode,omitempty"`
+	ClientScoped     bool               `json:"clientScoped,omitempty"`
+	CustomConfig     []ConfigEntry      `json:"customConfig,omitempty"`
+	CreatedAt        string             `json:"createdAt"`
+	UpdatedAt        string             `json:"updatedAt"`
 }
 
 // SyncSubscriptionItem matches the platform's SyncSubscriptionInput.
@@ -107,9 +107,10 @@ type SubscriptionsResource struct {
 	c *FlowCatalystClient
 }
 
-// Create — POST /api/subscriptions.
-func (r *SubscriptionsResource) Create(ctx context.Context, req *CreateSubscriptionRequest) (*SubscriptionResponse, error) {
-	var out SubscriptionResponse
+// Create — POST /api/subscriptions. Returns the new subscription's id;
+// call Get for the full record.
+func (r *SubscriptionsResource) Create(ctx context.Context, req *CreateSubscriptionRequest) (*CreatedResponse, error) {
+	var out CreatedResponse
 	if err := r.c.Post(ctx, "/api/subscriptions", req, &out); err != nil {
 		return nil, err
 	}
@@ -135,13 +136,10 @@ func (r *SubscriptionsResource) List(ctx context.Context, clientID, status strin
 	return &out, nil
 }
 
-// Update — PUT /api/subscriptions/{id}.
-func (r *SubscriptionsResource) Update(ctx context.Context, id string, req *UpdateSubscriptionRequest) (*SubscriptionResponse, error) {
-	var out SubscriptionResponse
-	if err := r.c.Put(ctx, "/api/subscriptions/"+id, req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+// Update — PUT /api/subscriptions/{id}. The platform answers 204; call
+// Get for the refreshed record.
+func (r *SubscriptionsResource) Update(ctx context.Context, id string, req *UpdateSubscriptionRequest) error {
+	return r.c.Put(ctx, "/api/subscriptions/"+id, req, nil)
 }
 
 // Pause — POST /api/subscriptions/{id}/pause.

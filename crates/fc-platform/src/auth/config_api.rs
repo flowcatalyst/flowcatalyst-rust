@@ -38,7 +38,9 @@ pub struct CreateAnchorDomainRequest {
 pub struct AnchorDomainResponse {
     pub id: String,
     pub domain: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -67,6 +69,7 @@ impl From<AnchorDomain> for AnchorDomainResponse {
 /// Create client auth config request
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = CreateAuthConfigRequest)]
 pub struct CreateClientAuthConfigRequest {
     /// Email domain this config applies to
     pub email_domain: String,
@@ -97,6 +100,7 @@ pub struct CreateClientAuthConfigRequest {
 
     /// Multi-tenant OIDC
     #[serde(default)]
+    #[schema(required = true)]
     pub oidc_multi_tenant: bool,
 
     /// Multi-tenant issuer pattern
@@ -110,6 +114,7 @@ pub struct CreateClientAuthConfigRequest {
 /// Update client auth config request
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = UpdateAuthConfigRequest)]
 pub struct UpdateClientAuthConfigRequest {
     /// Primary client ID
     pub primary_client_id: Option<String>,
@@ -206,6 +211,7 @@ pub struct UpdateGrantedClientsRequest {
 /// secret is its reference or `encrypted:` form, never a plaintext.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = AuthConfigResponse)]
 pub struct ClientAuthConfigResponse {
     pub id: String,
     pub email_domain: String,
@@ -227,7 +233,9 @@ pub struct ClientAuthConfigResponse {
     pub oidc_issuer_pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_client_secret_ref: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -313,7 +321,9 @@ pub struct IdpRoleMappingResponse {
     pub idp_type: String,
     pub idp_role_name: String,
     pub platform_role_name: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -388,7 +398,7 @@ pub struct AuthConfigState {
     post,
     path = "",
     tag = "anchor-domains",
-    operation_id = "postApiAnchorDomains",
+    operation_id = "createAnchorDomain",
     request_body = CreateAnchorDomainRequest,
     responses(
         (status = 201, description = "Anchor domain created", body = CreatedResponse),
@@ -427,7 +437,7 @@ pub async fn create_anchor_domain(
     get,
     path = "",
     tag = "anchor-domains",
-    operation_id = "getApiAnchorDomains",
+    operation_id = "listAnchorDomains",
     responses(
         (status = 200, description = "List of anchor domains", body = AnchorDomainListResponse)
     ),
@@ -524,7 +534,7 @@ pub async fn check_anchor_domain(
     delete,
     path = "/{id}",
     tag = "anchor-domains",
-    operation_id = "deleteApiAnchorDomainsById",
+    operation_id = "deleteAnchorDomain",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -569,7 +579,7 @@ pub struct UpdateAnchorDomainRequest {
     put,
     path = "/{id}",
     tag = "anchor-domains",
-    operation_id = "putApiAnchorDomainsById",
+    operation_id = "updateAnchorDomain",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -613,7 +623,7 @@ pub async fn update_anchor_domain(
     post,
     path = "",
     tag = "auth-configs",
-    operation_id = "postApiAuthConfigs",
+    operation_id = "createAuthConfig",
     request_body = CreateClientAuthConfigRequest,
     responses(
         (status = 201, description = "Client auth config created", body = CreatedResponse),
@@ -711,7 +721,7 @@ pub async fn get_client_auth_config(
     get,
     path = "",
     tag = "auth-configs",
-    operation_id = "getApiAuthConfigs",
+    operation_id = "listAuthConfigs",
     responses(
         (status = 200, description = "List of client auth configs", body = AuthConfigListResponse)
     ),
@@ -738,7 +748,7 @@ pub async fn list_client_auth_configs(
     put,
     path = "/{id}",
     tag = "auth-configs",
-    operation_id = "putApiAuthConfigsById",
+    operation_id = "updateAuthConfig",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -796,7 +806,7 @@ pub async fn update_client_auth_config(
     delete,
     path = "/{id}",
     tag = "auth-configs",
-    operation_id = "deleteApiAuthConfigsById",
+    operation_id = "deleteAuthConfig",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -1225,7 +1235,7 @@ pub async fn update_granted_clients(
     post,
     path = "",
     tag = "idp-role-mappings",
-    operation_id = "postApiIdpRoleMappings",
+    operation_id = "createIdpRoleMapping",
     request_body = CreateIdpRoleMappingRequest,
     responses(
         (status = 201, description = "IDP role mapping created", body = CreatedResponse),
@@ -1282,7 +1292,7 @@ pub struct IdpRoleMappingQuery {
     get,
     path = "",
     tag = "idp-role-mappings",
-    operation_id = "getApiIdpRoleMappings",
+    operation_id = "listIdpRoleMappings",
     params(IdpRoleMappingQuery),
     responses(
         (status = 200, description = "List of IDP role mappings", body = IdpRoleMappingListResponse)
@@ -1317,7 +1327,7 @@ pub async fn list_idp_role_mappings(
     delete,
     path = "/{id}",
     tag = "idp-role-mappings",
-    operation_id = "deleteApiIdpRoleMappingsById",
+    operation_id = "deleteIdpRoleMapping",
     params(
         ("id" = String, Path, description = "IDP role mapping ID")
     ),

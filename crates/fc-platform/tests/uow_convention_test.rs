@@ -1,6 +1,7 @@
 //! Convention test: every `*UseCase::execute` body must terminate through
 //! `UnitOfWork::commit` / `commit_delete` / `commit_all` / `emit_event` /
-//! `emit_events` / `commit_all_with_events`, OR only return `Err(..)`s.
+//! `emit_events` / `commit_all_with_events` / `commit_sync`, OR only return
+//! `Err(..)`s. A sync use case writes nothing outside that commit.
 //!
 //! `execute` returns `Result<Committed<Event>, UseCaseError>`, and
 //! `Committed` can only be constructed inside the `usecase` module, so it's
@@ -26,6 +27,7 @@ const UOW_PATTERNS: &[&str] = &[
     "unit_of_work.emit_event(",
     "unit_of_work.emit_events(",
     "unit_of_work.commit_all_with_events(",
+    "unit_of_work.commit_sync(",
 ];
 
 /// File-level skip list: use-case files that don't own writes (e.g. pure
@@ -244,7 +246,7 @@ fn every_use_case_terminates_through_unit_of_work() {
             "\n\nUse cases whose `execute` body doesn't terminate through `UnitOfWork`.\n\
              Every `*UseCase::execute` must either call one of \
              `unit_of_work.commit/commit_delete/commit_all/emit_event/emit_events/\
-             commit_all_with_events` on the happy path, or return only `Err(..)`.\n\
+             commit_all_with_events/commit_sync` on the happy path, or return only `Err(..)`.\n\
              `Committed` can only be constructed inside the `usecase` module; skipping UoW \
              means the use case never emits a domain event or audit log — a silent data \
              integrity bug.\n\n\
@@ -257,4 +259,48 @@ fn every_use_case_terminates_through_unit_of_work() {
         }
         panic!("{}", msg);
     }
+}
+
+/// A sync is planned in full and written in one unit-of-work transaction
+/// with its per-row events and rollup (Go's `usecaseop.Sync`), so a bad row
+/// fails the sync with nothing written. A repository write called from a
+/// sync use case would land outside that transaction and survive a later
+/// row's failure.
+#[test]
+fn sync_use_cases_write_only_through_the_unit_of_work() {
+    let mut files = Vec::new();
+    walk_rs_files(&src_root(), &mut files);
+    let writes = regex::Regex::new(
+        r"(?:_repo|\brepo)\s*\.\s*(?:insert|update|delete|upsert|save|archive\w*|insert_\w+|update_\w+|delete_\w+)\s*\(",
+    )
+    .unwrap();
+    let mut syncs = 0;
+    let mut violations = Vec::new();
+    for path in files {
+        let is_sync = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("sync"))
+            && path
+                .parent()
+                .and_then(|p| p.file_name())
+                .is_some_and(|n| n == "operations");
+        if !is_sync {
+            continue;
+        }
+        syncs += 1;
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let code = content.split("#[cfg(test)]").next().unwrap_or("");
+        for (n, line) in code.lines().enumerate() {
+            if !line.trim_start().starts_with("//") && writes.is_match(line) {
+                violations.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(syncs >= 10, "found only {syncs} sync use cases");
+    assert!(
+        violations.is_empty(),
+        "sync use cases writing outside the unit of work:\n{}",
+        violations.join("\n")
+    );
 }

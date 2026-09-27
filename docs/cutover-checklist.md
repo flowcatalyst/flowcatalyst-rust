@@ -14,13 +14,24 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`feat/harness-delivery`)
 - [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
       `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
-- [ ] API parity converged: every diff fixed or ruled. Run 5: 1231 OK / 113 ACCEPTED / 19 DIFF / 0 ERROR
-      (`docs/parity/api-run-5.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), portal
-      token `tier` (2), audit by-principal/facets (3), 3 unnamed Go defects, service-accounts list (below)
-- [ ] **Service-account events use the principal id, not the account id:** Go uses the account's `sac_` id
-      for `created`, `updated`, `deactivated`, `deleted` and `roles-assigned` (event subject, payload
-      `serviceAccountId`, audit `entityId`); Rust uses the principal's `prn_`. Subscribers matching on these
-      would see different ids. Fix after the use-case refactor.
+- [ ] API parity converged: every diff fixed or ruled. Run 6: 1234 OK / 113 ACCEPTED / 16 DIFF / 0 ERROR
+      (`docs/parity/api-run-6.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), audit
+      by-principal/facets (3), 3 unnamed Go defects (mint-token name, sync-platform schema tally,
+      unmapped-domain OIDC login)
+- [x] **Service-account events use the account id:** every `platform:iam:serviceaccount:*` event (and
+      `service-account-provisioned`) carries the account's `sac_` id as subject, group and
+      `serviceAccountId`, so the audit `entityId` too, as Go (`feat/cutover-fixes`)
+- [x] Syncs are atomic as Go's `usecaseop.Sync`: event types, processes, roles, dispatch pools,
+      subscriptions (and the OpenAPI spec sync) plan every row, then write rows, per-row events and rollup
+      in one transaction; a bad row writes nothing (`feat/cutover-fixes`)
+- [x] Portal tokens carry Go's empty `tier`; the platform and the function host read it as no tier on an
+      identity-only token, granting nothing (`feat/cutover-fixes`)
+- [x] Go's auth purger: expired OAuth payloads, OIDC login states, portal login flows, 2FA email PINs and
+      trusted devices, reset/invite tokens (30 days after expiry), lapsed OAuth secrets, and the
+      `iam_login_attempts` quarterly partitions on a Go-partitioned database, every minute
+      (`feat/cutover-fixes`)
+- [x] Reset, invite and portal emails in Go's branded layout with the login theme (logo, colours, brand)
+      (`feat/cutover-fixes`)
 
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
 - [x] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
@@ -53,17 +64,36 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       revocation); token claims per #3/#20; `/auth/login` and `/api/me` shapes; passkey gate for INTERNAL IdPs
 - [x] Missing routes (`feat/go-routes`): the run-1 list (2FA, change-password, login-history, portal, docs,
       role-permission paths, service-account tokens, config properties, and more)
-- [ ] Per-area pass: write status codes (201/204), idempotent no-op repeats, Go's input validation, list
-      envelopes, null vs absent members, login-attempt fields, audit facet names
 - [ ] OpenAPI documents (`/q/openapi` and the developer spec) vs Go's huma documents: decide whether they
       must match
 
 ## Rulings adopted from the Java session, not yet built
-- [ ] Router auth (ruling 2): platform bearer tokens, `router:view`/`operate`, the `router-operator` role,
-      dev-only mocks, the PKCE dashboard. **The SDK releases that send the bearer must reach
-      integral/hr/rfp first** (laravel-sdk 0.10.27; hr is pinned to `^0.8` and must move to `^0.10`).
-      Rust's role catalogue doesn't have `router:view`/`operate` yet: add them, and grant `:view` to
-      `application-service` and `viewer`, when router auth is built.
+- [x] Router auth (ruling 2), built (`feat/router-auth`): platform bearer tokens verified against the
+      platform's JWKS (`fc-platform-jwks`, shared with the function host), `router:view`/`operate`,
+      the `platform:router-operator` role, `:view` on `viewer` and `application-service`, dev-only
+      mocks, the PKCE dashboard (`FC_ROUTER_DASHBOARD_CLIENT_ID`). Production's `AUTH_MODE=NONE` is
+      still honoured, loudly (decision #43), so nothing changes until the owner steps below.
+- [ ] **Owner: switch router auth on** (decision #43), in this order:
+      1. Release laravel-sdk 0.10.27 (and the TS SDK) with the router bearer; move integral, hr
+         (from `^0.8` to `^0.10`) and rfp to it and deploy them. Their service accounts get
+         `router:view` through `platform:application-service` once the Rust platform is deployed
+         (the code-role sync applies it on start); a Go platform does not grant it.
+      2. Assign `platform:router-operator` to the people and service accounts that operate the
+         router (super-admins already hold it).
+      3. Dashboard sign-in: `POST /api/oauth-clients` with `clientType: PUBLIC`,
+         `grantTypes: ["authorization_code"]`, `pkceRequired: true`, `apiAccess: true`,
+         `applicationIds: [<the platform application's id>]`,
+         `defaultScopes: ["platform:messaging:router:view", "platform:messaging:router:operate"]`,
+         `redirectUris: ["https://{routerDomain}/router/dashboard.html",
+         "https://{routerDomain}/router/monitoring/dashboard"]`; put its client id on the router task
+         as `FC_ROUTER_DASHBOARD_CLIENT_ID`.
+      4. IaC (`inhance/iac/compute/fc-router.ts`): remove `AUTH_MODE=NONE`; keep
+         `FC_ROUTER_PLATFORM_URL=http://fc-platform:8080` (tokens are verified against its discovery
+         and `/.well-known/jwks.json`). After the deploy: the router logs "Router API
+         authentication: platform bearer tokens", `/router/health` carries no `authWarning`, and an
+         unauthenticated `GET /router/monitoring/pools` answers 401.
+      5. Code: delete decision #43's `NONE` exception (`platform_auth::resolve`), so `NONE` is dev-only
+         as the ruling says.
 - [x] SDKs: single-flight refresh (ruling 5), webhook `check()` (ruling 11), bearer on router calls; licences as published (TS Apache-2.0, Laravel MIT, Go/Rust Apache-2.0)
 - [x] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results (Java SDK: not done)
 
@@ -105,8 +135,6 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`~/Library/Caches/flowcatalyst-dev/pgdata`) can be deleted once nothing in it is needed
 - [ ] Built-in role catalogue: Java's V17 `platform:admin:config:manage` vs Go/Rust `…:config:update` —
       each binary resets built-in roles to its own on start; settle one name
-- [ ] fc-dev's developer-portal auto-sync records a `platform:admin:eventtype:updated` event per platform
-      event type (131) on every start; only record changed ones
 
 ## Also landed
 - Go's production SPA replaces the old Vue frontend (functions UI re-integrated in Go's idiom).

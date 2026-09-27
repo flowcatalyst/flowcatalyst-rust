@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::answer::{outcome_for, HttpAnswer};
-use super::bearer::{TokenClaims, SCOPE_WILDCARD};
+use super::bearer::{self, TokenClaims, SCOPE_WILDCARD};
 use super::public_routes::{self, LIVE};
 use super::route_path::RoutePath;
 use super::{cors, latin1, webhook, Shared};
@@ -382,7 +382,7 @@ async fn authenticate(
             .bearer
             .authenticate(call.header("authorization").as_deref())
             .await
-            .map(|claims| Caller::Principal(claims.principal()))
+            .map(|claims| Caller::Principal(bearer::principal(&claims)))
             .map_err(|reason| unauthorized_bearer(&reason)),
         EndpointAuth::None => Ok(Caller::Anonymous),
     }
@@ -457,7 +457,7 @@ async fn handle_versioned(
         function_path,
         params,
         body,
-        Caller::Principal(claims.principal()),
+        Caller::Principal(bearer::principal(&claims)),
         true,
         true,
         None,
@@ -591,6 +591,7 @@ async fn invoke(
         interrupted: interrupted.clone(),
         correlation_id,
         causation_id,
+        usage: invoke::UsageMeter::new(),
     };
     let span = tracing::info_span!(
         "invocation",
@@ -612,10 +613,19 @@ async fn invoke(
     };
     let version = function.version();
     let started = Instant::now();
+    let usage = context.usage.clone();
+    let client = entry.client_id.clone();
     let mut task = tokio::spawn(
         async move {
-            let _worker = worker; // released only when the invocation really ends
-            function.instance().invoke(context).await
+            let worker = worker; // released only when the invocation really ends
+            let result = function.instance().invoke(context).await;
+            // Consumption is final only now, even when the caller was already
+            // answered at the deadline.
+            worker
+                .shared
+                .metrics
+                .consumed(&worker.address, client.as_deref(), usage.read());
+            result
         }
         .instrument(span.clone()),
     );
@@ -638,6 +648,10 @@ async fn invoke(
         Ok(Ok(Err(InvokeError::Unavailable(detail)))) => {
             tracing::warn!(address = %entry.address, invocation_id = %invocation_id, err = %detail, "function could not run the invocation");
             (unavailable(), "unavailable")
+        }
+        Ok(Ok(Err(InvokeError::FuelExhausted { limit }))) => {
+            tracing::warn!(address = %entry.address, invocation_id = %invocation_id, max_fuel = limit, "function invocation used up its fuel");
+            (fuel_exhausted(), "fuel_exhausted")
         }
         Ok(Err(join_error)) => {
             tracing::warn!(address = %entry.address, invocation_id = %invocation_id, err = %join_error, "function invocation panicked");
@@ -722,6 +736,15 @@ fn timed_out() -> HttpAnswer {
         504,
         "FUNCTION_TIMEOUT",
         "the invocation exceeded its deadline",
+    )
+}
+
+/// The guest spent the fuel `limits.maxFuel` allows (owner decision #13).
+fn fuel_exhausted() -> HttpAnswer {
+    HttpAnswer::error(
+        500,
+        "FUNCTION_FUEL_EXHAUSTED",
+        "the invocation used up the fuel its limits allow",
     )
 }
 

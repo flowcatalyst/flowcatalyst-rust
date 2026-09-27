@@ -137,6 +137,16 @@ impl JsonNode {
         }
     }
 
+    /// The value of an integral number that fits a Java `long` (Jackson's
+    /// `isIntegralNumber() && canConvertToLong()`); `None` for anything else,
+    /// including `1.0` and `1e3`.
+    pub fn fits_long(&self) -> Option<i64> {
+        match self {
+            JsonNode::Number(JsonNumber::Integer(text)) => text.parse().ok(),
+            _ => None,
+        }
+    }
+
     /// Jackson's `asString()` on a scalar: a string's text, `""` for null,
     /// `true`/`false`, and a number's text (an integer exactly, a float as
     /// serde_json writes it). Jackson throws for an

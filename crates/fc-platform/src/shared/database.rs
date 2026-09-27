@@ -650,6 +650,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "056_function_js_runtime",
             include_str!("../../../../migrations/056_function_js_runtime.sql"),
         ),
+        // Go's 057 (the rest of it): a dispatch job's descriptor, and the
+        // job's descriptor and metadata on the read projection.
+        (
+            "057_dispatch_job_descriptor_and_read_metadata",
+            include_str!(
+                "../../../../migrations/057_dispatch_job_descriptor_and_read_metadata.sql"
+            ),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -915,6 +923,19 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM pg_constraint \
              WHERE conname = 'fn_functions_runtime_check' \
                AND pg_get_constraintdef(oid) LIKE '%''JS''%')",
+        ),
+        // A database Go migrated to 057 has all three columns.
+        (
+            "057_dispatch_job_descriptor_and_read_metadata",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs' \
+               AND column_name = 'descriptor') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs_read' \
+               AND column_name = 'descriptor') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs_read' \
+               AND column_name = 'metadata')",
         ),
     ];
 

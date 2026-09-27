@@ -16,7 +16,12 @@
 //!    `fn deploy` is a no-op (`changed: false`).
 //! 4. The promote wired the subscription to the host's URL, and
 //!    `fn invoke` reaches the function, unversioned and versioned.
-//! 5. `runtime: js` (the `js` feature): the TypeScript template's bundle
+//! 5. A second function, `pdk_db` (the host's committed database guest),
+//!    reaches a database its manifest declares under `db[]` (owner
+//!    decision #7): its connection is a secret set with `fn secret set`
+//!    (here fc-dev's own Postgres), and it creates a table, inserts and
+//!    reads back through the host's pool.
+//! 6. `runtime: js` (the `js` feature): the TypeScript template's bundle
 //!    (`crates/fc-fnhost-js/tests/fixtures/js/hello.mjs`) with the template's
 //!    manifest deploys and answers on the same host; a component published
 //!    to it is refused (`ARTIFACT_RUNTIME_MISMATCH`).
@@ -473,11 +478,93 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     assert_eq!(answer["status"], 200, "{answer}");
     assert_eq!(answer["body"], r#"{"ok":true}"#, "{answer}");
 
+    // ── 5. a function reaches its own database ───────────────────────────
+    let db_address = "shop.default.orders";
+    let db_manifest = tmp.path().join("db-manifest.json");
+    std::fs::write(
+        &db_manifest,
+        serde_json::json!({
+            "runtime": "wasm",
+            "entrypoint": "wasi_http_incoming_handler",
+            "endpoints": [{"path": "/*", "auth": "none"}],
+            "secrets": ["ORDERS_DB"],
+            "db": [{"name": "main", "secretRef": "ORDERS_DB", "poolSize": 2}],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let db_manifest = db_manifest.to_str().unwrap();
+    let dsn_file = tmp.path().join("orders-dsn");
+    std::fs::write(&dsn_file, &database_url).unwrap();
+    let (code, out, err) = fc_dev_fn(&[
+        "--credentials-file",
+        &creds,
+        "secret",
+        "set",
+        db_address,
+        "ORDERS_DB",
+        "--from-file",
+        dsn_file.to_str().unwrap(),
+        "--manifest",
+        db_manifest,
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}{err}");
+    let db_wasm = repo_path("crates/fc-fnhost-core/tests/fixtures/wasm/pdk_db.wasm");
+    let (code, out, err) = fc_dev_fn(&[
+        "--credentials-file",
+        &creds,
+        "deploy",
+        db_wasm.to_str().unwrap(),
+        db_address,
+        "--manifest",
+        db_manifest,
+        "--wait",
+        "90s",
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}{err}");
+    let call = |method: &'static str, path: String| {
+        let creds = creds.clone();
+        async move {
+            let (code, out, err) = fc_dev_fn(&[
+                "--credentials-file",
+                &creds,
+                "--output",
+                "json",
+                "invoke",
+                db_address,
+                "--method",
+                method,
+                "--path",
+                &path,
+            ])
+            .await;
+            assert_eq!(code, 0, "{path}: {out}{err}");
+            let answer: Value = serde_json::from_str(out.trim()).unwrap();
+            assert_eq!(answer["status"], 200, "{path}: {answer}");
+            serde_json::from_str::<Value>(answer["body"].as_str().unwrap()).unwrap()
+        }
+    };
+    let table = format!("fn_e2e_orders_{}", std::process::id());
+    assert_eq!(
+        call("POST", format!("/setup?table={table}")).await["updated"],
+        0
+    );
+    assert_eq!(
+        call("POST", format!("/items?table={table}&id=7&name=first")).await["updated"],
+        1
+    );
+    assert_eq!(
+        call("GET", format!("/items?table={table}")).await["rows"],
+        serde_json::json!([{"id": 7, "name": "first"}])
+    );
+
     // A two-part address is a usage error.
     let (code, _, err) = fc_dev_fn(&["--credentials-file", &creds, "invoke", "shop.book"]).await;
     assert_eq!(code, 2, "{err}");
 
-    // ── 5. runtime: js, the TypeScript template's bundle ─────────────────
+    // ── 6. runtime: js, the TypeScript template's bundle ─────────────────
     #[cfg(feature = "js")]
     {
         const JS_ADDRESS: &str = "shop.default.hello-js";

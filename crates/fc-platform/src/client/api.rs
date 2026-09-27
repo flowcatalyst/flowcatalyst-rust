@@ -63,21 +63,26 @@ pub struct ClientResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub status_changed_at: Option<String>,
     /// The client's notes, oldest first (Go `ClientResponse.notes`).
     pub notes: Vec<ClientNoteResponse>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
 /// Go's `NoteResponse` (client/api/dto.go).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = NoteResponse)]
 pub struct ClientNoteResponse {
     pub category: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub added_by: Option<String>,
+    #[schema(format = DateTime)]
     pub added_at: String,
 }
 
@@ -111,6 +116,7 @@ impl From<Client> for ClientResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ClientListResponse {
     pub clients: Vec<ClientResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -149,6 +155,7 @@ pub struct AddNoteRequest {
 /// Add note response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = StatusChangeResponse)]
 pub struct AddNoteResponse {
     pub message: String,
 }
@@ -180,6 +187,7 @@ pub struct ClientApplicationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ClientApplicationsResponse {
     pub applications: Vec<ClientApplicationResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -231,7 +239,7 @@ pub struct ClientsState {
     post,
     path = "",
     tag = "clients",
-    operation_id = "postApiClients",
+    operation_id = "createClient",
     request_body = CreateClientRequest,
     responses(
         (status = 201, description = "Client created", body = crate::shared::api_common::CreatedResponse),
@@ -270,7 +278,7 @@ pub async fn create_client(
     get,
     path = "/{id}",
     tag = "clients",
-    operation_id = "getApiClientsById",
+    operation_id = "getClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -311,11 +319,9 @@ fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, Plat
     get,
     path = "",
     tag = "clients",
-    operation_id = "getApiClients",
+    operation_id = "listClients",
     params(
-        ("page" = Option<u32>, Query, description = "Page number"),
-        ("limit" = Option<u32>, Query, description = "Items per page"),
-        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client")
+        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client (Rust extension)")
     ),
     responses(
         (status = 200, description = "List of clients", body = ClientListResponse),
@@ -352,7 +358,7 @@ pub async fn list_clients(
     put,
     path = "/{id}",
     tag = "clients",
-    operation_id = "putApiClientsById",
+    operation_id = "updateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -389,7 +395,7 @@ pub async fn update_client(
     delete,
     path = "/{id}",
     tag = "clients",
-    operation_id = "deleteApiClientsById",
+    operation_id = "deleteClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -427,7 +433,7 @@ pub async fn delete_client(
     post,
     path = "/{id}/activate",
     tag = "clients",
-    operation_id = "postApiClientsByIdActivate",
+    operation_id = "activateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -461,6 +467,15 @@ pub async fn activate_client(
     }))
 }
 
+/// Go `SuspendClientRequest`: the body of `suspend`, the same member as
+/// [`StatusChangeRequest`] (documentation only; the handler reads a
+/// `StatusChangeRequest`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[allow(dead_code)]
+pub struct SuspendClientRequest {
+    pub reason: String,
+}
+
 /// Suspend a client
 ///
 /// Suspends a client (e.g., for billing issues). Requires a reason.
@@ -468,11 +483,11 @@ pub async fn activate_client(
     post,
     path = "/{id}/suspend",
     tag = "clients",
-    operation_id = "postApiClientsByIdSuspend",
+    operation_id = "suspendClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
-    request_body = StatusChangeRequest,
+    request_body = SuspendClientRequest,
     responses(
         (status = 200, description = "Client suspended", body = StatusChangeResponse),
         (status = 404, description = "Client not found"),
@@ -518,7 +533,7 @@ pub async fn suspend_client(
     post,
     path = "/{id}/deactivate",
     tag = "clients",
-    operation_id = "postApiClientsByIdDeactivate",
+    operation_id = "deactivateClient",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -568,7 +583,7 @@ pub async fn deactivate_client(
     get,
     path = "/search",
     tag = "clients",
-    operation_id = "getApiClientsSearch",
+    operation_id = "searchClientsByQuery",
     params(
         ("q" = Option<String>, Query, description = "Search term")
     ),
@@ -616,7 +631,7 @@ pub async fn search_clients(
     get,
     path = "/by-identifier/{identifier}",
     tag = "clients",
-    operation_id = "getApiClientsByIdentifierByIdentifier",
+    operation_id = "getClientByIdentifier",
     params(
         ("identifier" = String, Path, description = "Client identifier/slug")
     ),
@@ -650,7 +665,7 @@ pub async fn get_client_by_identifier(
     post,
     path = "/{id}/notes",
     tag = "clients",
-    operation_id = "postApiClientsByIdNotes",
+    operation_id = "addClientNote",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -696,7 +711,7 @@ pub async fn add_note(
     get,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "getApiClientsByIdApplications",
+    operation_id = "getClientApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -760,7 +775,7 @@ pub async fn get_client_applications(
     post,
     path = "/{id}/applications/{applicationId}/enable",
     tag = "clients",
-    operation_id = "postApiClientsByIdApplicationsByAppIdEnable",
+    operation_id = "enableClientApplication",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("applicationId" = String, Path, description = "Application ID")
@@ -797,7 +812,7 @@ pub async fn enable_application(
     post,
     path = "/{id}/applications/{applicationId}/disable",
     tag = "clients",
-    operation_id = "postApiClientsByIdApplicationsByAppIdDisable",
+    operation_id = "disableClientApplication",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("applicationId" = String, Path, description = "Application ID")
@@ -834,7 +849,7 @@ pub async fn disable_application(
     put,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "putApiClientsByIdApplications",
+    operation_id = "updateClientApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),

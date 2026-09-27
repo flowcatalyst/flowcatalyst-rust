@@ -4,6 +4,7 @@
 //! diagram source). Codes follow `{application}:{subdomain}:{process-name}`,
 //! mirroring EventType.
 
+use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
 use serde::{Deserialize, Serialize};
 
@@ -108,10 +109,9 @@ pub struct Processes<'a> {
 
 impl Processes<'_> {
     /// Create a new process.
-    pub async fn create(
-        &self,
-        req: &CreateProcessRequest,
-    ) -> Result<ProcessResponse, ClientError> {
+    ///
+    /// Returns `{ id }` only. Call `get(&id)` if you need the full record.
+    pub async fn create(&self, req: &CreateProcessRequest) -> Result<CreatedResponse, ClientError> {
         self.client.post("/api/processes", req).await
     }
 
@@ -133,35 +133,23 @@ impl Processes<'_> {
         application: Option<&str>,
         subdomain: Option<&str>,
         status: Option<&str>,
-        search: Option<&str>,
     ) -> Result<ProcessListResponse, ClientError> {
         let mut params = Vec::new();
         if let Some(app) = application {
-            params.push(format!("application={}", app));
+            params.push(("application", app.to_string()));
         }
         if let Some(sub) = subdomain {
-            params.push(format!("subdomain={}", sub));
+            params.push(("subdomain", sub.to_string()));
         }
         if let Some(s) = status {
-            params.push(format!("status={}", s));
+            params.push(("status", s.to_string()));
         }
-        if let Some(term) = search {
-            params.push(format!("search={}", term));
-        }
-        let query = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
+        let query = FlowCatalystClient::query_string(&params);
         self.client.get(&format!("/api/processes{}", query)).await
     }
 
     /// Update a process. The platform returns 204 No Content on success.
-    pub async fn update(
-        &self,
-        id: &str,
-        req: &UpdateProcessRequest,
-    ) -> Result<(), ClientError> {
+    pub async fn update(&self, id: &str, req: &UpdateProcessRequest) -> Result<(), ClientError> {
         self.client
             .put_empty(&format!("/api/processes/{}", id), req)
             .await
@@ -206,5 +194,74 @@ impl Processes<'_> {
                 &req,
             )
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::test_support::MockPlatform;
+
+    #[tokio::test]
+    async fn create_sends_body_diagram_type_and_tags_and_reads_the_id() {
+        let stub =
+            MockPlatform::start(&[("POST", "/api/processes", 201, r#"{"id":"prc_1"}"#)]).await;
+        let created = stub
+            .client()
+            .processes()
+            .create(&CreateProcessRequest {
+                code: "orders:f:flow".into(),
+                name: "Flow".into(),
+                body: "graph TD".into(),
+                diagram_type: Some("mermaid".into()),
+                tags: vec!["core".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(created.id, "prc_1");
+        assert_eq!(
+            stub.single().json(),
+            serde_json::json!({"code": "orders:f:flow", "name": "Flow", "body": "graph TD",
+                "diagramType": "mermaid", "tags": ["core"]})
+        );
+    }
+
+    #[tokio::test]
+    async fn get_reads_gos_process_shape_and_list_sends_gos_filters() {
+        let process = r#"{"id":"prc_1","code":"orders:f:flow","name":"Flow","status":"CURRENT",
+            "source":"API","application":"orders","subdomain":"f","processName":"flow",
+            "body":"graph TD","diagramType":"mermaid","tags":["core"],
+            "createdAt":"t","updatedAt":"t"}"#;
+        let list = format!(r#"{{"items":[{process}]}}"#);
+        let stub = MockPlatform::start(&[
+            ("GET", "/api/processes/prc_1", 200, process),
+            ("GET", "/api/processes", 200, &list),
+        ])
+        .await;
+        let c = stub.client();
+        let p = c.processes().get("prc_1").await.unwrap();
+        assert_eq!(p.diagram_type, "mermaid");
+        assert_eq!(p.tags, vec!["core"]);
+        c.processes()
+            .list(Some("orders"), None, Some("CURRENT"))
+            .await
+            .unwrap();
+        assert_eq!(
+            stub.requests()[1].query_pairs(),
+            vec![
+                ("application".to_string(), "orders".to_string()),
+                ("status".to_string(), "CURRENT".to_string())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_posts_to_the_archive_route() {
+        let stub = MockPlatform::start(&[("POST", "/api/processes/prc_1/archive", 204, "")]).await;
+        stub.client().processes().archive("prc_1").await.unwrap();
+        let req = stub.single();
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/api/processes/prc_1/archive");
     }
 }

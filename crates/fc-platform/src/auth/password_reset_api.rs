@@ -28,6 +28,7 @@ use crate::password_reset::repository::PasswordResetTokenRepository;
 use crate::principal::entity::Principal;
 use crate::principal::operations::events::PasswordResetRequested;
 use crate::principal::repository::PrincipalRepository;
+use crate::shared::branding::{EmailContent, Theme};
 use crate::shared::email_service::{EmailMessage, EmailService};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::ClientIp;
@@ -54,6 +55,10 @@ pub struct PasswordResetEmailer {
     pub unit_of_work: Arc<PgUnitOfWork>,
     /// Base URL for the links (e.g. "https://app.flowcatalyst.io")
     pub external_base_url: String,
+    /// Platform config, for the login theme (logo, colours, brand name) the
+    /// emails are rendered with (Go `NewEmailer(svc, brand)`); `None` renders
+    /// the defaults.
+    pub brand: Option<Arc<crate::PlatformConfigRepository>>,
 }
 
 /// What a reset token carries beyond its principal.
@@ -108,20 +113,23 @@ impl PasswordResetEmailer {
             self.external_base_url.trim_end_matches('/'),
             raw_token
         );
+        // Go `linkEmailer.SendResetLink`.
+        let theme = Theme::load(self.brand.as_ref()).await;
         let message = EmailMessage {
             to: email.clone(),
             subject: "Reset your password".to_string(),
-            html_body: format!(
-                "<p>We received a request to reset your password. Click the link below to choose a new one.</p>\
-                 <p><a href=\"{}\">Reset password</a></p>\
-                 <p>This link expires in 15 minutes.</p>\
-                 <p>If you didn't request this, you can safely ignore this email.</p>",
-                reset_link
-            ),
-            text_body: Some(format!(
-                "We received a request to reset your password.\n\nReset link: {}\n\nThis link expires in 15 minutes.",
-                reset_link
-            )),
+            html_body: theme.render_email(&EmailContent {
+                heading: "Reset your password",
+                intro: "We received a request to reset your password. Click the button below to choose a new one.",
+                button_label: "Reset password",
+                button_url: &reset_link,
+                after_button: &[
+                    "This link expires in 15 minutes.",
+                    "If you didn't request this, you can safely ignore this email.",
+                ],
+                ..EmailContent::default()
+            }),
+            text_body: None,
         };
         if let Err(e) = self.email_service.send(&message).await {
             warn!(principal_id = %principal.id, error = %e, "Failed to send password reset email");
@@ -169,18 +177,24 @@ impl PasswordResetEmailer {
             self.external_base_url.trim_end_matches('/'),
             raw_token
         );
+        // Go `linkEmailer.SendInviteLink`.
+        let theme = Theme::load(self.brand.as_ref()).await;
+        let heading = format!("Welcome to {}", theme.brand_name);
         let message = EmailMessage {
             to: email,
             subject: "Set your password".to_string(),
-            html_body: format!(
-                "<p>An account has been created for you. Click the link below to set your password and sign in.</p>\
-                 <p><a href=\"{link}\">Set your password</a></p>\
-                 <p>If two-factor authentication is required for your organisation, you'll be guided through setting it up.</p>\
-                 <p>This link expires in 72 hours.</p>"
-            ),
-            text_body: Some(format!(
-                "An account has been created for you.\n\nSet your password: {link}\n\nThis link expires in 72 hours."
-            )),
+            html_body: theme.render_email(&EmailContent {
+                heading: &heading,
+                intro: "An account has been created for you. Click the button below to set your password and sign in.",
+                button_label: "Set your password",
+                button_url: &link,
+                after_button: &[
+                    "If two-factor authentication is required for your organisation, you'll be guided through setting it up.",
+                    "This link expires in 72 hours.",
+                ],
+                ..EmailContent::default()
+            }),
+            text_body: None,
         };
         self.email_service
             .send(&message)

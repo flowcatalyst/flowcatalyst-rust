@@ -13,7 +13,7 @@ fc-function-model = { path = "../fc-function-model" }
 
 # V8 through deno_core (owner decisions #6, #27). Pinned exactly: a
 # snapshot is only valid for the V8 that wrote it, and every number in
-# docs/function-runner-density.md §9 was measured on this release. The
+# docs/function-runner-density.md §10 was measured on this release. The
 # default features are deno_core's own (V8, its custom libc++, the tokio
 # reactor); the prebuilt V8 static library is downloaded by `v8`'s build
 # script (RUSTY_V8_ARCHIVE / RUSTY_V8_MIRROR point it elsewhere offline).

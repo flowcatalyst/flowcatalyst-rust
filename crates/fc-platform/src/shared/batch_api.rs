@@ -130,6 +130,7 @@ pub struct BatchEventItem {
     #[serde(alias = "client_code")]
     pub client_code: Option<String>,
     #[serde(alias = "context_data")]
+    #[schema(value_type = Option<Vec<crate::event::api::ContextDataDto>>)]
     pub context_data: Option<serde_json::Value>,
 }
 
@@ -155,6 +156,7 @@ fn context_entries(value: Option<serde_json::Value>) -> Vec<ContextData> {
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = BatchRequest)]
 pub struct BatchEventsRequest {
     pub items: Vec<BatchEventItem>,
 }
@@ -199,7 +201,19 @@ pub struct SdkEventsState {
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
-async fn batch_events(
+/// Ingest a batch of events (SDK)
+#[utoipa::path(
+    post,
+    path = "/batch",
+    tag = "events",
+    operation_id = "batchIngestEvents",
+    request_body = BatchEventsRequest,
+    responses(
+        (status = 201, description = "Created", body = BatchResponse),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn batch_events(
     State(state): State<SdkEventsState>,
     auth: Authenticated,
     Json(req): Json<BatchEventsRequest>,

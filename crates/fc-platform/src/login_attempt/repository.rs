@@ -217,3 +217,149 @@ impl LoginAttemptRepository {
         Ok(count.0)
     }
 }
+
+// ─── Partition maintenance (Go owner ruling X-03) ───────────────────────────
+//
+// Go's migration 049 range-partitions `iam_login_attempts` by quarter on
+// `attempted_at`, with a DEFAULT partition. From then on Go's housekeeping
+// purger (StartPurger, internal/server/subsystems.go) keeps the current and
+// next quarter's partitions in place and drops partitions wholly older than
+// the retention — never a row DELETE (loginattempt/loginattempt.go:358-509).
+// Rust runs on the database Go migrated, so it keeps them the same way. On a
+// table that is not partitioned (a Rust-only database) both are no-ops.
+
+/// Every quarterly partition's name starts with this; the DEFAULT partition's
+/// doesn't, so neither method touches it.
+const PARTITION_PREFIX: &str = "iam_login_attempts_";
+
+/// The first instant of `at`'s calendar quarter (UTC).
+fn quarter_start(at: DateTime<Utc>) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let month = ((at.month() - 1) / 3) * 3 + 1;
+    chrono::NaiveDate::from_ymd_opt(at.year(), month, 1).expect("a quarter's first day")
+}
+
+/// `iam_login_attempts_YYYY_qN` for the quarter starting at `start`.
+fn quarter_partition_name(start: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    format!(
+        "{PARTITION_PREFIX}{:04}_q{}",
+        start.year(),
+        (start.month() - 1) / 3 + 1
+    )
+}
+
+/// The exclusive end (next quarter's start) of a `…_YYYY_qN` partition;
+/// `None` for any other name, such as the DEFAULT partition.
+fn quarter_partition_end(name: &str) -> Option<chrono::NaiveDate> {
+    let (year, quarter) = name.strip_prefix(PARTITION_PREFIX)?.split_once("_q")?;
+    let year: i32 = year.parse().ok()?;
+    let quarter: u32 = quarter.parse().ok()?;
+    if !(1..=4).contains(&quarter) {
+        return None;
+    }
+    chrono::NaiveDate::from_ymd_opt(year, (quarter - 1) * 3 + 1, 1)?
+        .checked_add_months(chrono::Months::new(3))
+}
+
+/// A double-quoted identifier.
+fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+impl LoginAttemptRepository {
+    /// Whether `iam_login_attempts` is a partitioned table (Go
+    /// `isPartitioned`); `false` when it is a plain table or absent.
+    async fn is_partitioned(&self) -> Result<bool> {
+        let relkind: Option<(String,)> = sqlx::query_as(
+            "SELECT relkind::text FROM pg_class WHERE relname = 'iam_login_attempts'",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(relkind.is_some_and(|(k,)| k == "p"))
+    }
+
+    /// Create the partition covering `at`'s calendar quarter unless it
+    /// exists (Go `EnsureQuarterlyPartition`). A no-op on an unpartitioned
+    /// table.
+    pub async fn ensure_quarterly_partition(&self, at: DateTime<Utc>) -> Result<()> {
+        if !self.is_partitioned().await? {
+            return Ok(());
+        }
+        let start = quarter_start(at);
+        let end = start
+            .checked_add_months(chrono::Months::new(3))
+            .expect("the next quarter");
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {} PARTITION OF iam_login_attempts FOR VALUES FROM ('{}') TO ('{}')",
+            quote_ident(&quarter_partition_name(start)),
+            start.format("%Y-%m-%d"),
+            end.format("%Y-%m-%d"),
+        );
+        sqlx::query(&sql).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Drop every quarterly partition whose whole range ends on or before
+    /// `cutoff` (Go `DropPartitionsOlderThan`), returning their names. The
+    /// DEFAULT partition and any other child are left alone. A schema-level
+    /// drop, never a row DELETE; a no-op on an unpartitioned table.
+    pub async fn drop_partitions_older_than(&self, cutoff: DateTime<Utc>) -> Result<Vec<String>> {
+        if !self.is_partitioned().await? {
+            return Ok(Vec::new());
+        }
+        let children: Vec<(String,)> = sqlx::query_as(
+            "SELECT child.relname::text FROM pg_inherits i \
+             JOIN pg_class parent ON i.inhparent = parent.oid \
+             JOIN pg_class child ON i.inhrelid = child.oid \
+             WHERE parent.relname = 'iam_login_attempts'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let cutoff = cutoff.date_naive();
+        let mut dropped = Vec::new();
+        for (name,) in children {
+            let Some(end) = quarter_partition_end(&name) else {
+                continue;
+            };
+            if end <= cutoff {
+                sqlx::query(&format!("DROP TABLE IF EXISTS {}", quote_ident(&name)))
+                    .execute(&self.pool)
+                    .await?;
+                dropped.push(name);
+            }
+        }
+        Ok(dropped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn quarterly_partition_names_and_ranges_match_go() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap();
+        let start = quarter_start(at);
+        assert_eq!(start.to_string(), "2026-07-01");
+        assert_eq!(quarter_partition_name(start), "iam_login_attempts_2026_q3");
+        assert_eq!(
+            quarter_partition_end("iam_login_attempts_2026_q3").map(|d| d.to_string()),
+            Some("2026-10-01".to_string())
+        );
+        assert_eq!(
+            quarter_partition_end("iam_login_attempts_2026_q4").map(|d| d.to_string()),
+            Some("2027-01-01".to_string())
+        );
+        for other in [
+            "iam_login_attempts_default",
+            "iam_login_attempts_2026_q5",
+            "iam_login_attempts_x_q1",
+            "other_2026_q1",
+        ] {
+            assert_eq!(quarter_partition_end(other), None, "{other}");
+        }
+        assert_eq!(quote_ident("a\"b"), "\"a\"\"b\"");
+    }
+}

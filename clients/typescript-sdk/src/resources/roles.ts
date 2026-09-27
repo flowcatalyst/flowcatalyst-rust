@@ -13,13 +13,19 @@ import type {
 	GetRoleResponse,
 	GetRoleByCodeResponse,
 	CreateRoleData,
+	CreatedResponse,
 	UpdateRoleData,
 	GetRolesByApplicationResponse,
 	SyncRolesData,
 	SyncRolesResponse as SyncRolesResponseType,
 } from "../generated/types.gen.js";
 
-/** Pagination params (page/size). Mirrors the previous generated shape. */
+/**
+ * Pagination params (page/size).
+ *
+ * @deprecated The platform's `GET /api/roles` does not paginate; `list`
+ * ignores this argument.
+ */
 export type PaginationParams = {
 	page?: number;
 	size?: number;
@@ -32,6 +38,7 @@ export type CreateRoleRequest = CreateRoleData["body"];
 export type UpdateRoleRequest = UpdateRoleData["body"];
 export type RoleListByApplicationResponse = GetRolesByApplicationResponse;
 export type SyncRolesResponse = SyncRolesResponseType;
+export type CreateRoleResponse = CreatedResponse;
 
 /**
  * Roles resource for managing role-based access control.
@@ -82,10 +89,11 @@ export class RolesResource {
 	}
 
 	/**
-	 * Create a new role.
+	 * Create a new role. The platform answers `201 { id }`; call `get(id)`
+	 * for the full entity.
 	 */
-	create(data: CreateRoleRequest): ResultAsync<RoleDto, SdkError> {
-		return this.client.request<RoleDto>((httpClient, headers) =>
+	create(data: CreateRoleRequest): ResultAsync<CreateRoleResponse, SdkError> {
+		return this.client.request<CreateRoleResponse>((httpClient, headers) =>
 			sdk.createRole({
 				client: httpClient,
 				headers,
@@ -95,20 +103,23 @@ export class RolesResource {
 	}
 
 	/**
-	 * Update a role.
+	 * Update a role. The platform answers `204 No Content`; call
+	 * `get(roleName)` to read the result.
 	 */
 	update(
 		roleName: string,
 		data: UpdateRoleRequest,
-	): ResultAsync<RoleDto, SdkError> {
-		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.updateRole({
-				client: httpClient,
-				headers,
-				path: { id: roleName },
-				body: data,
-			}),
-		);
+	): ResultAsync<void, SdkError> {
+		return this.client
+			.request<unknown>((httpClient, headers) =>
+				sdk.updateRole({
+					client: httpClient,
+					headers,
+					path: { id: roleName },
+					body: data,
+				}),
+			)
+			.map((): void => undefined);
 	}
 
 	/**

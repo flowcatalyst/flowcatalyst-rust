@@ -15,7 +15,7 @@ For platform deployment (provisioning, secrets, HA) see [../operations/](../oper
 | Building a webhook receiver | [receiving-webhooks.md](receiving-webhooks.md) — request shape, HMAC, ack/nack |
 | Wiring events to webhooks | [subscriptions-and-pools.md](subscriptions-and-pools.md) — patterns, dispatch modes, pool sizing |
 | Doing scheduled / cron work | [scheduled-jobs.md](scheduled-jobs.md) — EVENT vs WEBHOOK modes |
-| Writing a function (Rust, TypeScript or JavaScript) | [functions.md](functions.md) — runtimes, the host API, `fc-dev fn` |
+| Writing a function (Rust, TypeScript or JavaScript) | [functions.md](functions.md) — runtimes, limits, fuel, database access, the host API, `fc-dev fn` |
 | Running an app with PostGIS / external Postgres | [fc-dev.md#recipe-app-with-postgis](fc-dev.md#recipe-app-with-postgis-or-any-other-extension-fc-dev-cant-bundle) — `fc-dev outbox poll` sidecar |
 | Diagnosing problems | [debugging.md](debugging.md) — by symptom |
 

@@ -85,8 +85,8 @@ pub async fn redeem_portal_code(
     synth.updated_at = ident.updated_at;
     synth.all_applications = false;
 
-    // Client-bound, like every interactive identity token.
-    let access_token = match auth_service.generate_identity_access_token(&synth, Some(client_id)) {
+    // Client-bound, like every interactive identity token; no tier, as Go's.
+    let access_token = match auth_service.generate_portal_access_token(&synth, Some(client_id)) {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "portal access token mint failed");
