@@ -391,3 +391,48 @@ The bar comes from the language assessment.
 - In the spike's component call path, the handler runs in its own task and the caller awaits the outparam, as
   `wasmtime serve` does. Joining the handler and the response in one task worked for the Rust guest but hung
   StarlingMonkey.
+
+---
+
+## 9. Fuel metering overhead (owner decision #13, 2026-09-27)
+
+Every invocation on the host is metered in wasmtime fuel (`Config::consume_fuel`), and its peak linear memory
+recorded through the store's `ResourceLimiter`; `limits.maxFuel` stops a guest past its budget
+(`500 FUNCTION_FUEL_EXHAUSTED`). Epoch interruption still enforces the wall-clock deadline and gives the
+1 ms time slices; fuel is only counted. A running guest also refuels every 10 M fuel
+(`fuel_async_yield_interval`), which is where compiled code writes its register-held count back, so a
+guest stopped at its deadline mid-loop still reports what it spent (to within 10 M).
+
+**Method.** `crates/fc-fnhost-core/tests/wasm_fuel.rs`, `measure_fuel_metering_overhead` (ignored; run in
+release, `cargo test --release -p fc-fnhost-core --test wasm_fuel -- --ignored --nocapture --test-threads 1`).
+Two complete hosts (artifact cache, reconciler, `WasmLoader`, listener) run side by side, one engine with
+`consume_fuel` off and one with it on, and the calls **alternate** between them through the real
+listener (loopback HTTP included), so background load hits both alike. Same machine as §1, but **not**
+idle: other build jobs held the load average at 200+ throughout, so compare the two columns of a row,
+not rows with §2. Three runs; the table is the third, the ranges span all three.
+
+| Workload (guest) | calls | off p50 / p99 | on p50 / p99 | p50 overhead (3 runs) |
+|---|---:|---:|---:|---:|
+| `echo /x` — a trivial handler: request fields to JSON | 4,000 | 0.113 / 0.195 ms | 0.114 / 0.205 ms | +0.3 … +1.8% |
+| `spin ?n=20000000` — a tight counting loop (the worst case: one fuel check per iteration) | 150 | 9.08 / 9.36 ms | 10.90 / 12.03 ms | **+19.3 … +20.0%** |
+| `spin ?hash=200` — FNV over a 64 KiB buffer, 200× (loads, stores, arithmetic) | 150 | 14.19 / 14.51 ms | 14.19 / 14.75 ms | −0.1 … +0.2% |
+| `alloc ?mb=32` — allocate and touch 32 MiB | 600 | 2.49 / 3.14 ms | 2.49 / 3.29 ms | +0.1 … +0.3% |
+
+| Static cost | off | on |
+|---|---:|---:|
+| `.cwasm` of the `spin` guest | 397,080 B | 446,336 B (+12.4%) |
+| `.cwasm` of the `echo` guest | 433,416 B | 482,680 B (+11.4%) |
+| first call (lazy: compile + instantiate + call) | 22–72 ms | 25–58 ms (within noise) |
+
+**Reading it.**
+
+- Metering is **not material** for real handlers: within noise (≤ 2%) for request/JSON work, memory
+  fills and mixed arithmetic. Only a loop that does almost nothing per iteration pays visibly (~20%),
+  because the per-iteration fuel check is then a large share of the iteration. So metering stays **on
+  unconditionally**, as the plain instruction count; no coarser accounting was needed.
+- Density: fuel adds ~12% to compiled code, i.e. about +50 KB of mapped `.cwasm` per function. The
+  anonymous footprint (§2.1's 146 KB per function from `.cwasm`) is unchanged; the RSS-with-mapped-code
+  figure moves from ≈573 KB to ≈620 KB per function (≈1,690 instead of ≈1,790 functions per GiB when
+  every code page stays resident).
+- `EngineSettings::consume_fuel` exists only for this measurement. Metered and unmetered code differ, so
+  it is part of the `.cwasm` fingerprint: switching it never loads a stale file.

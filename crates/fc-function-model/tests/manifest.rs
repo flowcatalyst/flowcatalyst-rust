@@ -188,6 +188,95 @@ fn wasm_manifest_resolves_wasm_memory_mb() {
     assert_eq!(Manifest::read_stored(&m.to_json()).unwrap(), m);
 }
 
+// ── limits.maxFuel (owner decision #13, beyond Java) ────────────────────
+
+const WASM_WITH_FUEL: &str = r#"{"runtime":"wasm","entrypoint":"handle","limits":{"maxFuel":FUEL},
+    "endpoints":[{"path":"/a","auth":"none"}]}"#;
+
+#[test]
+fn max_fuel_is_optional_and_round_trips_through_the_stored_form() {
+    let absent = parse(
+        &WASM_WITH_FUEL.replace(r#""maxFuel":FUEL"#, r#""wasmMemoryMb":8"#),
+        Runtime::Wasm,
+        &unrestricted(),
+    )
+    .unwrap();
+    assert_eq!(absent.limits.max_fuel, None, "absent: metered, unlimited");
+    assert!(!absent.to_json().to_string().contains("maxFuel"));
+
+    // Past a Java int: fuel is counted in guest instructions.
+    let m = parse(
+        &WASM_WITH_FUEL.replace("FUEL", "50000000000"),
+        Runtime::Wasm,
+        &unrestricted(),
+    )
+    .unwrap();
+    assert_eq!(m.limits.max_fuel, Some(50_000_000_000));
+    assert!(m.to_json().to_string().contains(r#""maxFuel":50000000000"#));
+    assert_eq!(Manifest::read_stored(&m.to_json()).unwrap(), m);
+
+    let component = parse(
+        r#"{"runtime":"component","limits":{"maxFuel":7},"endpoints":[{"path":"/a","auth":"none"}]}"#,
+        Runtime::Component,
+        &unrestricted(),
+    )
+    .unwrap();
+    assert_eq!(component.limits.max_fuel, Some(7));
+}
+
+#[test]
+fn max_fuel_must_be_a_positive_integer() {
+    for bad in [
+        "0",
+        "-1",
+        "1.5",
+        "\"10\"",
+        "true",
+        "1e3",
+        "99999999999999999999",
+    ] {
+        let (code, message) = parse(
+            &WASM_WITH_FUEL.replace("FUEL", bad),
+            Runtime::Wasm,
+            &unrestricted(),
+        )
+        .unwrap_err();
+        assert_eq!(code, "LIMIT_INVALID", "{bad}");
+        assert_eq!(message, "maxFuel must be a positive integer", "{bad}");
+    }
+    let rejected = Manifest::check(
+        Some(&tree(&WASM_WITH_FUEL.replace("FUEL", "0"))),
+        Runtime::Wasm,
+        &defaults(),
+        &unrestricted(),
+    )
+    .unwrap_err();
+    assert_eq!(rejected.problems()[0].pointer, "/limits/maxFuel");
+}
+
+#[test]
+fn max_fuel_is_not_applicable_to_a_jvm_function() {
+    let (code, message) = reject_jvm(
+        r#"{"runtime":"jvm","entrypoint":"x","limits":{"maxFuel":1000},"endpoints":[{"path":"/a","auth":"none"}]}"#,
+    );
+    assert_eq!(code, "LIMIT_NOT_APPLICABLE");
+    assert_eq!(message, "maxFuel is not applicable to a jvm function");
+}
+
+#[test]
+fn a_stored_max_fuel_that_does_not_read_is_dropped() {
+    for bad in ["0", "-5", "\"x\"", "1.5"] {
+        let m = stored(&format!(
+            r#"{{"runtime":"wasm","entrypoint":"handle","limits":{{"maxFuel":{bad}}}}}"#
+        ));
+        assert_eq!(m.limits.max_fuel, None, "{bad}");
+    }
+    let jvm = stored(r#"{"runtime":"jvm","entrypoint":"a.B","limits":{"maxFuel":10}}"#);
+    assert_eq!(jvm.limits.max_fuel, None);
+    let wasm = stored(r#"{"runtime":"wasm","entrypoint":"h","limits":{"maxFuel":10}}"#);
+    assert_eq!(wasm.limits.max_fuel, Some(10));
+}
+
 // ── structural rules ────────────────────────────────────────────────────
 
 #[test]

@@ -32,6 +32,31 @@ const DURATION_BUCKETS: [f64; 13] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
 ];
 
+/// Fuel per invocation: 10k (a trivial handler is tens of thousands) to
+/// 10G (seconds of pure compute).
+const FUEL_BUCKETS: [f64; 11] = [1e4, 3e4, 1e5, 3e5, 1e6, 3e6, 1e7, 3e7, 1e8, 1e9, 1e10];
+
+/// Peak linear memory per invocation: 256 KiB … 4 GiB (wasm32's ceiling).
+const MEMORY_BUCKETS: [f64; 13] = [
+    262_144.0,
+    1_048_576.0,
+    2_097_152.0,
+    4_194_304.0,
+    8_388_608.0,
+    16_777_216.0,
+    33_554_432.0,
+    67_108_864.0,
+    134_217_728.0,
+    268_435_456.0,
+    536_870_912.0,
+    1_073_741_824.0,
+    4_294_967_296.0,
+];
+
+/// The `client` label of a platform-owned function (the
+/// `fn_client_policies` key the platform uses for itself).
+pub const PLATFORM_CLIENT_LABEL: &str = fc_function_model::FunctionOwner::PLATFORM_KEY;
+
 pub const CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 type Labels = Vec<(String, String)>;
@@ -65,11 +90,25 @@ fn new_histogram() -> Histogram {
     Histogram::new(DURATION_BUCKETS)
 }
 
+fn new_fuel_histogram() -> Histogram {
+    Histogram::new(FUEL_BUCKETS)
+}
+
+fn new_memory_histogram() -> Histogram {
+    Histogram::new(MEMORY_BUCKETS)
+}
+
 pub struct FnMetrics {
     registry: Registry,
     invocations: Family<Labels, Counter>,
     duration: Family<Labels, Histogram, fn() -> Histogram>,
     active: Family<Labels, Gauge>,
+    fuel_total: Family<Labels, Counter>,
+    fuel: Family<Labels, Histogram, fn() -> Histogram>,
+    peak_memory: Family<Labels, Histogram, fn() -> Histogram>,
+    /// The `(address, client)` label sets the consumption series use, per
+    /// address, for the sweep.
+    consumption_labels: Mutex<HashMap<String, HashSet<Labels>>>,
     load_errors: Family<Labels, Counter>,
     reconcile_total: Family<Labels, Counter>,
     last_reconcile_success: Gauge<f64, AtomicU64>,
@@ -173,6 +212,28 @@ impl FnMetrics {
         );
         let active = Family::<Labels, Gauge>::default();
         registry.register("fc_fn_active", "Invocations in flight", active.clone());
+        let fuel_total = Family::<Labels, Counter>::default();
+        registry.register(
+            "fc_fn_fuel",
+            "wasmtime fuel spent by invocations, by function and client",
+            fuel_total.clone(),
+        );
+        let fuel = Family::<Labels, Histogram, fn() -> Histogram>::new_with_constructor(
+            new_fuel_histogram,
+        );
+        registry.register(
+            "fc_fn_invocation_fuel",
+            "wasmtime fuel spent per invocation, by function and client",
+            fuel.clone(),
+        );
+        let peak_memory = Family::<Labels, Histogram, fn() -> Histogram>::new_with_constructor(
+            new_memory_histogram,
+        );
+        registry.register(
+            "fc_fn_invocation_peak_memory_bytes",
+            "Peak guest linear memory per invocation, by function and client",
+            peak_memory.clone(),
+        );
         let load_errors = Family::<Labels, Counter>::default();
         registry.register(
             "fc_fn_load_errors",
@@ -203,6 +264,10 @@ impl FnMetrics {
             invocations,
             duration,
             active,
+            fuel_total,
+            fuel,
+            peak_memory,
+            consumption_labels: Mutex::new(HashMap::new()),
             load_errors,
             reconcile_total,
             last_reconcile_success,
@@ -283,6 +348,38 @@ impl FnMetrics {
             .observe(elapsed.as_secs_f64());
     }
 
+    /// What one invocation consumed (owner decision #13): fuel as a
+    /// running total and a per-invocation histogram, and the peak linear
+    /// memory, all labelled `address` and `client` (the owning client's id,
+    /// or `PLATFORM`). Per client: `sum by (client)`.
+    pub fn consumed(
+        &self,
+        address: &FunctionAddress,
+        client_id: Option<&str>,
+        consumption: crate::invoke::Consumption,
+    ) {
+        if consumption == crate::invoke::Consumption::default() {
+            return;
+        }
+        let rendered = address.render();
+        let set = labels(&[
+            ("address", &rendered),
+            ("client", client_id.unwrap_or(PLATFORM_CLIENT_LABEL)),
+        ]);
+        if let Some(fuel) = consumption.fuel {
+            self.fuel_total.get_or_create(&set).inc_by(fuel);
+            self.fuel.get_or_create(&set).observe(fuel as f64);
+        }
+        if let Some(bytes) = consumption.peak_memory_bytes {
+            self.peak_memory.get_or_create(&set).observe(bytes as f64);
+        }
+        self.consumption_labels
+            .lock()
+            .entry(rendered)
+            .or_default()
+            .insert(set);
+    }
+
     // ── cardinality: an address leaving desired state drops its series ──
 
     pub fn sweep_dead_addresses(&self, currently_desired: &HashSet<FunctionAddress>) {
@@ -296,6 +393,13 @@ impl FnMetrics {
             if let Some(sets) = self.invocation_labels.lock().remove(&rendered) {
                 for set in sets {
                     self.invocations.remove(&set);
+                }
+            }
+            if let Some(sets) = self.consumption_labels.lock().remove(&rendered) {
+                for set in sets {
+                    self.fuel_total.remove(&set);
+                    self.fuel.remove(&set);
+                    self.peak_memory.remove(&set);
                 }
             }
             if let Some(permits) = self.permits.read().clone() {
@@ -364,6 +468,33 @@ mod tests {
     }
 
     #[test]
+    fn consumption_is_exported_per_function_and_client() {
+        let m = metrics();
+        let a = FunctionAddress::parse("a.b.c").unwrap();
+        let used = |fuel, memory| crate::invoke::Consumption {
+            fuel: Some(fuel),
+            peak_memory_bytes: Some(memory),
+        };
+        m.consumed(&a, Some("clt_1"), used(40_000, 2 << 20));
+        m.consumed(&a, Some("clt_1"), used(60_000, 1 << 20));
+        m.consumed(&a, None, used(5, 1));
+        // A runtime that meters nothing adds no series.
+        m.consumed(&a, Some("clt_2"), crate::invoke::Consumption::default());
+        let text = m.encode().unwrap();
+        for series in [
+            r#"fc_fn_fuel_total{address="a.b.c",client="clt_1"} 100000"#,
+            r#"fc_fn_fuel_total{address="a.b.c",client="PLATFORM"} 5"#,
+            r#"fc_fn_invocation_fuel_count{address="a.b.c",client="clt_1"} 2"#,
+            r#"fc_fn_invocation_fuel_sum{address="a.b.c",client="clt_1"} 100000.0"#,
+            r#"fc_fn_invocation_peak_memory_bytes_count{address="a.b.c",client="clt_1"} 2"#,
+            r#"fc_fn_invocation_peak_memory_bytes_sum{address="a.b.c",client="clt_1"} 3145728.0"#,
+        ] {
+            assert!(text.contains(series), "{series} missing from:\n{text}");
+        }
+        assert!(!text.contains("clt_2"), "{text}");
+    }
+
+    #[test]
     fn series_for_an_address_leaving_desired_state_are_swept() {
         let m = metrics();
         let gone = FunctionAddress::parse("a.b.gone").unwrap();
@@ -381,6 +512,14 @@ mod tests {
             );
         }
         m.refused("not_found", None, ListenerEntry::Public);
+        m.consumed(
+            &gone,
+            Some("clt_1"),
+            crate::invoke::Consumption {
+                fuel: Some(10),
+                peak_memory_bytes: Some(1 << 20),
+            },
+        );
         assert!(m.encode().unwrap().contains("a.b.gone"));
         m.sweep_dead_addresses(&[kept.clone()].into());
         let text = m.encode().unwrap();

@@ -390,3 +390,129 @@ async fn read_all(stream: &InputStream) -> Result<Vec<u8>, String> {
         }
     }
 }
+
+// ── flowcatalyst:function/db ─────────────────────────────────────────────
+
+/// Opens the manifest's `db[]` entry `name`. Reached only from
+/// [`Context::db`](crate::Context::db), so only a function that opens a
+/// database imports `flowcatalyst:function/db` (0.1.2).
+#[cfg(all(feature = "flowcatalyst", not(test)))]
+pub(crate) fn open_db(name: &str) -> Result<Box<dyn crate::db::DbBackend>, crate::db::DbError> {
+    fc::db::open(name)
+        .map(|database| Box::new(WasiDb(database)) as Box<dyn crate::db::DbBackend>)
+        .map_err(db_error)
+}
+
+/// The crate's own tests run in the wasmtime CLI (`cargo test --target
+/// wasm32-wasip2`), which provides no `flowcatalyst:function` imports: the
+/// test build must not import `db`, and uses `TestHost::db` instead.
+#[cfg(all(feature = "flowcatalyst", test))]
+pub(crate) fn open_db(_: &str) -> Result<Box<dyn crate::db::DbBackend>, crate::db::DbError> {
+    Err(crate::db::DbError::new(
+        crate::db::DbErrorCode::Error,
+        "no FlowCatalyst host in the crate's own tests: use TestHost::db",
+    ))
+}
+
+#[cfg(feature = "flowcatalyst")]
+#[cfg_attr(test, allow(dead_code))]
+struct WasiDb(fc::db::Database);
+
+#[cfg(feature = "flowcatalyst")]
+#[cfg_attr(test, allow(dead_code))]
+struct WasiTx(fc::db::Transaction);
+
+#[cfg(feature = "flowcatalyst")]
+#[cfg_attr(test, allow(dead_code))]
+fn db_error(e: fc::db::Error) -> crate::db::DbError {
+    use crate::db::DbErrorCode as C;
+    use fc::db::ErrorCode as W;
+    crate::db::DbError::new(
+        match e.code {
+            W::NotDeclared => C::NotDeclared,
+            W::BadRequest => C::BadRequest,
+            W::TxUnknown => C::TxUnknown,
+            W::Constraint => C::Constraint,
+            W::Syntax => C::Syntax,
+            W::Timeout => C::Timeout,
+            W::Unavailable => C::Unavailable,
+            W::Error => C::Error,
+        },
+        e.message,
+    )
+}
+
+#[cfg(feature = "flowcatalyst")]
+#[cfg_attr(test, allow(dead_code))]
+fn db_params(params: &[crate::db::Param]) -> Vec<fc::db::Param> {
+    use crate::db::Param as P;
+    params
+        .iter()
+        .map(|p| match p {
+            P::Null => fc::db::Param::Null,
+            P::Bool(b) => fc::db::Param::Boolean(*b),
+            P::Int(i) => fc::db::Param::Integer(*i),
+            P::Float(f) => fc::db::Param::Float(*f),
+            P::Decimal(d) => fc::db::Param::Decimal(d.clone()),
+            P::Text(t) => fc::db::Param::Text(t.clone()),
+        })
+        .collect()
+}
+
+#[cfg(feature = "flowcatalyst")]
+#[cfg_attr(test, allow(dead_code))]
+fn db_rows(rows: fc::db::Rows) -> crate::db::Rows {
+    crate::db::Rows::new(rows.json, rows.count, rows.truncated)
+}
+
+#[cfg(feature = "flowcatalyst")]
+impl crate::db::DbBackend for WasiDb {
+    fn query(
+        &self,
+        sql: &str,
+        params: &[crate::db::Param],
+    ) -> Result<crate::db::Rows, crate::db::DbError> {
+        self.0
+            .query(sql, &db_params(params))
+            .map(db_rows)
+            .map_err(db_error)
+    }
+
+    fn execute(&self, sql: &str, params: &[crate::db::Param]) -> Result<u64, crate::db::DbError> {
+        self.0.execute(sql, &db_params(params)).map_err(db_error)
+    }
+
+    fn begin(&self) -> Result<Box<dyn crate::db::TxBackend>, crate::db::DbError> {
+        self.0
+            .begin()
+            .map(|tx| Box::new(WasiTx(tx)) as Box<dyn crate::db::TxBackend>)
+            .map_err(db_error)
+    }
+}
+
+/// Dropping the resource (the `WasiTx` itself) rolls the transaction back.
+#[cfg(feature = "flowcatalyst")]
+impl crate::db::TxBackend for WasiTx {
+    fn query(
+        &self,
+        sql: &str,
+        params: &[crate::db::Param],
+    ) -> Result<crate::db::Rows, crate::db::DbError> {
+        self.0
+            .query(sql, &db_params(params))
+            .map(db_rows)
+            .map_err(db_error)
+    }
+
+    fn execute(&self, sql: &str, params: &[crate::db::Param]) -> Result<u64, crate::db::DbError> {
+        self.0.execute(sql, &db_params(params)).map_err(db_error)
+    }
+
+    fn finish(self: Box<Self>, commit: bool) -> Result<(), crate::db::DbError> {
+        if commit {
+            fc::db::Transaction::commit(self.0).map_err(db_error)
+        } else {
+            fc::db::Transaction::rollback(self.0).map_err(db_error)
+        }
+    }
+}

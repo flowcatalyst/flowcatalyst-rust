@@ -80,6 +80,22 @@ pub struct Limits {
     pub max_duration_ms: i32,
     pub max_concurrency: i32,
     pub wasm_memory_mb: Option<i32>,
+    /// `maxFuel` (a Rust extension, owner decision #13): the most wasmtime
+    /// fuel one invocation may consume; past it the invocation fails
+    /// `FUNCTION_FUEL_EXHAUSTED`. `None` when absent: the invocation is
+    /// metered, never stopped for fuel. Only a `wasm`/`component` function
+    /// may set it (`LIMIT_NOT_APPLICABLE` otherwise). No default and no
+    /// client ceiling: fuel counts guest instructions, a unit only the
+    /// function's author can size.
+    pub max_fuel: Option<i64>,
+}
+
+impl Limits {
+    /// Whether `runtime` meters fuel, so `maxFuel` applies to it: the
+    /// WASI component runtimes (wasmtime fuel).
+    pub fn takes_fuel(runtime: Runtime) -> bool {
+        matches!(runtime.wire_value(), "wasm" | "component")
+    }
 }
 
 /// One entry of the function's HTTP surface.
@@ -271,7 +287,7 @@ pub const TOP_KEYS: &[&str] = &[
     "httpAllow",
 ];
 #[doc(hidden)]
-pub const LIMITS_KEYS: &[&str] = &["maxDurationMs", "maxConcurrency", "wasmMemoryMb"];
+pub const LIMITS_KEYS: &[&str] = &["maxDurationMs", "maxConcurrency", "wasmMemoryMb", "maxFuel"];
 #[doc(hidden)]
 pub const ENDPOINT_KEYS: &[&str] = &[
     "path",
@@ -697,12 +713,41 @@ fn parse_limits(
         }
     }
 
+    let mut max_fuel = None;
+    let mut fuel_ok = true;
+    if let (Some(runtime), Some(fuel)) = (runtime, present(node.get("maxFuel"))) {
+        if !Limits::takes_fuel(runtime) {
+            c.add(
+                "LIMIT_NOT_APPLICABLE",
+                format!(
+                    "maxFuel is not applicable to a {} function",
+                    runtime.wire_value()
+                ),
+                "/limits/maxFuel",
+            );
+            fuel_ok = false;
+        } else {
+            match fuel.fits_long().filter(|v| *v > 0) {
+                Some(value) => max_fuel = Some(value),
+                None => {
+                    c.add(
+                        "LIMIT_INVALID",
+                        "maxFuel must be a positive integer",
+                        "/limits/maxFuel",
+                    );
+                    fuel_ok = false;
+                }
+            }
+        }
+    }
+
     let limits = Limits {
         max_duration_ms: max_duration_ms?,
         max_concurrency: max_concurrency?,
         wasm_memory_mb,
+        max_fuel,
     };
-    wasm_ok.then_some(limits)
+    (wasm_ok && fuel_ok).then_some(limits)
 }
 
 /// Absent: `min(default, ceiling)`. Present: a positive `int`
@@ -1896,6 +1941,15 @@ fn read_limits(root: &JsonNode, runtime: Runtime) -> Limits {
         wasm_memory_mb: runtime.takes_wasm_memory().then(|| {
             read_positive_int(node, "wasmMemoryMb", FunctionLimits::DEFAULT_WASM_MEMORY_MB)
         }),
+        // A stored value that no longer reads is dropped: the function runs
+        // metered but unlimited, as it would with no `maxFuel`.
+        max_fuel: if Limits::takes_fuel(runtime) {
+            node.and_then(|n| n.get("maxFuel"))
+                .and_then(JsonNode::fits_long)
+                .filter(|v| *v > 0)
+        } else {
+            None
+        },
     }
 }
 
@@ -2145,6 +2199,7 @@ impl serde::Serialize for Manifest {
                 max_duration_ms: m.limits.max_duration_ms,
                 max_concurrency: m.limits.max_concurrency,
                 wasm_memory_mb: m.limits.wasm_memory_mb,
+                max_fuel: m.limits.max_fuel,
             },
             endpoints: m
                 .endpoints
@@ -2237,6 +2292,8 @@ struct LimitsWire {
     max_concurrency: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     wasm_memory_mb: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_fuel: Option<i64>,
 }
 
 #[derive(serde::Serialize)]

@@ -43,6 +43,13 @@ hmac = { workspace = true }
 subtle = { workspace = true }
 
 base64 = "0.22"
+urlencoding = "2.1"
+# Function database access (owner decision #7): one shared sqlx pool per
+# connection a function's manifest declares.
+sqlx = { workspace = true }
+# `aws-sm://` references for a function's database secret, behind the
+# `aws-secrets` feature (on in fc-server).
+aws-sdk-secretsmanager = { workspace = true, optional = true }
 # ECR registry auth (owner decision #14), behind the `ecr` feature: pulls in
 # the AWS SDK only when it is enabled (on in fc-server, whose function-host
 # role is the deployed host).
@@ -75,8 +82,16 @@ wasmparser = { version = "0.258", default-features = false, features = ["std", "
 # to the plain anonymous/Bearer/Basic flow, which fails Unauthorized unless
 # `RegistryCredentials` carries a fixed credential for that host.
 ecr = ["dep:aws-sdk-ecr", "dep:aws-config"]
+# `aws-sm://<secret id or ARN>` as a function database's `db[].secretRef`
+# value: read from AWS Secrets Manager on the host's own role, and re-read
+# every FC_FN_DB_SECRET_REFRESH_SECONDS so a rotated password reaches the
+# pool. Off, such a value is an unsupported DSN.
+aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
 
 [dev-dependencies]
+# The database tests (`tests/db_*.rs`, ignored: they need Docker).
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
 # Test-only: hand-written components (WAT) for the load-refusal tests.
 wat = "1"
 tempfile = { workspace = true }

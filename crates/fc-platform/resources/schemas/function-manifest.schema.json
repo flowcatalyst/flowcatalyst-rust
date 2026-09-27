@@ -47,6 +47,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "Wasm linear memory, in megabytes. Only applicable when runtime is \"wasm\" — present on a jvm function is LIMIT_NOT_APPLICABLE. Absent on a wasm function ⇒ the platform default clamped to the client's ceiling."
+        },
+        "maxFuel": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The most wasmtime fuel (roughly, guest instructions) one invocation may consume; past it the invocation fails with 500 FUNCTION_FUEL_EXHAUSTED. Only applicable when runtime is \"wasm\" or \"component\" — present on a jvm function is LIMIT_NOT_APPLICABLE. Absent ⇒ every invocation is metered and none is stopped for fuel. A Rust-host extension: Java's parser refuses it."
         }
       },
       "additionalProperties": false
@@ -256,7 +261,7 @@
       "then": {
         "properties": {
           "limits": {
-            "properties": { "wasmMemoryMb": false }
+            "properties": { "wasmMemoryMb": false, "maxFuel": false }
           }
         }
       }

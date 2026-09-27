@@ -24,10 +24,16 @@ wasmtime::component::bindgen!({
     imports: {
         "flowcatalyst:function/events.emit": async,
         "flowcatalyst:function/events.emit-event": async,
+        "flowcatalyst:function/db": async,
+    },
+    with: {
+        "flowcatalyst:function/db.database": crate::db::Database,
+        "flowcatalyst:function/db.transaction": crate::db::Transaction,
     },
 });
 
-use flowcatalyst::function::{config, events, invocation, log, secrets};
+use flowcatalyst::function::{config, db, events, invocation, log, secrets};
+use wasmtime::component::Resource;
 
 /// The host side of every import a function can have: WASI 0.2 (the proxy
 /// and CLI sets), `wasi:http`, and `flowcatalyst:function`. A component that
@@ -66,7 +72,78 @@ pub struct FunctionShared {
     pub memory_limit: usize,
     /// The response body's cap, in bytes: `limits.wasmMemoryMb`.
     pub response_cap: usize,
+    /// `limits.maxFuel`: the fuel one invocation may spend (`None`:
+    /// metered, never stopped for fuel).
+    pub max_fuel: Option<u64>,
     pub emitter: Emitter,
+}
+
+/// The store's [`ResourceLimiter`](wasmtime::ResourceLimiter): the memory
+/// cap ([`StoreLimits`]), plus the invocation's linear-memory high-water
+/// mark for the usage meter (owner decision #13). Every memory's size is
+/// summed (a Rust component has one); wasmtime reports a memory's initial
+/// size here too, so an instance that never grows still reports it.
+pub struct MeteredLimits {
+    pub limits: StoreLimits,
+    pub usage: crate::invoke::UsageMeter,
+    in_use: u64,
+}
+
+impl MeteredLimits {
+    pub fn new(limits: StoreLimits, usage: crate::invoke::UsageMeter) -> Self {
+        Self {
+            limits,
+            usage,
+            in_use: 0,
+        }
+    }
+}
+
+impl wasmtime::ResourceLimiter for MeteredLimits {
+    fn memory_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let granted = self.limits.memory_growing(current, desired, maximum)?;
+        if granted {
+            self.in_use = self
+                .in_use
+                .saturating_add(desired.saturating_sub(current) as u64);
+            self.usage.observe_memory(self.in_use);
+        }
+        Ok(granted)
+    }
+
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.limits.memory_grow_failed(error)
+    }
+
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        self.limits.table_growing(current, desired, maximum)
+    }
+
+    fn table_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        self.limits.table_grow_failed(error)
+    }
+
+    fn instances(&self) -> usize {
+        self.limits.instances()
+    }
+
+    fn tables(&self) -> usize {
+        self.limits.tables()
+    }
+
+    fn memories(&self) -> usize {
+        self.limits.memories()
+    }
 }
 
 /// Why the host did not publish an event: its own refusal before the
@@ -176,10 +253,12 @@ pub struct GuestState {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub table: ResourceTable,
-    pub limits: StoreLimits,
+    pub limits: MeteredLimits,
     pub hooks: EgressHooks,
     pub function: Arc<FunctionShared>,
     pub invocation: InvocationData,
+    /// The invocation's databases (`flowcatalyst:function/db`).
+    pub db: crate::db::DbSession,
 }
 
 impl WasiView for GuestState {
@@ -283,5 +362,160 @@ impl events::Host for GuestState {
 impl invocation::Host for GuestState {
     fn context(&mut self) -> invocation::InvocationContext {
         self.invocation.context.clone()
+    }
+}
+
+// ── flowcatalyst:function/db (0.1.2): a thin layer over crate::db ────────
+
+fn db_error(failure: crate::db::DbFailure) -> db::Error {
+    use crate::db::DbErrorCode as C;
+    db::Error {
+        code: match failure.code {
+            C::NotDeclared => db::ErrorCode::NotDeclared,
+            C::BadRequest => db::ErrorCode::BadRequest,
+            C::TxUnknown => db::ErrorCode::TxUnknown,
+            C::Constraint => db::ErrorCode::Constraint,
+            C::Syntax => db::ErrorCode::Syntax,
+            C::Timeout => db::ErrorCode::Timeout,
+            C::Unavailable => db::ErrorCode::Unavailable,
+            C::Error => db::ErrorCode::Error,
+        },
+        message: failure.message,
+    }
+}
+
+/// A handle the host could not store or find (the resource table is
+/// full, or the handle is gone): reported as the guest's error, not a trap.
+fn table_error(e: wasmtime::component::ResourceTableError) -> db::Error {
+    db::Error {
+        code: db::ErrorCode::Error,
+        message: format!("the database handle is not available: {e}"),
+    }
+}
+
+fn db_params(params: Vec<db::Param>) -> Vec<crate::db::Param> {
+    params
+        .into_iter()
+        .map(|p| match p {
+            db::Param::Null => crate::db::Param::Null,
+            db::Param::Boolean(b) => crate::db::Param::Boolean(b),
+            db::Param::Integer(i) => crate::db::Param::Integer(i),
+            db::Param::Float(f) => crate::db::Param::Float(f),
+            db::Param::Decimal(d) => crate::db::Param::Decimal(d),
+            db::Param::Text(t) => crate::db::Param::Text(t),
+        })
+        .collect()
+}
+
+fn db_rows(rows: crate::db::RowsAnswer) -> db::Rows {
+    db::Rows {
+        json: rows.json,
+        count: rows.count,
+        truncated: rows.truncated,
+    }
+}
+
+impl db::Host for GuestState {
+    async fn open(&mut self, name: String) -> Result<Resource<crate::db::Database>, db::Error> {
+        let database = self.db.open(&name).map_err(db_error)?;
+        self.table.push(database).map_err(table_error)
+    }
+}
+
+impl db::HostDatabase for GuestState {
+    async fn query(
+        &mut self,
+        database: Resource<crate::db::Database>,
+        sql: String,
+        params: Vec<db::Param>,
+    ) -> Result<db::Rows, db::Error> {
+        let database = self.table.get(&database).map_err(table_error)?;
+        database
+            .query(&sql, &db_params(params))
+            .await
+            .map(db_rows)
+            .map_err(db_error)
+    }
+
+    async fn execute(
+        &mut self,
+        database: Resource<crate::db::Database>,
+        sql: String,
+        params: Vec<db::Param>,
+    ) -> Result<u64, db::Error> {
+        let database = self.table.get(&database).map_err(table_error)?;
+        database
+            .execute(&sql, &db_params(params))
+            .await
+            .map_err(db_error)
+    }
+
+    async fn begin(
+        &mut self,
+        database: Resource<crate::db::Database>,
+    ) -> Result<Resource<crate::db::Transaction>, db::Error> {
+        let database = self.table.get(&database).map_err(table_error)?;
+        let transaction = database.begin().await.map_err(db_error)?;
+        self.table.push(transaction).map_err(table_error)
+    }
+
+    async fn drop(&mut self, database: Resource<crate::db::Database>) -> wasmtime::Result<()> {
+        self.table.delete(database)?;
+        Ok(())
+    }
+}
+
+impl db::HostTransaction for GuestState {
+    async fn query(
+        &mut self,
+        transaction: Resource<crate::db::Transaction>,
+        sql: String,
+        params: Vec<db::Param>,
+    ) -> Result<db::Rows, db::Error> {
+        let transaction = self.table.get_mut(&transaction).map_err(table_error)?;
+        transaction
+            .query(&sql, &db_params(params))
+            .await
+            .map(db_rows)
+            .map_err(db_error)
+    }
+
+    async fn execute(
+        &mut self,
+        transaction: Resource<crate::db::Transaction>,
+        sql: String,
+        params: Vec<db::Param>,
+    ) -> Result<u64, db::Error> {
+        let transaction = self.table.get_mut(&transaction).map_err(table_error)?;
+        transaction
+            .execute(&sql, &db_params(params))
+            .await
+            .map_err(db_error)
+    }
+
+    async fn commit(
+        &mut self,
+        transaction: Resource<crate::db::Transaction>,
+    ) -> Result<(), db::Error> {
+        let transaction = self.table.delete(transaction).map_err(table_error)?;
+        transaction.commit().await.map_err(db_error)
+    }
+
+    async fn rollback(
+        &mut self,
+        transaction: Resource<crate::db::Transaction>,
+    ) -> Result<(), db::Error> {
+        let transaction = self.table.delete(transaction).map_err(table_error)?;
+        transaction.rollback().await.map_err(db_error)
+    }
+
+    /// Dropping an open transaction rolls it back (its connection goes back
+    /// to the pool, whose reset rolls back).
+    async fn drop(
+        &mut self,
+        transaction: Resource<crate::db::Transaction>,
+    ) -> wasmtime::Result<()> {
+        self.table.delete(transaction)?;
+        Ok(())
     }
 }

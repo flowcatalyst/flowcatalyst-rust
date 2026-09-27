@@ -76,7 +76,8 @@ async fn an_import_the_host_does_not_provide_is_refused() {
         r#"(import "evil:thing/iface@1.0.0" (instance))"#,
         r#"(import "wasi:keyvalue/store@0.2.0" (instance))"#,
         r#"(import "wasi:http/types@0.3.0" (instance))"#,
-        r#"(import "flowcatalyst:function/db@0.1.0" (instance))"#,
+        r#"(import "flowcatalyst:function/kv@0.1.2" (instance))"#,
+        r#"(import "flowcatalyst:function/db@0.2.0" (instance))"#,
         r#"(import "bare-function" (func))"#,
     ] {
         let (state, _) = load(

@@ -245,6 +245,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdk_db"
+version = "0.0.0"
+dependencies = [
+ "fc-function-pdk",
+ "serde_json",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
