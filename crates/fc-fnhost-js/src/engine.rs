@@ -30,12 +30,38 @@ use tokio::sync::mpsc;
 type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 
 /// Starts V8, once per process, with deno_core's own (non-snapshotting)
-/// flags, and builds the [`base_snapshot`]. (WebAssembly is removed from a
-/// function's globals by the bootstrap, not by a flag.)
-pub fn init_v8() -> Result<&'static [u8], String> {
+/// flags and this crate's platform ([`crate::platform`]), and, when
+/// [`use_snapshot`], builds the [`base_snapshot`] every isolate is made
+/// from. (WebAssembly is removed from a function's globals by the bootstrap,
+/// not by a flag.)
+pub fn init_v8() -> Result<Option<&'static [u8]>, String> {
     static INIT: Once = Once::new();
-    INIT.call_once(|| JsRuntime::init_platform(None));
-    base_snapshot()
+    INIT.call_once(|| JsRuntime::init_platform(Some(crate::platform::new())));
+    if use_snapshot() {
+        base_snapshot().map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Whether isolates are made from the base snapshot: on Linux, unless
+/// `FC_FN_JS_SNAPSHOT=false`; elsewhere only with `FC_FN_JS_SNAPSHOT=true`.
+///
+/// An isolate from the snapshot starts in about 0.7 ms, one without in about
+/// 2.5 ms (deno_core's own start-up and the bootstrap script, every time).
+/// On macOS arm64, creating and disposing thousands of isolates from a
+/// snapshot aborted the process in most runs (`pointer being freed was not
+/// allocated` in `BackingStore::~BackingStore`, from V8's heap teardown;
+/// reproduced with deno_core alone and its own snapshot, never without a
+/// snapshot, and never on Linux arm64 in 16 runs of 2,000 requests). Windows
+/// is untested here, and deno_core itself serialises the first snapshot
+/// deserialisation there for a crash of its own. Production hosts run Linux.
+pub fn use_snapshot() -> bool {
+    match std::env::var("FC_FN_JS_SNAPSHOT").ok().as_deref() {
+        Some(v) if v.eq_ignore_ascii_case("true") => true,
+        Some(v) if v.eq_ignore_ascii_case("false") => false,
+        _ => cfg!(target_os = "linux"),
+    }
 }
 
 /// The process's **base snapshot**: deno_core's own JavaScript plus the
@@ -82,7 +108,14 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
                         deno_core::PollEventLoopOptions::default(),
                     ))
                     .map_err(|e| format!("the warm-up failed: {e}"))?;
-                Ok(js.snapshot())
+                // The creator's foreground tasks go while it still exists
+                // (see `crate::platform`).
+                // SAFETY: only the pointer's value is used, as a key.
+                let key = crate::platform::key(unsafe { js.v8_isolate().as_raw_isolate_ptr() });
+                crate::platform::close(key);
+                let snapshot = js.snapshot();
+                crate::platform::forget(key);
+                Ok(snapshot)
             })
             .map_err(|e| format!("no thread for the base snapshot: {e}"))?
             .join()

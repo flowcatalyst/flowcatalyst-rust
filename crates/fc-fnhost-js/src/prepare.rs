@@ -60,11 +60,12 @@ pub struct Prepared {
     pub took: Duration,
 }
 
-/// Checks `bundle` and makes its code cache. Blocking: call it on a thread
+/// Checks `bundle` and makes its code cache, in an isolate made as a
+/// request's is (from `base` when there is one). Blocking: call it on a thread
 /// of its own (it creates and drops an isolate, on a current-thread
 /// runtime).
 pub fn prepare(
-    base: &'static [u8],
+    base: Option<&'static [u8]>,
     bundle: &[u8],
     entrypoint: &str,
     limits: Limits,

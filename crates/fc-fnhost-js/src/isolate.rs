@@ -1,7 +1,9 @@
-//! One isolate, created from the process's base snapshot for one request
-//! and dropped after it (the `wasi:http` instance-per-request model): it
-//! loads the version's bundle (from V8's code cache), runs its top-level
-//! code, then handles the request.
+//! One isolate, created for one request and dropped after it (the
+//! `wasi:http` instance-per-request model): from the process's base
+//! snapshot where there is one (see [`crate::engine::use_snapshot`]), else
+//! by running deno_core's start-up and the bootstrap. It loads the version's
+//! bundle (from V8's code cache), runs its top-level code, then handles the
+//! request.
 //!
 //! **Many isolates per thread.** A worker thread interleaves the isolates
 //! of every request it holds, so one waiting on I/O (`fetch`, `emit`, a
@@ -12,6 +14,10 @@
 //! created, entered around every use ([`Isolate::enter`], every poll of
 //! the event loop) and entered again just before it is dropped. At any
 //! moment at most one isolate is entered on a thread.
+//!
+//! **Foreground tasks.** V8's tasks for an isolate run on its thread, entered,
+//! at each poll, and those left when it is dropped are destroyed before it is
+//! (see [`crate::platform`]).
 //!
 //! **Limits.** The V8 heap is capped at the function's memory limit; as
 //! the heap nears it, V8 calls back, the isolate's execution is terminated
@@ -32,6 +38,7 @@ use deno_core::{v8, JsRuntime, ModuleId, PollEventLoopOptions, RuntimeOptions};
 use crate::allocator::{self, Budget};
 use crate::modules::FunctionModules;
 use crate::ops::{fc_function, HostState};
+use crate::platform;
 
 /// The smallest V8 heap an isolate gets, whatever the function's memory
 /// limit: below it, restoring the snapshot alone would hit the limit.
@@ -135,10 +142,11 @@ impl std::fmt::Display for StartError {
 }
 
 impl Isolate {
-    /// An isolate from the process's base snapshot, loading modules through
-    /// `modules`, with `host` in its op state. Returns exited.
+    /// An isolate from the process's base snapshot (or, without one,
+    /// deno_core's own start-up and the bootstrap script), loading modules
+    /// through `modules`, with `host` in its op state. Returns exited.
     pub fn from_base(
-        base: &'static [u8],
+        base: Option<&'static [u8]>,
         limits: Limits,
         host: Rc<HostState>,
         modules: Rc<FunctionModules>,
@@ -147,7 +155,7 @@ impl Isolate {
         let mut js = JsRuntime::try_new(RuntimeOptions {
             extensions: vec![fc_function::init()],
             module_loader: Some(modules),
-            startup_snapshot: Some(base),
+            startup_snapshot: base,
             create_params: Some(limits.create_params(&budget)),
             ..Default::default()
         })
@@ -166,6 +174,13 @@ impl Isolate {
             });
         }
         js.op_state().borrow_mut().put(host);
+        let bootstrapped = match base {
+            Some(_) => Ok(()),
+            None => js
+                .execute_script("[fc:bootstrap]", crate::prepare::BOOTSTRAP.to_owned())
+                .map(|_| ())
+                .map_err(|e| format!("the bootstrap failed: {e}")),
+        };
         // `Atomics.wait` would block the worker thread (and every isolate
         // sharing it): off, it throws.
         js.v8_isolate().set_allow_atomics_wait(false);
@@ -174,14 +189,16 @@ impl Isolate {
         let raw = unsafe { js.v8_isolate().as_raw_isolate_ptr() };
         // SAFETY: created entered, on this thread (see the module docs).
         unsafe { v8::Isolate::from_raw_isolate_ptr(raw).exit() };
-        Ok(Isolate {
+        let isolate = Isolate {
             js: ManuallyDrop::new(js),
             raw,
             stops,
             handle,
             budget,
             main: None,
-        })
+        };
+        bootstrapped?;
+        Ok(isolate)
     }
 
     /// Loads the main module (the host's seal, then the bundle) and runs
@@ -195,6 +212,7 @@ impl Isolate {
             let mut load = Box::pin(js.load_main_es_module(&specifier));
             std::future::poll_fn(|cx| {
                 let _entered = Entered::new(raw);
+                platform::run_pending(platform::key(raw), cx.waker());
                 load.as_mut().poll(cx)
             })
             .await
@@ -211,6 +229,7 @@ impl Isolate {
         let js = &mut *self.js;
         std::future::poll_fn(|cx| {
             let _entered = Entered::new(raw);
+            platform::run_pending(platform::key(raw), cx.waker());
             match js.poll_event_loop(cx, PollEventLoopOptions::default()) {
                 Poll::Ready(Err(e)) => Poll::Ready(Err(StartError::Evaluate(e.to_string()))),
                 _ => Poll::Ready(Ok(())),
@@ -238,6 +257,7 @@ impl Isolate {
         let js = &mut *self.js;
         std::future::poll_fn(|cx| {
             let _entered = Entered::new(raw);
+            platform::run_pending(platform::key(raw), cx.waker());
             if let Poll::Ready(result) = future.as_mut().poll(cx) {
                 return Poll::Ready(result.map_err(|e| e.to_string()));
             }
@@ -336,7 +356,12 @@ impl Drop for Isolate {
         // SAFETY: the isolate is alive (dropped just below) and on this
         // thread; nothing else is entered here now.
         unsafe { v8::Isolate::from_raw_isolate_ptr(self.raw).enter() };
+        // Its foreground tasks go while it still exists (see
+        // `crate::platform`).
+        let key = platform::key(self.raw);
+        platform::close(key);
         // SAFETY: dropped exactly once, here.
         unsafe { ManuallyDrop::drop(&mut self.js) };
+        platform::forget(key);
     }
 }

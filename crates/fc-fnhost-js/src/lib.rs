@@ -8,6 +8,7 @@
 //! | Piece | Where |
 //! |---|---|
 //! | V8's platform, the base snapshot, the worker threads | [`engine`] |
+//! | V8's foreground tasks for short-lived isolates | [`platform`] |
 //! | load: check the bundle by running it, keep its code cache | [`prepare`] |
 //! | what a bundle may import (`flowcatalyst:function/*`) | [`modules`] |
 //! | the host APIs, `console` and `fetch` (ops) | [`ops`] and `js/bootstrap.js` |
@@ -31,6 +32,7 @@ mod function;
 pub mod isolate;
 pub mod modules;
 pub mod ops;
+pub mod platform;
 pub mod prepare;
 
 use std::collections::HashMap;
@@ -73,7 +75,8 @@ impl JsSettings {
 /// The runtime every JS function on this host shares.
 pub struct JsRuntime {
     workers: Arc<engine::Workers>,
-    base: &'static [u8],
+    /// The base snapshot, where isolates are made from one.
+    base: Option<&'static [u8]>,
     http: reqwest::Client,
     /// The host's own runtime, where outbound calls and emits run.
     host_runtime: Option<tokio::runtime::Handle>,

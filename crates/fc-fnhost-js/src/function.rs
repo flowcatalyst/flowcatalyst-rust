@@ -44,7 +44,7 @@ use crate::ops::{ContextOut, HostState, InvocationState, VersionShared};
 
 pub struct JsFunction {
     workers: Arc<Workers>,
-    base: &'static [u8],
+    base: Option<&'static [u8]>,
     version: Arc<VersionShared>,
     code: VersionCode,
     limits: Limits,
@@ -54,7 +54,7 @@ pub struct JsFunction {
 impl JsFunction {
     pub(crate) fn new(
         workers: Arc<Workers>,
-        base: &'static [u8],
+        base: Option<&'static [u8]>,
         version: Arc<VersionShared>,
         code: VersionCode,
         limits: Limits,
@@ -152,7 +152,7 @@ enum Outcome {
 type Slot = Arc<Mutex<Option<Terminator>>>;
 
 struct Job {
-    base: &'static [u8],
+    base: Option<&'static [u8]>,
     code: VersionCode,
     limits: Limits,
     version: Arc<VersionShared>,

@@ -273,8 +273,11 @@ async fn measure_density() {
     }
 }
 
-/// Where a request's time goes, in process (no HTTP): isolate creation from
-/// the base snapshot, loading and running the bundle, the call, teardown.
+/// Where a request's time goes, in process (no HTTP): isolate creation (from
+/// the base snapshot where [`fc_fnhost_js::engine::use_snapshot`]), loading
+/// and running the bundle, the call, teardown. Also 2,000 isolates created
+/// and disposed in a row: `FC_FN_JS_SNAPSHOT=true` on macOS aborted most runs
+/// of it (see `use_snapshot`).
 #[test]
 #[ignore = "measurement: run in release with --ignored --nocapture"]
 fn measure_request_phases() {
@@ -373,8 +376,78 @@ fn measure_request_phases() {
             drop_.push(t4 - t3);
         }
     }
-    println!("create (base snapshot): {}", stats(create));
+    println!(
+        "create ({}): {}",
+        if base.is_some() {
+            "base snapshot"
+        } else {
+            "no snapshot"
+        },
+        stats(create)
+    );
     println!("start (load + top level): {}", stats(start));
     println!("call: {}", stats(call));
     println!("drop: {}", stats(drop_));
+}
+
+/// One function's `invoke` in process (no HTTP): the worker hand-off, the
+/// watchdog and the isolate, without the listener.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "measurement: run in release with --ignored --nocapture"]
+async fn measure_invoke_without_http() {
+    let h = JsHarness::start_with(
+        vec![entry(
+            A,
+            1,
+            &bundle("hello.mjs"),
+            manifest(json!({
+                "limits": {"maxConcurrency": 64, "wasmMemoryMb": 32},
+                "endpoints": [{"path": "/hello/{name}", "auth": "none"}],
+            })),
+            json!({"config": {"GREETING": "Hi"}}),
+        )],
+        Options {
+            max_executing: 4,
+            ..Options::default()
+        },
+    )
+    .await;
+    let function = h
+        .reconciler
+        .registry()
+        .peek(&fc_function_abi::FunctionAddress::parse(A).unwrap())
+        .expect("loaded");
+    let context = || fc_fnhost_core::invoke::InvocationContext {
+        invocation_id: "inv".into(),
+        address: fc_function_abi::FunctionAddress::parse(A).unwrap(),
+        version: 1,
+        method: "GET".into(),
+        path: "/hello/Ada".into(),
+        original_host: Some("localhost".into()),
+        original_path: None,
+        path_params: [("name".to_string(), "Ada".to_string())]
+            .into_iter()
+            .collect(),
+        query: Default::default(),
+        raw_query: None,
+        headers: Default::default(),
+        body: Default::default(),
+        remote_address: None,
+        caller: fc_function_abi::Caller::Anonymous,
+        deadline: std::time::Instant::now() + Duration::from_secs(5),
+        interrupted: tokio_util::sync::CancellationToken::new(),
+        correlation_id: "inv".into(),
+        causation_id: None,
+    };
+    let mut samples = Vec::new();
+    for i in 0..2200 {
+        let t = Instant::now();
+        let response = function.instance().invoke(context()).await.unwrap();
+        assert_eq!(response.status(), 200);
+        if i >= 200 {
+            samples.push(t.elapsed());
+        }
+    }
+    println!("invoke in process, c=1: {}", stats(samples));
+    h.close().await;
 }
