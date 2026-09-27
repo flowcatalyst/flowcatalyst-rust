@@ -75,7 +75,9 @@ pub struct ProcessResponse {
     pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -112,6 +114,7 @@ pub struct ProcessListResponse {
 #[into_params(parameter_in = Query)]
 pub struct ProcessesQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
     pub application: Option<String>,
     pub subdomain: Option<String>,

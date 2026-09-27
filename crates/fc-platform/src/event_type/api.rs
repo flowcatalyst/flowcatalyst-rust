@@ -76,7 +76,9 @@ pub struct EventTypeResponse {
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     pub spec_versions: Vec<SpecVersionResponse>,
 }
@@ -87,9 +89,10 @@ pub struct EventTypeResponse {
 pub struct SpecVersionResponse {
     pub version: String,
     /// The schema document (`null` when none).
-    #[schema(value_type = Option<Object>)]
+    #[schema(required = true, value_type = serde_json::Value)]
     pub schema: Option<serde_json::Value>,
     pub status: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -139,6 +142,7 @@ impl From<EventType> for EventTypeResponse {
 #[into_params(parameter_in = Query)]
 pub struct EventTypesQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by application

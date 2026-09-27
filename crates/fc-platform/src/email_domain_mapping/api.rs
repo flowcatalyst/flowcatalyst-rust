@@ -34,6 +34,7 @@ pub struct CreateEmailDomainMappingRequest {
     #[serde(default)]
     pub remember_device_enabled: Option<bool>,
     #[serde(default)]
+    #[schema(value_type = Option<i64>)]
     pub remember_device_days: Option<i32>,
 }
 
@@ -61,6 +62,7 @@ pub struct UpdateEmailDomainMappingRequest {
     #[serde(default)]
     pub remember_device_enabled: Option<bool>,
     #[serde(default)]
+    #[schema(value_type = Option<i64>)]
     pub remember_device_days: Option<i32>,
 }
 
@@ -96,8 +98,11 @@ pub struct EmailDomainMappingResponse {
     #[serde(rename = "allowed2faMethods")]
     pub allowed_2fa_methods: Vec<String>,
     pub remember_device_enabled: bool,
+    #[schema(value_type = i64)]
     pub remember_device_days: i32,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -137,6 +142,7 @@ impl From<EmailDomainMapping> for EmailDomainMappingResponse {
 #[schema(as = MappingListResponse)]
 pub struct EmailDomainMappingsListResponse {
     pub mappings: Vec<EmailDomainMappingResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

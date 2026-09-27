@@ -91,6 +91,7 @@ pub struct CreateEventRequest {
 pub struct CreateEventResponse {
     pub event: EventResponse,
     /// Number of dispatch jobs created for matching subscriptions
+    #[schema(value_type = i64)]
     pub dispatch_job_count: usize,
     /// True if this was a deduplicated request (event already existed)
     pub is_duplicate: bool,
@@ -107,6 +108,7 @@ pub struct EventResponse {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[schema(format = DateTime)]
     pub time: String,
     pub data: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,6 +123,7 @@ pub struct EventResponse {
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_data: Vec<ContextDataDto>,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -449,9 +452,10 @@ pub struct EventDetailResponse {
     pub event_type: String,
     pub source: String,
     pub subject: String,
+    #[schema(format = DateTime)]
     pub time: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<serde_json::Value>)]
     pub data: Option<serde_json::Value>,
     pub deduplication_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -469,7 +473,9 @@ pub struct EventDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub projected_at: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
 }
 
@@ -514,6 +520,7 @@ pub struct EventListItem {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[schema(format = DateTime)]
     pub time: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application: Option<String>,
@@ -527,6 +534,7 @@ pub struct EventListItem {
     pub correlation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[schema(format = DateTime)]
     pub projected_at: String,
 }
 

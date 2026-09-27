@@ -435,6 +435,7 @@ pub struct PortalUserAppRef {
     pub code: String,
     pub name: String,
     pub source: String,
+    #[schema(format = DateTime)]
     pub granted_at: String,
 }
 
@@ -452,12 +453,17 @@ pub struct PortalUserListItem {
     pub has_password: bool,
     pub apps: Vec<PortalUserAppRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub invited_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub invite_expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_login_at: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -860,7 +866,9 @@ pub struct PortalAppResponse {
     #[schema(value_type = Vec<LinkedOAuthClientDoc>)]
     pub oauth_clients: Vec<LinkedOAuthClient>,
     pub user_count: i64,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -1166,6 +1174,7 @@ pub async fn delete_portal_app(
 #[serde(rename_all = "camelCase")]
 pub struct AssignUnassignedResponse {
     pub portal_app_code: String,
+    #[schema(value_type = i64)]
     pub assigned: usize,
 }
 

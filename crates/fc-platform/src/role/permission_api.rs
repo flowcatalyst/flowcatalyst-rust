@@ -72,6 +72,7 @@ impl RolePermissionsState {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RolePermissionListResponse {
+    #[schema(required = true)]
     pub permissions: Option<Vec<String>>,
 }
 

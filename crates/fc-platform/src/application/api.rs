@@ -119,7 +119,9 @@ pub struct ApplicationResponse {
     /// the detail endpoint only; every other response carries `false`, as
     /// Go's does (no N+1 lookup across list rows).
     pub has_login_client: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -418,6 +420,7 @@ pub async fn get_application<U: UnitOfWork>(
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationListResponse {
     pub applications: Vec<ApplicationResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

@@ -349,6 +349,7 @@ pub struct DeclaredByEntry {
 /// `GET`/`PUT …/config`.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = FunctionConfigResponse)]
 pub struct ConfigResponse {
     /// The whole map, keys in order.
     pub values: BTreeMap<String, String>,
@@ -359,6 +360,7 @@ pub struct ConfigResponse {
 
 /// Body of `PUT …/config`: a full replacement.
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[schema(as = FunctionSetConfigRequest)]
 pub struct SetConfigRequest {
     pub values: Option<BTreeMap<String, String>>,
 }

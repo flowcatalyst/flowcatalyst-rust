@@ -63,7 +63,9 @@ pub struct ConnectionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
     pub source: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -92,6 +94,7 @@ impl From<Connection> for ConnectionResponse {
 #[schema(as = ConnectionListResponse)]
 pub struct ConnectionsListResponse {
     pub connections: Vec<ConnectionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

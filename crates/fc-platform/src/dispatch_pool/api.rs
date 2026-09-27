@@ -82,7 +82,9 @@ pub struct DispatchPoolResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_identifier: Option<String>,
     pub status: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -110,6 +112,7 @@ impl From<DispatchPool> for DispatchPoolResponse {
 #[into_params(parameter_in = Query)]
 pub struct DispatchPoolsQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by client ID
@@ -124,6 +127,7 @@ pub struct DispatchPoolsQuery {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchPoolListResponse {
     pub pools: Vec<DispatchPoolResponse>,
+    #[schema(value_type = i64)]
     pub total: u32,
 }
 

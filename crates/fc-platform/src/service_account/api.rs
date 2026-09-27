@@ -136,6 +136,7 @@ pub struct ServiceAccountsQuery {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountListResponse {
     pub service_accounts: Vec<ServiceAccountResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -170,8 +171,11 @@ pub struct ServiceAccountResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_used_at: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -234,6 +238,7 @@ pub struct RegenerateTokenResponse {
     /// The service account's id (Go `RegenerateTokenResponse.id`)
     pub id: String,
     /// New auth token (shown only once)
+    #[schema(required = false)]
     pub auth_token: String,
 }
 
@@ -245,6 +250,7 @@ pub struct RegenerateSecretResponse {
     /// The service account's id (Go `RegenerateSecretResponse.id`)
     pub id: String,
     /// New signing secret (shown only once)
+    #[schema(required = false)]
     pub signing_secret: String,
 }
 
@@ -257,6 +263,7 @@ pub struct RoleAssignmentResponse {
     /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_source: Option<String>,
+    #[schema(format = DateTime)]
     pub assigned_at: String,
 }
 

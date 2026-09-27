@@ -74,6 +74,7 @@ pub struct BulkImportUser {
 #[serde(rename_all = "camelCase")]
 #[schema(as = BulkImportResult)]
 pub struct BulkImportRowResult {
+    #[schema(value_type = i64)]
     pub row: usize,
     pub email: String,
     pub status: String,
@@ -85,8 +86,11 @@ pub struct BulkImportRowResult {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkImportResponse {
+    #[schema(value_type = i64)]
     pub created: usize,
+    #[schema(value_type = i64)]
     pub skipped: usize,
+    #[schema(value_type = i64)]
     pub failed: usize,
     pub results: Vec<BulkImportRowResult>,
 }
@@ -95,6 +99,7 @@ pub struct BulkImportResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalVersionResponse {
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 

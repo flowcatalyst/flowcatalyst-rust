@@ -130,6 +130,7 @@ pub struct BatchEventItem {
     #[serde(alias = "client_code")]
     pub client_code: Option<String>,
     #[serde(alias = "context_data")]
+    #[schema(value_type = Option<Vec<crate::event::api::ContextDataDto>>)]
     pub context_data: Option<serde_json::Value>,
 }
 

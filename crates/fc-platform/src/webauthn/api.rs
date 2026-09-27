@@ -68,7 +68,7 @@ pub struct RegisterBeginResponse {
     /// Opaque ceremony state token; pass back unchanged on `register/complete`.
     pub state_id: String,
     /// `PublicKeyCredentialCreationOptions` JSON for the browser.
-    #[schema(value_type = Object)]
+    #[schema(value_type = serde_json::Value)]
     pub options: serde_json::Value,
 }
 
@@ -82,7 +82,7 @@ pub struct RegisterCompleteRequest {
     /// The `PublicKeyCredential` returned by `navigator.credentials.create()`.
     /// Read only once the ceremony is found, as Go does, so an unknown
     /// ceremony is reported as such whatever the credential holds.
-    #[schema(value_type = Object)]
+    #[schema(required = true, value_type = serde_json::Value)]
     #[serde(default)]
     pub credential: serde_json::Value,
 }
@@ -106,7 +106,7 @@ pub struct AuthenticateBeginRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticateBeginResponse {
     pub state_id: String,
-    #[schema(value_type = Object)]
+    #[schema(value_type = serde_json::Value)]
     pub options: serde_json::Value,
 }
 
@@ -116,7 +116,7 @@ pub struct AuthenticateCompleteRequest {
     pub state_id: String,
     /// The `PublicKeyCredential` returned by `navigator.credentials.get()`.
     /// Read only once the ceremony is found (see [`RegisterCompleteRequest`]).
-    #[schema(value_type = Object)]
+    #[schema(required = true, value_type = serde_json::Value)]
     #[serde(default)]
     pub credential: serde_json::Value,
 }
@@ -126,6 +126,7 @@ pub struct AuthenticateCompleteRequest {
 #[schema(as = WebauthnAuthenticateCompleteResponse)]
 pub struct AuthenticateCompleteResponse {
     pub principal_id: String,
+    #[schema(required = true)]
     pub email: Option<String>,
     pub name: String,
     pub roles: Vec<String>,

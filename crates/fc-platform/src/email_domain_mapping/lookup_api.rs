@@ -66,6 +66,7 @@ pub struct MoveProviderResponse {
     pub email_domain: String,
     pub from_identity_provider_id: String,
     pub to_identity_provider_id: String,
+    #[schema(value_type = i64)]
     pub users_reset: usize,
 }
 
@@ -93,7 +94,7 @@ async fn with_idp_name(
     operation_id = "lookupEmailDomainMapping",
     params(("domain" = String, Query, description = "Email domain, matched exactly")),
     responses(
-        (status = 200, description = "The mapping, or {found: false}"),
+        (status = 200, description = "The mapping, or {found: false}", body = serde_json::Value),
         (status = 400, description = "No domain given")
     )
 )]

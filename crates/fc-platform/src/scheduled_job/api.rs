@@ -78,8 +78,10 @@ pub struct CreateScheduledJobRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     #[serde(default)]
+    #[schema(required = true)]
     pub concurrent: bool,
     #[serde(default)]
+    #[schema(required = true)]
     pub tracks_completion: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<i32>,
@@ -144,6 +146,7 @@ pub struct FireRequest {
 #[schema(as = WriteInstanceLogRequest)]
 pub struct InstanceLogRequest {
     /// Required, as Go's `WriteInstanceLogRequest` (huma: no `omitempty`).
+    #[schema(value_type = String)]
     pub level: LogLevelDto,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,6 +216,29 @@ fn resolve_instance_completion(
 
 // ── Query parameters ────────────────────────────────────────────────────────
 
+/// Go `OffsetPageScheduledJobResponse`: the page [`PaginatedResponse`]
+/// serialises for scheduled jobs (documentation only).
+#[derive(ToSchema)]
+#[allow(dead_code)]
+pub struct OffsetPageScheduledJobResponse {
+    data: Vec<ScheduledJobResponse>,
+    page: i64,
+    size: i64,
+    total: i64,
+    total_pages: i64,
+}
+
+/// Go `OffsetPageScheduledJobInstanceResponse` (documentation only).
+#[derive(ToSchema)]
+#[allow(dead_code)]
+pub struct OffsetPageScheduledJobInstanceResponse {
+    data: Vec<ScheduledJobInstanceResponse>,
+    page: i64,
+    size: i64,
+    total: i64,
+    total_pages: i64,
+}
+
 #[derive(Debug, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
@@ -222,6 +248,7 @@ pub struct ListJobsQuery {
     pub status: Option<String>,
     pub search: Option<String>,
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 }
 
@@ -234,6 +261,7 @@ pub struct ListInstancesQuery {
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 }
 
@@ -485,8 +513,15 @@ pub async fn create_scheduled_job(
 #[utoipa::path(
     get, path = "", tag = "scheduled-jobs",
     operation_id = "listScheduledJobs",
-    params(ListJobsQuery),
-    responses((status = 200, body = PaginatedResponse<ScheduledJobResponse>)),
+    params(
+        ListJobsQuery,
+        ("page" = Option<i64>, Query, description = "Page number (0-based)"),
+        ("size" = Option<i64>, Query, description = "Page size"),
+        ("limit" = Option<i64>, Query, description = "Alias of size"),
+        ("pageSize" = Option<i64>, Query, description = "Alias of size"),
+        ("page_size" = Option<i64>, Query, description = "Alias of size"),
+    ),
+    responses((status = 200, body = OffsetPageScheduledJobResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn list_scheduled_jobs(
@@ -828,8 +863,16 @@ pub async fn fire_scheduled_job(
 #[utoipa::path(
     get, path = "/{id}/instances", tag = "scheduled-jobs",
     operation_id = "listScheduledJobInstances",
-    params(("id" = String, Path, description = "Scheduled job ID"), ListInstancesQuery),
-    responses((status = 200, body = PaginatedResponse<ScheduledJobInstanceResponse>)),
+    params(
+        ("id" = String, Path, description = "Scheduled job ID"),
+        ListInstancesQuery,
+        ("page" = Option<i64>, Query, description = "Page number (0-based)"),
+        ("size" = Option<i64>, Query, description = "Page size"),
+        ("limit" = Option<i64>, Query, description = "Alias of size"),
+        ("pageSize" = Option<i64>, Query, description = "Alias of size"),
+        ("page_size" = Option<i64>, Query, description = "Alias of size"),
+    ),
+    responses((status = 200, body = OffsetPageScheduledJobInstanceResponse)),
     security(("bearer_auth" = []))
 )]
 pub async fn list_instances_for_job(

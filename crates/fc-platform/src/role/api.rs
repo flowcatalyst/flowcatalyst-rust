@@ -42,6 +42,7 @@ pub struct CreateRoleRequest {
 
     /// Whether clients can manage this role
     #[serde(default)]
+    #[schema(required = true)]
     pub client_managed: bool,
 }
 
@@ -87,7 +88,9 @@ pub struct RoleResponse {
     pub permissions: Vec<String>,
     pub source: String,
     pub client_managed: bool,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -116,6 +119,7 @@ impl From<AuthRole> for RoleResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RoleListResponse {
     pub roles: Vec<RoleResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -125,6 +129,7 @@ pub struct RoleListResponse {
 #[into_params(parameter_in = Query)]
 pub struct RolesQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by application code
@@ -184,6 +189,7 @@ impl From<crate::role::permission_catalog::CatalogPermission> for PermissionResp
 #[serde(rename_all = "camelCase")]
 pub struct PermissionListResponse {
     pub permissions: Vec<PermissionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

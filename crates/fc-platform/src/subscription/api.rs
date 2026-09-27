@@ -285,7 +285,9 @@ pub struct SubscriptionResponse {
     pub data_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -329,6 +331,7 @@ impl From<Subscription> for SubscriptionResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionListResponse {
     pub subscriptions: Vec<SubscriptionResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -338,6 +341,7 @@ pub struct SubscriptionListResponse {
 #[into_params(parameter_in = Query)]
 pub struct SubscriptionsQuery {
     #[serde(flatten)]
+    #[param(ignore)]
     pub pagination: PaginationParams,
 
     /// Filter by client ID

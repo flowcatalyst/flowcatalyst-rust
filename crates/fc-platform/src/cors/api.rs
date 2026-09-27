@@ -33,7 +33,9 @@ pub struct CorsOriginResponse {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -55,6 +57,7 @@ impl From<CorsAllowedOrigin> for CorsOriginResponse {
 #[schema(as = CorsOriginListResponse)]
 pub struct CorsOriginsListResponse {
     pub cors_origins: Vec<CorsOriginResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

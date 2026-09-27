@@ -50,8 +50,9 @@ pub struct SetDeveloperCredentialResponse {
 /// answers it, plus `hasDeveloperCredential` / `developerCredentialUpdatedAt`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DeveloperUserListResponse {
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<crate::principal::api::PrincipalResponse>)]
     pub principals: Vec<serde_json::Value>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 

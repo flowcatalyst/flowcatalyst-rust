@@ -10,7 +10,11 @@
 //! Only the handlers Go documents are listed. Routes Go lacks (e.g.
 //! `/api/anchor-domains/check/{domain}`, the auth-config sub-resources) stay
 //! out of the document, as before.
+//!
+//! [`shape_as_go_contract`] then applies the conventions of Go's document
+//! that no per-handler annotation expresses (see its docs).
 
+use serde_json::{json, Map, Value};
 use utoipa::OpenApi;
 
 #[derive(OpenApi)]
@@ -181,4 +185,268 @@ pub fn documented_plain_routes() -> utoipa::openapi::OpenApi {
         .nest("/api/portal-users", PortalUsersDoc::openapi())
         .nest("/api/service-accounts", ServiceAccountsDoc::openapi())
         .nest("/api/events", EventsBatchDoc::openapi())
+}
+
+/// Go's error envelope as its document names it (`httpcompat.ErrorModel`):
+/// `{error, message, details?}`. This platform's error bodies carry the same
+/// members plus `code` (the same value as `error`).
+fn error_model() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "error": {"type": "string", "description": "Machine-readable error code (e.g. ROLE_HAS_ASSIGNMENTS)"},
+            "message": {"type": "string", "description": "Human-readable error message"},
+            "details": {"type": "object", "additionalProperties": {}}
+        },
+        "required": ["error", "message"]
+    })
+}
+
+/// Reshape the published document (`/q/openapi`) to the conventions of Go's
+/// huma document, which the SDKs' generated clients are generated from:
+///
+/// 1. **Errors.** Go documents one success response and a `default` response
+///    with `ErrorModel` per operation. The per-status error responses the
+///    handlers annotate (mostly without a body) are replaced by that
+///    `default`, and `ErrorModel` is added.
+/// 2. **Optional members are not nullable.** Go types an optional member as
+///    its plain type (absent when unset) and uses `[T, "null"]` only for a
+///    required member that may be null. `Option<T>` makes utoipa emit
+///    `[T, "null"]` (or `oneOf [null, T]`) everywhere; for members that are not
+///    required, optional query parameters and optional request bodies, the
+///    `null` is dropped.
+/// 3. **No orphans of this document's own making.** Component schemas no
+///    operation reaches (e.g. `ErrorResponse`, `PaginationParams`, the
+///    shapes of the error responses dropped in 1) are removed.
+///
+/// The full document (`/q/openapi-full`, including `/bff`) is not reshaped.
+pub fn shape_as_go_contract(doc: &mut Value) {
+    reshape(doc);
+}
+
+fn reshape(doc: &mut Value) {
+    if let Some(paths) = doc.get_mut("paths").and_then(Value::as_object_mut) {
+        for item in paths.values_mut() {
+            let Some(item) = item.as_object_mut() else {
+                continue;
+            };
+            for (method, op) in item.iter_mut() {
+                if !matches!(method.as_str(), "get" | "put" | "post" | "delete" | "patch") {
+                    continue;
+                }
+                shape_operation(op);
+            }
+        }
+    }
+    if let Some(schemas) = doc
+        .pointer_mut("/components/schemas")
+        .and_then(Value::as_object_mut)
+    {
+        schemas.insert("ErrorModel".to_string(), error_model());
+        for schema in schemas.values_mut() {
+            strip_optional_nulls(schema);
+        }
+    }
+    drop_unreachable_schemas(doc);
+}
+
+fn shape_operation(op: &mut Value) {
+    if let Some(responses) = op.get_mut("responses").and_then(Value::as_object_mut) {
+        responses.retain(|code, _| code.starts_with('2'));
+        responses.insert(
+            "default".to_string(),
+            json!({
+                "description": "Error",
+                "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorModel"}}}
+            }),
+        );
+    }
+    if let Some(params) = op.get_mut("parameters").and_then(Value::as_array_mut) {
+        for param in params {
+            let required = param.get("required").and_then(Value::as_bool) == Some(true);
+            if !required {
+                if let Some(schema) = param.get_mut("schema") {
+                    unwrap_nullable(schema);
+                }
+            }
+        }
+    }
+    if let Some(body) = op.get_mut("requestBody") {
+        let required = body.get("required").and_then(Value::as_bool) == Some(true);
+        if !required {
+            if let Some(content) = body.get_mut("content").and_then(Value::as_object_mut) {
+                for media in content.values_mut() {
+                    if let Some(schema) = media.get_mut("schema") {
+                        unwrap_nullable(schema);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every object schema reachable inside `schema`: its members that are not
+/// required lose their `null`.
+fn strip_optional_nulls(schema: &mut Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+    let required: Vec<String> = obj
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|r| {
+            r.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(props) = obj.get_mut("properties").and_then(Value::as_object_mut) {
+        for (name, prop) in props.iter_mut() {
+            if !required.contains(name) {
+                unwrap_nullable(prop);
+            }
+            strip_optional_nulls(prop);
+        }
+    }
+    for key in ["items", "additionalProperties"] {
+        if let Some(inner) = obj.get_mut(key) {
+            strip_optional_nulls(inner);
+        }
+    }
+    for key in ["allOf", "oneOf", "anyOf"] {
+        if let Some(list) = obj.get_mut(key).and_then(Value::as_array_mut) {
+            for inner in list {
+                strip_optional_nulls(inner);
+            }
+        }
+    }
+}
+
+/// `[T, "null"]` -> `T`; `oneOf [{type: null}, X]` -> `X` (keeping the
+/// description).
+fn unwrap_nullable(schema: &mut Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::Array(types)) = obj.get("type") {
+        let kept: Vec<Value> = types
+            .iter()
+            .filter(|t| t.as_str() != Some("null"))
+            .cloned()
+            .collect();
+        if kept.len() != types.len() {
+            let replacement = if kept.len() == 1 {
+                kept[0].clone()
+            } else {
+                Value::Array(kept)
+            };
+            obj.insert("type".to_string(), replacement);
+        }
+    }
+    for key in ["oneOf", "anyOf"] {
+        let Some(Value::Array(list)) = obj.get(key) else {
+            continue;
+        };
+        let non_null: Vec<&Value> = list
+            .iter()
+            .filter(|v| v.get("type").and_then(Value::as_str) != Some("null"))
+            .collect();
+        if non_null.len() == 1 && list.len() == 2 {
+            let mut inner: Map<String, Value> =
+                non_null[0].as_object().cloned().unwrap_or_default();
+            obj.remove(key);
+            if let Some(description) = obj.remove("description") {
+                inner.entry("description").or_insert(description);
+            }
+            for (k, v) in obj.iter() {
+                inner.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            *schema = Value::Object(inner);
+            return;
+        }
+    }
+}
+
+/// Remove component schemas no path reaches (transitively).
+fn drop_unreachable_schemas(doc: &mut Value) {
+    let mut reachable = std::collections::BTreeSet::new();
+    let mut queue = Vec::new();
+    collect_refs(doc.get("paths").unwrap_or(&Value::Null), &mut queue);
+    while let Some(name) = queue.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        if let Some(schema) = doc.pointer(&format!("/components/schemas/{name}")) {
+            collect_refs(schema, &mut queue);
+        }
+    }
+    if let Some(schemas) = doc
+        .pointer_mut("/components/schemas")
+        .and_then(Value::as_object_mut)
+    {
+        schemas.retain(|name, _| reachable.contains(name));
+    }
+}
+
+fn collect_refs(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::Object(obj) => {
+            if let Some(Value::String(r)) = obj.get("$ref") {
+                if let Some(name) = r.strip_prefix("#/components/schemas/") {
+                    out.push(name.to_string());
+                }
+            }
+            for v in obj.values() {
+                collect_refs(v, out);
+            }
+        }
+        Value::Array(list) => list.iter().for_each(|v| collect_refs(v, out)),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_members_lose_null_and_required_ones_keep_it() {
+        let mut doc = json!({
+            "paths": {"/x": {"get": {
+                "parameters": [{"in": "query", "name": "q", "required": false, "schema": {"type": ["string", "null"]}}],
+                "responses": {
+                    "200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/X"}}}},
+                    "404": {"description": "Not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Gone"}}}}
+                }
+            }}},
+            "components": {"schemas": {
+                "X": {"type": "object", "required": ["a"], "properties": {
+                    "a": {"type": ["string", "null"]},
+                    "b": {"type": ["string", "null"]},
+                    "c": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/Y"}], "description": "d"}
+                }},
+                "Y": {"type": "object"},
+                "Gone": {"type": "object"}
+            }}
+        });
+        reshape(&mut doc);
+        let x = &doc["components"]["schemas"]["X"]["properties"];
+        assert_eq!(x["a"]["type"], json!(["string", "null"]));
+        assert_eq!(x["b"]["type"], json!("string"));
+        assert_eq!(
+            x["c"],
+            json!({"$ref": "#/components/schemas/Y", "description": "d"})
+        );
+        let op = &doc["paths"]["/x"]["get"];
+        assert_eq!(op["parameters"][0]["schema"]["type"], json!("string"));
+        assert!(op["responses"].get("404").is_none());
+        assert_eq!(
+            op["responses"]["default"]["content"]["application/json"]["schema"]["$ref"],
+            json!("#/components/schemas/ErrorModel")
+        );
+        let schemas = doc["components"]["schemas"].as_object().unwrap();
+        assert!(schemas.contains_key("ErrorModel"));
+        assert!(schemas.contains_key("Y"));
+        assert!(!schemas.contains_key("Gone"));
+    }
 }

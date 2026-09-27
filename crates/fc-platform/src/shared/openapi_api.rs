@@ -24,12 +24,14 @@ async fn openapi_yaml(State(specs): State<Specs>) -> impl IntoResponse {
 }
 
 /// The two spec routes for `openapi`.
-pub fn openapi_router(openapi: &utoipa::openapi::OpenApi) -> Router {
+pub fn openapi_router(openapi: &serde_json::Value) -> Router {
     let specs = Specs {
         json: serde_json::to_vec(openapi)
             .map(Bytes::from)
             .unwrap_or_default(),
-        yaml: openapi.to_yaml().map(Bytes::from).unwrap_or_default(),
+        yaml: serde_norway::to_string(openapi)
+            .map(Bytes::from)
+            .unwrap_or_default(),
     };
     Router::new()
         .route("/api/openapi.json", get(openapi_json))

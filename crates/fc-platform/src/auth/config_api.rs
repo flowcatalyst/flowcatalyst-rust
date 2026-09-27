@@ -38,7 +38,9 @@ pub struct CreateAnchorDomainRequest {
 pub struct AnchorDomainResponse {
     pub id: String,
     pub domain: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -98,6 +100,7 @@ pub struct CreateClientAuthConfigRequest {
 
     /// Multi-tenant OIDC
     #[serde(default)]
+    #[schema(required = true)]
     pub oidc_multi_tenant: bool,
 
     /// Multi-tenant issuer pattern
@@ -230,7 +233,9 @@ pub struct ClientAuthConfigResponse {
     pub oidc_issuer_pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_client_secret_ref: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -316,7 +321,9 @@ pub struct IdpRoleMappingResponse {
     pub idp_type: String,
     pub idp_role_name: String,
     pub platform_role_name: String,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 

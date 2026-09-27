@@ -180,4 +180,104 @@ async fn shared_operations_carry_gos_operation_ids() {
         "operations documented by both platforms must carry Go's operationId:\n{}",
         mismatched.join("\n")
     );
+    assert!(
+        go_only.is_empty(),
+        "operations Go documents but this platform does not:\n{}",
+        go_only.join("\n")
+    );
+}
+
+/// Go's component schemas this document does not carry, and why.
+const SCHEMAS_NOT_DOCUMENTED: &[(&str, &str)] = &[
+    (
+        "RawDispatchJobResponse",
+        "an orphan in Go's document: no operation references it",
+    ),
+    (
+        "RawEventResponse",
+        "an orphan in Go's document: no operation references it",
+    ),
+    (
+        "MetadataDTO",
+        "dispatch-job `metadata` items; the dispatch-job DTOs are owned by the dispatch-job descriptor work (docs/sdks.md)",
+    ),
+];
+
+/// The schema an operation's JSON request body or first success response
+/// names (`$ref`, or `[$ref]` for an array of them).
+fn body_schema_name(schema: &Value) -> Option<String> {
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        return r.rsplit('/').next().map(str::to_string);
+    }
+    if schema.get("type").and_then(Value::as_str) == Some("array") {
+        return body_schema_name(&schema["items"]).map(|n| format!("[{n}]"));
+    }
+    None
+}
+
+fn request_schema(op: &Value) -> Option<String> {
+    body_schema_name(&op["requestBody"]["content"]["application/json"]["schema"])
+}
+
+fn success_response(op: &Value) -> Option<(String, Option<String>)> {
+    let responses = op["responses"].as_object()?;
+    let (code, response) = responses
+        .iter()
+        .filter(|(c, _)| c.starts_with('2'))
+        .min_by_key(|(c, _)| c.as_str())?;
+    Some((
+        code.clone(),
+        body_schema_name(&response["content"]["application/json"]["schema"]),
+    ))
+}
+
+fn operation<'a>(doc: &'a Value, method: &str, path: &str) -> Option<&'a Value> {
+    doc["paths"]
+        .as_object()?
+        .iter()
+        .find(|(p, _)| normalise_path(p) == path)
+        .and_then(|(_, item)| item.get(method.to_lowercase()))
+}
+
+#[tokio::test]
+async fn shared_operations_name_gos_schemas() {
+    let rust = rust_document();
+    let go = go_document();
+
+    // Every schema Go names exists under the same name.
+    let rust_schemas = rust["components"]["schemas"].as_object().unwrap();
+    let missing: Vec<_> = go["components"]["schemas"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|name| !rust_schemas.contains_key(*name))
+        .filter(|name| !SCHEMAS_NOT_DOCUMENTED.iter().any(|(n, _)| n == name))
+        .cloned()
+        .collect();
+    assert!(missing.is_empty(), "Go schemas missing here: {missing:?}");
+
+    // Every shared operation names the same request schema and the same
+    // success status and schema.
+    let mut diffs = Vec::new();
+    for (method, path) in operations(&go).keys() {
+        let (Some(g), Some(r)) = (operation(&go, method, path), operation(&rust, method, path))
+        else {
+            continue;
+        };
+        if request_schema(g) != request_schema(r) {
+            diffs.push(format!(
+                "{method} {path} request: go {:?}, rust {:?}",
+                request_schema(g),
+                request_schema(r)
+            ));
+        }
+        let (gs, rs) = (success_response(g), success_response(r));
+        // `createEvent` also documents the 200 of an idempotent replay.
+        let replay = method == "POST" && path == "/api/events";
+        let same = gs == rs || (replay && gs.as_ref().map(|s| &s.1) == rs.as_ref().map(|s| &s.1));
+        if !same {
+            diffs.push(format!("{method} {path} response: go {gs:?}, rust {rs:?}"));
+        }
+    }
+    assert!(diffs.is_empty(), "{}", diffs.join("\n"));
 }

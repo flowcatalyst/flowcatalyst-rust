@@ -63,10 +63,13 @@ pub struct ClientResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub status_changed_at: Option<String>,
     /// The client's notes, oldest first (Go `ClientResponse.notes`).
     pub notes: Vec<ClientNoteResponse>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
 }
 
@@ -79,6 +82,7 @@ pub struct ClientNoteResponse {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub added_by: Option<String>,
+    #[schema(format = DateTime)]
     pub added_at: String,
 }
 
@@ -112,6 +116,7 @@ impl From<Client> for ClientResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ClientListResponse {
     pub clients: Vec<ClientResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -182,6 +187,7 @@ pub struct ClientApplicationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ClientApplicationsResponse {
     pub applications: Vec<ClientApplicationResponse>,
+    #[schema(value_type = i64)]
     pub total: usize,
 }
 
@@ -315,9 +321,7 @@ fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, Plat
     tag = "clients",
     operation_id = "listClients",
     params(
-        ("page" = Option<u32>, Query, description = "Page number"),
-        ("limit" = Option<u32>, Query, description = "Items per page"),
-        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client")
+        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client (Rust extension)")
     ),
     responses(
         (status = 200, description = "List of clients", body = ClientListResponse),
@@ -463,6 +467,15 @@ pub async fn activate_client(
     }))
 }
 
+/// Go `SuspendClientRequest`: the body of `suspend`, the same member as
+/// [`StatusChangeRequest`] (documentation only; the handler reads a
+/// `StatusChangeRequest`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[allow(dead_code)]
+pub struct SuspendClientRequest {
+    pub reason: String,
+}
+
 /// Suspend a client
 ///
 /// Suspends a client (e.g., for billing issues). Requires a reason.
@@ -474,7 +487,7 @@ pub async fn activate_client(
     params(
         ("id" = String, Path, description = "Client ID")
     ),
-    request_body = StatusChangeRequest,
+    request_body = SuspendClientRequest,
     responses(
         (status = 200, description = "Client suspended", body = StatusChangeResponse),
         (status = 404, description = "Client not found"),

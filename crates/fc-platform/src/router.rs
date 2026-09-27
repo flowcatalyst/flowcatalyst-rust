@@ -9,7 +9,6 @@ use axum::{
     routing::get,
     Router,
 };
-use utoipa::openapi::{schema::Type, ObjectBuilder};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -329,7 +328,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
     /// The returned `Router` includes all API routes, the health endpoint,
     /// Swagger UI, and SPA serving (if `static_dir` is set).
     /// It does **not** include auth middleware, CORS, or tracing layers.
-    pub fn build(self) -> (Router, utoipa::openapi::OpenApi) {
+    pub fn build(self) -> (Router, serde_json::Value) {
         // Per-IP rate limiters: separate buckets so a high-volume OAuth
         // client doesn't starve the auth login flow (and vice versa). The
         // limits compose with — they don't replace — the per-account
@@ -498,65 +497,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // routers below (`shared::openapi_contract`).
         openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
 
-        // 2. Hand-curated schemas for types referenced via #[serde(flatten)] or
-        //    via raw JSON responses — utoipa can't auto-collect these.
-        //    Keep these in sync with the actual structs in
-        //    `shared/api_common.rs` and `shared/error.rs`.
-        if let Some(components) = openapi.components.as_mut() {
-            // Mirrors `PaginationParams` in shared/api_common.rs. The struct's
-            // canonical wire field is `size` (camelCase of `size`); `limit`,
-            // `pageSize`, and `page_size` are accepted as deserialise aliases
-            // but the canonical/documented form is `size`.
-            components.schemas.insert(
-                "PaginationParams".to_string(),
-                ObjectBuilder::new()
-                    .property(
-                        "page",
-                        ObjectBuilder::new()
-                            .schema_type(Type::Integer)
-                            .description(Some("Page number (1-based)")),
-                    )
-                    .property(
-                        "size",
-                        ObjectBuilder::new()
-                            .schema_type(Type::Integer)
-                            .description(Some("Page size. Aliases: limit, pageSize, page_size.")),
-                    )
-                    .into(),
-            );
-
-            // Standard error envelope used by `PlatformError::IntoResponse`.
-            // Every non-2xx response body conforms to this shape.
-            components.schemas.insert(
-                "ErrorResponse".to_string(),
-                ObjectBuilder::new()
-                    .property(
-                        "error",
-                        ObjectBuilder::new()
-                            .schema_type(Type::String)
-                            .description(Some(
-                                "Machine-readable error code (e.g. ROLE_HAS_ASSIGNMENTS)",
-                            )),
-                    )
-                    .property(
-                        "code",
-                        ObjectBuilder::new()
-                            .schema_type(Type::String)
-                            .description(Some("The same machine-readable code as `error`")),
-                    )
-                    .property(
-                        "message",
-                        ObjectBuilder::new()
-                            .schema_type(Type::String)
-                            .description(Some("Human-readable error message suitable for display")),
-                    )
-                    .required("error")
-                    .required("code")
-                    .required("message")
-                    .into(),
-            );
-        }
-
         // 3. Set OpenAPI metadata
         openapi.info.title = "FlowCatalyst Platform API".to_string();
         openapi.info.version = fc_common::BUILD_VERSION.to_string();
@@ -579,12 +519,20 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 .build(),
         );
 
+        // 2. The published document, reshaped to Go's document conventions
+        //    (one `default` ErrorModel response, optional members not
+        //    nullable, no orphan schemas); see
+        //    `shared::openapi_contract::shape_as_go_contract`. Served as JSON
+        //    (utoipa's model cannot read back every schema it writes, e.g.
+        //    `{}`), fixed for the process lifetime.
+        let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
+        crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
+
         // Snapshot the platform's own OpenAPI document for the Developer
         // portal. Compile-time-derived from utoipa, so a single capture at
         // boot is correct for the lifetime of this binary; "Sync All" pushes
         // this value into the seeded `code='platform'` application row.
-        let platform_openapi =
-            Arc::new(serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null));
+        let platform_openapi = Arc::new(openapi.clone());
         let bff_developer_state = BffDeveloperState {
             application_repo: self.bff_developer.application_repo,
             openapi_spec_repo: self.bff_developer.openapi_spec_repo,
@@ -792,7 +740,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             // (FunctionOpenApiRoutes.java).
             .merge(crate::function::openapi::functions_openapi_router())
             // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
-            .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()))
+            .merge(
+                SwaggerUi::new(PATH_SWAGGER_UI)
+                    .external_url_unchecked(PATH_OPENAPI_SPEC, openapi.clone()),
+            )
             // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
             // into Swagger UI to keep the default UI aligned with the SDK
             // contract. Body is pre-serialised at boot.
