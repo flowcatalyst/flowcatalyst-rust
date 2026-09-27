@@ -664,3 +664,19 @@ func TestRolesUpdateSendsPermissionsOnlyWhenSet(t *testing.T) {
 	assert.Equal(t, "/api/roles/orders:admin", seen.path)
 	assert.JSONEq(t, `{"permissions":["orders:read"]}`, seen.body)
 }
+
+// Go's AddSchemaRequest requires `version`: it is always sent.
+func TestEventTypesAddSchemaVersionAlwaysSendsVersion(t *testing.T) {
+	srv, seen := newStatusSrv(t, http.StatusOK, `{"id":"et_1","code":"a:b:c:d","name":"D"}`)
+	c := client.New(srv.URL)
+
+	_, err := c.EventTypes().AddSchemaVersion(context.Background(), "et_1",
+		&client.AddSchemaVersionRequest{Schema: json.RawMessage(`{"type":"object"}`)})
+	require.NoError(t, err)
+	assert.Equal(t, "POST", seen.method)
+	assert.Equal(t, "/api/event-types/et_1/versions", seen.path)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(seen.body), &body))
+	_, has := body["version"]
+	assert.True(t, has, "version is required by Go and must be sent: %s", seen.body)
+}

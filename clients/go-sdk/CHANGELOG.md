@@ -29,6 +29,8 @@ published, so the breaking changes below affect no released version.
 
 ### Request shapes
 
+- `AddSchemaVersionRequest.Version` is always sent: Go's `AddSchemaRequest`
+  requires it.
 - `UpdateEventTypeRequest.Name` and `UpdateConnectionRequest.Name` are now
   `string` and always sent. The platform requires the name on every update.
   Added `ClientScoped` (event types) and `ApplicationCode` (connections).
