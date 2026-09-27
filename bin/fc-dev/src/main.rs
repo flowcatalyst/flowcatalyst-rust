@@ -940,9 +940,10 @@ async fn main() -> Result<()> {
         platform_application_id.clone(),
     );
 
-    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
-    // purger does the same).
-    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+    // Go's auth purger (expired auth rows, lapsed OAuth secret overlaps,
+    // login-attempts partitions), every minute.
+    fc_platform::shared::server_setup::spawn_auth_purger(
+        &repos.pool,
         repos.oauth_client_repo.clone(),
     );
 
