@@ -256,7 +256,9 @@ The router role exposes a dedicated monitoring API beyond Prometheus, under `fc-
 | `GET /monitoring/consumer-health` | Lag distribution per consumer |
 | `GET /monitoring/standby-status` | Leader / standby state |
 
-Auth is configurable via `AUTH_MODE` (`NONE` / `API_KEY` / `OIDC`). Useful for an operator dashboard that wants more detail than Prometheus exposes (Prometheus metrics are point-in-time; the warning service tracks warnings over an 8h window).
+These need a platform bearer token holding `platform:messaging:router:view` (the
+`platform:router-operator`, `platform:viewer` and `platform:application-service` roles hold it);
+see `AUTH_MODE` in `configuration.md`. Useful for an operator dashboard that wants more detail than Prometheus exposes (Prometheus metrics are point-in-time; the warning service tracks warnings over an 8h window).
 
 The platform's admin UI consumes these endpoints when displaying router status.
 

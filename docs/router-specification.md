@@ -997,7 +997,11 @@ rather than being reimplemented at each call site.
 
 Two behaviours ride along with this table and are not simple name aliasing:
 
-- **Auth mode inference.** The Go reference enables BasicAuth on the router
+- **Auth mode inference.** *Superseded outside dev mode by owner ruling 2
+  (2026-09-25, decision #21): the router API requires a platform bearer token,
+  and Basic auth (inferred or explicit) applies in dev mode only; decision #43
+  keeps `AUTH_MODE=NONE` for now. See `docs/architecture/message-router.md`,
+  "HTTP API".* The Go reference enables BasicAuth on the router
   surface whenever a username is configured, with no separate "mode" switch —
   only an explicit `AUTH_MODE=NONE` (case-insensitive) turns it off regardless
   of credentials. An implementation that instead requires an explicit

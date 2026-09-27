@@ -70,6 +70,11 @@ read `scope` as the tier. The Go and Rust SDKs were fixed here. They fall back t
   now send it on `inPipeline` / `inPipelineBatch`; the Go and Rust SDKs already did (now pinned by
   tests).
   These releases must reach integral, hr and rfp **before** any router enforces auth.
+  The router needs `platform:messaging:router:view` in the token's `scope`. An application's
+  service account holds it through `platform:application-service`, and a client-credentials token
+  requested without a `scope` carries every permission the account holds. A caller that narrows
+  its scope (the Go SDK's `ClientCredentialsConfig.Scopes`) must include it. The Rust SDK sends
+  the token its caller gives it.
 - **Single-flight session refresh** (ruling 5, Java e0a9fd13). TS joins an in-flight exchange per
   refresh token and reuses its result for 10 s; Laravel does the same under a cache lock across
   PHP workers, with the token set memoised encrypted for 10 s. The Rust and Go `OAuthClient`
