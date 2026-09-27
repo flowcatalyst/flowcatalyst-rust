@@ -138,6 +138,8 @@ fc-stream = { path = "../fc-stream" }
 # The function host's webhook verifier: deliveries the platform signs must
 # pass it (tests/function_promote_golden_test.rs).
 fc-fnhost-core = { path = "../fc-fnhost-core" }
+# The deployed host's runtimes, JS included (tests/function_host_e2e_test.rs).
+fc-fnhost-js = { path = "../fc-fnhost-js" }
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 testcontainers = { workspace = true }
