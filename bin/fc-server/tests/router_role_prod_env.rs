@@ -9,7 +9,9 @@ mod support;
 use std::path::Path;
 use std::time::Duration;
 
-use support::prod_env::{assert_production_contract, get, spawn_router, wait_exit, StandIns};
+use support::prod_env::{
+    assert_production_contract, eventually, get, spawn_router, wait_exit, StandIns,
+};
 
 fn fc_server() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_fc-server"))
@@ -41,6 +43,81 @@ async fn router_role_honours_the_production_task_definition() {
     assert!(
         !log.contains("router-test-secret"),
         "the client secret is never logged"
+    );
+
+    // Decision #43: the task's AUTH_MODE=NONE is honoured for now, loudly:
+    // at startup and on the router's health and monitoring output.
+    let warning =
+        "router API unauthenticated; remove AUTH_MODE=NONE once SDKs send the platform bearer";
+    assert!(log.contains(warning), "startup WARN: {log}");
+    let health = get(&router.api("/router/health")).await.unwrap();
+    assert!(health.1.contains(warning), "{}", health.1);
+    let monitoring = get(&router.api("/router/monitoring/health")).await.unwrap();
+    assert_eq!(monitoring.0, 200);
+    assert!(monitoring.1.contains(warning), "{}", monitoring.1);
+    // The mock, test, benchmark and seed routes are dev-only: absent here.
+    for path in ["/router/api/test/stats", "/router/api/benchmark/stats"] {
+        let answer = get(&router.api(path)).await.unwrap();
+        assert_eq!(answer.0, 404, "{path}: {}", answer.1);
+    }
+}
+
+/// Owner ruling 2: without `AUTH_MODE=NONE` the router's API needs a
+/// platform bearer token. The stand-in platform has no discovery document,
+/// so every token is refused (fail closed) while delivery, health and the
+/// dashboard page carry on.
+#[tokio::test(flavor = "multi_thread")]
+async fn router_role_without_auth_mode_none_requires_the_platform_bearer() {
+    let stand_ins = StandIns::start().await;
+    let mut env = stand_ins.production_env();
+    env.remove("AUTH_MODE");
+    let router = spawn_router(fc_server(), &stand_ins, env);
+
+    eventually(
+        Duration::from_secs(30),
+        "GET /health answers 200",
+        || async {
+            get(&router.api("/health"))
+                .await
+                .filter(|(status, _)| *status == 200)
+        },
+    )
+    .await;
+    let pools = get(&router.api("/router/monitoring/pools")).await.unwrap();
+    assert_eq!(pools.0, 401, "{}", pools.1);
+    assert!(pools.1.contains("UNAUTHORIZED"), "{}", pools.1);
+    let resp = reqwest::Client::new()
+        .get(router.api("/router/monitoring/pools"))
+        .bearer_auth("not-a-platform-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+    assert_eq!(resp.headers()["x-auth-mode"], "BEARER");
+    let publish = reqwest::Client::new()
+        .post(router.api("/router/messages"))
+        .json(&serde_json::json!({"payload": {}, "mediationTarget": "http://127.0.0.1:9/"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(publish.status().as_u16(), 401);
+
+    for path in [
+        "/router/health",
+        "/router/metrics",
+        "/router/dashboard.html",
+    ] {
+        let answer = get(&router.api(path)).await.unwrap();
+        assert_ne!(answer.0, 401, "{path} stays open");
+    }
+    let health = get(&router.api("/router/health")).await.unwrap();
+    assert!(!health.1.contains("authWarning"), "{}", health.1);
+    let dev = get(&router.api("/router/api/test/stats")).await.unwrap();
+    assert_eq!(dev.0, 404);
+    let log = router.log();
+    assert!(
+        log.contains("platform bearer tokens"),
+        "startup names the guard: {log}"
     );
 }
 

@@ -11,7 +11,10 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use super::env::{dev_router_config, RouterEnv};
-use crate::api::{create_router_with_options, AuthMode, RouterDeps, RouterOptions};
+use crate::api::platform_auth::{self, RouterAuthChoice, RouterAuthDecision};
+use crate::api::{
+    create_router_with_options, DashboardSignIn, PlatformAuth, RouterDeps, RouterOptions,
+};
 use crate::config_sync::{ConfigSyncConfig, ConfigSyncService};
 use crate::health::{HealthService, HealthServiceConfig};
 use crate::lifecycle::{LifecycleConfig, LifecycleManager};
@@ -49,8 +52,72 @@ pub struct RouterRuntime {
     lifecycle: LifecycleManager,
     drain_timeout: Duration,
     manager_handle: Option<JoinHandle<()>>,
+    /// Who may call the HTTP surface (owner ruling 2, decision #43).
+    api_auth: ApiAuth,
     /// Keeps the notification batch scheduler alive for the runtime's life.
     _notifications: Option<NotificationServiceWithScheduler>,
+}
+
+/// The router API's guard, decided once at start (and logged there).
+struct ApiAuth {
+    decision: RouterAuthDecision,
+    /// Where bearer tokens are verified: `FC_ROUTER_PLATFORM_URL` (or its
+    /// aliases), else the platform in this process.
+    verify_url: Option<String>,
+    dashboard_client_id: Option<String>,
+    dev_mode: bool,
+}
+
+impl ApiAuth {
+    fn from_env(env: &RouterEnv) -> Self {
+        let decision = platform_auth::resolve(&env.api_auth);
+        let verify_url = env
+            .platform_url
+            .clone()
+            .filter(|u| !u.trim().is_empty())
+            .or_else(|| env.local_platform_url.clone());
+        for setting in &decision.ignored {
+            warn!(
+                setting,
+                "router API auth: this setting applies in dev mode only and is ignored; the \
+                 router API requires a platform bearer token"
+            );
+        }
+        match decision.choice {
+            RouterAuthChoice::Open { transitional: true } => {
+                warn!(
+                    "{} (AUTH_MODE=NONE outside dev mode: /messages, breaker resets, in-flight \
+                     ACKs and pool updates are open to anyone who can reach this port; decision #43)",
+                    platform_auth::UNAUTHENTICATED_WARNING
+                );
+            }
+            RouterAuthChoice::Open {
+                transitional: false,
+            } => info!("Router API authentication disabled (dev mode)"),
+            RouterAuthChoice::Legacy => {
+                info!("Router API authentication: dev-mode Basic/OIDC (AUTH_MODE)")
+            }
+            RouterAuthChoice::PlatformBearer => match verify_url.as_deref() {
+                Some(url) => info!(
+                    platform_url = %url,
+                    dashboard_sign_in = env.dashboard_client_id.is_some(),
+                    "Router API authentication: platform bearer tokens \
+                     (platform:messaging:router:view / :operate)"
+                ),
+                None => warn!(
+                    "router API auth: no platform to verify tokens against \
+                     (FC_ROUTER_PLATFORM_URL unset and no platform in this process); every router \
+                     API call except health, metrics and the dashboard page will answer 401"
+                ),
+            },
+        }
+        Self {
+            decision,
+            verify_url,
+            dashboard_client_id: env.dashboard_client_id.clone(),
+            dev_mode: env.dev_mode,
+        }
+    }
 }
 
 impl RouterRuntime {
@@ -58,6 +125,7 @@ impl RouterRuntime {
     /// watcher retries in the background (Go `Watch`), so the caller binds
     /// HTTP straight away whatever state the config sources are in.
     pub async fn start(env: &RouterEnv, opts: RouterRuntimeOptions) -> crate::Result<Self> {
+        let api_auth = ApiAuth::from_env(env);
         let notifications = create_notification_service_with_scheduler(&env.notification);
         let warning_service = Arc::new(match notifications {
             Some(ref ns) => {
@@ -208,12 +276,16 @@ impl RouterRuntime {
             lifecycle,
             drain_timeout: env.drain_timeout,
             manager_handle: Some(manager_handle),
+            api_auth,
             _notifications: notifications,
         })
     }
 
     /// The router's HTTP surface (monitoring, health, dashboard, publish),
-    /// authenticated per `AUTH_MODE` / `FC_ROUTER_AUTH_*`. `http_prefix`
+    /// guarded as [`platform_auth::resolve`] decided at start: platform
+    /// bearer tokens, or (dev mode) `AUTH_MODE` / `FC_ROUTER_AUTH_*`, or
+    /// decision #43's transitional `AUTH_MODE=NONE`. The mock, test,
+    /// benchmark and seed routes exist in dev mode only. `http_prefix`
     /// additionally nests it under that path.
     pub fn api_router(
         &self,
@@ -221,14 +293,25 @@ impl RouterRuntime {
         metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
         http_prefix: Option<String>,
     ) -> Router {
-        let auth_config = crate::api::AuthConfig::from_env();
-        let auth_state = if auth_config.mode != AuthMode::None {
-            info!(mode = ?auth_config.mode, "Router API authentication configured");
-            Some(crate::api::create_auth_state(auth_config))
-        } else {
-            info!("Router API authentication disabled (AUTH_MODE=NONE or no credentials)");
-            None
+        let (auth_state, platform_auth) = match self.api_auth.decision.choice {
+            RouterAuthChoice::Open { .. } => (None, None),
+            RouterAuthChoice::Legacy => (
+                Some(crate::api::create_auth_state(
+                    crate::api::AuthConfig::from_env(),
+                )),
+                None,
+            ),
+            RouterAuthChoice::PlatformBearer => (
+                None,
+                Some(PlatformAuth::new(self.api_auth.verify_url.as_deref())),
+            ),
         };
+        // One discovery shared with the guard: the dashboard's authorize URL
+        // is in the same document the issuer comes from.
+        let dashboard_sign_in = std::sync::Arc::new(DashboardSignIn::new(
+            platform_auth.as_ref().and_then(PlatformAuth::key_source),
+            self.api_auth.dashboard_client_id.as_deref(),
+        ));
         let config_reloader = self
             .config_sync
             .clone()
@@ -250,6 +333,10 @@ impl RouterRuntime {
                     .unwrap_or_else(|| "default".to_string()),
                 metrics_handle,
                 auth_state,
+                platform_auth,
+                dashboard_sign_in: Some(dashboard_sign_in),
+                dev_routes: self.api_auth.dev_mode,
+                auth_warning: self.api_auth.decision.warning().map(str::to_owned),
                 router_http_prefix: http_prefix,
                 config_reloader,
                 ..RouterOptions::default()

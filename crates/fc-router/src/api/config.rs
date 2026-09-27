@@ -331,6 +331,7 @@ mod tests {
             metrics_handle: None,
             cached_broker_stats: Arc::new(super::super::CachedBrokerStats::new(queue_manager)),
             config_reloader: None,
+            auth_warning: None,
         }
     }
 

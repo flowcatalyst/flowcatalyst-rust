@@ -3223,6 +3223,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "fc-common",
+ "fc-platform-jwks",
  "fc-queue",
  "fc-standby",
  "fc-stream",

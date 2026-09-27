@@ -71,6 +71,18 @@ pub struct RouterEnv {
     pub platform_url: Option<String>,
     /// `FC_ROUTER_CLIENT_ID` + `FC_ROUTER_CLIENT_SECRET`.
     pub credentials: Option<RouterCredentials>,
+    /// The platform in this process (`http://127.0.0.1:<FC_API_PORT>`), set
+    /// by `fc-server` when its platform role runs beside the router. Never
+    /// read from the environment. The router API verifies bearer tokens
+    /// against `platform_url`, else this (owner ruling 2).
+    pub local_platform_url: Option<String>,
+    /// `AUTH_MODE`, `FC_ROUTER_AUTH_USER` / `_PASS`: which guard the
+    /// router's API gets ([`crate::api::platform_auth::resolve`]).
+    pub api_auth: crate::api::platform_auth::RouterAuthSettings,
+    /// `FC_ROUTER_DASHBOARD_CLIENT_ID`: the public OAuth client the
+    /// dashboard signs in through (authorization code + PKCE). Unset leaves
+    /// dashboard sign-in off; the API still takes bearer tokens.
+    pub dashboard_client_id: Option<String>,
     /// `FLOWCATALYST_DEV_MODE`.
     pub dev_mode: bool,
     /// `FC_ROUTER_STRICT_ROUTING`.
@@ -162,12 +174,18 @@ impl RouterEnv {
             .filter(|&n| n > 0)
             .map_or(0, |n| n as usize);
 
+        let dev_mode = env.bool_first(&["FLOWCATALYST_DEV_MODE"], false);
         Ok(Self {
             config_urls,
             config_interval,
             platform_url,
             credentials,
-            dev_mode: env.bool_first(&["FLOWCATALYST_DEV_MODE"], false),
+            local_platform_url: None,
+            api_auth: crate::api::platform_auth::RouterAuthSettings::from_lookup(dev_mode, |k| {
+                env.first(&[k])
+            }),
+            dashboard_client_id: env.first(&["FC_ROUTER_DASHBOARD_CLIENT_ID"]),
+            dev_mode,
             strict_routing: env.bool_first(&["FC_ROUTER_STRICT_ROUTING"], false),
             drain_timeout,
             synth_pool_idle_secs,

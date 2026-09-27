@@ -290,7 +290,13 @@ async fn main() -> Result<()> {
     // half-configured platform credential refuses to start, as Go's
     // newRouterServer does.
     let router_env = if router_enabled {
-        Some(fc_router::bootstrap::RouterEnv::from_env()?)
+        let mut env = fc_router::bootstrap::RouterEnv::from_env()?;
+        // The router API verifies platform bearer tokens (owner ruling 2):
+        // against FC_ROUTER_PLATFORM_URL, else the platform in this process.
+        if platform_enabled {
+            env.local_platform_url = Some(format!("http://127.0.0.1:{api_port}"));
+        }
+        Some(env)
     } else {
         None
     };
