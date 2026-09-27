@@ -49,6 +49,10 @@ async fn field_gap_migrations_rerun_as_no_ops_and_are_recognised_when_applied() 
             "059_principal_role_assigned_by",
             include_str!("../../../migrations/059_principal_role_assigned_by.sql"),
         ),
+        (
+            "060_service_account_webhook_credential_members",
+            include_str!("../../../migrations/060_service_account_webhook_credential_members.sql"),
+        ),
     ];
     for (id, sql) in migrations {
         sqlx::raw_sql(sql)
@@ -496,4 +500,173 @@ async fn service_account_role_assignments_record_who_assigned_them() {
         .unwrap();
     let listed = get_json(&app, &roles_path, &token).await;
     assert!(listed["roles"][0].get("assignedBy").is_none(), "{listed}");
+}
+
+// ── 6. Service-account update: webhookCredentials ────────────────────────
+
+/// Go's update replaces the account's webhook credentials with the
+/// `webhookCredentials` it is sent, storing the type, token, signing secret
+/// and algorithm and dropping the other four members; they are all stored
+/// here (secrets sealed, as the token and signing secret always are). Every
+/// member is write-only; the delivery path signs with the new token and
+/// secret; the audit row masks the secrets.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_update_replaces_the_webhook_credentials() {
+    use fc_platform::service_account::outbound_credentials::{ById, OutboundCredentialsResolver};
+    use fc_platform::shared::encryption_service::EncryptionService;
+
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    let sa = assert_status(
+        app.post(
+            "/api/service-accounts",
+            &token,
+            json!({"code": "gaps-webhook-sa", "name": "Gaps Webhook SA"}),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let id = sa["serviceAccount"]["id"].as_str().unwrap().to_string();
+    let path = format!("/api/service-accounts/{id}");
+
+    let (s, body) = read_json(
+        app.put(
+            &path,
+            &token,
+            json!({"webhookCredentials": {
+                "authType": "BASIC_AUTH",
+                "token": "tok-123",
+                "username": "svc-user",
+                "password": "pw-456",
+                "headerName": "X-Api-Key",
+                "signingSecret": "sig-789",
+                "signingAlgorithm": "HMAC_SHA256",
+                "signatureHeader": "X-Signature"
+            }}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{body}");
+
+    let enc = EncryptionService::from_env().expect("app key");
+    #[allow(clippy::type_complexity)]
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT wh_auth_type, wh_auth_token_ref, wh_username, wh_password_ref, \
+         wh_header_name, wh_signing_secret_ref, wh_signing_algorithm, wh_signature_header \
+         FROM iam_service_accounts WHERE id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("BASIC_AUTH"));
+    assert_eq!(
+        enc.decrypt_ref(row.1.as_deref().unwrap()).unwrap(),
+        "tok-123"
+    );
+    assert_eq!(row.2.as_deref(), Some("svc-user"));
+    let password_ref = row.3.as_deref().unwrap();
+    assert!(password_ref.starts_with("encrypted:"), "never plaintext");
+    assert_eq!(enc.decrypt_ref(password_ref).unwrap(), "pw-456");
+    assert_eq!(row.4.as_deref(), Some("X-Api-Key"));
+    assert_eq!(
+        enc.decrypt_ref(row.5.as_deref().unwrap()).unwrap(),
+        "sig-789"
+    );
+    assert_eq!(row.6.as_deref(), Some("HMAC_SHA256"));
+    assert_eq!(row.7.as_deref(), Some("X-Signature"));
+
+    // Reads answer the type only.
+    let read = get_json(&app, &path, &token).await;
+    assert_eq!(read["authType"], "BASIC_AUTH");
+    for member in ["webhookCredentials", "token", "password", "signingSecret"] {
+        assert!(read.get(member).is_none(), "{member}: {read}");
+    }
+
+    // Deliveries are signed with the new token and secret.
+    let resolver = OutboundCredentialsResolver::new(
+        std::sync::Arc::new(fc_platform::ServiceAccountRepository::new(&app.pool)),
+        Some(std::sync::Arc::new(enc)),
+    );
+    match resolver.by_service_account_id(&id).await.unwrap() {
+        ById::Found(creds) => {
+            assert_eq!(creds.token.as_deref(), Some("tok-123"));
+            assert_eq!(creds.signing_secret.as_deref(), Some("sig-789"));
+        }
+        other => panic!("expected credentials, got {other:?}"),
+    }
+
+    // The audit row keeps the shape and masks the secrets.
+    let (audited,): (Value,) = sqlx::query_as(
+        "SELECT operation_json FROM aud_logs WHERE operation_json ? 'webhookCredentials' \
+         ORDER BY performed_at DESC LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    let wh = &audited["webhookCredentials"];
+    assert_eq!(wh["username"], "svc-user");
+    for secret in ["token", "password", "signingSecret"] {
+        assert_eq!(wh[secret], "***", "{secret}: {audited}");
+    }
+
+    // An update without them leaves them; an unknown type or algorithm is a
+    // 400 and changes nothing.
+    let (s, _) = read_json(app.put(&path, &token, json!({"name": "Renamed"})).await).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let kept: (Option<String>,) =
+        sqlx::query_as("SELECT wh_username FROM iam_service_accounts WHERE id = $1")
+            .bind(&id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(kept.0.as_deref(), Some("svc-user"));
+    for (creds, code) in [
+        (json!({"authType": "OAUTH_MAGIC"}), "INVALID_AUTH_TYPE"),
+        (
+            json!({"authType": "HMAC_SIGNATURE", "signingAlgorithm": "MD5"}),
+            "INVALID_SIGNING_ALGORITHM",
+        ),
+    ] {
+        let (s, body) = read_json(
+            app.put(&path, &token, json!({"webhookCredentials": creds}))
+                .await,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"], code);
+    }
+
+    // Go's replace: `NONE` clears every member.
+    let (s, _) = read_json(
+        app.put(
+            &path,
+            &token,
+            json!({"webhookCredentials": {"authType": "NONE"}}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let cleared: (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT wh_auth_type, wh_auth_token_ref, wh_password_ref \
+         FROM iam_service_accounts WHERE id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(cleared, (Some("NONE".to_string()), None, None));
 }

@@ -45,7 +45,7 @@ pub struct SecretColumn {
 /// secret. That one is a verify-only `hashed:v1:` ref, which can only be
 /// computed from the plaintext the client presents; `/oauth/token` migrates
 /// older shapes lazily on the next successful authentication.
-pub const SECRET_COLUMNS: [SecretColumn; 4] = [
+pub const SECRET_COLUMNS: [SecretColumn; 5] = [
     SecretColumn {
         table: "oauth_identity_providers",
         column: "oidc_client_secret_ref",
@@ -65,6 +65,11 @@ pub const SECRET_COLUMNS: [SecretColumn; 4] = [
         table: "app_platform_configs",
         column: "value",
         row_filter: Some("value_type = 'SECRET'"),
+    },
+    SecretColumn {
+        table: "iam_service_accounts",
+        column: "wh_password_ref",
+        row_filter: None,
     },
 ];
 

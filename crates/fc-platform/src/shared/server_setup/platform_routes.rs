@@ -717,6 +717,7 @@ pub fn build_platform_routes(
         repos.service_account_repo.clone(),
         repos.client_repo.clone(),
         unit_of_work.clone(),
+        encryption_service.clone(),
     ));
     let delete_sa_use_case = Arc::new(DeleteServiceAccountUseCase::new(
         repos.service_account_repo.clone(),

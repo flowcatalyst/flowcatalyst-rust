@@ -55,6 +55,10 @@ struct ServiceAccountRow {
     wh_auth_token_ref: Option<String>,
     wh_signing_secret_ref: Option<String>,
     wh_signing_algorithm: Option<String>,
+    wh_username: Option<String>,
+    wh_password_ref: Option<String>,
+    wh_header_name: Option<String>,
+    wh_signature_header: Option<String>,
     last_used_at: Option<DateTime<Utc>>,
     #[allow(dead_code)]
     created_at: DateTime<Utc>,
@@ -169,8 +173,10 @@ impl ServiceAccountRepository {
                 (id, code, name, description, application_id, active,
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm,
                  wh_credentials_created_at, wh_credentials_regenerated_at,
-                 last_used_at, created_at, updated_at, scope, client_ids)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16)",
+                 last_used_at, created_at, updated_at, scope, client_ids,
+                 wh_username, wh_password_ref, wh_header_name, wh_signature_header)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16,
+                     $17, $18, $19, $20)",
         )
         .bind(sa_id)
         .bind(&account.code)
@@ -188,6 +194,10 @@ impl ServiceAccountRepository {
         .bind(now)
         .bind(&account.requested_scope)
         .bind(&account.client_ids)
+        .bind(&wh.username)
+        .bind(&wh.password)
+        .bind(&wh.header_name)
+        .bind(&wh.signature_header)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -220,6 +230,7 @@ impl ServiceAccountRepository {
         let sa = sqlx::query_as::<_, ServiceAccountRow>(
             "SELECT id, code, name, description, application_id, scope, client_ids, active, \
              wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
+             wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
              last_used_at, created_at, updated_at \
              FROM iam_service_accounts WHERE code = $1",
         )
@@ -490,7 +501,8 @@ impl ServiceAccountRepository {
                     code = $2, name = $3, description = $4, application_id = $5, active = $6,
                     wh_auth_type = $7, wh_auth_token_ref = $8, wh_signing_secret_ref = $9,
                     wh_signing_algorithm = $10, last_used_at = $11, updated_at = $12,
-                    scope = $13, client_ids = $14
+                    scope = $13, client_ids = $14, wh_username = $15, wh_password_ref = $16,
+                    wh_header_name = $17, wh_signature_header = $18
                  WHERE id = $1",
             )
             .bind(sa_table_id)
@@ -507,6 +519,10 @@ impl ServiceAccountRepository {
             .bind(now)
             .bind(&account.requested_scope)
             .bind(&account.client_ids)
+            .bind(&wh.username)
+            .bind(&wh.password)
+            .bind(&wh.header_name)
+            .bind(&wh.signature_header)
             .execute(&self.pool)
             .await?;
         }
@@ -531,6 +547,7 @@ impl ServiceAccountRepository {
             sqlx::query_as::<_, ServiceAccountRow>(
                 "SELECT id, code, name, description, application_id, scope, client_ids, active, \
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
+                 wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
                  last_used_at, created_at, updated_at \
                  FROM iam_service_accounts WHERE id = $1",
             )
@@ -572,6 +589,7 @@ impl ServiceAccountRepository {
             sqlx::query_as::<_, ServiceAccountRow>(
                 "SELECT id, code, name, description, application_id, scope, client_ids, active, \
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
+                 wh_username, wh_password_ref, wh_header_name, wh_signature_header, \
                  last_used_at, created_at, updated_at \
                  FROM iam_service_accounts WHERE id = ANY($1)",
             )
@@ -644,12 +662,12 @@ impl ServiceAccountRepository {
                 WebhookCredentials {
                     auth_type: auth_type.unwrap_or_default(),
                     token: sa.wh_auth_token_ref.clone(),
-                    username: None,
-                    password: None,
-                    header_name: None,
+                    username: sa.wh_username.clone(),
+                    password: sa.wh_password_ref.clone(),
+                    header_name: sa.wh_header_name.clone(),
                     signing_secret: sa.wh_signing_secret_ref.clone(),
                     signing_algorithm,
-                    signature_header: None,
+                    signature_header: sa.wh_signature_header.clone(),
                 }
             }
             None => WebhookCredentials::default(),
@@ -798,8 +816,8 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
 
         // 2. Upsert iam_service_accounts (webhook credentials)
         sqlx::query(
-            "INSERT INTO iam_service_accounts (id, code, name, description, application_id, active, wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, wh_credentials_created_at, last_used_at, created_at, updated_at, scope, client_ids)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            "INSERT INTO iam_service_accounts (id, code, name, description, application_id, active, wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, wh_credentials_created_at, last_used_at, created_at, updated_at, scope, client_ids, wh_username, wh_password_ref, wh_header_name, wh_signature_header)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
              ON CONFLICT (id) DO UPDATE SET
                 code = EXCLUDED.code,
                 name = EXCLUDED.name,
@@ -812,6 +830,10 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
                 wh_auth_token_ref = EXCLUDED.wh_auth_token_ref,
                 wh_signing_secret_ref = EXCLUDED.wh_signing_secret_ref,
                 wh_signing_algorithm = EXCLUDED.wh_signing_algorithm,
+                wh_username = EXCLUDED.wh_username,
+                wh_password_ref = EXCLUDED.wh_password_ref,
+                wh_header_name = EXCLUDED.wh_header_name,
+                wh_signature_header = EXCLUDED.wh_signature_header,
                 last_used_at = EXCLUDED.last_used_at,
                 updated_at = EXCLUDED.updated_at"
         )
@@ -831,6 +853,10 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(now)
         .bind(&sa.requested_scope)
         .bind(&sa.client_ids)
+        .bind(&wh.username)
+        .bind(&wh.password)
+        .bind(&wh.header_name)
+        .bind(&wh.signature_header)
         .execute(&mut **tx.inner).await?;
 
         // 3. Sync client grants: exactly the PARTNER account's clients.
@@ -981,6 +1007,10 @@ mod tests {
             wh_auth_token_ref: None,
             wh_signing_secret_ref: None,
             wh_signing_algorithm: algorithm.map(str::to_string),
+            wh_username: None,
+            wh_password_ref: None,
+            wh_header_name: None,
+            wh_signature_header: None,
             last_used_at: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

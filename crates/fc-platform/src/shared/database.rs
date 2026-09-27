@@ -670,6 +670,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "059_principal_role_assigned_by",
             include_str!("../../../../migrations/059_principal_role_assigned_by.sql"),
         ),
+        // The webhook-credential members Go accepts on a service account
+        // but drops (username, password, header names).
+        (
+            "060_service_account_webhook_credential_members",
+            include_str!(
+                "../../../../migrations/060_service_account_webhook_credential_members.sql"
+            ),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -960,6 +968,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'iam_principal_roles' \
                AND column_name = 'assigned_by')",
+        ),
+        (
+            "060_service_account_webhook_credential_members",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_service_accounts' \
+               AND column_name = 'wh_signature_header')",
         ),
     ];
 
