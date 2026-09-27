@@ -181,7 +181,8 @@ impl WasmHarness {
                 consume_fuel: options.consume_fuel,
                 ..EngineSettings::default()
             },
-            max_executing: options.max_executing,
+            threads: options.max_executing,
+            budget: fc_fnhost_core::exec::ExecBudget::new(options.max_executing),
             cache_dir: dir.path().to_owned(),
             db: options.db.clone(),
         })

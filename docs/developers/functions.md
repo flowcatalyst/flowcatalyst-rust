@@ -261,7 +261,9 @@ produce a response rejects with an `HttpError` whose `code` is the `wasi:http` e
 - **Memory:** `limits.wasmMemoryMb` caps the isolate's JavaScript heap (at least 8 MiB) and, separately, its
   `ArrayBuffer` storage. Past either, the call ends with 500.
 - **Time:** the endpoint's `timeoutMs` stops the function wherever it is (the caller gets 504). JavaScript is not
-  preempted otherwise: a computation holds its worker thread until it awaits, so keep CPU-heavy work short.
+  preempted otherwise: a computation holds its worker thread, and one of the host's `FC_FN_MAX_EXECUTING`
+  executing slots (shared with every WASM function on the host), until it awaits, so keep CPU-heavy work short.
+  Awaiting `fetch`, an emit or a timer holds neither.
 - **Settle before you return.** Work still pending when the response is ready is dropped with the isolate.
 - **Failures:** a throw, a rejection, a value that is not a `Response`, or a promise that can never settle answers
   `500 {"error":"the function failed"}`. The error goes to the host's log, never to the caller.
@@ -303,6 +305,7 @@ HTTPS API and emits an event) show the whole shape, with native unit tests throu
 | Memory per request in flight | an instance (its linear memory) | an isolate, ≈1.8 MiB |
 | Per request, through the listener (Linux) | ≈0.1 ms | ≈1.1 ms, plus the bundle's top-level code (+0.7 ms at 256 KiB) |
 | Isolation of a busy function | preempted every 1 ms (epoch ticks) | runs to its next `await` on its worker thread |
+| Executing slots (`FC_FN_MAX_EXECUTING`, one budget for the host) | held while computing, given back every 1 ms and at every wait | held while computing, until the next `await` |
 | Fuel metering, `maxFuel` | yes | no |
 | Database access (`db[]`) | yes | not yet |
 | Ecosystem | crates that build for `wasm32-wasip2` | npm packages that bundle without Node APIs |

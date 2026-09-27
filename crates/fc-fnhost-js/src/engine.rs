@@ -1,18 +1,29 @@
 //! The one V8 platform and the worker threads every JS function shares.
 //!
 //! **Where functions run.** Not on the listener's tokio workers: on
-//! `FC_FN_MAX_EXECUTING` threads of their own (the variable the WASM
-//! runtime sizes its guest runtime with), each a current-thread tokio
+//! `FC_FN_MAX_EXECUTING` threads of their own, each a current-thread tokio
 //! runtime driving many isolates at once ([`crate::isolate`] explains how
-//! they share a thread). So at most that many functions execute JavaScript
-//! at any moment, and one waiting on I/O holds no thread. A new call goes
-//! to the worker with the fewest calls in flight.
+//! they share a thread). A new call goes to the worker with the fewest
+//! calls in flight, and one waiting on I/O holds no thread.
+//!
+//! **What caps execution** is not these threads but the host-wide
+//! [`ExecBudget`]: `FC_FN_MAX_EXECUTING` permits that the JS isolates and
+//! the WASM guests share, so a host running both kinds executes at most
+//! that many guests at once, not that many of each. An isolate holds a
+//! permit only while its future is polled, one event-loop turn at a time
+//! (see [`crate::function`]); awaiting a `fetch`, an emit or a timer, it
+//! holds none. Each worker is a [`Lane`]: an isolate takes its worker's
+//! lane before it queues for a permit, so a permit is never handed to an
+//! isolate whose thread is busy with another. There are
+//! `FC_FN_MAX_EXECUTING` workers so that JS alone can use the whole budget;
+//! more could never execute at once.
 //!
 //! **What a worker cannot do** that the WASM runtime's epoch ticks do:
 //! preempt. JavaScript runs to its next `await`; a function that computes
-//! for 200 ms holds its worker, and the other calls on that worker, for
-//! 200 ms. Its deadline still stops it (the watchdog terminates the
-//! isolate from another thread).
+//! for 200 ms holds its worker, and its permit, for 200 ms (the other calls
+//! on that worker wait; the WASM guests and the other workers share what
+//! permits are left). Its deadline still stops it (the watchdog terminates
+//! the isolate from another thread).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -20,6 +31,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Once, OnceLock};
 
 use deno_core::{JsRuntime, JsRuntimeForSnapshot, RuntimeOptions};
+
+use fc_fnhost_core::exec::{ExecBudget, Lane};
 
 use crate::ops::fc_function;
 use crate::prepare::BOOTSTRAP;
@@ -157,11 +170,14 @@ const WARM_UP: &str = r#"
 struct Worker {
     jobs: mpsc::UnboundedSender<Job>,
     load: Arc<AtomicUsize>,
+    /// Which of this worker's isolates may run or queue for a permit.
+    lane: Lane,
 }
 
 pub struct Workers {
     workers: Vec<Worker>,
     next: AtomicUsize,
+    budget: ExecBudget,
 }
 
 /// A worker's stack: V8 limits its own stack use to about 1 MiB, and the
@@ -169,7 +185,8 @@ pub struct Workers {
 const WORKER_STACK_BYTES: usize = 8 << 20;
 
 impl Workers {
-    pub fn start(count: usize) -> Result<Self, String> {
+    /// `count` workers whose isolates execute on `budget`'s permits.
+    pub fn start(count: usize, budget: ExecBudget) -> Result<Self, String> {
         let mut workers = Vec::with_capacity(count.max(1));
         for i in 0..count.max(1) {
             let (jobs, mut queue) = mpsc::unbounded_channel::<Job>();
@@ -192,12 +209,20 @@ impl Workers {
             workers.push(Worker {
                 jobs,
                 load: Arc::new(AtomicUsize::new(0)),
+                lane: Lane::new(),
             });
         }
         Ok(Self {
             workers,
             next: AtomicUsize::new(0),
+            budget,
         })
+    }
+
+    /// The executing permits the isolates share with the host's other
+    /// runtimes.
+    pub fn budget(&self) -> &ExecBudget {
+        &self.budget
     }
 
     pub fn len(&self) -> usize {
@@ -208,12 +233,13 @@ impl Workers {
         self.workers.is_empty()
     }
 
-    /// Runs `make()`'s future on the least-loaded worker (ties go round
-    /// robin). `false` when the workers are gone (the engine is shutting
-    /// down).
+    /// Runs `make(lane)`'s future on the least-loaded worker (ties go round
+    /// robin); `lane` is that worker's, for metering the future on
+    /// ([`ExecBudget::run_on`]). `false` when the workers are gone (the
+    /// engine is shutting down).
     pub fn run<F, Fut>(&self, make: F) -> bool
     where
-        F: FnOnce() -> Fut + Send + 'static,
+        F: FnOnce(Lane) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
         let start = self.next.fetch_add(1, Ordering::Relaxed);
@@ -223,6 +249,7 @@ impl Workers {
             .min_by_key(|w| w.load.load(Ordering::Relaxed))
             .expect("at least one worker");
         let load = worker.load.clone();
+        let lane = worker.lane.clone();
         load.fetch_add(1, Ordering::Relaxed);
         let job: Job = Box::new(move || {
             Box::pin(async move {
@@ -233,7 +260,7 @@ impl Workers {
                     }
                 }
                 let _done = Done(load);
-                make().await;
+                make(lane).await;
             })
         });
         worker.jobs.send(job).is_ok()

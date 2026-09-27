@@ -113,6 +113,7 @@ pub struct FnMetrics {
     reconcile_total: Family<Labels, Counter>,
     last_reconcile_success: Gauge<f64, AtomicU64>,
     permits: Arc<RwLock<Option<Arc<dyn PermitsView>>>>,
+    budget: Arc<RwLock<Option<crate::exec::ExecBudget>>>,
     /// The invocation label sets created per address, for the sweep.
     invocation_labels: Mutex<HashMap<String, HashSet<Labels>>>,
     known_addresses: Mutex<HashSet<FunctionAddress>>,
@@ -182,6 +183,48 @@ impl Collector for PermitsGauge {
                 ];
                 ConstGauge::new(available).encode(metric.encode_family(&labels)?)?;
             }
+        }
+        Ok(())
+    }
+}
+
+/// The host-wide executing budget (`FC_FN_MAX_EXECUTING`, every runtime
+/// together; Rust host only): `fc_fn_executing`, `fc_fn_executing_waiting`
+/// and `fc_fn_executing_limit`, once the host has a budget.
+struct ExecutingGauges {
+    budget: Arc<RwLock<Option<crate::exec::ExecBudget>>>,
+}
+
+impl std::fmt::Debug for ExecutingGauges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExecutingGauges")
+    }
+}
+
+impl Collector for ExecutingGauges {
+    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), std::fmt::Error> {
+        let Some(budget) = self.budget.read().clone() else {
+            return Ok(());
+        };
+        for (name, help, value) in [
+            (
+                "fc_fn_executing",
+                "Guests executing now, every runtime together (FC_FN_MAX_EXECUTING permits in use)",
+                budget.executing(),
+            ),
+            (
+                "fc_fn_executing_waiting",
+                "Guests ready to run, queued for an FC_FN_MAX_EXECUTING permit",
+                budget.waiting(),
+            ),
+            (
+                "fc_fn_executing_limit",
+                "FC_FN_MAX_EXECUTING: guests that may execute at once, every runtime together",
+                budget.limit(),
+            ),
+        ] {
+            let gauge = ConstGauge::new(value as i64);
+            gauge.encode(encoder.encode_descriptor(name, help, None, gauge.metric_type())?)?;
         }
         Ok(())
     }
@@ -259,6 +302,10 @@ impl FnMetrics {
         registry.register_collector(Box::new(PermitsGauge {
             permits: permits.clone(),
         }));
+        let budget: Arc<RwLock<Option<crate::exec::ExecBudget>>> = Arc::new(RwLock::new(None));
+        registry.register_collector(Box::new(ExecutingGauges {
+            budget: budget.clone(),
+        }));
         Self {
             registry,
             invocations,
@@ -272,6 +319,7 @@ impl FnMetrics {
             reconcile_total,
             last_reconcile_success,
             permits,
+            budget,
             invocation_labels: Mutex::new(HashMap::new()),
             known_addresses: Mutex::new(HashSet::new()),
         }
@@ -288,6 +336,12 @@ impl FnMetrics {
 
     pub fn permits_ready(&self, permits: Arc<dyn PermitsView>) {
         *self.permits.write() = Some(permits);
+    }
+
+    /// The executing budget the host's runtimes share, for
+    /// `fc_fn_executing*`.
+    pub fn budget_ready(&self, budget: crate::exec::ExecBudget) {
+        *self.budget.write() = Some(budget);
     }
 
     fn count_invocation(
@@ -453,6 +507,27 @@ mod tests {
         ] {
             assert!(text.contains(series), "{series} missing from:\n{text}");
         }
+    }
+
+    #[tokio::test]
+    async fn the_shared_executing_budget_is_exposed_once_the_host_has_one() {
+        let m = metrics();
+        assert!(!m.encode().unwrap().contains("fc_fn_executing"));
+        let budget = crate::exec::ExecBudget::new(3);
+        m.budget_ready(budget.clone());
+        // Scraped from inside a guest's poll: that guest holds a permit.
+        let observed = budget.run(async { m.encode().unwrap() }).await;
+        for series in [
+            "fc_fn_executing 1",
+            "fc_fn_executing_waiting 0",
+            "fc_fn_executing_limit 3",
+        ] {
+            assert!(
+                observed.contains(series),
+                "{series} missing from:\n{observed}"
+            );
+        }
+        assert!(m.encode().unwrap().contains("fc_fn_executing 0"));
     }
 
     #[test]

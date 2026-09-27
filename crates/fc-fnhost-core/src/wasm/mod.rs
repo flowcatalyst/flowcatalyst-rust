@@ -14,14 +14,22 @@
 //! | the invoker: instance per request, deadline, outcomes | `function` |
 //!
 //! **Where guests run.** Not on the listener's tokio workers: every guest
-//! runs on its own runtime of `FC_FN_MAX_EXECUTING` worker threads (cores
-//! minus one by default), so at most that many guests execute at any moment
-//! and the listener always has a core to accept, route and answer on. A
-//! guest yields its thread at every epoch tick (1 ms), so the guests share
-//! those threads round-robin; one waiting on I/O (outbound HTTP, an emit,
-//! a sleep) holds no thread at all. This is on top of the listener's own
-//! permits (host-wide and per function, which bound how many invocations
-//! are in flight at all).
+//! runs on this runtime's own tokio runtime of `FC_FN_MAX_EXECUTING` worker
+//! threads (cores minus one by default), so the listener always has a core
+//! to accept, route and answer on. What caps how many guests execute is
+//! not those threads but the host-wide [`crate::exec::ExecBudget`], whose
+//! `FC_FN_MAX_EXECUTING` permits every runtime on the host shares (the JS
+//! isolates too): a guest's future holds a permit only while it is polled.
+//! A store runs on a wasmtime fiber that suspends at every async host call
+//! that is not ready (outbound HTTP, a database query, an emit, a sleep),
+//! at every epoch tick (1 ms) and at every fuel yield; each suspension
+//! gives the permit back, and the guest queues (FIFO, with the JS isolates)
+//! for one before it resumes. So computing guests share the permits
+//! round-robin at the tick, and one waiting on I/O holds neither a permit
+//! nor a thread. The threads number `FC_FN_MAX_EXECUTING` so that WASM
+//! alone can use the whole budget; more could never execute at once. This
+//! is on top of the listener's own permits (host-wide and per function,
+//! which bound how many invocations are in flight at all).
 //!
 //! **Load refusals** (the heartbeat's `LOAD:<code>`): `WASM_INVALID`,
 //! `WASM_CORE_MODULE_UNSUPPORTED`, `WASM_IMPORT_NOT_ALLOWED`,
@@ -70,8 +78,11 @@ use output::GuestLogger;
 #[derive(Debug, Clone)]
 pub struct WasmSettings {
     pub engine: EngineSettings,
-    /// `FC_FN_MAX_EXECUTING`: guests executing at once, host-wide.
-    pub max_executing: usize,
+    /// The guest runtime's worker threads (`FC_FN_MAX_EXECUTING`, so WASM
+    /// alone can use the whole budget).
+    pub threads: usize,
+    /// The executing permits every runtime on the host shares.
+    pub budget: crate::exec::ExecBudget,
     /// The artifact cache root (`FC_FN_CACHE_DIR`); `.cwasm` files go in
     /// its `cwasm/` directory.
     pub cache_dir: PathBuf,
@@ -84,8 +95,9 @@ pub struct WasmSettings {
 impl WasmSettings {
     /// From the host's environment: the pool holds one instance per
     /// in-flight invocation the listener can admit (`FC_FN_MAX_CONCURRENCY`),
-    /// plus headroom.
-    pub fn from_env(env: &crate::env::HostEnv) -> Self {
+    /// plus headroom. `budget` is the host's one executing budget, shared
+    /// with its other runtimes.
+    pub fn from_env(env: &crate::env::HostEnv, budget: &crate::exec::ExecBudget) -> Self {
         Self {
             engine: EngineSettings {
                 max_instances: u32::try_from(env.max_concurrency.max(1))
@@ -93,7 +105,8 @@ impl WasmSettings {
                     .saturating_add(16),
                 ..EngineSettings::default()
             },
-            max_executing: env.max_executing,
+            threads: env.max_executing.max(1),
+            budget: budget.clone(),
             cache_dir: env.cache_dir.clone(),
             db: crate::db::DbSettings {
                 max_pools: env.max_db_pools.max(1) as usize,
@@ -110,6 +123,8 @@ pub struct WasmRuntime {
     linker: Linker<GuestState>,
     cwasm: cwasm::CwasmCache,
     guests: GuestRuntime,
+    /// The executing permits a guest holds while it runs.
+    budget: crate::exec::ExecBudget,
     /// The runtime the host itself runs on, for control-plane calls made on
     /// a guest's behalf.
     host_runtime: Option<tokio::runtime::Handle>,
@@ -139,7 +154,7 @@ impl WasmRuntime {
             guest::linker(&engine).map_err(|e| format!("the wasm linker did not build: {e:#}"))?;
         let fingerprint = engine::fingerprint(&engine);
         let guests = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(settings.max_executing.max(1))
+            .worker_threads(settings.threads.max(1))
             .thread_name("fn-guest")
             .enable_all()
             .build()
@@ -147,7 +162,8 @@ impl WasmRuntime {
         let ticker = engine::EpochTicker::start(&engine)
             .map_err(|e| format!("the epoch ticker did not start: {e}"))?;
         tracing::info!(
-            max_executing = settings.max_executing.max(1),
+            threads = settings.threads.max(1),
+            max_executing = settings.budget.limit(),
             max_instances = settings.engine.max_instances,
             engine = %fingerprint,
             "wasm runtime started"
@@ -157,6 +173,7 @@ impl WasmRuntime {
             engine,
             linker,
             guests: GuestRuntime(Some(guests)),
+            budget: settings.budget.clone(),
             host_runtime: tokio::runtime::Handle::try_current().ok(),
             consume_fuel: settings.engine.consume_fuel,
             db_pools: crate::db::DbPools::new(settings.db.clone(), resolver),
@@ -166,6 +183,11 @@ impl WasmRuntime {
 
     pub fn engine(&self) -> &Engine {
         &self.engine
+    }
+
+    /// The executing permits guests hold while they run.
+    pub fn budget(&self) -> &crate::exec::ExecBudget {
+        &self.budget
     }
 
     /// The function database pools.

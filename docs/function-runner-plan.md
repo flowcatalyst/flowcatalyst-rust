@@ -529,7 +529,9 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
 - **Where guests run**: on a dedicated tokio runtime of `FC_FN_MAX_EXECUTING` threads (new env var; default
   cores − 1, at least 1). This is on top of the listener's permits, and never on the listener's workers.
   A running guest yields at every epoch tick, so guests share those threads round-robin. A guest waiting on
-  I/O holds no thread.
+  I/O holds no thread. (Since 2026-09-27 the cap is not the threads but one host-wide budget of
+  `FC_FN_MAX_EXECUTING` permits that the JS runtime shares, `fc-fnhost-core/src/exec.rs`: a guest holds a
+  permit only while its future is polled, so it gives it back at every tick and every host call that waits.)
 - **Deadline** (the endpoint's `timeoutMs`): the epoch callback interrupts a running guest, and a guest
   blocked in host I/O is dropped. The call answers 504, and the listener's permits are held until the guest
   is really gone.
@@ -682,11 +684,14 @@ function-host role and fc-dev's in-process host load it behind a default `js` ca
   under churn there (`BackingStore::~BackingStore`, reproduced with deno_core alone), never on Linux.
   `FC_FN_JS_SNAPSHOT` overrides. The crate runs its own V8 platform (`src/platform.rs`) so no V8 task outlives its
   isolate, which deno_core's does under per-request isolates.
-- **Where it runs.** `FC_FN_MAX_EXECUTING` worker threads (the variable the WASM guests' runtime uses; the two pools
-  are separate), each a current-thread tokio runtime driving many isolates: an isolate is exited after creation,
-  entered around every poll, and entered again to be dropped (rusty_v8 otherwise requires strictly nested isolate
-  lifetimes). A request goes to the least-loaded worker. A function waiting on I/O holds no thread; a computing one
-  holds its worker until it awaits (V8 does not preempt).
+- **Where it runs.** `FC_FN_MAX_EXECUTING` worker threads (as many as the WASM guests' runtime has), each a
+  current-thread tokio runtime driving many isolates. The threads don't cap execution: both runtimes take permits
+  from one host-wide budget of `FC_FN_MAX_EXECUTING` (owner decision, 2026-09-27; `fc-fnhost-core/src/exec.rs`),
+  held only while an isolate's event loop is polled, so WASM and JS together execute at most that many guests.
+  Each worker is a lane: an isolate takes its worker's lane before it queues for a permit. An isolate is exited
+  after creation, entered around every poll, and entered again to be dropped (rusty_v8 otherwise requires strictly
+  nested isolate lifetimes). A request goes to the least-loaded worker. A function waiting on I/O holds no thread
+  and no permit; a computing one holds its worker and its permit until it awaits (V8 does not preempt).
 - **Limits.** V8 heap = `wasmMemoryMb` (8 MiB floor); near the limit the isolate is terminated rather than V8
   aborting the process. `ArrayBuffer` storage has its own cap (a counting allocator). The deadline is a watchdog that
   terminates the isolate from another thread (504); the listener's permits are held until the isolate is gone.

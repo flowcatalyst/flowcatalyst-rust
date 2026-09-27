@@ -157,6 +157,7 @@ impl FnHost {
     }
 
     pub fn with_parts(env: HostEnv, parts: HostParts) -> Self {
+        let budget = parts.loaders.budget().cloned();
         let registry = Arc::new(FunctionRegistry::new(env.max_loaded, parts.clock.clone()));
         let reconciler = Arc::new(Reconciler::new(
             env.pool.clone(),
@@ -168,6 +169,9 @@ impl FnHost {
             registry.clone(),
         ));
         let metrics = Arc::new(FnMetrics::new(registry));
+        if let Some(budget) = &budget {
+            metrics.budget_ready(budget.clone());
+        }
         reconciler.set_observer(metrics.clone());
         {
             let metrics = metrics.clone();
@@ -354,8 +358,20 @@ pub async fn run(
 /// on JVM hosts). Shared by `fc-server`'s function-host role, `fc-dev`'s
 /// in-process host and the end-to-end tests, so all run the same assembly.
 pub fn wasm_loaders(env: &HostEnv) -> Result<Loaders, String> {
-    let wasm = crate::wasm::WasmRuntime::new(crate::wasm::WasmSettings::from_env(env))?;
-    Ok(Arc::new(crate::wasm::WasmLoader::new(wasm)).register(Loaders::none()))
+    wasm_loaders_with(env, &crate::exec::ExecBudget::new(env.max_executing))
+}
+
+/// [`wasm_loaders`] on `budget`, the host's one executing budget
+/// (`FC_FN_MAX_EXECUTING`), which the caller shares with the host's other
+/// runtimes. The loaders carry it for the host's metrics.
+pub fn wasm_loaders_with(
+    env: &HostEnv,
+    budget: &crate::exec::ExecBudget,
+) -> Result<Loaders, String> {
+    let wasm = crate::wasm::WasmRuntime::new(crate::wasm::WasmSettings::from_env(env, budget))?;
+    Ok(Arc::new(crate::wasm::WasmLoader::new(wasm))
+        .register(Loaders::none())
+        .with_budget(budget.clone()))
 }
 
 /// The private (`FC_FN_PORT`) and public (`FC_FN_PUBLIC_PORT`) function

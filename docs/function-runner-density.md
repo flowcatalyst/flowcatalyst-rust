@@ -541,7 +541,35 @@ cargo test --release -p fc-fnhost-js --test js_density -- --ignored --nocapture 
   declarations costs about +0.7 ms, 1 MiB about +3.3 ms). A snapshot per version would remove this; the read-only-space
   crash rules it out in-process today (§10.1).
 
-### 10.4 Build and binary
+### 10.4 One executing budget for both runtimes (2026-09-27)
+
+As first built, `FC_FN_MAX_EXECUTING` was applied per runtime: the WASM guests' runtime and the JS workers each had
+that many threads, and the threads were the cap, so a host running both kinds could execute up to twice that many
+guests at once. The owner ruled it one host-wide budget. Both runtimes now take permits from one FIFO semaphore
+(`fc-fnhost-core/src/exec.rs`), held only while a guest's future is polled: a WASM guest gives its permit back at
+every epoch tick, fuel yield and waiting host call; a JS isolate at the end of every event-loop turn (so a computation
+holds it until its next `await`). A guest awaiting I/O holds no permit and no thread. Each runtime keeps
+`FC_FN_MAX_EXECUTING` threads so either alone can use the whole budget. Each JS worker is a lane: its isolates take
+it before they queue for a permit, so a permit is never handed to an isolate whose thread is busy.
+
+Cost, macOS arm64 (M4 Pro, release, the same binaries' ignored tests before and after, run alternately on a machine
+shared with other builds; indicative only):
+
+| | before | after |
+|---|---:|---:|
+| WASM `echo`, c=16 through the listener (`wasm_neighbour`) | 31,200-34,500 calls/s | 32,100-34,400 calls/s |
+| WASM, A's p99 beside B spinning, cap 3, B=8 | 0.97-1.04 ms | 0.93-1.84 ms |
+| WASM, A's p99 beside B spinning, cap 8, B=8 | 6.6-8.0 ms | 2.0-9.1 ms |
+| JS `hello` 1 KiB, c=16, 4 workers (`js_density`) | 1,235 calls/s | 1,200 calls/s |
+| JS `hello` + 256 KiB, c=16 | 880-906 calls/s | 868-912 calls/s |
+| JS `invoke` in process, c=1, p50 | 3.05 ms | 3.43 ms |
+
+No cost shows above the noise: taking a permit is one atomic when one is free, and the WASM guests' 1 ms re-queue is
+what the epoch tick already paid. `crates/fc-fnhost-js/tests/shared_budget.rs` asserts the budget (at most two of two
+WASM and two JS CPU-bound guests at once with `FC_FN_MAX_EXECUTING=2`), that I/O holds no permit, and that the
+deadline applies while a guest queues.
+
+### 10.5 Build and binary
 
 | fc-server, release, macOS arm64 | without `js` | with `js` (default) | difference |
 |---|---:|---:|---:|

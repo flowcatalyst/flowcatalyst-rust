@@ -20,15 +20,21 @@
 //!   Java's `500 {"error":"the function failed"}`, the detail only on the
 //!   host's WARN line;
 //! - the deadline (the endpoint's `timeoutMs`) stops the isolate wherever
-//!   it is: [`InvokeError::Timeout`] (504), and the call's permits are held
-//!   until the isolate has stopped running JavaScript. (Its teardown, a
-//!   bounded fraction of a millisecond, happens after the answer.)
+//!   it is, including queued for an executing permit:
+//!   [`InvokeError::Timeout`] (504), and the call's permits are held until
+//!   the isolate has stopped running JavaScript. (Its teardown, a bounded
+//!   fraction of a millisecond, happens after the answer.)
+//!
+//! **Executing.** An isolate runs JavaScript only while it holds one of the
+//! host's `FC_FN_MAX_EXECUTING` executing permits, which the WASM guests
+//! share; see [`run`].
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use fc_fnhost_core::exec::{ExecBudget, Lane, Stopped};
 use fc_fnhost_core::invoke::{InvocationContext, InvokeError, Invoker};
 use fc_fnhost_core::loader::FunctionInstance;
 use fc_function_abi::{MultiMap, Response};
@@ -167,10 +173,32 @@ struct Job {
 
 /// Runs the request, answers through `answer`, then tears the isolate down:
 /// the caller has its response before the isolate's teardown.
-async fn run(job: Job, answer: oneshot::Sender<Outcome>) {
-    let (outcome, isolate) = run_isolate(job).await;
-    let _ = answer.send(outcome);
-    drop(isolate);
+///
+/// **The executing budget.** Everything that runs V8 on the worker (making
+/// the isolate, the top-level code, the call, the teardown) holds one of
+/// the host's executing permits, shared with the WASM guests, but only
+/// while its future is polled: each poll is one turn of the isolate's event
+/// loop, which runs JavaScript until every task awaits an op or a timer,
+/// then returns, and the permit goes back. So a function awaiting a
+/// `fetch`, an emit or a timer holds no permit, and one computing holds it
+/// until its next `await`. Before each turn the isolate takes its worker's
+/// lane and then queues (FIFO, with the WASM guests) for a permit. Stopped
+/// (the deadline, the listener's interrupt) while it queues, it answers a
+/// timeout at once rather than when a permit frees.
+async fn run(job: Job, answer: oneshot::Sender<Outcome>, budget: ExecBudget, lane: Lane) {
+    let stop = job.stop.clone();
+    let unfinished = match budget.run_on(&lane, run_isolate(job)).until(stop).await {
+        Ok((outcome, isolate)) => {
+            let _ = answer.send(outcome);
+            let Some(isolate) = isolate else { return };
+            budget.run_on(&lane, async move { drop(isolate) }).await;
+            return;
+        }
+        Err(Stopped(unfinished)) => unfinished,
+    };
+    let _ = answer.send(Outcome::Timeout);
+    // Dropping the unfinished run tears its isolate down, if it had one.
+    budget.run_on(&lane, async move { drop(unfinished) }).await;
 }
 
 async fn run_isolate(job: Job) -> (Outcome, Option<Isolate>) {
@@ -274,9 +302,10 @@ impl Invoker for JsFunction {
             slot: slot.clone(),
         };
         let span = tracing::Span::current();
-        let sent = self.workers.run(move || {
+        let budget = self.workers.budget().clone();
+        let sent = self.workers.run(move |lane| {
             async move {
-                run(job, sender).await;
+                run(job, sender, budget, lane).await;
             }
             .instrument(span)
         });

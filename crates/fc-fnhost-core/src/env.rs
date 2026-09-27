@@ -212,8 +212,11 @@ pub struct HostEnv {
     /// `FC_FN_MAX_CONCURRENCY` (default 512): the host-wide permit ceiling.
     pub max_concurrency: i32,
     /// `FC_FN_MAX_EXECUTING` (default: available cores minus one, at least
-    /// 1): WASM guests executing at once, host-wide. The guest runtime's
-    /// thread count, on top of the listener's permits. Rust host only.
+    /// 1): guests executing at once, host-wide, every runtime together (WASM
+    /// and JS share one [`crate::exec::ExecBudget`]). A guest holds a permit
+    /// only while it runs, never while it waits on I/O. Each runtime also
+    /// gets this many threads, so either alone can use the whole budget. On
+    /// top of the listener's permits. Rust host only.
     pub max_executing: usize,
     /// `FC_DRAIN_TIMEOUT_SECONDS` (default 60).
     pub drain_timeout_seconds: u64,
@@ -401,8 +404,8 @@ impl HostEnv {
     }
 }
 
-/// Available cores minus one (at least 1): a spinning guest on every
-/// guest thread still leaves a core for the listener.
+/// Available cores minus one (at least 1): with every permit held by a
+/// spinning guest, a core is still left for the listener.
 pub fn default_max_executing() -> usize {
     std::thread::available_parallelism()
         .map_or(1, |n| n.get())

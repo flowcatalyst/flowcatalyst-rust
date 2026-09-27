@@ -203,3 +203,51 @@ async fn database_errors_reach_the_guest_as_javas_codes() {
         assert_eq!(h.guest_json(&format!("/items?table={t}")).await["count"], 1);
     }
 }
+
+/// A guest waiting on its database holds no executing permit: with
+/// `FC_FN_MAX_EXECUTING=1`, another guest computes while a query sleeps.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires Docker"]
+async fn a_guest_waiting_on_its_database_holds_no_executing_permit() {
+    let spin = "app.orders.spin";
+    let h = std::sync::Arc::new(
+        WasmHarness::start_with(
+            vec![
+                entry(
+                    ADDR,
+                    1,
+                    &guest("pdk_db"),
+                    db_manifest(2),
+                    json!({"secrets": {"DB_DSN": postgres()}}),
+                ),
+                entry(spin, 1, &guest("spin"), manifest(json!({})), json!({})),
+            ],
+            support::wasm::Options {
+                max_executing: 1,
+                ..Default::default()
+            },
+        )
+        .await,
+    );
+    let started = std::time::Instant::now();
+    let sleeping = {
+        let h = h.clone();
+        tokio::spawn(async move { h.get("/sql?q=SELECT%20pg_sleep(1.5)").await })
+    };
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let computed = h
+        .send(
+            h.client
+                .get(format!("{}/functions/{spin}/x?n=1000000", h.base)),
+        )
+        .await;
+    let computed_at = started.elapsed();
+    assert_eq!(computed.status, 200, "{}", computed.text());
+    assert!(
+        computed_at < Duration::from_millis(1200),
+        "the spin ran while the query slept: done at {computed_at:?}"
+    );
+    let slept = sleeping.await.unwrap();
+    assert_eq!(slept.status, 200, "{}", slept.text());
+    assert!(slept.json().get("error").is_none(), "{}", slept.text());
+}

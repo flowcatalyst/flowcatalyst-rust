@@ -7,7 +7,7 @@
 //!
 //! | Piece | Where |
 //! |---|---|
-//! | V8's platform, the base snapshot, the worker threads | [`engine`] |
+//! | V8's platform, the base snapshot, the worker threads (on the host's shared executing budget) | [`engine`] |
 //! | V8's foreground tasks for short-lived isolates | [`platform`] |
 //! | load: check the bundle by running it, keep its code cache | [`prepare`] |
 //! | what a bundle may import (`flowcatalyst:function/*`) | [`modules`] |
@@ -42,6 +42,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use fc_fnhost_core::emit::Emitter;
 use fc_fnhost_core::env::HostEnv;
+use fc_fnhost_core::exec::ExecBudget;
 use fc_fnhost_core::loader::{FunctionLoader, LoadOutcome, LoadRequest, Loaders};
 use fc_fnhost_core::wasm::egress::HttpAllowlist;
 use fc_fnhost_core::wasm::output::GuestLogger;
@@ -60,17 +61,23 @@ pub const DEFAULT_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Everything the runtime is configured with.
 #[derive(Debug, Clone)]
 pub struct JsSettings {
-    /// `FC_FN_MAX_EXECUTING`: worker threads, so functions executing
-    /// JavaScript at once.
-    pub max_executing: usize,
+    /// Worker threads (`FC_FN_MAX_EXECUTING`, so JS alone can use the
+    /// whole budget).
+    pub workers: usize,
+    /// The executing permits every runtime on the host shares: at most
+    /// `FC_FN_MAX_EXECUTING` guests, WASM and JS together, execute at once.
+    pub budget: ExecBudget,
     /// How long a bundle's top-level code may run at load.
     pub init_timeout: Duration,
 }
 
 impl JsSettings {
-    pub fn from_env(env: &HostEnv) -> Self {
+    /// From the host's environment, on `budget`, the host's one executing
+    /// budget (shared with its WASM runtime).
+    pub fn from_env(env: &HostEnv, budget: &ExecBudget) -> Self {
         Self {
-            max_executing: env.max_executing,
+            workers: env.max_executing.max(1),
+            budget: budget.clone(),
             init_timeout: DEFAULT_INIT_TIMEOUT,
         }
     }
@@ -92,9 +99,10 @@ impl JsRuntime {
     /// host's tokio runtime.
     pub fn new(settings: JsSettings) -> Result<Arc<Self>, String> {
         let base = engine::init_v8()?;
-        let workers = engine::Workers::start(settings.max_executing)?;
+        let workers = engine::Workers::start(settings.workers, settings.budget.clone())?;
         tracing::info!(
             workers = workers.len(),
+            max_executing = settings.budget.limit(),
             v8 = deno_core::v8::VERSION_STRING,
             "js runtime started"
         );
@@ -231,9 +239,11 @@ impl FunctionLoader for JsLoader {
 /// The runtimes the deployed host loads: fc-fnhost-core's WASI components
 /// (`component`, `wasm`) and V8 isolates (`js`); `jvm` stays
 /// `RUNTIME_UNSUPPORTED`. Shared by `fc-server`'s function-host role,
-/// `fc-dev`'s in-process host and the end-to-end tests.
+/// `fc-dev`'s in-process host and the end-to-end tests. Both runtimes
+/// execute on one [`ExecBudget`] of `FC_FN_MAX_EXECUTING` permits.
 pub fn loaders(env: &HostEnv) -> Result<Loaders, String> {
-    let loaders = fc_fnhost_core::host::wasm_loaders(env)?;
-    let js = JsRuntime::new(JsSettings::from_env(env))?;
+    let budget = ExecBudget::new(env.max_executing);
+    let loaders = fc_fnhost_core::host::wasm_loaders_with(env, &budget)?;
+    let js = JsRuntime::new(JsSettings::from_env(env, &budget))?;
     Ok(Arc::new(JsLoader::new(js)).register(loaders))
 }

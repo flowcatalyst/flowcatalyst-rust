@@ -86,6 +86,9 @@ pub trait FunctionLoader: Send + Sync + 'static {
 #[derive(Clone, Default)]
 pub struct Loaders {
     by_runtime: HashMap<String, Arc<dyn FunctionLoader>>,
+    /// The executing permits the runtimes share (`FC_FN_MAX_EXECUTING`),
+    /// for the host's metrics.
+    budget: Option<crate::exec::ExecBudget>,
 }
 
 impl Loaders {
@@ -97,6 +100,18 @@ impl Loaders {
     pub fn with(mut self, runtime: &str, loader: Arc<dyn FunctionLoader>) -> Self {
         self.by_runtime.insert(runtime.to_ascii_lowercase(), loader);
         self
+    }
+
+    /// Records the executing budget the registered runtimes share, so the
+    /// host can expose it (`fc_fn_executing`).
+    pub fn with_budget(mut self, budget: crate::exec::ExecBudget) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
+    /// The executing budget the runtimes share, when one was recorded.
+    pub fn budget(&self) -> Option<&crate::exec::ExecBudget> {
+        self.budget.as_ref()
     }
 
     pub fn get(&self, runtime: &str) -> Option<&Arc<dyn FunctionLoader>> {
