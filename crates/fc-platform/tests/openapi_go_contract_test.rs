@@ -197,10 +197,6 @@ const SCHEMAS_NOT_DOCUMENTED: &[(&str, &str)] = &[
         "RawEventResponse",
         "an orphan in Go's document: no operation references it",
     ),
-    (
-        "MetadataDTO",
-        "dispatch-job `metadata` items; the dispatch-job DTOs are owned by the dispatch-job descriptor work (docs/sdks.md)",
-    ),
 ];
 
 /// The schema an operation's JSON request body or first success response

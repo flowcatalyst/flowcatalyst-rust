@@ -20,6 +20,25 @@ use crate::{
     DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, RetryStrategy,
 };
 
+/// Go `MetadataDTO`: one key/value tag of a dispatch job (documentation of
+/// [`DispatchMetadata`]).
+#[derive(ToSchema)]
+#[schema(as = MetadataDTO)]
+#[allow(dead_code)]
+struct MetadataDoc {
+    key: String,
+    value: String,
+}
+
+/// A directly created job's own dispatch priority (documentation of the
+/// `queue` member; matched ignoring case).
+#[derive(ToSchema)]
+#[allow(dead_code, clippy::upper_case_acronyms, non_camel_case_types)]
+enum DispatchQueueDoc {
+    DEFAULT,
+    HIGH_PRIORITY,
+}
+
 /// Dispatch job response DTO: Go's `DispatchJobResponse`
 /// (dispatchjob/api/dto.go). Absent members stay absent (`omitempty`); the
 /// job row carries no attempts, so `attempts` is only ever absent here (the
@@ -70,7 +89,7 @@ pub struct DispatchJobResponse {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attempts: Vec<DispatchAttemptResponse>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<MetadataDoc>)]
     pub metadata: Vec<DispatchMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
@@ -78,15 +97,21 @@ pub struct DispatchJobResponse {
     /// fanned-out job, or the creator's own (Go's 057).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptor: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub scheduled_for: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_attempt_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
@@ -168,6 +193,7 @@ pub struct DispatchJobReadResponse {
     pub kind: String,
     pub target_url: String,
     pub mode: String,
+    #[schema(required = false)]
     pub dispatch_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -179,15 +205,20 @@ pub struct DispatchJobReadResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptor: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<MetadataDoc>)]
     pub metadata: Vec<DispatchMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub scheduled_for: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub last_attempt_at: Option<String>,
     pub attempt_count: u32,
 }
@@ -414,6 +445,7 @@ pub struct CreateDispatchJobRequest {
     /// matched ignoring case (400 `INVALID_QUEUE` otherwise). Omitted or
     /// blank leaves it unset, so the subscription's priority applies.
     #[serde(default)]
+    #[schema(inline, value_type = Option<DispatchQueueDoc>)]
     pub queue: Option<String>,
 }
 
@@ -497,12 +529,15 @@ pub struct BatchCreateDispatchJobsResponse {
 #[schema(as = AttemptDTO)]
 pub struct DispatchAttemptResponse {
     pub attempt_number: u32,
+    #[schema(format = DateTime)]
     pub attempted_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i64>)]
     pub response_code: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body: Option<String>,
@@ -513,7 +548,7 @@ pub struct DispatchAttemptResponse {
     pub error_type: Option<String>,
     /// What the platform sent on this attempt (Go's `RequestSummary`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<crate::dispatch_job_actions::api::RequestSummary>)]
     pub request: Option<serde_json::Value>,
 }
 
