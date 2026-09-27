@@ -4,13 +4,13 @@
 //! V8 hands an isolate's foreground tasks (GC finalisation steps, the
 //! memory reducer, …) to the embedder's platform, some to run soon and some
 //! after a delay. deno_core's own platform schedules a delayed task on
-//! tokio and, when the delay is up, pushes it onto the isolate's queue; a
-//! task whose isolate has meanwhile been disposed is then destroyed after
-//! its isolate, and a V8 task's destructor reaches into the isolate that
-//! made it (its cancelable-task manager). With an isolate per request that
-//! happens constantly: the host crashed with `pointer being freed was not
-//! allocated` in `BackingStore::~BackingStore` during a later isolate's
-//! teardown, in about half of the runs of 2,000 requests.
+//! tokio and, when the delay is up, pushes it onto the isolate's queue,
+//! which the tokio task keeps alive: a task whose isolate has meanwhile been
+//! disposed is then destroyed after its isolate, and a V8 task's destructor
+//! reaches into the isolate that made it (its cancelable-task manager). A
+//! long-lived isolate rarely meets that; an isolate per request (disposed
+//! within seconds, while the memory reducer's delays run to seconds) meets
+//! it on every request that allocates.
 //!
 //! This platform keeps every task in a registry keyed by its isolate, and
 //! the isolate's owner decides its end:
