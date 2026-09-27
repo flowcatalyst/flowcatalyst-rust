@@ -25,7 +25,13 @@
 //!
 //! **Load refusals** (the heartbeat's `LOAD:<code>`): `WASM_INVALID`,
 //! `WASM_CORE_MODULE_UNSUPPORTED`, `WASM_IMPORT_NOT_ALLOWED`,
-//! `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_MEMORY_OVER_CAP`.
+//! `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_MEMORY_OVER_CAP`. **Load failures**
+//! (the code verbatim) from the manifest's `db[]` ([`crate::db`]):
+//! `DB_UNSUPPORTED`, `DB_SECRET_UNRESOLVED`, `DB_POOL_LIMIT`.
+//!
+//! **Metering** (owner decision #13): the engine meters fuel; each store
+//! starts with `limits.maxFuel` (or unlimited), and the invocation's fuel
+//! and peak linear memory go to its [`crate::invoke::UsageMeter`].
 
 pub mod cwasm;
 pub mod egress;
