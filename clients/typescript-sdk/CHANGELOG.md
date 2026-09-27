@@ -66,6 +66,12 @@ at code that was reading `undefined`.
   (`concurrency`, `clientIdentifier`), `ScheduledJob.applicationId`,
   `InPipelineCheckResponse` (`poolCode`, `queueId`), and `FireResponse`
   (`instanceId`, `scheduledJobId`, exported).
+- `CreateDispatchJobDto.withDescriptor(descriptor)`: what the job is, in
+  words (e.g. "Notify Value of user logins"), shown in the platform's
+  dispatch-jobs grid. It travels in the outbox payload as `descriptor` and
+  is left out when unset, like `queue`. At most 255 characters
+  (`MAX_DISPATCH_JOB_DESCRIPTOR_LENGTH`, exported); a longer one throws,
+  where the platform would answer 400 `VALIDATION`.
 
 ### Changed
 - Hand-written resource calls now send and read what the Go platform's API
