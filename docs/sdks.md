@@ -176,12 +176,30 @@ parameter) beside their existing `queue`; `fc-sdk` (`.queue()`, `.descriptor()` 
 no `queue` before. TS, Laravel and Java reject a descriptor over 255 characters; the Go SDK has no
 dispatch-job builder.
 
-**Platform gaps these fixes expose** (Go documents it, this platform does not do it; handler or
-data work, not done here): an application's per-client `baseUrlOverride`/`configJson` are not
-stored, so `configJson` reads empty; `clientScoped` on event-type create/update is ignored;
-`GET /api/events/{id}` has no `contextData`; service-account role assignments have no
-`assignedBy`/`clientId`; service-account update ignores `webhookCredentials`, and create reads only
-its `authType`; OAuth-client create takes `clientId` where Go takes `principalId`.
+**Platform gaps these fixes exposed, now closed** (Go documents the member; the platform now
+stores and answers it; `crates/fc-platform/tests/go_field_gaps_test.rs`). Where Go documents a
+member it never fills, the platform implements the evident intent rather than Go's gap:
+- An application's per-client `baseUrlOverride` and `configJson` are stored (migration 058; Go has
+  no column) and answered by both client-config reads; the Rust-only `PUT …/clients/{clientId}`
+  sets them (`configJson` or `config`).
+- `clientScoped` on event-type create and update (`/api`) and the BFF create is stored, as Go
+  stores it. Go's `/api` `EventTypeResponse` does not carry it and neither does Rust's; the BFF
+  read does.
+- `GET /api/events/{id}` answers the event's `contextData` (Go reads only the projection, which
+  has none).
+- OAuth-client create takes Go's `principalId` (it must name a service account's principal).
+- A service account's role assignments answer `assignedBy` (migration 059; Go has no column);
+  `clientId` stays absent because role grants are not client-scoped.
+- Service-account update takes `webhookCredentials` and replaces the account's credentials, as Go
+  does, keeping the four members Go drops (migration 060); every member is write-only. Create still
+  reads only `authType`, as Go.
+- Dispatch-job list rows answer `priority` (1 `HIGH_PRIORITY`, 0 `DEFAULT`, absent without a claim
+  of the job's own; migration 061), which Go documents and never fills.
+- The debug BFF reads answer Go's `RawEventResponse` / `RawDispatchJobResponse`.
+
+The hand-written SDKs gained the request members where they wrap the route (`clientScoped` on the
+fc-sdk and Laravel event-type create); none of them wraps OAuth clients, service-account update or
+roles, event reads or dispatch-job reads.
 
 ## Platform OpenAPI document (`/q/openapi`) against Go's
 
@@ -204,13 +222,14 @@ of the SDKs' generated clients. The document at `/q/openapi` (also `/api/openapi
   `shared::openapi_contract::shape_as_go_contract` (the full `/q/openapi-full` is untouched): one
   success response plus `default: ErrorModel` per operation; `required` on parameters only when
   true, query parameters `explode: false`; optional members, parameters and bodies not nullable;
-  `additionalProperties` true on top-level request bodies and false elsewhere; no orphan schemas.
+  `additionalProperties` true on top-level request bodies and false elsewhere; no orphan schemas
+  except Go's own two (the debug BFF routes' `RawDispatchJobResponse` and `RawEventResponse`).
   The document is served as JSON (and YAML through `serde_norway`), because utoipa's model cannot
   read back every schema it writes.
 
 `crates/fc-platform/tests/openapi_go_contract_test.rs` (no database) fails if an operation Go
 documents is missing, has another operationId, or names another request or success schema, or if
-a Go schema name is missing (Go's two orphan schemas excepted). `OPENAPI_DUMP=<file>` writes the document.
+a Go schema name is missing. `OPENAPI_DUMP=<file>` writes the document.
 
 **Measured against Go's lockfile** (`flowcatalyst-go` `73a6918`):
 
@@ -240,9 +259,10 @@ Not decided (they keep the parity steps below DIFFs):
   schema and property descriptions and Go's examples. Only the generated JSDoc differs.
 - **`security`**: Rust annotates `bearer_auth` per operation (no `securitySchemes`, so generators
   ignore it; Swagger UI shows it).
-- **Path parameter names**: `/api/config/{appCode}/…` (Go `{app}`) and `/api/roles/{roleName}`
-  for get, update and delete (Go `{id}`). The router shares those segments with other routes,
-  whose parameter must have the same name. These are the 6 differing generated functions.
+- **Path parameter names**: now Go's (`/api/roles/{id}`, `/api/config/{app}/{section}/{property}`).
+  axum's router (matchit 0.8) only requires one name per full route, so the routes sharing the
+  segment (`/api/roles/{roleName}/permissions…`, the Rust-only `/api/config/{appCode}/{section}`)
+  did not block it.
 - **`createEvent`** also documents the 200 of an idempotent replay beside Go's 201.
 - **Rust extensions** (documented because the handlers accept them): list filters on clients
   (`status`), connections (`serviceAccountId`), IdP role mappings (`idpType`), OAuth clients
@@ -251,13 +271,18 @@ Not decided (they keep the parity steps below DIFFs):
   accounts (`active`, `applicationId`, `clientId`); members `AddRoleRequest.clientId`,
   `UpdateMappingRequest.identityProviderId`/`scopeType`, `UpdateOAuthClientRequest.active`,
   `UpdatePrincipalRequest.clientId`/`firstName`/`lastName`/`scope`.
-- **Platform gaps**, where the document is truthful and Rust lacks what Go has: see "SDK calls
-  against Go's API" above (per-client config, `clientScoped`, event `contextData`, service-account
-  role and webhook-credential members, OAuth-client `principalId`); `LoginAttemptResponse.identifier`
-  and `RolePermissionListResponse.permissions` may be null.
-- **`DispatchJobRead.priority`**: Go's list rows carry it; Rust's do not.
-- Go's two orphan schemas (`RawDispatchJobResponse`, `RawEventResponse`) are not reproduced, and a
-  few schemas list members or `required` in another order.
+- **Nullability**: `LoginAttemptResponse.identifier` and `RolePermissionListResponse.permissions`
+  may be null.
+- A few schemas list members or `required` in another order.
+
+The platform gaps (per-client config, `clientScoped`, event `contextData`, service-account role and
+webhook-credential members, OAuth-client `principalId`, `DispatchJobRead.priority`, Go's two
+orphan schemas) are closed; see "SDK calls against Go's API" above. A TS client generated from
+this document and compared with the committed one (comments, `$schema` and `…Writable` ignored)
+differs in 82 types (93 before), none missing (2 before); against a client generated from Go's
+current lockfile, 22 types differ (38 before), all Rust-only additions, the replay 200 and the two
+nullabilities above. All 256 generated operation functions Go documents are now identical to the
+ones generated from Go's lockfile (250 before; the 6 were the path parameter names).
 
 **Not regenerated.** Regenerating the SDKs from this document would remove `$schema` from every
 response type (and the TS `…Writable` types, 195 of them), change 36 more types and 6 functions,
