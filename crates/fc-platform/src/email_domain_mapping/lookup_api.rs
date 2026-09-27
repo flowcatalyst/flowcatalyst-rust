@@ -92,7 +92,7 @@ async fn with_idp_name(
     path = "/api/email-domain-mappings/lookup",
     tag = "email-domain-mappings",
     operation_id = "lookupEmailDomainMapping",
-    params(("domain" = String, Query, description = "Email domain, matched exactly")),
+    params(("domain" = Option<String>, Query, description = "Email domain to look up (e.g. example.com)")),
     responses(
         (status = 200, description = "The mapping, or {found: false}", body = serde_json::Value),
         (status = 400, description = "No domain given")

@@ -243,10 +243,13 @@ pub struct OffsetPageScheduledJobInstanceResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ListJobsQuery {
+    pub status: Option<String>,
+
     /// Filter by client. Pass the literal `platform` to filter platform-scoped.
     pub client_id: Option<String>,
-    pub status: Option<String>,
+
     pub search: Option<String>,
+
     #[serde(flatten)]
     #[param(ignore)]
     pub pagination: PaginationParams,
@@ -821,7 +824,7 @@ pub async fn delete_scheduled_job(
     post, path = "/{id}/fire", tag = "scheduled-jobs",
     operation_id = "fireScheduledJobNow",
     params(("id" = String, Path, description = "Scheduled job ID")),
-    request_body = FireRequest,
+    request_body(content = Option<FireRequest>, description = "Optional correlation id and context"),
     responses((status = 202, body = FireNowResponse), (status = 404), (status = 409)),
     security(("bearer_auth" = []))
 )]

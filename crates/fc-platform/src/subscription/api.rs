@@ -340,15 +340,15 @@ pub struct SubscriptionListResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct SubscriptionsQuery {
-    #[serde(flatten)]
-    #[param(ignore)]
-    pub pagination: PaginationParams,
+    /// Filter by status
+    pub status: Option<String>,
 
     /// Filter by client ID
     pub client_id: Option<String>,
 
-    /// Filter by status
-    pub status: Option<String>,
+    #[serde(flatten)]
+    #[param(ignore)]
+    pub pagination: PaginationParams,
 }
 
 /// Subscriptions service state

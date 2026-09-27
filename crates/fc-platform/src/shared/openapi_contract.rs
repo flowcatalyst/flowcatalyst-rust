@@ -194,9 +194,9 @@ fn error_model() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "error": {"type": "string", "description": "Machine-readable error code (e.g. ROLE_HAS_ASSIGNMENTS)"},
-            "message": {"type": "string", "description": "Human-readable error message"},
-            "details": {"type": "object", "additionalProperties": {}}
+            "details": {"type": "object", "additionalProperties": {}},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
         },
         "required": ["error", "message"]
     })
@@ -215,7 +215,11 @@ fn error_model() -> Value {
 ///    `[T, "null"]` (or `oneOf [null, T]`) everywhere; for members that are not
 ///    required, optional query parameters and optional request bodies, the
 ///    `null` is dropped.
-/// 3. **No orphans of this document's own making.** Component schemas no
+/// 3. **Closed objects.** Go marks each operation's top-level request body
+///    schema `additionalProperties: true` (a body may carry members the
+///    platform ignores, as serde here does) and every other object schema
+///    `additionalProperties: false`; the component schemas get the same.
+/// 4. **No orphans of this document's own making.** Component schemas no
 ///    operation reaches (e.g. `ErrorResponse`, `PaginationParams`, the
 ///    shapes of the error responses dropped in 1) are removed.
 ///
@@ -248,6 +252,45 @@ fn reshape(doc: &mut Value) {
         }
     }
     drop_unreachable_schemas(doc);
+    mark_additional_properties(doc);
+}
+
+/// Rule 3: `additionalProperties` on the component object schemas.
+fn mark_additional_properties(doc: &mut Value) {
+    let mut request_bodies = Vec::new();
+    if let Some(paths) = doc.get("paths").and_then(Value::as_object) {
+        for item in paths.values().filter_map(Value::as_object) {
+            for op in item.values() {
+                if let Some(content) = op
+                    .pointer("/requestBody/content")
+                    .and_then(Value::as_object)
+                {
+                    for media in content.values() {
+                        if let Some(Value::String(r)) = media.pointer("/schema/$ref") {
+                            if let Some(name) = r.strip_prefix("#/components/schemas/") {
+                                request_bodies.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(schemas) = doc
+        .pointer_mut("/components/schemas")
+        .and_then(Value::as_object_mut)
+    {
+        for (name, schema) in schemas.iter_mut() {
+            let Some(obj) = schema.as_object_mut() else {
+                continue;
+            };
+            if !obj.contains_key("properties") || obj.contains_key("additionalProperties") {
+                continue;
+            }
+            let open = request_bodies.contains(name);
+            obj.insert("additionalProperties".to_string(), Value::Bool(open));
+        }
+    }
 }
 
 fn shape_operation(op: &mut Value) {
@@ -269,6 +312,9 @@ fn shape_operation(op: &mut Value) {
                     unwrap_nullable(schema);
                 }
             }
+            if let Some(schema) = param.get_mut("schema") {
+                strip_optional_nulls(schema);
+            }
         }
     }
     if let Some(body) = op.get_mut("requestBody") {
@@ -286,11 +332,15 @@ fn shape_operation(op: &mut Value) {
 }
 
 /// Every object schema reachable inside `schema`: its members that are not
-/// required lose their `null`.
+/// required lose their `null`, and integers lose the `minimum: 0` of an
+/// unsigned Rust type (Go documents no bounds).
 fn strip_optional_nulls(schema: &mut Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
+    if obj.get("minimum") == Some(&json!(0)) {
+        obj.remove("minimum");
+    }
     let required: Vec<String> = obj
         .get("required")
         .and_then(Value::as_array)
@@ -445,6 +495,7 @@ mod tests {
             json!("#/components/schemas/ErrorModel")
         );
         let schemas = doc["components"]["schemas"].as_object().unwrap();
+        assert_eq!(schemas["X"]["additionalProperties"], json!(false));
         assert!(schemas.contains_key("ErrorModel"));
         assert!(schemas.contains_key("Y"));
         assert!(!schemas.contains_key("Gone"));

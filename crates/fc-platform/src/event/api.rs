@@ -201,18 +201,12 @@ impl From<EventRead> for EventReadResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct EventsQuery {
-    /// Result size (the SPA's; wins over `limit`). Default 100, max 1000.
-    pub size: Option<i64>,
-
-    /// Result size (the SDK's).
-    pub limit: Option<i64>,
-
-    /// Rows to skip.
-    pub offset: Option<i64>,
-
     /// Exact event type
     #[serde(rename = "type")]
     pub event_type: Option<String>,
+
+    /// Exact source
+    pub source: Option<String>,
 
     /// Exact subject
     pub subject: Option<String>,
@@ -223,17 +217,26 @@ pub struct EventsQuery {
     /// Accepted and ignored, as Go (no backing column on the projection).
     pub principal_id: Option<String>,
 
+    /// Filter by correlation ID
+    pub correlation_id: Option<String>,
+
     /// RFC 3339 lower bound on createdAt (an unparsable value is ignored)
     pub since: Option<String>,
 
     /// RFC 3339 upper bound on createdAt (an unparsable value is ignored)
     pub until: Option<String>,
 
+    /// Result size (the SDK's).
+    pub limit: Option<i64>,
+
+    /// Rows to skip.
+    pub offset: Option<i64>,
+
+    /// Result size (the SPA's; wins over `limit`). Default 100, max 1000.
+    pub size: Option<i64>,
+
     /// Filter by client IDs (comma-separated)
     pub client_ids: Option<String>,
-
-    /// Filter by event types (comma-separated)
-    pub types: Option<String>,
 
     /// Filter by application codes (comma-separated)
     pub applications: Option<String>,
@@ -244,11 +247,8 @@ pub struct EventsQuery {
     /// Filter by aggregates (comma-separated)
     pub aggregates: Option<String>,
 
-    /// Filter by correlation ID
-    pub correlation_id: Option<String>,
-
-    /// Exact source
-    pub source: Option<String>,
+    /// Filter by event types (comma-separated)
+    pub types: Option<String>,
 }
 
 fn split_csv(input: Option<&str>) -> Vec<String> {

@@ -178,11 +178,11 @@ pub struct AuditLogsQuery {
     /// Filter by entity ID
     pub entity_id: Option<String>,
 
-    /// Filter by operation (the command name)
-    pub operation: Option<String>,
-
     /// Filter by principal ID
     pub principal_id: Option<String>,
+
+    /// Filter by operation (the command name)
+    pub operation: Option<String>,
 
     /// CSV of application ids
     pub application_ids: Option<String>,

@@ -111,15 +111,15 @@ impl From<DispatchPool> for DispatchPoolResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct DispatchPoolsQuery {
-    #[serde(flatten)]
-    #[param(ignore)]
-    pub pagination: PaginationParams,
+    /// Filter by status
+    pub status: Option<String>,
 
     /// Filter by client ID
     pub client_id: Option<String>,
 
-    /// Filter by status
-    pub status: Option<String>,
+    #[serde(flatten)]
+    #[param(ignore)]
+    pub pagination: PaginationParams,
 }
 
 /// Dispatch pools list response (matches TS `{ pools, total }` shape)
