@@ -73,6 +73,9 @@ async fn migration_039_adds_gos_columns_and_is_recognised_when_already_applied()
     assert!(tracked, "the probe recognises an applied 039");
 }
 
+/// A column's table, name, type, width, nullability and default.
+type ColumnShape = (String, String, String, Option<i32>, String, Option<String>);
+
 /// Migration 057: the rest of Go's 057 — `descriptor` on both dispatch-job
 /// tables and `metadata` on the read projection, with Go's types,
 /// nullability and defaults.
@@ -96,19 +99,18 @@ async fn migration_057_adds_gos_descriptor_and_read_metadata() {
         .await
         .unwrap();
 
-    let columns: Vec<(String, String, String, Option<i32>, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT table_name::text, column_name::text, data_type::text, \
+    let columns: Vec<ColumnShape> = sqlx::query_as(
+        "SELECT table_name::text, column_name::text, data_type::text, \
                     character_maximum_length::int, is_nullable::text, column_default::text \
              FROM information_schema.columns \
              WHERE table_schema = 'public' \
                AND table_name IN ('msg_dispatch_jobs', 'msg_dispatch_jobs_read') \
                AND column_name IN ('descriptor', 'metadata') \
              ORDER BY 1, 2",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     let col = |t: &str, c: &str, ty: &str, len: Option<i32>, null: &str, def: Option<&str>| {
         (
             t.to_string(),
