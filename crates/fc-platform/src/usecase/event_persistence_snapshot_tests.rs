@@ -54,7 +54,9 @@ use crate::process::operations::{ProcessCreated, ProcessUpdated, ProcessesSynced
 use crate::role::operations::events::{RoleCreated, RolesSynced};
 use crate::scheduled_job::operations::events::{ScheduledJobCreated, ScheduledJobsSynced};
 use crate::service_account::operations::events::{
-    ServiceAccountCreated, ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated,
+    ServiceAccountCreated, ServiceAccountDeactivated, ServiceAccountDeleted,
+    ServiceAccountRolesAssigned, ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated,
+    ServiceAccountUpdated,
 };
 use crate::service_account::operations::{
     CreateServiceAccountCommand, CreateServiceAccountResult, RegenerateAuthTokenCommand,
@@ -454,18 +456,56 @@ fn scheduled_jobs_synced() {
 //
 // The use cases return wrapper results carrying one-time secrets. The secrets
 // must never reach the persisted event.
+//
+// Every service-account event names the account (`sac_1`), never its SERVICE
+// principal (`prn_1`): subject, message group, `serviceAccountId` and the audit
+// row's `entity_id`, as Go builds them from `sa.ID`.
+
+/// An account whose SERVICE principal and own row have different ids, as
+/// every account does.
+fn service_account() -> crate::ServiceAccount {
+    let mut sa = crate::ServiceAccount::new("orders-bot", "Orders bot", UserScope::Anchor);
+    sa.id = "prn_1".to_string();
+    sa.service_account_table_id = Some("sac_1".to_string());
+    sa
+}
+
+#[test]
+fn service_account_updated() {
+    let e = fixed!(ServiceAccountUpdated::new(&ctx(), &service_account()));
+    check(&e, EXPECTED_SERVICE_ACCOUNT_UPDATED);
+}
+
+#[test]
+fn service_account_deactivated() {
+    let e = fixed!(ServiceAccountDeactivated::new(&ctx(), &service_account()));
+    check(&e, EXPECTED_SERVICE_ACCOUNT_DEACTIVATED);
+}
+
+#[test]
+fn service_account_deleted() {
+    let e = fixed!(ServiceAccountDeleted::new(&ctx(), &service_account()));
+    check(&e, EXPECTED_SERVICE_ACCOUNT_DELETED);
+}
+
+#[test]
+fn service_account_roles_assigned() {
+    let e = fixed!(ServiceAccountRolesAssigned::new(
+        &ctx(),
+        &service_account(),
+        s(&["platform:viewer"]),
+        vec![]
+    ));
+    check(&e, EXPECTED_SERVICE_ACCOUNT_ROLES_ASSIGNED);
+}
 
 #[test]
 fn service_account_created() {
-    let e = fixed!(ServiceAccountCreated::new(
-        &ctx(),
-        "sac_1",
-        "orders-bot",
-        "Orders bot"
-    ));
+    let e = fixed!(ServiceAccountCreated::new(&ctx(), &service_account()));
     check(&e, EXPECTED_SERVICE_ACCOUNT_CREATED);
     let result = CreateServiceAccountResult {
         event: e,
+        principal_id: "prn_1".to_string(),
         auth_token: "fc_secret_token".to_string(),
         signing_secret: "secret_signing".to_string(),
     };
@@ -476,8 +516,7 @@ fn service_account_created() {
 fn service_account_token_regenerated() {
     let e = fixed!(ServiceAccountTokenRegenerated::new(
         &ctx(),
-        "sac_1",
-        "orders-bot"
+        &service_account()
     ));
     check(&e, EXPECTED_SERVICE_ACCOUNT_TOKEN_REGENERATED);
     let result = RegenerateAuthTokenResult {
@@ -491,8 +530,7 @@ fn service_account_token_regenerated() {
 fn service_account_secret_regenerated() {
     let e = fixed!(ServiceAccountSecretRegenerated::new(
         &ctx(),
-        "sac_1",
-        "orders-bot"
+        &service_account()
     ));
     check(&e, EXPECTED_SERVICE_ACCOUNT_SECRET_REGENERATED);
     let result = RegenerateSigningSecretResult {
@@ -734,12 +772,8 @@ fn service_account_commands_persist_no_generated_credentials() {
         all_applications: false,
     };
     let result = CreateServiceAccountResult {
-        event: fixed!(ServiceAccountCreated::new(
-            &ctx(),
-            "sac_1",
-            "orders-bot",
-            "Orders bot"
-        )),
+        event: fixed!(ServiceAccountCreated::new(&ctx(), &service_account())),
+        principal_id: "prn_1".to_string(),
         auth_token: TOKEN.to_string(),
         signing_secret: SIGNING.to_string(),
     };
@@ -753,8 +787,7 @@ fn service_account_commands_persist_no_generated_credentials() {
     let result = RegenerateAuthTokenResult {
         event: fixed!(ServiceAccountTokenRegenerated::new(
             &ctx(),
-            "sac_1",
-            "orders-bot"
+            &service_account()
         )),
         auth_token: TOKEN.to_string(),
     };
@@ -766,8 +799,7 @@ fn service_account_commands_persist_no_generated_credentials() {
     let result = RegenerateSigningSecretResult {
         event: fixed!(ServiceAccountSecretRegenerated::new(
             &ctx(),
-            "sac_1",
-            "orders-bot"
+            &service_account()
         )),
         signing_secret: SIGNING.to_string(),
     };
@@ -846,6 +878,10 @@ const EXPECTED_SCHEDULED_JOBS_SYNCED: &str = r#"{"aud_logs":{"entity_id":"synced
 const EXPECTED_SERVICE_ACCOUNT_CREATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"code":"orders-bot","name":"Orders bot","serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:created-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:created","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_SERVICE_ACCOUNT_TOKEN_REGENERATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"code":"orders-bot","serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:token-regenerated-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:token-regenerated","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_SERVICE_ACCOUNT_SECRET_REGENERATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"code":"orders-bot","serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:secret-regenerated-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:secret-regenerated","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_SERVICE_ACCOUNT_UPDATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"name":"Orders bot","serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:updated-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:updated","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_SERVICE_ACCOUNT_DEACTIVATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:deactivated-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:deactivated","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_SERVICE_ACCOUNT_DELETED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"code":"orders-bot","serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:deleted-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:deleted","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_SERVICE_ACCOUNT_ROLES_ASSIGNED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"rolesAdded":["platform:viewer"],"rolesRemoved":[],"serviceAccountId":"sac_1"},"deduplication_id":"platform:iam:serviceaccount:roles-assigned-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:roles-assigned","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:iam","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_SUBSCRIPTION_CREATED: &str = r#"{"aud_logs":{"entity_id":"sub_1","entity_type":"Subscription","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Subscription"}],"correlation_id":"corr-snap","data":{"code":"orders-shipped","name":"Orders shipped","subscriptionId":"sub_1"},"deduplication_id":"platform:admin:subscription:created-evt_0SNAPSHOT0001","event_type":"platform:admin:subscription:created","id":"evt_0SNAPSHOT0001","message_group":"platform:subscription:sub_1","source":"platform:admin","spec_version":"1.0","subject":"platform.subscription.sub_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_PASSKEY_REGISTERED: &str = r#"{"aud_logs":{"entity_id":"pkc_1","entity_type":"Passkey","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Passkey"}],"correlation_id":"corr-snap","data":{"credentialId":"pkc_1","name":"YubiKey","userId":"prn_1"},"deduplication_id":"platform:admin:passkey:registered-evt_0SNAPSHOT0001","event_type":"platform:admin:passkey:registered","id":"evt_0SNAPSHOT0001","message_group":"platform:passkey:pkc_1","source":"platform:admin","spec_version":"1.0","subject":"platform.passkey.pkc_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_ROLES_SYNCED: &str = r#"{"aud_logs":{"entity_id":"","entity_type":"Roles","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Roles"}],"correlation_id":"corr-snap","data":{"applicationCode":"orders","created":3,"removed":1,"syncedCodes":["orders:viewer"],"total":4,"updated":2},"deduplication_id":"platform:admin:roles:synced-evt_0SNAPSHOT0001","event_type":"platform:admin:roles:synced","id":"evt_0SNAPSHOT0001","message_group":"platform:roles:orders","source":"platform:admin","spec_version":"1.0","subject":"platform.roles","time":"2026-01-02T03:04:05Z"}}"#;

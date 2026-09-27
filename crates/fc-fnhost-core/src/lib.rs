@@ -33,6 +33,7 @@ pub(crate) mod java;
 pub mod artifact;
 pub mod clock;
 pub mod control_plane;
+pub mod db;
 pub mod desired;
 pub mod env;
 pub mod fingerprint;

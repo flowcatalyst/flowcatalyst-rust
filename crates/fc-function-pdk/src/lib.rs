@@ -38,6 +38,7 @@
 //! | `ctx.events().emit(OutboundEvent)` / `EmitResult` | [`Events::emit`] (the event id) / [`EmitError`] |
 //! | `ctx.http().send(HttpCall)` / `HttpCallRefusedException` | [`Http::send`] / [`HttpError::Denied`] |
 //! | `ctx.logger()` | [`Context::logger`], and the `log` crate (feature `log`) |
+//! | `fc_db_query/execute/begin/commit/rollback` (Java W4) | [`Context::db`] → [`Db`] / [`Transaction`] (a guard: drop rolls back), [`params!`] |
 //! | `ctx.clock()` | [`Context::now`] |
 //! | `Webhook.event/schedule(body)` | [`Webhook::event`]`(&req)`, [`Webhook::schedule`]`(&req)` |
 //!
@@ -45,7 +46,7 @@
 //!
 //! | Feature | Default | What it adds |
 //! |---|---|---|
-//! | `flowcatalyst` | yes | The `flowcatalyst:function` imports: [`Context::config`], [`Context::secrets`], [`Context::events`], [`Context::invocation`], [`Request::path_param`], host logging. |
+//! | `flowcatalyst` | yes | The `flowcatalyst:function` imports: [`Context::config`], [`Context::secrets`], [`Context::events`], [`Context::invocation`], [`Context::db`], [`Request::path_param`], host logging. |
 //! | `json` | yes | serde helpers: [`Request::json`], [`HttpCall::with_json`], [`HttpReply::json`], [`json()`](fn@json), [`OutboundEventExt::with_json`]. |
 //! | `log` | yes | `log::info!` and friends reach the function's logger. |
 //!
@@ -77,6 +78,8 @@
 
 mod backend;
 mod context;
+#[cfg(feature = "flowcatalyst")]
+pub mod db;
 mod error;
 mod http;
 #[cfg(feature = "json")]
@@ -92,6 +95,8 @@ mod wasi;
 #[cfg(feature = "flowcatalyst")]
 pub use context::{Config, EmitError, Events, Invocation, MissingKey, Secrets};
 pub use context::{Context, Level, Logger};
+#[cfg(feature = "flowcatalyst")]
+pub use db::{Db, DbError, DbErrorCode, Param, Rows, Transaction};
 pub use error::{Error, HandlerOutput, Result};
 pub use http::{Http, HttpCall, HttpDenied, HttpError, HttpReply};
 #[cfg(feature = "json")]
@@ -126,7 +131,7 @@ pub mod prelude {
     #[cfg(feature = "json")]
     pub use crate::{json, OutboundEventExt};
     #[cfg(feature = "flowcatalyst")]
-    pub use crate::{EmitError, Invocation};
+    pub use crate::{params, Db, DbError, EmitError, Invocation, Param, Transaction};
 }
 
 /// What `#[handler]` expands to. Not a public API.

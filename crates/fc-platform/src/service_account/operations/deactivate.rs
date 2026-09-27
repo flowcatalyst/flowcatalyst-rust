@@ -88,13 +88,13 @@ impl<U: UnitOfWork> DeactivateServiceAccountUseCase<U> {
         // Idempotent: already-inactive SA is a no-op success so the
         // cascade caller doesn't have to filter.
         if !sa.active {
-            let event = ServiceAccountDeactivated::new(ctx, &sa.id);
+            let event = ServiceAccountDeactivated::new(ctx, &sa);
             return Ok((sa, event));
         }
 
         sa.deactivate();
 
-        let event = ServiceAccountDeactivated::new(ctx, &sa.id);
+        let event = ServiceAccountDeactivated::new(ctx, &sa);
         Ok((sa, event))
     }
 }

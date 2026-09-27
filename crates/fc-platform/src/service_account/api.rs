@@ -515,7 +515,7 @@ pub async fn create_service_account<U: UnitOfWork>(
         Ok(result) => {
             let account = state
                 .repo
-                .find_by_id(&result.event.service_account_id)
+                .find_by_id(&result.principal_id)
                 .await?
                 .ok_or_else(|| PlatformError::internal("Created service account not found"))?;
 
@@ -557,7 +557,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 pkce_required: true,
                 application_ids: vec![],
                 allowed_origins: vec![],
-                service_account_principal_id: Some(result.event.service_account_id.clone()),
+                service_account_principal_id: Some(result.principal_id.clone()),
                 created_by: Some(auth.0.principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,

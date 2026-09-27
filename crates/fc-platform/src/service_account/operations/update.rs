@@ -134,7 +134,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         service_account.updated_at = Utc::now();
 
         // Create domain event
-        let event = ServiceAccountUpdated::new(&ctx, &service_account.id, &service_account.name);
+        let event = ServiceAccountUpdated::new(&ctx, &service_account);
 
         // Atomic commit
         self.unit_of_work

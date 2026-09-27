@@ -27,6 +27,7 @@ pub mod jwks_cache;
 pub mod oidc_login_api;
 pub mod oidc_login_state;
 pub mod oidc_login_state_repository;
+pub mod oidc_payload_repository;
 pub mod oidc_sync_service;
 
 // Authorization codes

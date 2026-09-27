@@ -1059,6 +1059,18 @@ async fn portal_password_login_issues_a_portal_code() {
     assert_eq!(id_token["portal_app_code"], "gate-a");
     assert_eq!(id_token["roles"], json!([]));
     assert_eq!(id_token["nonce"], "n-1");
+    // Go's portal tokens carry no tier (`tier: ""`), and the platform still
+    // reads the access token, as an identity-only credential.
+    assert_eq!(id_token["tier"], "");
+    let access = tokens["access_token"].as_str().unwrap();
+    assert_eq!(jwt_payload(access)["tier"], "");
+    assert_eq!(jwt_payload(access)["token_use"], "identity");
+    let claims = app
+        .auth_service
+        .validate_token(access)
+        .expect("portal token validates");
+    assert_eq!(claims.tier, None);
+    assert!(!claims.is_anchor());
 
     // App gate: B needs its own grant.
     let flow_b = authorize(&app, &b_client, b_redirect, "st-b").await;

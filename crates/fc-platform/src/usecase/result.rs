@@ -12,7 +12,7 @@ use super::error::UseCaseError;
 /// Its constructor is visible only inside the `usecase` module, so the only
 /// ways to get one are `UnitOfWork::commit()` / `commit_delete()` /
 /// `emit_event()` / `emit_events()` / `commit_all()` /
-/// `commit_all_with_events()` and `PgUnitOfWork::run()`. `UseCase::execute`
+/// `commit_all_with_events()` / `commit_sync()` and `PgUnitOfWork::run()`. `UseCase::execute`
 /// returns `Result<Committed<Event>, UseCaseError>`, so `?` works in it and
 /// its happy path can only end in one of those calls:
 ///

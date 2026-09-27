@@ -1,11 +1,14 @@
-/// The FlowCatalyst function contract, version 0.1.1.
+/// The FlowCatalyst function contract, version 0.1.2.
 ///
-/// 0.1.1 adds `events.emit-event` (and its two types) and changes nothing
-/// else, so it is a superset of
-/// 0.1.0: a component built against 0.1.0 links unchanged against a host
-/// that serves 0.1.1 (the Component Model resolves `0.1.x` imports
-/// semver-compatibly). A component that calls `emit-event` needs a 0.1.1
-/// host.
+/// Every 0.1.x release only adds, so each is a superset of the one before:
+/// a component built against 0.1.0 or 0.1.1 links unchanged against a host
+/// that serves 0.1.2 (the Component Model resolves `0.1.x` imports
+/// semver-compatibly).
+///
+/// - 0.1.1 added `events.emit-event` (and its two types); a component that
+///   calls it needs a 0.1.1 host.
+/// - 0.1.2 adds the `db` interface; a component that imports it needs a
+///   0.1.2 host.
 ///
 /// A FlowCatalyst function is a WASI 0.2 component that exports
 /// `wasi:http/incoming-handler`: the host hands it each invocation as an
@@ -31,6 +34,10 @@
 ///   gets `500`.
 /// - The invocation stops at the endpoint's `timeoutMs`: the caller gets
 ///   `504` and the instance is discarded, wherever the guest was.
+/// - Every invocation is metered in wasmtime fuel (roughly, WebAssembly
+///   instructions executed). With `limits.maxFuel` in the manifest, an
+///   invocation that spends more is stopped wherever it is and the caller
+///   gets `500 FUNCTION_FUEL_EXHAUSTED`.
 /// - WASI is configured with no preopened directories, no environment, no
 ///   arguments and no sockets. Clocks and random work. Standard output is
 ///   logged at INFO and standard error at WARN on the function's logger
@@ -46,7 +53,7 @@
 /// `deps/` holds the WASI 0.2.12 packages this one refers to, copied
 /// unchanged from wasmtime-wasi-http 49.0.1 (WebAssembly/WASI, Apache-2.0
 /// WITH LLVM-exception).
-package flowcatalyst:function@0.1.1;
+package flowcatalyst:function@0.1.2;
 
 /// The function's manifest-declared configuration.
 interface config {
@@ -243,6 +250,125 @@ interface invocation {
     context: func() -> invocation-context;
 }
 
+/// The databases the manifest declares under `db[]` (added in 0.1.2), over
+/// the host's shared connection pools.
+///
+/// - Only a `db[].name` opens; anything else is `not-declared`.
+/// - Parameters are bound to the statement's `?` placeholders in order,
+///   never interpolated into the SQL (`??` is a literal `?`, for the jsonb
+///   operators). A statement is one SQL command.
+/// - Connections belong to the invocation. Without a transaction each
+///   statement borrows a connection and returns it before answering. A
+///   `transaction` holds one connection until it is committed, rolled back
+///   or dropped; dropping it, or the invocation ending while it is open,
+///   rolls it back. Every connection goes back to the pool clean: an open
+///   transaction rolled back and the session reset (`DISCARD ALL`), whatever
+///   the SQL did.
+/// - Each statement's timeout is the time left before the invocation's
+///   deadline; with less than a millisecond left it is not sent (`timeout`).
+///   Waiting for a free connection also ends at the deadline.
+/// - A query answers at most 10 000 rows or 8 MiB of row JSON, whichever
+///   comes first; `rows.truncated` says there were more.
+/// - Errors are values, never traps. The host never logs SQL text or
+///   parameter values; an `unavailable` database is also logged for the
+///   operator.
+interface db {
+    /// A statement parameter.
+    variant param {
+        /// SQL `NULL`, of whatever type the statement needs there.
+        null,
+        /// Bound as `boolean`.
+        boolean(bool),
+        /// Bound as `bigint` (`int8`).
+        integer(s64),
+        /// Bound as `double precision` (`float8`).
+        float(f64),
+        /// An exact decimal (`12.50`, `-3`, `1.5e10`), bound as `numeric`.
+        decimal(string),
+        /// Text of no declared type: the server reads it as whatever the
+        /// statement needs at that position (`text`, `uuid`, `timestamptz`,
+        /// `jsonb`, `date`, `numeric`, an enum, ...).
+        text(string),
+    }
+
+    /// Why a call failed. The first three are the host's own refusals; the
+    /// others come from the database, by SQLSTATE class.
+    enum error-code {
+        /// The name is not a `db[].name` of the manifest (`DB_NOT_DECLARED`).
+        not-declared,
+        /// The call itself is malformed: a parameter the statement's type
+        /// cannot take, a placeholder count that does not match, too many
+        /// connections held at once by this invocation (`DB_BAD_REQUEST`).
+        bad-request,
+        /// The transaction is no longer open (`DB_TX_UNKNOWN`).
+        tx-unknown,
+        /// SQLSTATE class 23: an integrity constraint (`DB_CONSTRAINT`).
+        constraint,
+        /// SQLSTATE class 42: a syntax error or access rule violation
+        /// (`DB_SYNTAX`).
+        syntax,
+        /// The statement ran past the invocation's deadline, no connection
+        /// became free before it, or no time was left (`DB_TIMEOUT`).
+        timeout,
+        /// The database could not be reached or is out of connections
+        /// (SQLSTATE classes 08, 53 and 57): worth a retry (`DB_UNAVAILABLE`).
+        unavailable,
+        /// Anything else the database refused (`DB_ERROR`).
+        error,
+    }
+
+    record error {
+        code: error-code,
+        /// A reason for the function's own use: the host's, or the
+        /// database's message. Never contains a parameter value from the
+        /// host's side.
+        message: string,
+    }
+
+    /// A query's answer.
+    record rows {
+        /// The rows as a JSON array of objects keyed by column label (a
+        /// later column with the same label wins). Values: `int2`, `int4`,
+        /// `int8`, `oid`, `float4`, `float8` are numbers (`NaN` and the
+        /// infinities as strings); `numeric` a string exactly as PostgreSQL
+        /// prints it; `bool` a boolean; `timestamptz` ISO-8601 in UTC with
+        /// `Z`, `timestamp` without an offset, `date`, `time` and `timetz`
+        /// ISO-8601 (`infinity`/`-infinity` as those strings); `bytea`
+        /// base64; `json` and `jsonb` the JSON value itself; `NULL` null;
+        /// anything else (text, uuid, interval, arrays, enums, inet, ...)
+        /// PostgreSQL's text form, as a string.
+        json: string,
+        /// How many rows `json` holds.
+        count: u32,
+        /// There were more rows than the caps let through.
+        truncated: bool,
+    }
+
+    /// A database the manifest declares.
+    resource database {
+        /// Runs a statement that returns rows.
+        query: func(sql: string, params: list<param>) -> result<rows, error>;
+        /// Runs a statement for its effect; the number of rows it affected.
+        execute: func(sql: string, params: list<param>) -> result<u64, error>;
+        /// Opens a transaction on a connection of its own.
+        begin: func() -> result<transaction, error>;
+    }
+
+    /// An open transaction. Dropping it rolls it back.
+    resource transaction {
+        query: func(sql: string, params: list<param>) -> result<rows, error>;
+        execute: func(sql: string, params: list<param>) -> result<u64, error>;
+        /// Commits. The transaction is over whatever the outcome: a commit
+        /// that fails (a deferred constraint, a statement that failed
+        /// earlier in it) rolled it back.
+        commit: static func(tx: transaction) -> result<_, error>;
+        rollback: static func(tx: transaction) -> result<_, error>;
+    }
+
+    /// The manifest's `db[]` entry named `name`.
+    open: func(name: string) -> result<database, error>;
+}
+
 /// Everything a function may import from FlowCatalyst. Bind this world for
 /// the FlowCatalyst half of a function (the `wasi:http` half comes from the
 /// WASI bindings of the guest's language).
@@ -252,6 +378,7 @@ world imports {
     import log;
     import events;
     import invocation;
+    import db;
 }
 
 /// A FlowCatalyst function: a `wasi:http/proxy` component that may also

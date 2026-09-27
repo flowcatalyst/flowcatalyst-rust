@@ -67,6 +67,17 @@ impl Context {
         }
     }
 
+    /// The database the manifest declares under `db[]` as `name`
+    /// (`DB_NOT_DECLARED` otherwise). See [`crate::db`].
+    #[cfg(feature = "flowcatalyst")]
+    pub fn db(&self, name: &str) -> Result<crate::db::Db, crate::db::DbError> {
+        let backend = match self.backend.test_databases() {
+            Some(databases) => databases.open(name)?,
+            None => crate::wasi::open_db(name)?,
+        };
+        Ok(crate::db::Db::new(name.to_owned(), backend))
+    }
+
     /// The function's logger (`fn.<address>` on the host, with the
     /// invocation's fields on every line).
     pub fn logger(&self) -> Logger {

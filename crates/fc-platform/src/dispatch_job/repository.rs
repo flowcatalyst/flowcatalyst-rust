@@ -48,6 +48,8 @@ struct DispatchJobRow {
     duration_millis: Option<i64>,
     last_error: Option<String>,
     idempotency_key: Option<String>,
+    descriptor: Option<String>,
+    queue: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -99,6 +101,8 @@ impl TryFrom<DispatchJobRow> for DispatchJob {
             attempts: vec![],
             metadata,
             idempotency_key: r.idempotency_key,
+            descriptor: r.descriptor,
+            queue: r.queue,
             created_at: r.created_at,
             updated_at: r.updated_at,
             scheduled_for: r.scheduled_for,
@@ -146,6 +150,8 @@ struct DispatchJobReadRow {
     last_attempt_at: Option<DateTime<Utc>>,
     duration_millis: Option<i64>,
     idempotency_key: Option<String>,
+    descriptor: Option<String>,
+    metadata: serde_json::Value,
     is_completed: Option<bool>,
     is_terminal: Option<bool>,
     projected_at: Option<DateTime<Utc>>,
@@ -200,6 +206,10 @@ impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
             last_attempt_at: r.last_attempt_at,
             duration_millis: r.duration_millis,
             idempotency_key: r.idempotency_key,
+            descriptor: r.descriptor,
+            // As Go's `rowToJob`: tags that are not `[{key, value}]` read as
+            // none.
+            metadata: serde_json::from_value(r.metadata).unwrap_or_default(),
             is_completed: r.is_completed.unwrap_or_default(),
             is_terminal: r.is_terminal.unwrap_or_default(),
             projected_at: r.projected_at,
@@ -332,10 +342,11 @@ impl DispatchJobRepository {
                  service_account_id, client_id, subscription_id, mode, dispatch_pool_id,
                  message_group, sequence, timeout_seconds, schema_id, status, max_retries,
                  retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
-                 completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at)
+                 completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
+                 descriptor, queue)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)"#,
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)"#,
         )
         .bind(&job.id)
         .bind(&job.external_id)
@@ -373,6 +384,8 @@ impl DispatchJobRepository {
         .bind(&job.idempotency_key)
         .bind(job.created_at)
         .bind(job.updated_at)
+        .bind(&job.descriptor)
+        .bind(&job.queue)
         .execute(&self.pool)
         .await?;
 
@@ -597,7 +610,7 @@ impl DispatchJobRepository {
                 retry_strategy = $26, scheduled_for = $27, expires_at = $28,
                 attempt_count = $29, last_attempt_at = $30, completed_at = $31,
                 duration_millis = $32, last_error = $33, idempotency_key = $34,
-                updated_at = $35
+                updated_at = $35, descriptor = $37
             WHERE id = $1 AND created_at = $36"#,
         )
         .bind(&job.id)
@@ -636,6 +649,7 @@ impl DispatchJobRepository {
         .bind(&job.idempotency_key)
         .bind(job.updated_at)
         .bind(job.created_at)
+        .bind(&job.descriptor)
         .execute(&self.pool)
         .await?;
 
@@ -761,6 +775,8 @@ impl DispatchJobRepository {
         let mut idempotency_keys: Vec<Option<String>> = Vec::with_capacity(jobs.len());
         let mut created_ats = Vec::with_capacity(jobs.len());
         let mut updated_ats = Vec::with_capacity(jobs.len());
+        let mut descriptors: Vec<Option<String>> = Vec::with_capacity(jobs.len());
+        let mut queues: Vec<Option<String>> = Vec::with_capacity(jobs.len());
 
         for job in jobs {
             ids.push(job.id.as_str());
@@ -799,6 +815,8 @@ impl DispatchJobRepository {
             idempotency_keys.push(job.idempotency_key.clone());
             created_ats.push(job.created_at);
             updated_ats.push(job.updated_at);
+            descriptors.push(job.descriptor.clone());
+            queues.push(job.queue.clone());
         }
 
         sqlx::query(
@@ -808,7 +826,8 @@ impl DispatchJobRepository {
                  service_account_id, client_id, subscription_id, mode, dispatch_pool_id,
                  message_group, sequence, timeout_seconds, schema_id, status, max_retries,
                  retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
-                 completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at)
+                 completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
+                 descriptor, queue)
             SELECT * FROM UNNEST(
                 $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[],
                 $6::varchar[], $7::varchar[], $8::varchar[], $9::jsonb[], $10::varchar[],
@@ -817,7 +836,8 @@ impl DispatchJobRepository {
                 $20::varchar[], $21::int4[], $22::int4[], $23::varchar[], $24::varchar[],
                 $25::int4[], $26::varchar[], $27::timestamptz[], $28::timestamptz[],
                 $29::int4[], $30::timestamptz[], $31::timestamptz[], $32::int8[],
-                $33::varchar[], $34::varchar[], $35::timestamptz[], $36::timestamptz[]
+                $33::varchar[], $34::varchar[], $35::timestamptz[], $36::timestamptz[],
+                $37::varchar[], $38::varchar[]
             )"#,
         )
         .bind(&ids)
@@ -856,6 +876,8 @@ impl DispatchJobRepository {
         .bind(&idempotency_keys as &[Option<String>])
         .bind(&created_ats)
         .bind(&updated_ats)
+        .bind(&descriptors as &[Option<String>])
+        .bind(&queues as &[Option<String>])
         .execute(executor)
         .await?;
 
@@ -1081,10 +1103,10 @@ impl DispatchJobRepository {
                  max_retries, last_error, timeout_seconds, retry_strategy, application,
                  subdomain, aggregate, created_at, updated_at, scheduled_for, expires_at,
                  completed_at, last_attempt_at, duration_millis, idempotency_key,
-                 is_completed, is_terminal, projected_at)
+                 is_completed, is_terminal, projected_at, descriptor, metadata)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)"#,
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)"#,
         )
         .bind(&p.id)
         .bind(&p.external_id)
@@ -1123,6 +1145,8 @@ impl DispatchJobRepository {
         .bind(p.is_completed)
         .bind(p.is_terminal)
         .bind(p.projected_at)
+        .bind(&p.descriptor)
+        .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
         .execute(&self.pool)
         .await?;
 
@@ -1138,10 +1162,10 @@ impl DispatchJobRepository {
                  max_retries, last_error, timeout_seconds, retry_strategy, application,
                  subdomain, aggregate, created_at, updated_at, scheduled_for, expires_at,
                  completed_at, last_attempt_at, duration_millis, idempotency_key,
-                 is_completed, is_terminal, projected_at)
+                 is_completed, is_terminal, projected_at, descriptor, metadata)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
             ON CONFLICT (id, created_at) DO UPDATE SET
                 status = EXCLUDED.status,
                 attempt_count = EXCLUDED.attempt_count,
@@ -1191,6 +1215,8 @@ impl DispatchJobRepository {
         .bind(p.is_completed)
         .bind(p.is_terminal)
         .bind(p.projected_at)
+        .bind(&p.descriptor)
+        .bind(serde_json::to_value(&p.metadata).unwrap_or_else(|_| serde_json::json!([])))
         .execute(&self.pool)
         .await?;
 

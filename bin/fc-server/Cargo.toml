@@ -19,7 +19,7 @@ fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres",
 fc-mcp = { path = "../../crates/fc-mcp" }
 # The function-host role. `ecr`: ECR registry auth for oci:// artifacts
 # (owner decision #14), as the former fc-fnhost binary had it.
-fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr"] }
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr", "aws-secrets"] }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

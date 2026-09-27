@@ -105,7 +105,7 @@ async fn client_scope_service_account_is_not_anchor() {
     // The token carries CLIENT and only its client.
     let token = token(&app, &p);
     let claims = app.auth_service.validate_token(&token).expect("claims");
-    assert_eq!(claims.tier, UserScope::Client);
+    assert_eq!(claims.tier, Some(UserScope::Client));
     assert_eq!(claims.clients.len(), 1);
     assert!(claims.clients[0].starts_with(&clt), "{:?}", claims.clients);
 
@@ -133,7 +133,7 @@ async fn anchor_scope_service_account_is_still_anchor() {
     let token = token(&app, &p);
     assert_eq!(
         app.auth_service.validate_token(&token).unwrap().tier,
-        UserScope::Anchor
+        Some(UserScope::Anchor)
     );
     // It passes the anchor check; only the permission check stops it.
     assert_eq!(

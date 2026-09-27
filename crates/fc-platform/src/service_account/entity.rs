@@ -413,6 +413,15 @@ impl ServiceAccount {
         self.scope.is_anchor() || self.principal_client_ids.iter().any(|c| c == client_id)
     }
 
+    /// The account's own id (`iam_service_accounts.id`, `sac_…`): what the API
+    /// answers with and what Go's service-account events carry as subject and
+    /// `serviceAccountId` (`subjectFor(sa.ID)`,
+    /// serviceaccount/operations/events.go). A legacy SERVICE principal with
+    /// no account row falls back to the principal's id.
+    pub fn account_id(&self) -> &str {
+        self.service_account_table_id.as_deref().unwrap_or(&self.id)
+    }
+
     pub fn deactivate(&mut self) {
         self.active = false;
         self.updated_at = Utc::now();

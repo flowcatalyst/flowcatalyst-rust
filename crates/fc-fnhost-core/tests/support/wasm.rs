@@ -32,9 +32,10 @@ pub const ADDR: &str = "app.orders.ship";
 pub const ENTRYPOINT: &str = "wasi:http/incoming-handler";
 
 /// Every committed guest, in `SHA256SUMS` (and `tests/guests/build.sh`)
-/// order. `pdk`, `pdk-pure` and `hello` are written with the guest SDK
-/// (`crates/fc-function-pdk`; `hello` is `examples/function-hello-rust`).
-pub const GUESTS: [&str; 14] = [
+/// order. `pdk`, `pdk-pure`, `hello` and `pdk_db` are written with the
+/// guest SDK (`crates/fc-function-pdk`; `hello` is
+/// `examples/function-hello-rust`).
+pub const GUESTS: [&str; 15] = [
     "echo",
     "spin",
     "alloc",
@@ -49,6 +50,7 @@ pub const GUESTS: [&str; 14] = [
     "pdk",
     "pdk-pure",
     "hello",
+    "pdk_db",
 ];
 
 pub fn fixtures_dir() -> PathBuf {
@@ -130,6 +132,9 @@ pub struct Options {
     pub max_executing: usize,
     pub max_instances: u32,
     pub host_max_concurrency: i32,
+    /// `EngineSettings::consume_fuel` (on in production).
+    pub consume_fuel: bool,
+    pub db: fc_fnhost_core::db::DbSettings,
 }
 
 impl Default for Options {
@@ -138,6 +143,8 @@ impl Default for Options {
             max_executing: 4,
             max_instances: 32,
             host_max_concurrency: 64,
+            consume_fuel: true,
+            db: fc_fnhost_core::db::DbSettings::default(),
         }
     }
 }
@@ -147,6 +154,7 @@ pub struct WasmHarness {
     pub reconciler: Arc<Reconciler>,
     pub listener: Arc<FnListener>,
     pub runtime: Arc<WasmRuntime>,
+    pub metrics: Arc<FnMetrics>,
     pub client: reqwest::Client,
     pub base: String,
     /// Holds the artifact and `.cwasm` caches.
@@ -170,10 +178,12 @@ impl WasmHarness {
         let runtime = WasmRuntime::new(WasmSettings {
             engine: EngineSettings {
                 max_instances: options.max_instances,
+                consume_fuel: options.consume_fuel,
                 ..EngineSettings::default()
             },
             max_executing: options.max_executing,
             cache_dir: dir.path().to_owned(),
+            db: options.db.clone(),
         })
         .unwrap();
         let cache = ArtifactCache::new(dir.path(), DEFAULT_MAX_BYTES).unwrap();
@@ -202,13 +212,17 @@ impl WasmHarness {
             trusted_proxies: TrustedProxies::default_list(),
             clock,
         }));
-        listener.start(reconciler.clone(), metrics).await.unwrap();
+        listener
+            .start(reconciler.clone(), metrics.clone())
+            .await
+            .unwrap();
         let base = format!("http://127.0.0.1:{}", listener.port().unwrap());
         Self {
             control,
             reconciler,
             listener,
             runtime,
+            metrics,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()

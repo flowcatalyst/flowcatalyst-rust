@@ -10,13 +10,14 @@
 # Rebuilds are not byte-reproducible across toolchains and checkouts, so
 # rebuild only the guests you changed.
 #
-# `pdk` is this workspace's guest written with crates/fc-function-pdk (G1);
+# `pdk` is this workspace's guest written with crates/fc-function-pdk (G1),
+# `pdk_db` its database access (flowcatalyst:function/db, 0.1.2);
 # `pdk-pure` is the PDK's own `pure` example, built without the
 # `flowcatalyst` feature (so in the PDK's workspace, where no other guest
 # unifies it back on); `hello` is examples/function-hello-rust (G2).
 set -euo pipefail
 cd "$(dirname "$0")"
-all=(echo spin alloc fail config secret http emit emit_event log pure pdk pdk-pure hello)
+all=(echo spin alloc fail config secret http emit emit_event log pure pdk pdk-pure hello pdk_db)
 if [[ $# -gt 0 ]]; then guests=("$@"); else guests=("${all[@]}"); fi
 example=../../../../examples/function-hello-rust
 pdk=../../../fc-function-pdk

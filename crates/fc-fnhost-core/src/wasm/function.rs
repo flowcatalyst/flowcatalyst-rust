@@ -47,7 +47,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
 use super::egress::EgressHooks;
-use super::guest::{FunctionShared, GuestState, InvocationData};
+use super::guest::{FunctionShared, GuestState, InvocationData, MeteredLimits};
 use super::output::GuestOutput;
 use super::WasmRuntime;
 use crate::invoke::{InvocationContext, InvokeError, Invoker};
@@ -57,6 +57,10 @@ pub struct WasmFunction {
     runtime: Arc<WasmRuntime>,
     pre: ProxyPre<GuestState>,
     shared: Arc<FunctionShared>,
+    /// The version's database pool memberships; released at close, so the
+    /// pools it alone used close with it (the last invocation holding a
+    /// clone has drained by then).
+    databases: parking_lot::Mutex<Option<Arc<crate::db::DbBindings>>>,
     closed: AtomicBool,
 }
 
@@ -65,11 +69,13 @@ impl WasmFunction {
         runtime: Arc<WasmRuntime>,
         pre: ProxyPre<GuestState>,
         shared: Arc<FunctionShared>,
+        databases: Option<Arc<crate::db::DbBindings>>,
     ) -> Self {
         Self {
             runtime,
             pre,
             shared,
+            databases: parking_lot::Mutex::new(databases),
             closed: AtomicBool::new(false),
         }
     }
@@ -90,15 +96,19 @@ impl WasmFunction {
             wasi: wasi.build(),
             http: WasiHttpCtx::new(),
             table: ResourceTable::new(),
-            limits: StoreLimitsBuilder::new()
-                .memory_size(self.shared.memory_limit)
-                .build(),
+            limits: MeteredLimits::new(
+                StoreLimitsBuilder::new()
+                    .memory_size(self.shared.memory_limit)
+                    .build(),
+                context.usage.clone(),
+            ),
             hooks: EgressHooks {
                 allow: self.shared.allow.clone(),
                 deadline: context.deadline,
             },
             function: self.shared.clone(),
             invocation: InvocationData::from(context),
+            db: crate::db::DbSession::new(self.databases.lock().clone(), context.deadline),
         }
     }
 
@@ -123,6 +133,12 @@ impl WasmFunction {
         );
     }
 
+    fn out_of_fuel(&self) -> InvokeError {
+        InvokeError::FuelExhausted {
+            limit: self.shared.max_fuel.unwrap_or(u64::MAX),
+        }
+    }
+
     fn failed(&self, reason: &str, detail: &str) -> Result<Response, InvokeError> {
         self.warn(reason, detail);
         Ok(Response::function_failed())
@@ -139,6 +155,8 @@ enum GuestEnd {
     Interrupted,
     /// Dropped mid-run: the invocation was cancelled or timed out.
     Stopped,
+    /// It spent the fuel `limits.maxFuel` allows.
+    OutOfFuel,
     /// No pool slot free.
     NoInstance(String),
     /// Instantiation or request setup failed.
@@ -148,6 +166,31 @@ enum GuestEnd {
 type Head = Result<hyper::Response<HyperOutgoingBody>, ErrorCode>;
 type Outparam = tokio::sync::oneshot::Receiver<Head>;
 
+/// How much fuel a store starts with, and so what "spent" is measured
+/// from: the limit, or (unlimited) `u64::MAX`, which no invocation spends
+/// before its deadline.
+fn fuel_budget(max_fuel: Option<u64>) -> u64 {
+    max_fuel.unwrap_or(u64::MAX)
+}
+
+/// How often (in fuel) a running guest publishes the fuel it has spent.
+/// Compiled code keeps its fuel count in a register and writes it back only
+/// at calls, returns and this refuel point, so without it a guest spinning
+/// inside one function would report nothing it spent before its deadline
+/// stopped it. 10 M fuel is a few milliseconds of guest compute; the refuel
+/// costs one host call and a yield, like an epoch tick.
+const FUEL_PUBLISH_INTERVAL: u64 = 10_000_000;
+
+/// The fuel `store` has spent, when it meters fuel.
+fn fuel_spent(store: &impl wasmtime::AsContext<Data = GuestState>, budget: u64) -> Option<u64> {
+    store
+        .as_context()
+        .get_fuel()
+        .ok()
+        .map(|left| budget.saturating_sub(left))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn run_guest(
     engine: wasmtime::Engine,
     pre: ProxyPre<GuestState>,
@@ -156,19 +199,53 @@ async fn run_guest(
     outparam: tokio::sync::oneshot::Sender<Head>,
     deadline: Instant,
     stop: CancellationToken,
+    fuel: Option<Option<u64>>,
 ) -> GuestEnd {
+    let usage = state.limits.usage.clone();
     let mut store = Store::new(&engine, state);
     store.limiter(|state| &mut state.limits);
-    // Every tick: stop at the deadline, else yield so other guests (and
-    // other tasks on the guest runtime) get the thread.
-    store.set_epoch_deadline(1);
-    store.epoch_deadline_callback(move |_| {
-        if stop.is_cancelled() || Instant::now() >= deadline {
-            Ok(UpdateDeadline::Interrupt)
-        } else {
-            Ok(UpdateDeadline::Yield(1))
+    // `fuel` is `None` when the engine does not meter fuel.
+    let budget = fuel.map(fuel_budget);
+    if let Some(budget) = budget {
+        if let Err(e) = store
+            .set_fuel(budget)
+            .and_then(|()| store.fuel_async_yield_interval(Some(FUEL_PUBLISH_INTERVAL)))
+        {
+            return GuestEnd::Failed(format!("the fuel budget could not be set: {e:#}"));
         }
-    });
+        usage.set_fuel(0);
+    }
+    // Every tick: stop at the deadline, else yield so other guests (and
+    // other tasks on the guest runtime) get the thread. The tick also
+    // publishes the fuel spent so far, so a guest stopped mid-run (the
+    // deadline, a cancelled call) still reports what it used.
+    {
+        let usage = usage.clone();
+        store.set_epoch_deadline(1);
+        store.epoch_deadline_callback(move |context| {
+            if let Some(spent) = budget.and_then(|budget| fuel_spent(&context, budget)) {
+                usage.set_fuel(spent);
+            }
+            if stop.is_cancelled() || Instant::now() >= deadline {
+                Ok(UpdateDeadline::Interrupt)
+            } else {
+                Ok(UpdateDeadline::Yield(1))
+            }
+        });
+    }
+    let end = run_instance(&mut store, pre, request, outparam).await;
+    if let Some(spent) = budget.and_then(|budget| fuel_spent(&store, budget)) {
+        usage.set_fuel(spent);
+    }
+    end
+}
+
+async fn run_instance(
+    mut store: &mut Store<GuestState>,
+    pre: ProxyPre<GuestState>,
+    request: hyper::Request<Full<Bytes>>,
+    outparam: tokio::sync::oneshot::Sender<Head>,
+) -> GuestEnd {
     let proxy = match pre.instantiate_async(&mut store).await {
         Ok(proxy) => proxy,
         Err(e)
@@ -178,6 +255,7 @@ async fn run_guest(
             return GuestEnd::NoInstance(format!("{e:#}"))
         }
         Err(e) if is_interrupt(&e) => return GuestEnd::Interrupted,
+        Err(e) if is_out_of_fuel(&e) => return GuestEnd::OutOfFuel,
         Err(e) => return GuestEnd::Failed(format!("instantiation failed: {e:#}")),
     };
     let body = request.map(|b| {
@@ -202,12 +280,17 @@ async fn run_guest(
     match result {
         Ok(()) => GuestEnd::Returned,
         Err(e) if is_interrupt(&e) => GuestEnd::Interrupted,
+        Err(e) if is_out_of_fuel(&e) => GuestEnd::OutOfFuel,
         Err(e) => GuestEnd::Trapped(format!("{e:#}")),
     }
 }
 
 fn is_interrupt(e: &wasmtime::Error) -> bool {
     e.downcast_ref::<Trap>() == Some(&Trap::Interrupt)
+}
+
+fn is_out_of_fuel(e: &wasmtime::Error) -> bool {
+    e.downcast_ref::<Trap>() == Some(&Trap::OutOfFuel)
 }
 
 #[async_trait]
@@ -236,6 +319,7 @@ impl Invoker for WasmFunction {
                 sender,
                 deadline,
                 stop.clone(),
+                self.runtime.consume_fuel.then_some(self.shared.max_fuel),
             );
             self.runtime.spawn(
                 async move {
@@ -272,12 +356,21 @@ impl Invoker for WasmFunction {
                 if matches!(end, Some(GuestEnd::Interrupted) | Some(GuestEnd::Stopped)) {
                     return Err(InvokeError::Timeout);
                 }
+                if matches!(end, Some(GuestEnd::OutOfFuel)) {
+                    return Err(self.out_of_fuel());
+                }
                 Ok(response)
             }
             Driven::Timeout => Err(InvokeError::Timeout),
+            // The body stopped short because the guest ran out of fuel
+            // mid-stream: that, not the truncated body, is the answer.
+            Driven::Failed(..) if matches!(end, Some(GuestEnd::OutOfFuel)) => {
+                Err(self.out_of_fuel())
+            }
             Driven::Failed(reason, detail) => self.failed(reason, &detail),
             Driven::NoResponse => match end {
                 Some(GuestEnd::Interrupted) | Some(GuestEnd::Stopped) => Err(InvokeError::Timeout),
+                Some(GuestEnd::OutOfFuel) => Err(self.out_of_fuel()),
                 Some(GuestEnd::NoInstance(detail)) => {
                     self.warn("no_instance", &detail);
                     Err(InvokeError::Unavailable(detail))
@@ -460,6 +553,7 @@ fn to_request(c: &InvocationContext) -> Result<hyper::Request<Full<Bytes>>, Stri
 impl FunctionInstance for WasmFunction {
     async fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.databases.lock().take();
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

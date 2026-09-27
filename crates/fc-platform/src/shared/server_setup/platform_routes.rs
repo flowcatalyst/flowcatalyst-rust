@@ -296,6 +296,7 @@ pub fn build_platform_routes(
         email_service: email_service.clone(),
         unit_of_work: unit_of_work.clone(),
         external_base_url: config.password_reset_external_base_url.clone(),
+        brand: Some(repos.platform_config_repo.clone()),
     });
 
     let create_user_use_case = Arc::new(crate::principal::operations::CreateUserUseCase::new(
