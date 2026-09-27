@@ -1404,6 +1404,10 @@ pub struct DispatchJobRead {
     pub descriptor: Option<String>,
     #[serde(default)]
     pub metadata: Vec<DispatchMetadata>,
+    /// The job's own priority claim (`DEFAULT`, `HIGH_PRIORITY` or legacy
+    /// text), projected from the write row; `None` when it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
     #[serde(default)]
     pub is_completed: bool,
     #[serde(default)]
@@ -1452,6 +1456,7 @@ impl From<&DispatchJob> for DispatchJobRead {
             idempotency_key: job.idempotency_key.clone(),
             descriptor: job.descriptor.clone(),
             metadata: job.metadata.clone(),
+            queue: job.queue.clone(),
             is_completed: job.status == DispatchStatus::Completed,
             is_terminal: job.status.is_terminal(),
             projected_at: Some(Utc::now()),

@@ -678,6 +678,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
                 "../../../../migrations/060_service_account_webhook_credential_members.sql"
             ),
         ),
+        // A dispatch job's own priority claim on the read projection, for
+        // the list row's `priority` (Go documents it, never fills it).
+        (
+            "061_dispatch_job_read_queue",
+            include_str!("../../../../migrations/061_dispatch_job_read_queue.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -974,6 +980,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'iam_service_accounts' \
                AND column_name = 'wh_signature_header')",
+        ),
+        (
+            "061_dispatch_job_read_queue",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs_read' \
+               AND column_name = 'queue')",
         ),
     ];
 

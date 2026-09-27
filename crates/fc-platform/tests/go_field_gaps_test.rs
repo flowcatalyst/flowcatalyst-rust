@@ -53,6 +53,10 @@ async fn field_gap_migrations_rerun_as_no_ops_and_are_recognised_when_applied() 
             "060_service_account_webhook_credential_members",
             include_str!("../../../migrations/060_service_account_webhook_credential_members.sql"),
         ),
+        (
+            "061_dispatch_job_read_queue",
+            include_str!("../../../migrations/061_dispatch_job_read_queue.sql"),
+        ),
     ];
     for (id, sql) in migrations {
         sqlx::raw_sql(sql)
@@ -669,4 +673,85 @@ async fn service_account_update_replaces_the_webhook_credentials() {
     .await
     .unwrap();
     assert_eq!(cleared, (Some("NONE".to_string()), None, None));
+}
+
+// ── 7. Dispatch-job list rows: priority ──────────────────────────────────
+
+/// Run the dispatch-job projector for a moment.
+async fn project_dispatch_jobs(pool: &sqlx::PgPool) {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let projector = tokio::spawn(fc_stream::dispatch_job_projection::run(
+        pool.clone(),
+        200,
+        std::sync::Arc::new(fc_stream::health::StreamHealth::new(
+            "dispatch-job-projection".into(),
+        )),
+        cancel.clone(),
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    cancel.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(10), projector)
+        .await
+        .expect("projector stops")
+        .unwrap();
+}
+
+/// Go documents `priority` on the list row and never fills it. It is the
+/// job's own priority claim, projected to the read row: 1 for
+/// `HIGH_PRIORITY`, 0 for `DEFAULT`, absent when the job claims neither.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn dispatch_job_rows_answer_the_jobs_own_priority() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    let item = |code: &str, queue: Option<&str>| {
+        let mut item = json!({
+            "source": "gaps",
+            "code": code,
+            "targetUrl": "https://receiver.example.test/hook",
+            "payload": "{}",
+            "serviceAccountId": "sac_nobody",
+        });
+        if let Some(queue) = queue {
+            item["queue"] = json!(queue);
+        }
+        item
+    };
+    let (s, body) = read_json(
+        app.post(
+            "/api/dispatch-jobs/batch",
+            &token,
+            json!({"items": [
+                item("gaps:jobs:job:high", Some("HIGH_PRIORITY")),
+                item("gaps:jobs:job:default", Some("DEFAULT")),
+                item("gaps:jobs:job:unclaimed", None),
+            ]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    project_dispatch_jobs(&app.pool).await;
+
+    for path in [
+        "/api/dispatch-jobs",
+        "/api/dispatch-jobs/list-raw",
+        "/bff/dispatch-jobs",
+    ] {
+        let rows = get_json(&app, path, &token).await;
+        let row = |code: &str| {
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["code"] == code)
+                .unwrap_or_else(|| panic!("{path}: no {code} in {rows}"))
+                .clone()
+        };
+        assert_eq!(row("gaps:jobs:job:high")["priority"], 1, "{path}");
+        assert_eq!(row("gaps:jobs:job:default")["priority"], 0, "{path}");
+        assert!(
+            row("gaps:jobs:job:unclaimed").get("priority").is_none(),
+            "{path}"
+        );
+    }
 }
