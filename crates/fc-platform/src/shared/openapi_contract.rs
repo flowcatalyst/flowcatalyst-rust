@@ -457,7 +457,7 @@ fn collect_refs(value: &Value, out: &mut Vec<String>) {
             }
         }
         Value::Array(list) => list.iter().for_each(|v| collect_refs(v, out)),
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
