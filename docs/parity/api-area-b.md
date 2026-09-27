@@ -101,8 +101,8 @@ Not exercised by the harness but found while matching Go:
 
 - **Dispatch-job `descriptor` and read-side `metadata`** (Go migration 057): Go's fan-out stores the raising
   subscription's name as the job's descriptor and projects metadata into `msg_dispatch_jobs_read`; the SPA's list and
-  detail show both. Rust has neither column. It needs a migration plus changes in the fan-out and the projector (the
-  delivery path), so it was left for the pipeline owner.
+  detail show both. *Since done* (`feat/dispatch-descriptor`, Rust migration 057): the fan-out, the direct creates
+  and the projector populate both, and every dispatch-job read answers them.
 - `POST /api/events` with a known `deduplicationId` answers 200 `isDuplicate: true` with the stored event; Go always
   answers 201 `isDuplicate: false`. The SDKs accept both.
 - The scheduled-job and event-type write handlers load the row (404) before the use case validates; Go validates
