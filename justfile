@@ -604,12 +604,25 @@ _release-sdk kind bump:
     git add -- "$version_file" $manifest $manifest_pom
     git commit -m "$prefix v$new"
     git tag "$prefix/v$new"
-    git push origin HEAD "$prefix/v$new"
+    # JitPack (the Java SDK's distribution, jitpack.yml) builds a git ref and
+    # uses its name as the Maven version, which cannot contain '/': the Java
+    # release also gets a slash-free tag, java-sdk-vX.Y.Z, on the same commit.
+    jitpack_tag=""
+    if [ "{{ kind }}" = "java" ]; then
+        jitpack_tag="$prefix-v$new"
+        git tag "$jitpack_tag"
+    fi
+    git push origin HEAD "$prefix/v$new" $jitpack_tag
 
     echo ""
     echo "✓ Released $prefix v$new"
     echo ""
-    echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst-rust/actions/workflows/split-$prefix.yml"
+    if [ -n "$jitpack_tag" ]; then
+        echo "  JitPack:   https://jitpack.io/#flowcatalyst/flowcatalyst-rust/$jitpack_tag"
+        echo "             (the first request for that version builds it)"
+    else
+        echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst-rust/actions/workflows/split-$prefix.yml"
+    fi
 
 # ─── Tools ─────────────────────────────────────────────────────────────────
 
