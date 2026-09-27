@@ -315,11 +315,13 @@ async fn check_platform_ref(
     Ok(())
 }
 
-/// Beyond Java (owner decision 5): a `component` runtime (the manifest's
-/// or the function's) must publish a WASI component, so a core module or a
-/// jar fails here (`422 ARTIFACT_RUNTIME_MISMATCH`) instead of at load on
-/// every host. Only an uploaded (`platform://`) artifact can be read; an
-/// `oci://`, `s3://` or `file://` one is left to the host's own check.
+/// Beyond Java: a `component` runtime (owner decision 5) must publish a
+/// WASI component, and a `js` runtime (owner decisions 6 and 27) a
+/// JavaScript bundle (UTF-8 text, not wasm or a jar), the manifest's
+/// runtime or the function's. The wrong kind fails here (`422
+/// ARTIFACT_RUNTIME_MISMATCH`) instead of at load on every host. Only an
+/// uploaded (`platform://`) artifact can be read; an `oci://`, `s3://` or
+/// `file://` one is left to the host's own check.
 async fn check_artifact_kind(
     store: Option<&dyn ArtifactBlobStore>,
     artifact_ref: &str,
@@ -327,9 +329,10 @@ async fn check_artifact_kind(
     manifest: &Manifest,
     digest: &Digest,
 ) -> Result<(), UseCaseError> {
-    let runtime = if manifest.runtime.requires_component() {
+    let needs_check = |r: Runtime| r.requires_component() || r.requires_js_bundle();
+    let runtime = if needs_check(manifest.runtime) {
         manifest.runtime
-    } else if function.runtime.requires_component() {
+    } else if needs_check(function.runtime) {
         function.runtime
     } else {
         return Ok(());
@@ -337,16 +340,25 @@ async fn check_artifact_kind(
     let Some(store) = store.filter(|_| artifact_ref.starts_with("platform://")) else {
         return Ok(());
     };
-    match artifact::sniff(store, &function.id, digest).await {
-        Ok(crate::function::WasmKind::Component) => Ok(()),
-        Ok(other) => Err(artifact::runtime_mismatch(runtime, other)),
+    let kind = match artifact::sniff(store, &function.id, digest).await {
+        Ok(kind) => kind,
         Err(e) => {
             tracing::error!(function_id = %function.id, error = %e, "reading an uploaded artifact's header failed");
-            Err(UseCaseError::internal(
+            return Err(UseCaseError::internal(
                 "ARTIFACT_STORE_ERROR",
                 "reading the uploaded artifact failed",
-            ))
+            ));
         }
+    };
+    let fits = if runtime.requires_js_bundle() {
+        kind == crate::function::ArtifactKind::Text
+    } else {
+        kind == crate::function::ArtifactKind::Wasm(crate::function::WasmKind::Component)
+    };
+    if fits {
+        Ok(())
+    } else {
+        Err(artifact::runtime_mismatch(runtime, kind))
     }
 }
 

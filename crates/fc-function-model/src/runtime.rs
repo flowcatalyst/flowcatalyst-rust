@@ -1,4 +1,4 @@
-//! Java `function/Runtime.java`, plus `component`.
+//! Java `function/Runtime.java`, plus `component` and `js`.
 //!
 //! Java has exactly `jvm` and `wasm`. Rust adds **`component`** (owner
 //! decision 5, 2026-09-25): a WASI 0.2 component exporting
@@ -6,10 +6,19 @@
 //! host sniffing a `wasm` artifact. `wasm` keeps working exactly as before
 //! (a Rust host still loads a component published under it, entrypoint
 //! `wasi_http_incoming_handler`), and the two are compatible with each
-//! other ([`Runtime::accepts_manifest`]). A new runtime is one line in the
-//! `runtimes!` table below, plus a migration widening
-//! `fn_functions_runtime_check` and the `runtime` enum of
-//! `function-manifest.schema.json`.
+//! other ([`Runtime::accepts_manifest`]).
+//!
+//! Rust also adds **`js`** (owner decisions 6 and 27): a single ES module
+//! bundle, run in a V8 isolate by the Rust host's JS runtime
+//! (`fc-fnhost-js`). Its `entrypoint` is the export that handles the
+//! request, `default` unless the manifest names another, and
+//! `limits.wasmMemoryMb` caps the isolate's memory (the V8 heap, and
+//! separately its `ArrayBuffer` storage). `js` is compatible only with
+//! itself.
+//!
+//! A new runtime is one line in the `runtimes!` table below, plus a
+//! migration widening `fn_functions_runtime_check` and the `runtime` enum
+//! of `function-manifest.schema.json`.
 
 use crate::enum_str::str_enum;
 use crate::ValidationError;
@@ -25,6 +34,9 @@ pub enum EntrypointRule {
     /// `@0.2.<patch>`, or its manifest-safe alias
     /// [`INCOMING_HANDLER_ALIAS`].
     ComponentHandler,
+    /// An ES module export name: `default`, or an identifier
+    /// `^[A-Za-z_$][\w$]*$`.
+    JsExport,
 }
 
 /// The one export a `component` function has, and its default
@@ -35,6 +47,9 @@ pub const INCOMING_HANDLER: &str = "wasi:http/incoming-handler";
 /// (`[A-Za-z_]\w*`) accepts: how a component is published as `runtime:
 /// wasm`.
 pub const INCOMING_HANDLER_ALIAS: &str = "wasi_http_incoming_handler";
+
+/// A `js` function's default `entrypoint`: the bundle's default export.
+pub const JS_DEFAULT_EXPORT: &str = "default";
 
 impl EntrypointRule {
     /// Whether `raw` fits the rule (`\w` is ASCII, as in Java).
@@ -65,6 +80,13 @@ impl EntrypointRule {
                         None => false,
                     }
             }
+            EntrypointRule::JsExport => {
+                let mut chars = raw.chars();
+                chars
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                    && chars.all(|c| word(c) || c == '$')
+            }
         }
     }
 
@@ -75,6 +97,9 @@ impl EntrypointRule {
             EntrypointRule::WasmExport => "entrypoint must be a wasm export name",
             EntrypointRule::ComponentHandler => {
                 "entrypoint must be wasi:http/incoming-handler (optionally @0.2.x) or wasi_http_incoming_handler"
+            }
+            EntrypointRule::JsExport => {
+                "entrypoint must be the name of an ES module export (default, or an identifier)"
             }
         }
     }
@@ -110,6 +135,61 @@ impl WasmKind {
             WasmKind::Component => "a WASI component",
             WasmKind::CoreModule => "a core wasm module",
             WasmKind::NotWasm => "not wasm",
+        }
+    }
+}
+
+/// What an uploaded artifact looks like, from its first bytes: WASM (see
+/// [`WasmKind`]), a jar, or text that can be a JavaScript bundle. A header
+/// check, not a parse: the host compiles the bundle at load
+/// (`JS_INVALID`); this only refuses the wrong kind of file at publish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactKind {
+    Wasm(WasmKind),
+    /// A zip (`PK\x03\x04`): a jar.
+    Jar,
+    /// UTF-8 text with no NUL byte (a truncated trailing character is
+    /// allowed: the prefix may end mid-character).
+    Text,
+    /// Anything else, or empty.
+    Binary,
+}
+
+impl ArtifactKind {
+    /// How many leading bytes [`ArtifactKind::sniff`] reads at most.
+    pub const PREFIX_LEN: usize = 4096;
+
+    /// Reads at most [`ArtifactKind::PREFIX_LEN`] bytes of `prefix`.
+    pub fn sniff(prefix: &[u8]) -> ArtifactKind {
+        let prefix = &prefix[..prefix.len().min(Self::PREFIX_LEN)];
+        match WasmKind::sniff(prefix) {
+            WasmKind::NotWasm => {}
+            kind => return ArtifactKind::Wasm(kind),
+        }
+        if prefix.starts_with(b"PK\x03\x04") {
+            return ArtifactKind::Jar;
+        }
+        if prefix.is_empty() || prefix.contains(&0) {
+            return ArtifactKind::Binary;
+        }
+        match std::str::from_utf8(prefix) {
+            Ok(_) => ArtifactKind::Text,
+            // Only an incomplete character at the very end (`error_len`
+            // None) is a cut, not an invalid byte.
+            Err(e) if e.error_len().is_none() && prefix.len() == Self::PREFIX_LEN => {
+                ArtifactKind::Text
+            }
+            Err(_) => ArtifactKind::Binary,
+        }
+    }
+
+    /// How a refusal names it.
+    pub fn describe(self) -> &'static str {
+        match self {
+            ArtifactKind::Wasm(kind) => kind.describe(),
+            ArtifactKind::Jar => "a jar",
+            ArtifactKind::Text => "text",
+            ArtifactKind::Binary => "neither wasm nor UTF-8 text",
         }
     }
 }
@@ -158,14 +238,17 @@ runtimes! {
     Jvm => "JVM", "jvm", BinaryClassName, wasm_memory: false;
     Wasm => "WASM", "wasm", WasmExport, wasm_memory: true;
     Component => "COMPONENT", "component", ComponentHandler, wasm_memory: true;
+    Js => "JS", "js", JsExport, wasm_memory: true;
 }
 
 impl Runtime {
-    /// The `entrypoint` an absent one normalises to: only a component has
-    /// one (its only export); everywhere else it is required.
+    /// The `entrypoint` an absent one normalises to: a component's only
+    /// export, or a JS bundle's default export; `jvm` and `wasm` require
+    /// one.
     pub fn default_entrypoint(self) -> Option<&'static str> {
         match self {
             Runtime::Component => Some(INCOMING_HANDLER),
+            Runtime::Js => Some(JS_DEFAULT_EXPORT),
             Runtime::Jvm | Runtime::Wasm => None,
         }
     }
@@ -188,6 +271,12 @@ impl Runtime {
     /// run core modules), `jvm` is not WASM at all.
     pub fn requires_component(self) -> bool {
         self == Runtime::Component
+    }
+
+    /// Whether an artifact of this runtime must be a JavaScript bundle (a
+    /// UTF-8 ES module, see [`ArtifactKind`]): `js` only.
+    pub fn requires_js_bundle(self) -> bool {
+        self == Runtime::Js
     }
     /// `runtime is required and must be jvm or wasm`, listing every runtime.
     pub fn invalid_message() -> String {
@@ -284,6 +373,50 @@ mod tests {
     }
 
     #[test]
+    fn a_js_function_takes_only_js_manifests_and_defaults_to_the_default_export() {
+        assert!(Runtime::Js.accepts_manifest(Runtime::Js));
+        for other in [Runtime::Jvm, Runtime::Wasm, Runtime::Component] {
+            assert!(!Runtime::Js.accepts_manifest(other), "{other:?}");
+            assert!(!other.accepts_manifest(Runtime::Js), "{other:?}");
+        }
+        assert_eq!(Runtime::Js.default_entrypoint(), Some("default"));
+        assert!(Runtime::Js.requires_js_bundle());
+        assert!(!Runtime::Js.requires_component());
+        assert!(!Runtime::Component.requires_js_bundle());
+        let rule = Runtime::Js.entrypoint_rule();
+        for ok in ["default", "handle", "$h", "_x1"] {
+            assert!(rule.matches(ok), "{ok}");
+        }
+        for bad in ["", "1x", "a.b", "a-b", "wasi:http/incoming-handler"] {
+            assert!(!rule.matches(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_artifact_is_sniffed_as_wasm_a_jar_text_or_binary() {
+        let component = [0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00];
+        assert_eq!(
+            ArtifactKind::sniff(&component),
+            ArtifactKind::Wasm(WasmKind::Component)
+        );
+        assert_eq!(ArtifactKind::sniff(b"PK\x03\x04rest"), ArtifactKind::Jar);
+        assert_eq!(
+            ArtifactKind::sniff("export default () => new Response(\"é\");".as_bytes()),
+            ArtifactKind::Text
+        );
+        assert_eq!(ArtifactKind::sniff(b""), ArtifactKind::Binary);
+        assert_eq!(ArtifactKind::sniff(b"a\0b"), ArtifactKind::Binary);
+        assert_eq!(
+            ArtifactKind::sniff(&[0xff, 0xfe, 0x41]),
+            ArtifactKind::Binary
+        );
+        // A prefix cut in the middle of a character is still text.
+        let mut long = "a".repeat(ArtifactKind::PREFIX_LEN - 1).into_bytes();
+        long.extend_from_slice("é".as_bytes());
+        assert_eq!(ArtifactKind::sniff(&long), ArtifactKind::Text);
+    }
+
+    #[test]
     fn stored_parse_is_exact() {
         assert_eq!("JVM".parse::<Runtime>().unwrap(), Runtime::Jvm);
         assert_eq!("WASM".parse::<Runtime>().unwrap(), Runtime::Wasm);
@@ -306,7 +439,7 @@ mod tests {
             assert_eq!(err.code(), "RUNTIME_INVALID");
             assert_eq!(
                 err.message(),
-                "runtime is required and must be jvm, wasm or component"
+                "runtime is required and must be jvm, wasm, component or js"
             );
         }
     }
@@ -317,13 +450,19 @@ mod tests {
         assert_eq!(Runtime::Wasm.wire_value(), "wasm");
     }
 
-    /// Java's set plus `component` (owner decision 5).
+    /// Java's set plus `component` (owner decision 5) and `js` (owner
+    /// decisions 6 and 27).
     #[test]
-    fn javas_runtimes_and_component() {
+    fn javas_runtimes_component_and_js() {
         assert_eq!(
             Runtime::ALL,
-            [Runtime::Jvm, Runtime::Wasm, Runtime::Component]
+            [Runtime::Jvm, Runtime::Wasm, Runtime::Component, Runtime::Js]
         );
+        assert!(Runtime::Js.takes_wasm_memory());
+        assert_eq!(Runtime::Js.wire_value(), "js");
+        assert_eq!(Runtime::Js.as_str(), "JS");
+        assert_eq!("JS".parse::<Runtime>().unwrap(), Runtime::Js);
+        assert_eq!(Runtime::parse_strict("JS").unwrap(), Runtime::Js);
         assert!(!Runtime::Jvm.takes_wasm_memory());
         assert!(Runtime::Wasm.takes_wasm_memory());
         assert!(Runtime::Component.takes_wasm_memory());

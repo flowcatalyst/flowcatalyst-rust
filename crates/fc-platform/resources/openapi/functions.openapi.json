@@ -2499,7 +2499,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "description": {
@@ -2578,7 +2579,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "description": {
@@ -2675,7 +2677,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "entrypoint": {
@@ -3193,7 +3196,8 @@
             "enum": [
               "jvm",
               "wasm",
-              "component"
+              "component",
+              "js"
             ]
           },
           "entrypoint": {
@@ -4052,7 +4056,8 @@
               "enum": [
                 "jvm",
                 "wasm",
-                "component"
+                "component",
+                "js"
               ]
             }
           }
@@ -4112,7 +4117,8 @@
               "enum": [
                 "jvm",
                 "wasm",
-                "component"
+                "component",
+                "js"
               ]
             }
           }

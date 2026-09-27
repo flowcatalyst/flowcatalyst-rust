@@ -11,13 +11,13 @@
     },
     "runtime": {
       "type": "string",
-      "enum": ["jvm", "wasm", "component"],
-      "description": "The runtime this version executes in. component: a WASI 0.2 component exporting wasi:http/incoming-handler (Rust function hosts; the platform checks the artifact is a component at publish). wasm: a wasm artifact, which a Rust host loads when it is a component. Must match the function's own runtime (wasm and component are interchangeable), or publish fails with RUNTIME_MISMATCH."
+      "enum": ["jvm", "wasm", "component", "js"],
+      "description": "The runtime this version executes in. component: a WASI 0.2 component exporting wasi:http/incoming-handler (Rust function hosts; the platform checks the artifact is a component at publish). wasm: a wasm artifact, which a Rust host loads when it is a component. js: a single ES module bundle (UTF-8 JavaScript) run in a V8 isolate by Rust function hosts; the platform checks the artifact is text at publish. Must match the function's own runtime (wasm and component are interchangeable; js only matches js), or publish fails with RUNTIME_MISMATCH."
     },
     "entrypoint": {
       "type": "string",
       "minLength": 1,
-      "description": "jvm: a binary class name implementing io.flowcatalyst.function.Function (^[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*$), else ENTRYPOINT_INVALID. wasm: an export name (^[A-Za-z_]\\w*$); a component published as wasm names wasi_http_incoming_handler. component: optional, wasi:http/incoming-handler (optionally @0.2.x, the default) or wasi_http_incoming_handler. Required for jvm and wasm (ENTRYPOINT_REQUIRED)."
+      "description": "jvm: a binary class name implementing io.flowcatalyst.function.Function (^[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*$), else ENTRYPOINT_INVALID. wasm: an export name (^[A-Za-z_]\\w*$); a component published as wasm names wasi_http_incoming_handler. component: optional, wasi:http/incoming-handler (optionally @0.2.x, the default) or wasi_http_incoming_handler. js: optional, the ES module export that handles the request, default (the default) or an identifier (^[A-Za-z_$][\\w$]*$). Required for jvm and wasm (ENTRYPOINT_REQUIRED)."
     },
     "pool": {
       "type": "string",
@@ -46,7 +46,7 @@
         "wasmMemoryMb": {
           "type": "integer",
           "minimum": 1,
-          "description": "Wasm linear memory, in megabytes. Only applicable when runtime is \"wasm\" — present on a jvm function is LIMIT_NOT_APPLICABLE. Absent on a wasm function ⇒ the platform default clamped to the client's ceiling."
+          "description": "Wasm linear memory, in megabytes. Only applicable when runtime is \"wasm\" (or component or js; for js it caps the isolate's V8 heap, and separately its ArrayBuffer storage) — present on a jvm function is LIMIT_NOT_APPLICABLE. Absent on a wasm function ⇒ the platform default clamped to the client's ceiling."
         }
       },
       "additionalProperties": false
@@ -263,7 +263,7 @@
     },
     {
       "if": {
-        "properties": { "runtime": { "const": "component" } },
+        "properties": { "runtime": { "enum": ["component", "js"] } },
         "required": ["runtime"]
       },
       "else": { "required": ["entrypoint"] }

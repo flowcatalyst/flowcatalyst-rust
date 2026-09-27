@@ -65,7 +65,10 @@ pub use manifest::{
 };
 pub use pool_url_template::{InvalidPoolUrl, PoolUrlTemplate};
 pub use route_pattern::{PathParams, RouteMatch, RoutePattern, Segment};
-pub use runtime::{EntrypointRule, Runtime, WasmKind, INCOMING_HANDLER, INCOMING_HANDLER_ALIAS};
+pub use runtime::{
+    ArtifactKind, EntrypointRule, Runtime, WasmKind, INCOMING_HANDLER, INCOMING_HANDLER_ALIAS,
+    JS_DEFAULT_EXPORT,
+};
 pub use setting_key::SettingKey;
 pub use subscription_mode::SubscriptionMode;
 

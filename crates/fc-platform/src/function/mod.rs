@@ -38,13 +38,13 @@ pub use fc_function_model::{
 };
 
 pub use fc_function_model::{
-    parse_address, BlankClientId, ClientCeilings, Cors, DbRef, Digest, DnsLabel, Endpoint,
-    EndpointAuth, EntrypointRule, FunctionAddress, FunctionAddressPattern, FunctionLimits,
-    FunctionOwner, Hostname, HttpMethod, InvalidPoolUrl, JsonNode, JsonNumber, JsonParseError,
-    Limits, Manifest, ManifestProblem, ManifestRejected, NonPositiveLimit, PathParams,
-    PoolUrlTemplate, PublicRoute, RouteMatch, RoutePattern, Runtime, ScheduleSpec, Segment,
-    SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError, WasmKind,
-    LIVE_ALIAS,
+    parse_address, ArtifactKind, BlankClientId, ClientCeilings, Cors, DbRef, Digest, DnsLabel,
+    Endpoint, EndpointAuth, EntrypointRule, FunctionAddress, FunctionAddressPattern,
+    FunctionLimits, FunctionOwner, Hostname, HttpMethod, InvalidPoolUrl, JsonNode, JsonNumber,
+    JsonParseError, Limits, Manifest, ManifestProblem, ManifestRejected, NonPositiveLimit,
+    PathParams, PoolUrlTemplate, PublicRoute, RouteMatch, RoutePattern, Runtime, ScheduleSpec,
+    Segment, SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError,
+    WasmKind, LIVE_ALIAS,
 };
 
 use crate::usecase::UseCaseError;

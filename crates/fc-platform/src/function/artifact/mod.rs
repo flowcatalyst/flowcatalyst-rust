@@ -241,31 +241,38 @@ pub fn ref_mismatch() -> UseCaseError {
     )
 }
 
-/// The kind of WASM an uploaded blob is, from its first bytes (the rest is
-/// never read).
+/// What an uploaded blob is, from its first bytes (at most
+/// [`ArtifactKind::PREFIX_LEN`](super::ArtifactKind::PREFIX_LEN); the rest
+/// is never read).
 pub async fn sniff(
     store: &dyn ArtifactBlobStore,
     function_id: &str,
     digest: &Digest,
-) -> Result<super::WasmKind, ArtifactError> {
+) -> Result<super::ArtifactKind, ArtifactError> {
     use tokio::io::AsyncReadExt;
     let mut stream = store.open(function_id, digest).await?;
-    let mut header = Vec::with_capacity(super::WasmKind::HEADER_LEN);
+    let mut prefix = Vec::with_capacity(super::ArtifactKind::PREFIX_LEN);
     (&mut stream)
-        .take(super::WasmKind::HEADER_LEN as u64)
-        .read_to_end(&mut header)
+        .take(super::ArtifactKind::PREFIX_LEN as u64)
+        .read_to_end(&mut prefix)
         .await
         .map_err(|e| ArtifactError::Transport(e.to_string()))?;
-    Ok(super::WasmKind::sniff(&header))
+    Ok(super::ArtifactKind::sniff(&prefix))
 }
 
 /// `422 ARTIFACT_RUNTIME_MISMATCH` (beyond Java): the runtime needs a WASI
-/// component and the uploaded artifact is something else.
-pub fn runtime_mismatch(runtime: super::Runtime, found: super::WasmKind) -> UseCaseError {
+/// component (`component`) or a JavaScript bundle (`js`), and the uploaded
+/// artifact is something else.
+pub fn runtime_mismatch(runtime: super::Runtime, found: super::ArtifactKind) -> UseCaseError {
+    let needs = if runtime.requires_js_bundle() {
+        "a JavaScript bundle (a UTF-8 ES module)"
+    } else {
+        "a WASI 0.2 component"
+    };
     UseCaseError::unprocessable(
         "ARTIFACT_RUNTIME_MISMATCH",
         format!(
-            "runtime '{}' needs a WASI 0.2 component; the uploaded artifact is {}",
+            "runtime '{}' needs {needs}; the uploaded artifact is {}",
             runtime.wire_value(),
             found.describe()
         ),
