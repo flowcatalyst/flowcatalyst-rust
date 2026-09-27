@@ -385,6 +385,13 @@ pub struct DispatchJob {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descriptor: Option<String>,
 
+    /// The job's own dispatch priority claim (`msg_dispatch_jobs.queue`,
+    /// Go's 054): `DEFAULT` or `HIGH_PRIORITY`, set at ingest (sent on a
+    /// direct create, copied from the subscription by the fan-out) and never
+    /// changed. `None` defers to the subscription's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
+
     // === Timestamps ===
     /// When the job was created
     pub created_at: DateTime<Utc>,
@@ -475,6 +482,7 @@ impl DispatchJob {
             metadata: vec![],
             idempotency_key: None,
             descriptor: None,
+            queue: None,
             created_at: now,
             updated_at: now,
             scheduled_for: None,

@@ -408,6 +408,12 @@ pub struct CreateDispatchJobRequest {
     #[serde(default)]
     #[schema(max_length = 255)]
     pub descriptor: Option<String>,
+
+    /// The job's own dispatch priority: `DEFAULT` or `HIGH_PRIORITY`,
+    /// matched ignoring case (400 `INVALID_QUEUE` otherwise). Omitted or
+    /// blank leaves it unset, so the subscription's priority applies.
+    #[serde(default)]
+    pub queue: Option<String>,
 }
 
 /// `metadata` as either wire shape: a string map (Go's single create,
@@ -431,6 +437,18 @@ where
             .collect(),
         Some(Metadata::List(list)) => list,
     })
+}
+
+/// A directly created job's own priority (Go `jobFromItem`:
+/// `dispatchqueue.Parse`): canonical `DEFAULT` / `HIGH_PRIORITY`, `None`
+/// when omitted or blank, 400 `INVALID_QUEUE` for anything else.
+pub(crate) fn job_queue(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => {
+            crate::subscription::operations::create::parse_queue(raw).map_err(PlatformError::from)
+        }
+    }
 }
 
 /// Width of `msg_dispatch_jobs.descriptor` (`VARCHAR(255)`).
@@ -837,6 +855,7 @@ pub async fn create_dispatch_job(
 
     job.metadata = req.metadata;
     job.descriptor = job_descriptor(req.descriptor)?;
+    job.queue = job_queue(req.queue.as_deref())?;
 
     // Created PENDING (the entity's default), as Go inserts it: the
     // scheduler claims and queues it.
@@ -963,6 +982,7 @@ pub async fn batch_create_dispatch_jobs(
         job.data_only = job_req.data_only;
         job.metadata = job_req.metadata;
         job.descriptor = job_descriptor(job_req.descriptor)?;
+        job.queue = job_queue(job_req.queue.as_deref())?;
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;
         }

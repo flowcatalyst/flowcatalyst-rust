@@ -49,6 +49,7 @@ struct DispatchJobRow {
     last_error: Option<String>,
     idempotency_key: Option<String>,
     descriptor: Option<String>,
+    queue: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -101,6 +102,7 @@ impl TryFrom<DispatchJobRow> for DispatchJob {
             metadata,
             idempotency_key: r.idempotency_key,
             descriptor: r.descriptor,
+            queue: r.queue,
             created_at: r.created_at,
             updated_at: r.updated_at,
             scheduled_for: r.scheduled_for,
@@ -341,10 +343,10 @@ impl DispatchJobRepository {
                  message_group, sequence, timeout_seconds, schema_id, status, max_retries,
                  retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
                  completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
-                 descriptor)
+                 descriptor, queue)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                     $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)"#,
+                    $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)"#,
         )
         .bind(&job.id)
         .bind(&job.external_id)
@@ -383,6 +385,7 @@ impl DispatchJobRepository {
         .bind(job.created_at)
         .bind(job.updated_at)
         .bind(&job.descriptor)
+        .bind(&job.queue)
         .execute(&self.pool)
         .await?;
 
@@ -773,6 +776,7 @@ impl DispatchJobRepository {
         let mut created_ats = Vec::with_capacity(jobs.len());
         let mut updated_ats = Vec::with_capacity(jobs.len());
         let mut descriptors: Vec<Option<String>> = Vec::with_capacity(jobs.len());
+        let mut queues: Vec<Option<String>> = Vec::with_capacity(jobs.len());
 
         for job in jobs {
             ids.push(job.id.as_str());
@@ -812,6 +816,7 @@ impl DispatchJobRepository {
             created_ats.push(job.created_at);
             updated_ats.push(job.updated_at);
             descriptors.push(job.descriptor.clone());
+            queues.push(job.queue.clone());
         }
 
         sqlx::query(
@@ -822,7 +827,7 @@ impl DispatchJobRepository {
                  message_group, sequence, timeout_seconds, schema_id, status, max_retries,
                  retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
                  completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
-                 descriptor)
+                 descriptor, queue)
             SELECT * FROM UNNEST(
                 $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[],
                 $6::varchar[], $7::varchar[], $8::varchar[], $9::jsonb[], $10::varchar[],
@@ -832,7 +837,7 @@ impl DispatchJobRepository {
                 $25::int4[], $26::varchar[], $27::timestamptz[], $28::timestamptz[],
                 $29::int4[], $30::timestamptz[], $31::timestamptz[], $32::int8[],
                 $33::varchar[], $34::varchar[], $35::timestamptz[], $36::timestamptz[],
-                $37::varchar[]
+                $37::varchar[], $38::varchar[]
             )"#,
         )
         .bind(&ids)
@@ -872,6 +877,7 @@ impl DispatchJobRepository {
         .bind(&created_ats)
         .bind(&updated_ats)
         .bind(&descriptors as &[Option<String>])
+        .bind(&queues as &[Option<String>])
         .execute(executor)
         .await?;
 

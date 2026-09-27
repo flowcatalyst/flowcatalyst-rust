@@ -145,6 +145,7 @@ async fn sdk_batch_create_dispatch_jobs(
 
         job.metadata = job_req.metadata;
         job.descriptor = crate::dispatch_job::api::job_descriptor(job_req.descriptor)?;
+        job.queue = crate::dispatch_job::api::job_queue(job_req.queue.as_deref())?;
 
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;
