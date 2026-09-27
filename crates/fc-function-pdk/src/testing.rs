@@ -59,6 +59,8 @@ struct TestBackend {
     emit: EmitResponder,
     #[cfg(feature = "flowcatalyst")]
     emitted: RefCell<Vec<OutboundEvent>>,
+    #[cfg(feature = "flowcatalyst")]
+    databases: Rc<TestDatabases>,
     http: HttpResponder,
     calls: RefCell<Vec<HttpCall>>,
     logs: RefCell<Vec<(Level, String)>>,
@@ -94,6 +96,8 @@ impl TestHost {
                 emit: Box::new(|_| Ok(())),
                 #[cfg(feature = "flowcatalyst")]
                 emitted: RefCell::new(Vec::new()),
+                #[cfg(feature = "flowcatalyst")]
+                databases: Rc::new(TestDatabases::default()),
                 http: Box::new(|call| {
                     let host = target(call.url())?.host.to_owned();
                     Err(HttpError::Denied(HttpDenied::new(host)))
@@ -166,6 +170,30 @@ impl TestHost {
     ) -> Self {
         self.state().emit = Box::new(respond);
         self
+    }
+
+    /// A database the manifest declares under `db[]` as `name`, answering
+    /// every statement with `respond` (a query wants [`DbReply::Rows`], an
+    /// execute [`DbReply::Updated`]). Any other name is `DB_NOT_DECLARED`,
+    /// as on the host. What the function did is in
+    /// [`db_events`](Self::db_events).
+    #[cfg(feature = "flowcatalyst")]
+    pub fn db(
+        mut self,
+        name: impl Into<String>,
+        respond: impl Fn(&DbCall<'_>) -> Result<DbReply, crate::db::DbError> + 'static,
+    ) -> Self {
+        let databases = Rc::get_mut(&mut self.state().databases)
+            .expect("configure the TestHost before taking a request or context from it");
+        databases.responders.insert(name.into(), Box::new(respond));
+        self
+    }
+
+    /// Every statement, `begin`, `commit`, `rollback` and dropped
+    /// transaction, in order.
+    #[cfg(feature = "flowcatalyst")]
+    pub fn db_events(&self) -> Vec<DbEvent> {
+        self.backend.databases.events.borrow().clone()
     }
 
     /// How outbound calls answer. The default denies every one, as an empty
@@ -265,6 +293,11 @@ impl Backend for TestBackend {
         Ok(format!("evt_{}", emitted.len()))
     }
 
+    #[cfg(feature = "flowcatalyst")]
+    fn test_databases(&self) -> Option<&dyn crate::db::DbOpener> {
+        Some(&self.databases)
+    }
+
     fn log(&self, level: Level, message: &str) {
         self.logs.borrow_mut().push((level, message.to_owned()));
     }
@@ -286,6 +319,228 @@ impl Backend for TestBackend {
     }
 }
 
+// ── test databases ───────────────────────────────────────────────────────
+
+#[cfg(feature = "flowcatalyst")]
+type DbResponder = Box<dyn Fn(&DbCall<'_>) -> Result<DbReply, crate::db::DbError>>;
+
+#[cfg(feature = "flowcatalyst")]
+#[derive(Default)]
+struct TestDatabases {
+    responders: HashMap<String, DbResponder>,
+    events: RefCell<Vec<DbEvent>>,
+    next_transaction: std::cell::Cell<u32>,
+}
+
+/// One statement the function ran on a test database.
+#[cfg(feature = "flowcatalyst")]
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct DbCall<'a> {
+    pub db: &'a str,
+    /// The transaction it ran in (`1`, `2`, … in `begin` order).
+    pub transaction: Option<u32>,
+    pub sql: &'a str,
+    pub params: &'a [crate::db::Param],
+    /// `query` (rows wanted) rather than `execute`.
+    pub query: bool,
+}
+
+/// A test database's answer to a statement.
+#[cfg(feature = "flowcatalyst")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum DbReply {
+    Rows(crate::db::Rows),
+    Updated(u64),
+}
+
+#[cfg(all(feature = "flowcatalyst", feature = "json"))]
+impl DbReply {
+    /// Rows from a JSON array of objects.
+    pub fn rows(rows: serde_json::Value) -> Self {
+        let count = rows.as_array().map_or(0, Vec::len) as u32;
+        DbReply::Rows(crate::db::Rows::new(rows.to_string(), count, false))
+    }
+}
+
+/// What a function did to a test database.
+#[cfg(feature = "flowcatalyst")]
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum DbEvent {
+    Statement {
+        db: String,
+        transaction: Option<u32>,
+        sql: String,
+        params: Vec<crate::db::Param>,
+        query: bool,
+    },
+    Begin {
+        db: String,
+        transaction: u32,
+    },
+    Commit {
+        transaction: u32,
+    },
+    Rollback {
+        transaction: u32,
+    },
+    /// Dropped while open: the host rolls it back.
+    Dropped {
+        transaction: u32,
+    },
+}
+
+#[cfg(feature = "flowcatalyst")]
+struct TestDb {
+    databases: Rc<TestDatabases>,
+    name: String,
+}
+
+#[cfg(feature = "flowcatalyst")]
+struct TestTx {
+    databases: Rc<TestDatabases>,
+    name: String,
+    id: u32,
+    over: bool,
+}
+
+/// `databases` is an `Rc` so each open database can hold it.
+#[cfg(feature = "flowcatalyst")]
+impl crate::db::DbOpener for Rc<TestDatabases> {
+    fn open(&self, name: &str) -> Result<Box<dyn crate::db::DbBackend>, crate::db::DbError> {
+        if !self.responders.contains_key(name) {
+            return Err(crate::db::DbError::new(
+                crate::db::DbErrorCode::NotDeclared,
+                format!("no database named '{name}' is declared by this function's manifest"),
+            ));
+        }
+        Ok(Box::new(TestDb {
+            databases: self.clone(),
+            name: name.to_owned(),
+        }))
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+impl TestDatabases {
+    fn statement(
+        &self,
+        db: &str,
+        transaction: Option<u32>,
+        sql: &str,
+        params: &[crate::db::Param],
+        query: bool,
+    ) -> Result<DbReply, crate::db::DbError> {
+        self.events.borrow_mut().push(DbEvent::Statement {
+            db: db.to_owned(),
+            transaction,
+            sql: sql.to_owned(),
+            params: params.to_vec(),
+            query,
+        });
+        let respond = &self.responders[db];
+        respond(&DbCall {
+            db,
+            transaction,
+            sql,
+            params,
+            query,
+        })
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+fn rows_of(reply: DbReply) -> crate::db::Rows {
+    match reply {
+        DbReply::Rows(rows) => rows,
+        DbReply::Updated(_) => crate::db::Rows::new("[]", 0, false),
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+fn updated_of(reply: DbReply) -> u64 {
+    match reply {
+        DbReply::Updated(n) => n,
+        DbReply::Rows(rows) => rows.len() as u64,
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+impl crate::db::DbBackend for TestDb {
+    fn query(
+        &self,
+        sql: &str,
+        params: &[crate::db::Param],
+    ) -> Result<crate::db::Rows, crate::db::DbError> {
+        self.databases
+            .statement(&self.name, None, sql, params, true)
+            .map(rows_of)
+    }
+
+    fn execute(&self, sql: &str, params: &[crate::db::Param]) -> Result<u64, crate::db::DbError> {
+        self.databases
+            .statement(&self.name, None, sql, params, false)
+            .map(updated_of)
+    }
+
+    fn begin(&self) -> Result<Box<dyn crate::db::TxBackend>, crate::db::DbError> {
+        let id = self.databases.next_transaction.get() + 1;
+        self.databases.next_transaction.set(id);
+        self.databases.events.borrow_mut().push(DbEvent::Begin {
+            db: self.name.clone(),
+            transaction: id,
+        });
+        Ok(Box::new(TestTx {
+            databases: self.databases.clone(),
+            name: self.name.clone(),
+            id,
+            over: false,
+        }))
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+impl crate::db::TxBackend for TestTx {
+    fn query(
+        &self,
+        sql: &str,
+        params: &[crate::db::Param],
+    ) -> Result<crate::db::Rows, crate::db::DbError> {
+        self.databases
+            .statement(&self.name, Some(self.id), sql, params, true)
+            .map(rows_of)
+    }
+
+    fn execute(&self, sql: &str, params: &[crate::db::Param]) -> Result<u64, crate::db::DbError> {
+        self.databases
+            .statement(&self.name, Some(self.id), sql, params, false)
+            .map(updated_of)
+    }
+
+    fn finish(mut self: Box<Self>, commit: bool) -> Result<(), crate::db::DbError> {
+        self.over = true;
+        let transaction = self.id;
+        self.databases.events.borrow_mut().push(if commit {
+            DbEvent::Commit { transaction }
+        } else {
+            DbEvent::Rollback { transaction }
+        });
+        Ok(())
+    }
+}
+
+#[cfg(feature = "flowcatalyst")]
+impl Drop for TestTx {
+    fn drop(&mut self) {
+        if !self.over {
+            self.databases.events.borrow_mut().push(DbEvent::Dropped {
+                transaction: self.id,
+            });
+        }
+    }
+}
+
 #[cfg(all(feature = "flowcatalyst", feature = "json"))]
 fn is_json(bytes: &[u8]) -> bool {
     serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok()
@@ -301,6 +556,98 @@ fn is_json(bytes: &[u8]) -> bool {
 mod tests {
     use super::*;
     use crate::block_on;
+
+    #[cfg(all(feature = "flowcatalyst", feature = "json"))]
+    #[test]
+    fn a_test_database_answers_and_records_what_the_function_did() {
+        use crate::db::{DbError, DbErrorCode, Param};
+        let host = TestHost::new().db("orders", |call| {
+            if call.sql.starts_with("SELECT") {
+                Ok(DbReply::rows(
+                    serde_json::json!([{"id": 1, "state": "new"}]),
+                ))
+            } else if call.sql.contains("fail") {
+                Err(DbError::new(DbErrorCode::Constraint, "duplicate key"))
+            } else {
+                Ok(DbReply::Updated(1))
+            }
+        });
+        let ctx = host.context();
+        let db = ctx.db("orders").unwrap();
+        let rows = db
+            .query(
+                "SELECT id, state FROM orders WHERE id = ?",
+                crate::params![1],
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct Order {
+            id: i64,
+            state: String,
+        }
+        assert_eq!(
+            rows.parse::<Order>().unwrap(),
+            vec![Order {
+                id: 1,
+                state: "new".into()
+            }]
+        );
+        let tx = db.begin().unwrap();
+        assert_eq!(
+            tx.execute("UPDATE orders SET state = ?", crate::params!["x"])
+                .unwrap(),
+            1
+        );
+        tx.commit().unwrap();
+        let tx = db.begin().unwrap();
+        assert_eq!(
+            tx.execute("INSERT fail", &[]).unwrap_err().code(),
+            "DB_CONSTRAINT"
+        );
+        drop(tx);
+        let outcome: Result<(), DbError> = db.transaction(|tx| {
+            tx.execute("DELETE FROM orders", &[])?;
+            Err(DbError::new(DbErrorCode::Error, "changed my mind"))
+        });
+        assert!(outcome.is_err());
+        assert_eq!(ctx.db("other").unwrap_err().code(), "DB_NOT_DECLARED");
+        let events = host.db_events();
+        assert_eq!(
+            events[0],
+            DbEvent::Statement {
+                db: "orders".into(),
+                transaction: None,
+                sql: "SELECT id, state FROM orders WHERE id = ?".into(),
+                params: vec![Param::Int(1)],
+                query: true,
+            }
+        );
+        let tail: Vec<_> = events[1..]
+            .iter()
+            .map(|e| match e {
+                DbEvent::Statement { transaction, .. } => format!("stmt {transaction:?}"),
+                DbEvent::Begin { transaction, .. } => format!("begin {transaction}"),
+                DbEvent::Commit { transaction } => format!("commit {transaction}"),
+                DbEvent::Rollback { transaction } => format!("rollback {transaction}"),
+                DbEvent::Dropped { transaction } => format!("dropped {transaction}"),
+            })
+            .collect();
+        assert_eq!(
+            tail,
+            [
+                "begin 1",
+                "stmt Some(1)",
+                "commit 1",
+                "begin 2",
+                "stmt Some(2)",
+                "dropped 2",
+                "begin 3",
+                "stmt Some(3)",
+                "dropped 3"
+            ]
+        );
+    }
 
     #[test]
     fn the_clock_and_the_logger_are_the_hosts() {

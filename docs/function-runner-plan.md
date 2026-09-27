@@ -66,6 +66,37 @@ Fuel and memory metering (owner decision #13, 2026-09-27, branch `feat/fn-fuel-d
   loop, +12% compiled code. Not material, so metering is always on.
 - Author docs: `docs/developers/functions.md`.
 
+Function database access (owner decision #7, Java W4's author contract, 2026-09-27, branch `feat/fn-fuel-db`):
+- **WIT `flowcatalyst:function@0.1.2`** adds `interface db` (additive: 0.1.0/0.1.1 components link
+  unchanged; only a component that imports `db` needs a 0.1.2 host): `open(name) -> result<database,
+  error>`; `resource database { query, execute, begin }`; `resource transaction { query, execute,
+  commit: static, rollback: static }`, dropping it rolls back; `variant param { null, boolean, integer,
+  float, decimal, text }`; `record rows { json, count, truncated }`; `enum error-code` = Java's
+  `DB_NOT_DECLARED, DB_BAD_REQUEST, DB_TX_UNKNOWN, DB_CONSTRAINT, DB_SYNTAX, DB_TIMEOUT, DB_UNAVAILABLE,
+  DB_ERROR`.
+- **Host** (`crates/fc-fnhost-core/src/db/`, runtime-agnostic; the WASM glue is `wasm/guest.rs`): Java's
+  semantics — `?` placeholders (`??` literal), 10 000 rows / 8 MiB with `truncated`, a statement timeout of
+  the time left before the deadline, Java's row→JSON table, SQL never logged, `DB_UNAVAILABLE` also a
+  throttled operator WARN. Text and `NULL` parameters are untyped (the server infers), the rest typed as
+  Java's `setLong`/`setBigDecimal`/`setBoolean`.
+- **Pools** (`db/pools.rs`): one shared bounded sqlx `PgPool` per connection identity, refcounted by loaded
+  version, sized to the largest `poolSize` (a resize replaces the pool), at most `FC_FN_MAX_DB_POOLS`
+  (`DB_POOL_LIMIT`); a per-(function, pool) share gate of the function's `poolSize`; a per-invocation cap
+  (`FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION`, 2); on release `ROLLBACK` when not idle + `DISCARD ALL`
+  (sqlx `after_release`; fixes Java's mid-transaction bug). `db[].secretRef` values are the host's
+  secrets; an `aws-sm://` reference (feature `aws-secrets`, on in `fc-server`) is re-read every
+  `FC_FN_DB_SECRET_REFRESH_SECONDS` and pushed into the pool's connect options (the per-pool
+  `start_secret_refresh` rule). Load failures: `DB_UNSUPPORTED`, `DB_SECRET_UNRESOLVED`, `DB_POOL_LIMIT`.
+- **PDK**: `ctx.db("name")?` → `Db::{query, execute, begin, transaction}`, `Transaction` a guard
+  (`commit`/`rollback`, drop rolls back), `params![…]`, `Rows::{json, values, parse}`, `DbError::code()`;
+  `TestHost::db(name, responder)` + `db_events()`. Only a function that calls `ctx.db` imports
+  `flowcatalyst:function/db`.
+- **Tests**: `tests/db_postgres.rs` (12, Docker: query/execute, the row mapping, typed and untyped
+  parameters, commit/rollback/drop, a connection returned mid-transaction, the caps, the deadline, every
+  code, the share limit, the per-invocation cap, the invocation's end, secret rotation) and
+  `tests/wasm_db.rs` (the committed PDK guest `pdk_db` through the listener; load failures without a
+  database).
+
 Not done:
 - **H6:** a separate black-box conformance harness. It's largely covered by the end-to-end and `wasm_*` host tests.
 - **H7:** benchmarks on Linux. The F0 numbers are macOS only.
@@ -77,7 +108,7 @@ Not done:
 1. **JS/TS guest runtime**: componentize-js, a QuickJS component, or V8 isolates (§4a).
 2. ~~An explicit manifest runtime value such as `component`.~~ Done in Rust (owner decision 5): `runtime:
    component`, while `wasm` plus the alias still work. Java's schema and DB CHECK don't have it.
-3. The guest DB connection model, before Java W4 lands (§4 decision 3).
+3. ~~The guest DB connection model~~ (done, owner decision #7: one shared pool per DSN; see the Status above).
 4. ~~Fuel metering~~ (done, owner decision #13: see the Status above); per-tenant pools and quotas (§7).
 
 **Auth and wire**
@@ -173,8 +204,9 @@ units per host (adapters, edge endpoints, customer custom code), at low cost.
                                           └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Everything is HTTP. The host never touches the database. Events and schedules reach functions as ordinary signed
-webhooks from the platform's dispatcher and scheduler.
+Everything is HTTP. The host never touches the platform's database. Events and schedules reach functions as ordinary
+signed webhooks from the platform's dispatcher and scheduler. (Since owner decision #7 the host does open the
+databases a function's manifest declares under `db[]`, on the function's behalf.)
 
 ## 3. The contract: what "matching" means
 
@@ -528,6 +560,7 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
     - `unavailable`.
   - `invocation.context()`: the invocation id, address, version, caller (platform / anonymous / principal),
     correlation and causation ids, original host and path, remote address, and path parameters.
+  - `db` (0.1.2, owner decision #7): the manifest's `db[]` databases (see the Status at the top).
 - **Tests**: `tests/wasm_{listener,loading,logging,neighbour}.rs`, end to end through the real listener,
   against ten committed Rust guests (`tests/fixtures/wasm/`, pinned by `SHA256SUMS`; rebuild with
   `tests/guests/build.sh`).
@@ -659,7 +692,7 @@ and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
 ## 6. Following Java work that hasn't landed
 
 - **W3, the JS guest library `clients/function-js`.** The guest side only; no host change. When it lands in Java, JS guests run on the Rust host unchanged. Add its example to the H6 differential fixtures.
-- **W4, `fc_db_*` host functions** (`docs/spec/function-wasm-db.md`: query, execute, begin, commit and rollback, scoped to the invocation, at most 10k rows / 8 MiB). Implement it in H4 once Java lands it, after decision 3 above. Rust keeps `FC_FN_MAX_DB_POOLS` and the pool-per-DSN reference counting only if that's what the owner rules.
+- **W4, `fc_db_*` host functions** (`docs/spec/function-wasm-db.md`: query, execute, begin, commit and rollback, scoped to the invocation, at most 10k rows / 8 MiB). **Done** in Rust as WIT `flowcatalyst:function/db@0.1.2` over one shared pool per DSN (owner decision #7; see the Status).
 - **W5, where the SPA enables `wasm`.** Carry it through in P7.
 
 ## 7. Extensions beyond Java (owner decision; not part of drop-in)

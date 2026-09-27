@@ -32,9 +32,10 @@ pub const ADDR: &str = "app.orders.ship";
 pub const ENTRYPOINT: &str = "wasi:http/incoming-handler";
 
 /// Every committed guest, in `SHA256SUMS` (and `tests/guests/build.sh`)
-/// order. `pdk`, `pdk-pure` and `hello` are written with the guest SDK
-/// (`crates/fc-function-pdk`; `hello` is `examples/function-hello-rust`).
-pub const GUESTS: [&str; 14] = [
+/// order. `pdk`, `pdk-pure`, `hello` and `pdk_db` are written with the
+/// guest SDK (`crates/fc-function-pdk`; `hello` is
+/// `examples/function-hello-rust`).
+pub const GUESTS: [&str; 15] = [
     "echo",
     "spin",
     "alloc",
@@ -49,6 +50,7 @@ pub const GUESTS: [&str; 14] = [
     "pdk",
     "pdk-pure",
     "hello",
+    "pdk_db",
 ];
 
 pub fn fixtures_dir() -> PathBuf {

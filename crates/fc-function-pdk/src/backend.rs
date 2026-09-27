@@ -31,6 +31,17 @@ pub(crate) trait Backend {
     #[cfg(feature = "flowcatalyst")]
     fn emit(&self, event: &OutboundEvent) -> Result<String, EmitError>;
 
+    /// The test double's databases; `None` on the real host, where
+    /// [`Context::db`](crate::Context::db) calls the import directly. Not a
+    /// trait method that opens a database: a `dyn Backend`'s vtable keeps
+    /// every method it has, so the import would be linked into every
+    /// function, and a function that never opens a database must not
+    /// import `flowcatalyst:function/db` (it then runs on a 0.1.1 host).
+    #[cfg(feature = "flowcatalyst")]
+    fn test_databases(&self) -> Option<&dyn crate::db::DbOpener> {
+        None
+    }
+
     fn log(&self, level: Level, message: &str);
 
     fn send(&self, call: HttpCall) -> HttpFuture;

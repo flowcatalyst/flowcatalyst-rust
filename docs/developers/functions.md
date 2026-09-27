@@ -70,3 +70,78 @@ function that leaves the host's desired state are dropped, like its other series
 
 Metering costs little: between 0 and 2% on typical handlers and about 20% on a tight arithmetic loop
 (`docs/function-runner-density.md` §9).
+
+## Database access
+
+A function reaches the PostgreSQL databases its manifest declares under `db[]`, through the host's shared
+connection pools (owner decision #7; Java's W4 `fc_db_*` contract). The WIT interface is
+`flowcatalyst:function/db` (package 0.1.2); in Rust, [`fc-function-pdk`](../../crates/fc-function-pdk/README.md)
+wraps it:
+
+```json
+"secrets": ["ORDERS_DB"],
+"db": [{ "name": "orders", "secretRef": "ORDERS_DB", "poolSize": 4 }]
+```
+
+```rust
+use fc_function_pdk::prelude::*;
+
+#[handler]
+fn handle(req: Request, ctx: Context) -> Result<Response, Error> {
+    let db = ctx.db("orders")?;                    // DB_NOT_DECLARED for any other name
+    let id = req.path_param("id").unwrap_or_default().to_owned();
+
+    let tx = db.begin()?;                          // a guard: dropped uncommitted, it rolls back
+    tx.execute("UPDATE orders SET state = 'shipped' WHERE id = ?", params![id.as_str()])?;
+    tx.execute("INSERT INTO shipments (order_id, at) VALUES (?, ?)", params![id.as_str(), "2026-09-27T10:00:00Z"])?;
+    tx.commit()?;
+
+    let rows = db.query("SELECT id, state, total FROM orders WHERE id = ?", params![id.as_str()])?;
+    Ok(Response::json(200, rows.json())?)         // [{"id":"…","state":"shipped","total":"12.50"}]
+}
+```
+
+`db.transaction(|tx| { …; Ok(value) })` commits on `Ok` and rolls back on `Err`. In unit tests,
+`TestHost::new().db("orders", |call| Ok(DbReply::rows(json!([…]))))` answers the statements and
+`host.db_events()` records what the function did.
+
+**The connection.** `secretRef` names the secret holding it (the platform delivers it with the function's
+other secrets; set it with `fc-dev fn secret set` or the API). Accepted, PostgreSQL only:
+
+- `postgres://user:pass@host[:port]/db[?sslmode=…]` (or `postgresql://`);
+- `jdbc:postgresql://host[:port]/db?user=…&password=…` (Java's form);
+- `aws-sm://<secret id or ARN>` on hosts built with AWS support (`fc-server`): an AWS Secrets Manager
+  secret holding either of the above or an RDS-style JSON secret (`username`, `password`, `host`, `port`,
+  `dbname`). The host re-reads it every `FC_FN_DB_SECRET_REFRESH_SECONDS` (300), so an RDS password rotation
+  reaches the pool without a redeploy.
+
+Anything else fails the load with `DB_UNSUPPORTED` (heartbeat `FAILED`, the previous version keeps
+serving); an `aws-sm://` secret that cannot be read, `DB_SECRET_UNRESOLVED`. No connection is opened at
+load, so a database that is down is `DB_UNAVAILABLE` at run time, not a failed load. A plain DSN rotates
+through the platform: setting the secret's new value reloads the function onto a new pool.
+
+**The contract** (Java's):
+
+| | |
+|---|---|
+| Parameters | Bound to `?` placeholders in order, never interpolated. `??` is a literal `?` (jsonb's `?`, `?|`, `?&`). Integers are sent as `int8`, floats as `float8`, booleans as `bool`, `Param::Decimal` (and a JSON number that is not an integer) as `numeric`; text and `NULL` untyped, so the server reads text as whatever the placeholder needs (`uuid`, `timestamptz`, `jsonb`, `date`, an enum, …). A type text cannot be bound to directly (`interval`, arrays, ranges) goes through text in the SQL: `?::text::interval`. One SQL command per statement. |
+| Connections | Without a transaction, each statement borrows a connection and returns it before answering (autocommit). A transaction holds one until commit, rollback or drop; the invocation ending rolls back whatever is still open. Every connection goes back to the pool clean: an open or failed transaction rolled back and the session reset (`DISCARD ALL`), whatever the SQL did (`BEGIN` as a statement, `SET`, temporary tables, advisory locks). |
+| Deadline | Each statement's timeout is the time left before the invocation's deadline; with less than 1 ms left it is not sent. Waiting for a connection also ends at the deadline. |
+| Size | A query answers at most 10 000 rows or 8 MiB of row JSON; `truncated` says there were more. |
+| Rows | A JSON array of objects keyed by column label: `int2/4/8`, `oid` and `float4/8` as numbers (`NaN`, `Infinity` as strings), `numeric` as its exact text (`"12.50"`), `bool` as a boolean, `timestamptz` as ISO-8601 in UTC with `Z`, `timestamp`/`date`/`time`/`timetz` as ISO-8601, `bytea` as base64, `json`/`jsonb` as the value, `NULL` as null; everything else (text, uuid, interval, arrays, enums, inet, …) as PostgreSQL's text form. Types without a renderer (ranges, composites, geometric, `money`) come back as raw text or `\x`-hex: cast them (`col::text`). |
+| Errors | Values, never traps; SQL text and parameter values are never logged. Codes: `DB_NOT_DECLARED`, `DB_BAD_REQUEST` (a malformed call, a parameter its placeholder cannot take, too many connections at once), `DB_TX_UNKNOWN`, and by SQLSTATE class `DB_CONSTRAINT` (23), `DB_SYNTAX` (42), `DB_TIMEOUT` (57014, the deadline), `DB_UNAVAILABLE` (08, 53, 57: worth a retry; also logged for the operator), `DB_ERROR` (anything else). A commit after a statement failed in the transaction is `DB_ERROR`: nothing was committed. |
+
+**Pools and limits** (the host's operator settings are in
+[`../operations/configuration.md`](../operations/configuration.md)):
+
+- One pool per connection (host, port, database, user, password and parameters; or per `aws-sm://`
+  reference), shared by every function on the host that names it, sized to the largest `poolSize` among
+  them. `poolSize` defaults to 4 and is capped by the client's function policy.
+- A function holds at most its own `poolSize` connections of a shared pool at once, across all its
+  invocations, so one function with slow callers cannot take a pool from the others: its extra calls wait
+  (until their deadline, then `DB_TIMEOUT`). A function that needs its own pool gets its own database
+  user, so its own connection string.
+- One invocation holds at most `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION` (2) open transactions per database,
+  and never more than its `poolSize`: one more `begin` is `DB_BAD_REQUEST` rather than a wait on itself.
+- A host opens at most `FC_FN_MAX_DB_POOLS` (16) pools; a function that would need one more fails its
+  load with `DB_POOL_LIMIT`.

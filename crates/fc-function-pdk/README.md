@@ -58,6 +58,32 @@ Without the default `flowcatalyst` feature
 imports nothing but WASI 0.2 and also runs on `wasmtime serve`, Spin or
 wasmCloud.
 
+## Databases
+
+A function reaches the PostgreSQL databases its manifest declares under
+`db[]` (`flowcatalyst:function/db`, WIT 0.1.2) through `ctx.db(name)`:
+
+```rust,ignore
+use fc_function_pdk::prelude::*;
+
+#[handler]
+fn handle(req: Request, ctx: Context) -> Result<Response, Error> {
+    let db = ctx.db("orders")?;
+    let tx = db.begin()?;                  // dropped uncommitted: rolled back
+    tx.execute("UPDATE orders SET state = ? WHERE id = ?", params!["shipped", 42])?;
+    tx.commit()?;
+    let rows = db.query("SELECT id, state FROM orders WHERE id = ?", params![42])?;
+    Ok(Response::json(200, rows.json())?)
+}
+```
+
+Only a function that calls `ctx.db` imports the `db` interface, so every
+other function still runs on a host that serves 0.1.1. The contract (Java's
+`fc_db_*`: placeholders, row caps, the deadline, the row JSON, the `DB_*`
+codes) is in the `db` module's documentation and in
+`docs/developers/functions.md`; `testing::TestHost::db` stands in for a
+database in unit tests.
+
 ## The vendored WIT
 
 `wit/flowcatalyst-function/` (the `flowcatalyst:function` package and its
