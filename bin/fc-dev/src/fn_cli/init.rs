@@ -147,6 +147,7 @@ impl Lang {
     }
 
     /// The template directory, relative to the repository root.
+    #[cfg(test)]
     pub fn dir(self) -> &'static str {
         match self {
             Lang::Rust => "templates/function-rust",
