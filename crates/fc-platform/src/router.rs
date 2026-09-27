@@ -500,8 +500,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // 3. Set OpenAPI metadata
         openapi.info.title = "FlowCatalyst Platform API".to_string();
         openapi.info.version = fc_common::BUILD_VERSION.to_string();
-        openapi.info.description =
-            Some("REST APIs for events, subscriptions, and administration".to_string());
+        // No `info.description`: Go's document has none.
+        openapi.info.description = None;
         // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
         // metadata (its author as contact, "MIT OR Apache-2.0" as license),
         // so these must be set explicitly or the published spec advertises
