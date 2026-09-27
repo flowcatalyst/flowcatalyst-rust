@@ -3107,6 +3107,7 @@ dependencies = [
  "fc-function-model",
  "fc-function-signing",
  "fc-http-listener",
+ "fc-platform-jwks",
  "fc-queue",
  "fc-stream",
  "flate2",
