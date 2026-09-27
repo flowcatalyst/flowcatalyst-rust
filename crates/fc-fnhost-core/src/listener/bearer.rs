@@ -242,7 +242,8 @@ fn verify(
     Ok(TokenClaims {
         subject,
         principal_type: string("type"),
-        tier: string("tier"),
+        // Go writes `tier: ""` on a portal identity's token: no tier.
+        tier: string("tier").filter(|t| !t.is_empty()),
         clients: scope_ids(list("clients")),
         roles: list("roles"),
         all_applications: matches!(claims.get("all_applications"), Some(Value::Bool(true)))
