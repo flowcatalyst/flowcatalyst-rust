@@ -1,0 +1,34 @@
+[package]
+name = "fc-platform-jwks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Verifies platform-issued bearer JWTs against the platform's JWKS (Java platform/shared/auth/jwks): discovery, key caching, RS256, the platform's claim rules. Shared by the function host and the router."
+
+[dependencies]
+# `String.isBlank` and Jackson's `asString`/node iteration, as the Java
+# verifier reads the discovery and JWKS documents (the one copy).
+fc-function-model = { path = "../fc-function-model" }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+url = { workspace = true }
+sha2 = { workspace = true, features = ["oid"] }
+base64 = "0.22"
+rsa = "0.9"
+
+# `testing`: a fake platform (discovery + JWKS) that mints RS256 tokens, for
+# the tests of every crate that verifies platform tokens.
+axum = { workspace = true, optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
+
+[features]
+test-support = ["dep:axum", "dep:rand_core"]
+
+[dev-dependencies]
+# Its own `testing` fixture, for its own tests.
+fc-platform-jwks = { path = ".", features = ["test-support"] }
