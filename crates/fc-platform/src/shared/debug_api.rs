@@ -17,6 +17,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
+
+use crate::event::api::ContextDataDto;
 
 /// Debug list query — `?size=` only. Debug grids look at the most recent
 /// rows; no pagination.
@@ -47,61 +50,62 @@ pub struct DebugState {
 // DTOs - Raw Events
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+/// Go's `RawEventResponse` (event/api/dto.go), the row of
+/// `GET /bff/debug/events` and the body of `GET /bff/debug/events/{id}`: the
+/// write-side `msg_events` row with its context data. The type is
+/// `eventType` here, not `type` (the SPA's raw-event page binds it). Absent
+/// members are left out, as Go's `omitempty` leaves them.
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RawEventResponse {
     pub id: String,
     pub spec_version: String,
     pub event_type: String,
     pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[schema(format = DateTime)]
     pub time: String,
-    pub data: serde_json::Value,
+    /// The event payload; absent when the row has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub data: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message_group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub causation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deduplication_id: Option<String>,
-    pub context_data: Option<Vec<ContextDataResponse>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schema(required = false)]
+    pub context_data: Vec<ContextDataDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextDataResponse {
-    pub key: String,
-    pub value: String,
 }
 
 impl From<&Event> for RawEventResponse {
     fn from(event: &Event) -> Self {
-        let context_data = if event.context_data.is_empty() {
-            None
-        } else {
-            Some(
-                event
-                    .context_data
-                    .iter()
-                    .map(|cd| ContextDataResponse {
-                        key: cd.key.clone(),
-                        value: cd.value.clone(),
-                    })
-                    .collect(),
-            )
-        };
-
+        let blank = |v: &Option<String>| v.clone().filter(|s| !s.is_empty());
         Self {
             id: event.id.clone(),
             spec_version: event.spec_version.clone(),
             event_type: event.event_type.clone(),
             source: event.source.clone(),
-            subject: event.subject.clone(),
+            subject: blank(&event.subject),
             time: event.time.to_rfc3339(),
-            data: event.data.clone(),
+            data: Some(event.data.clone()).filter(|d| !d.is_null()),
             message_group: event.message_group.clone(),
             correlation_id: event.correlation_id.clone(),
             causation_id: event.causation_id.clone(),
-            deduplication_id: event.deduplication_id.clone(),
-            context_data,
+            deduplication_id: blank(&event.deduplication_id),
+            context_data: event
+                .context_data
+                .iter()
+                .cloned()
+                .map(ContextDataDto::from)
+                .collect(),
             client_id: event.client_id.clone(),
         }
     }
@@ -111,40 +115,65 @@ impl From<&Event> for RawEventResponse {
 // DTOs - Raw Dispatch Jobs
 // ============================================================================
 
-#[derive(Debug, Serialize)]
+/// Go's `RawDispatchJobResponse` (dispatchjob/api/dto.go), the row of
+/// `GET /bff/debug/dispatch-jobs`: the write-side `msg_dispatch_jobs` row,
+/// with the payload's length (not the payload) and the attempt count. Absent
+/// members are left out, as Go's `omitempty` leaves them.
+#[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RawDispatchJobResponse {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     pub kind: String,
     pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
     pub target_url: String,
     pub protocol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subscription_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message_group: Option<String>,
     pub mode: String,
     pub sequence: i32,
     pub status: String,
+    #[schema(value_type = i32)]
     pub attempt_count: u32,
     pub max_retries: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     pub timeout_seconds: u32,
     pub retry_strategy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    #[schema(format = DateTime)]
     pub created_at: String,
+    #[schema(format = DateTime)]
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub scheduled_for: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
     pub completed_at: Option<String>,
-    // Include payload info for debug (but not full payload for large payloads)
     pub payload_content_type: String,
+    /// The payload's length in bytes (the payload itself stays out).
+    #[schema(value_type = i64)]
     pub payload_length: usize,
+    #[schema(value_type = i64)]
     pub attempt_history_count: usize,
 }
 

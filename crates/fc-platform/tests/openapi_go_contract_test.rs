@@ -187,17 +187,10 @@ async fn shared_operations_carry_gos_operation_ids() {
     );
 }
 
-/// Go's component schemas this document does not carry, and why.
-const SCHEMAS_NOT_DOCUMENTED: &[(&str, &str)] = &[
-    (
-        "RawDispatchJobResponse",
-        "an orphan in Go's document: no operation references it",
-    ),
-    (
-        "RawEventResponse",
-        "an orphan in Go's document: no operation references it",
-    ),
-];
+/// Go's component schemas this document does not carry, and why. None:
+/// Go's two orphans (the debug BFF routes' `RawDispatchJobResponse` and
+/// `RawEventResponse`) are carried as Go carries them.
+const SCHEMAS_NOT_DOCUMENTED: &[(&str, &str)] = &[];
 
 /// The schema an operation's JSON request body or first success response
 /// names (`$ref`, or `[$ref]` for an array of them).

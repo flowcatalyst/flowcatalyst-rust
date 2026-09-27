@@ -755,3 +755,83 @@ async fn dispatch_job_rows_answer_the_jobs_own_priority() {
         );
     }
 }
+
+// ── 8. Raw debug reads: RawEventResponse, RawDispatchJobResponse ─────────
+
+/// No member of `row` is `null`: Go's raw shapes leave an absent member out.
+fn assert_no_nulls(row: &Value) {
+    for (key, value) in row.as_object().expect("an object") {
+        assert!(!value.is_null(), "{key} is null in {row}");
+    }
+}
+
+/// The debug BFF reads answer Go's `RawEventResponse` and
+/// `RawDispatchJobResponse`: absent members left out (never `null`), the
+/// event's context data, the job's payload length rather than its payload.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn debug_raw_reads_answer_gos_raw_shapes() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    sqlx::query(
+        "INSERT INTO msg_events (id, type, source, time, data, context_data) VALUES \
+         ('evtraw0000001', 'gaps:orders:order:placed', 'urn:gaps', NOW(), '{\"n\":1}', \
+          '[{\"key\":\"orderId\",\"value\":\"42\"}]'), \
+         ('evtraw0000002', 'gaps:orders:order:placed', 'urn:gaps', NOW(), NULL, NULL)",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let events = get_json(&app, "/bff/debug/events?size=10", &token).await;
+    let full = events
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "evtraw0000001")
+        .expect("the event")
+        .clone();
+    assert_no_nulls(&full);
+    assert_eq!(full["eventType"], "gaps:orders:order:placed");
+    assert_eq!(full["data"], json!({"n": 1}));
+    assert_eq!(
+        full["contextData"],
+        json!([{"key": "orderId", "value": "42"}])
+    );
+    let bare = get_json(&app, "/bff/debug/events/evtraw0000002", &token).await;
+    assert_no_nulls(&bare);
+    for absent in [
+        "data",
+        "contextData",
+        "subject",
+        "clientId",
+        "deduplicationId",
+    ] {
+        assert!(bare.get(absent).is_none(), "{absent}: {bare}");
+    }
+    assert_eq!(bare["specVersion"], "1.0");
+
+    let (s, body) = read_json(
+        app.post(
+            "/api/dispatch-jobs/batch",
+            &token,
+            json!({"items": [{
+                "source": "gaps",
+                "code": "gaps:jobs:job:raw",
+                "targetUrl": "https://receiver.example.test/hook",
+                "payload": "{\"k\":\"v\"}",
+                "serviceAccountId": "sac_nobody",
+            }]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let jobs = get_json(&app, "/bff/debug/dispatch-jobs?size=10", &token).await;
+    let job = &jobs[0];
+    assert_no_nulls(job);
+    assert_eq!(job["code"], "gaps:jobs:job:raw");
+    assert_eq!(job["payloadLength"], 9);
+    assert_eq!(job["attemptHistoryCount"], 0);
+    assert!(job.get("payload").is_none());
+}
