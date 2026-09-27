@@ -226,6 +226,15 @@ pub struct DispatchJobPayload {
     /// Idempotency key for deduplication
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// The job's own dispatch priority: `DEFAULT` or `HIGH_PRIORITY` (any
+    /// case). Absent leaves the platform's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
+    /// What the job is, in words (e.g. "Notify Value of user logins"), shown
+    /// in the dispatch-jobs grid. At most 255 characters; the platform answers
+    /// 400 `VALIDATION` for a longer one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
 }
 
 impl DispatchJobPayload {
@@ -270,6 +279,8 @@ impl DispatchJobPayload {
             ("dispatchPoolId", self.dispatch_pool_id.as_ref()),
             ("messageGroup", self.message_group.as_ref()),
             ("idempotencyKey", self.idempotency_key.as_ref()),
+            ("queue", self.queue.as_ref()),
+            ("descriptor", self.descriptor.as_ref()),
         ];
         for (key, value) in optional {
             if let Some(v) = value {
@@ -313,6 +324,8 @@ impl Default for DispatchJobPayload {
             max_retries: default_max_retries(),
             retry_strategy: default_retry_strategy(),
             idempotency_key: None,
+            queue: None,
+            descriptor: None,
         }
     }
 }
@@ -480,6 +493,21 @@ mod tests {
         assert_eq!(raw["retryStrategy"], "fixed");
         assert_eq!(raw["mode"], "BLOCK_ON_ERROR");
         assert!(raw.get("subscriptionId").is_none());
+        assert!(raw.get("queue").is_none());
+        assert!(raw.get("descriptor").is_none());
+    }
+
+    #[test]
+    fn the_outbox_payload_carries_queue_and_descriptor_when_set() {
+        let json = DispatchJobPayload {
+            code: "users:user:login:notify".to_string(),
+            queue: Some("HIGH_PRIORITY".to_string()),
+            descriptor: Some("Notify Value of user logins".to_string()),
+            ..Default::default()
+        }
+        .to_outbox_payload("x");
+        assert_eq!(json["queue"], "HIGH_PRIORITY");
+        assert_eq!(json["descriptor"], "Notify Value of user logins");
     }
 
     #[test]

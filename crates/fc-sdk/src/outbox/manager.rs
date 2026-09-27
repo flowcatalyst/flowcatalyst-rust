@@ -358,6 +358,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_dispatch_job_payload_carries_descriptor_and_queue_only_when_set() {
+        let (mgr, captured) = make_manager("clt_1");
+        mgr.create_dispatch_job(
+            job()
+                .descriptor("Notify Value of user logins")
+                .queue("HIGH_PRIORITY"),
+        )
+        .await
+        .unwrap();
+        mgr.create_dispatch_jobs(vec![job()]).await.unwrap();
+
+        let msgs = captured.lock().unwrap();
+        let set: serde_json::Value = serde_json::from_str(&msgs[0].payload).unwrap();
+        assert_eq!(set["descriptor"], "Notify Value of user logins");
+        assert_eq!(set["queue"], "HIGH_PRIORITY");
+
+        let unset: serde_json::Value = serde_json::from_str(&msgs[1].payload).unwrap();
+        assert!(unset.get("descriptor").is_none());
+        assert!(unset.get("queue").is_none());
+    }
+
+    #[tokio::test]
     async fn create_event_with_headers_propagates_them() {
         let (mgr, captured) = make_manager("clt_1");
         let mut headers = std::collections::HashMap::new();

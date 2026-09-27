@@ -35,6 +35,16 @@ before.
   `UpdatePrincipalRequest::email`.
 - List query values are form-encoded (an email's `+` no longer becomes a
   space).
+- Dispatch jobs carry a `descriptor` (what the job is, in words, e.g.
+  "Notify Value of user logins", shown in the platform's dispatch-jobs grid;
+  at most 255 characters, the platform answers 400 `VALIDATION` beyond) and a
+  `queue` (the job's own dispatch priority, `DEFAULT` or `HIGH_PRIORITY`):
+  `CreateDispatchJobDto::descriptor(..)` / `::queue(..)` and
+  `DispatchJobPayload::descriptor` / `::queue`. Both travel in the outbox
+  payload as `descriptor` / `queue` and are left out when unset. Both structs
+  gained public fields, so a struct literal of either without
+  `..Default::default()` (or `CreateDispatchJobDto::new`) needs the two
+  fields added.
 
 ### Changed
 - `Applications::get_service_account` reads `GET /api/applications/{id}` and
