@@ -428,6 +428,7 @@ async fn an_invite_link_is_minted_for_the_caller() {
         email_service: Arc::new(fc_platform::shared::email_service::LogEmailService),
         unit_of_work: app.unit_of_work.clone(),
         external_base_url: "https://platform.test/".to_string(),
+        brand: None,
     };
     let link = emailer
         .invite_link(&user, Some("https://app.test/home".to_string()))
@@ -580,4 +581,73 @@ async fn create_user_honours_the_invite_flags() {
             .await
             .unwrap();
     assert_eq!(purpose, "invite", "the default emails Go's invite");
+}
+
+/// Records what would have been sent.
+#[derive(Default)]
+struct Outbox(std::sync::Mutex<Vec<fc_platform::shared::email_service::EmailMessage>>);
+
+#[async_trait::async_trait]
+impl fc_platform::shared::email_service::EmailService for Outbox {
+    async fn send(
+        &self,
+        message: &fc_platform::shared::email_service::EmailMessage,
+    ) -> Result<(), String> {
+        self.0.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+}
+
+/// Go `linkEmailer`: the invite and reset emails carry the platform's login
+/// theme (logo, colours, brand) in Go's branded layout, HTML only.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn invite_and_reset_emails_are_branded_with_the_login_theme() {
+    use fc_platform::auth::password_reset_api::PasswordResetEmailer;
+    use fc_platform::platform_config::entity::PlatformConfig;
+    let app = TestApp::setup().await;
+    app.repos
+        .platform_config_repo
+        .insert(&PlatformConfig::new(
+            "platform",
+            "login",
+            "theme",
+            r##"{"brandName":"Acme Ops","primaryColor":"#222222","accentColor":"expression(x)","logoUrl":"https://cdn.acme.test/logo.png"}"##,
+        ))
+        .await
+        .unwrap();
+    let user = Principal::new_user("branded@flowcatalyst.test", UserScope::Client);
+    app.repos.principal_repo.insert(&user).await.unwrap();
+    let outbox = Arc::new(Outbox::default());
+    let emailer = PasswordResetEmailer {
+        password_reset_repo: app.repos.password_reset_repo.clone(),
+        email_service: outbox.clone(),
+        unit_of_work: app.unit_of_work.clone(),
+        external_base_url: "https://platform.test".to_string(),
+        brand: Some(app.repos.platform_config_repo.clone()),
+    };
+    emailer.send_invite(&user, None).await.unwrap();
+    emailer.send_reset_email(&user).await.unwrap();
+
+    let sent = outbox.0.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    let (invite, reset) = (&sent[0], &sent[1]);
+    assert_eq!(invite.subject, "Set your password");
+    assert!(invite.html_body.contains(">Welcome to Acme Ops</h1>"));
+    assert!(invite.html_body.contains("This link expires in 72 hours."));
+    assert_eq!(reset.subject, "Reset your password");
+    assert!(reset.html_body.contains("This link expires in 15 minutes."));
+    for m in [invite, reset] {
+        assert!(m.text_body.is_none(), "Go sends HTML only");
+        assert!(m
+            .html_body
+            .contains("<img src=\"https://cdn.acme.test/logo.png\" alt=\"Acme Ops\""));
+        assert!(m.html_body.contains("background-color:#222222"));
+        // An unsafe colour falls back to the default accent.
+        assert!(m.html_body.contains("background-color:#0967d2"));
+        assert!(!m.html_body.contains("expression("));
+        assert!(m
+            .html_body
+            .contains("This is an automated message from Acme Ops."));
+    }
 }
