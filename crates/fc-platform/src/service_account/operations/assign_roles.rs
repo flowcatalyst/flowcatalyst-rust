@@ -95,7 +95,7 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
 
         // Create domain event
         let event =
-            ServiceAccountRolesAssigned::new(&ctx, &service_account.id, roles_added, roles_removed);
+            ServiceAccountRolesAssigned::new(&ctx, &service_account, roles_added, roles_removed);
 
         // Atomic commit
         self.unit_of_work

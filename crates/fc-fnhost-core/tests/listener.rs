@@ -504,6 +504,15 @@ async fn h4_scope_pairs_are_ids_and_identity_tokens_are_refused() {
         identity.json()["message"],
         "an identity token is not an API credential"
     );
+
+    // A portal identity's token (Go: `tier: ""`) is read, and refused the
+    // same way: an empty tier grants nothing.
+    let portal = get(jwks.mint(&Claims::new("ptu_1", "", "", &[]).token_use("identity"))).await;
+    assert_eq!(portal.status, 401);
+    assert_eq!(
+        portal.json()["message"],
+        "an identity token is not an API credential"
+    );
 }
 
 #[tokio::test]

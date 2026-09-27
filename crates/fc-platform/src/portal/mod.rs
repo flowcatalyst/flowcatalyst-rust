@@ -99,6 +99,7 @@ impl PortalState {
             tokens: Arc::new(PortalResetTokenRepository::new(&deps.pool)),
             identities: identities.clone(),
             email_service: deps.email_service,
+            brand: Some(Arc::new(crate::PlatformConfigRepository::new(&deps.pool))),
             password_service: deps.password_service.clone(),
             external_base_url: deps.external_base_url,
         });

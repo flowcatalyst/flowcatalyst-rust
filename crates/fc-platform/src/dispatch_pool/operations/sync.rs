@@ -137,8 +137,10 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_codes: Vec<String> = Vec::new();
+        let mut saves: Vec<DispatchPool> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
 
+        // Plan every row before anything is written (Go's `usecaseop.Sync`).
         for input in &command.pools {
             synced_codes.push(input.code.clone());
 
@@ -152,17 +154,12 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     updated.rate_limit = input.rate_limit.map(|r| r as i32);
                     updated.concurrency = input.concurrency as i32;
                     updated.updated_at = chrono::Utc::now();
-                    if let Err(e) = self.dispatch_pool_repo.update(&updated).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to update pool '{}': {}",
-                            input.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&DispatchPoolUpdated::new(
                         &ctx,
                         &updated.id,
                         &updated.name,
                     ))?);
+                    saves.push(updated);
                     updated_count += 1;
                 }
                 None => {
@@ -170,15 +167,10 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     pool.description = input.description.clone();
                     pool.rate_limit = input.rate_limit.map(|r| r as i32);
                     pool.concurrency = input.concurrency as i32;
-                    if let Err(e) = self.dispatch_pool_repo.insert(&pool).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to create pool '{}': {}",
-                            input.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&DispatchPoolCreated::new(
                         &ctx, &pool.id, &pool.code, &pool.name,
                     ))?);
+                    saves.push(pool);
                     created_count += 1;
                 }
             }
@@ -193,17 +185,12 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                 {
                     let mut archived = pool.clone();
                     archived.archive();
-                    if let Err(e) = self.dispatch_pool_repo.update(&archived).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to archive pool '{}': {}",
-                            pool.code, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&DispatchPoolArchived::new(
                         &ctx,
                         &archived.id,
                         &archived.code,
                     ))?);
+                    saves.push(archived);
                     deleted_count += 1;
                 }
             }
@@ -218,9 +205,19 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
             synced_codes,
         };
 
-        // Go's usecaseop.Sync: a created/updated/archived event per synced
-        // pool, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
+        // Go's usecaseop.Sync: the rows (an archive is a save), a
+        // created/updated/archived event per synced pool, then the rollup, in
+        // one transaction.
+        self.unit_of_work
+            .commit_sync(
+                &*self.dispatch_pool_repo,
+                &saves,
+                &[],
+                rows,
+                event,
+                &command,
+            )
+            .await
     }
 }
 

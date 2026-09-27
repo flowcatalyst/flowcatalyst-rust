@@ -213,8 +213,12 @@ pub struct AccessTokenClaims {
     #[serde(rename = "type")]
     pub principal_type: PrincipalType,
 
-    /// Tenancy tier; on the wire `ANCHOR`, `PARTNER` or `CLIENT`
-    pub tier: UserScope,
+    /// Tenancy tier; on the wire `ANCHOR`, `PARTNER` or `CLIENT`. `None` is
+    /// Go's empty `tier`, which only a portal identity's access token carries
+    /// (a `ptu_` subject has no tenancy); such a token is identity-only, so it
+    /// authorizes nothing.
+    #[serde(serialize_with = "tier_or_empty")]
+    pub tier: Option<UserScope>,
 
     /// Granted permissions, space-delimited (the OAuth `scope`). Absent when
     /// the token carries none; permissions then derive from `roles`.
@@ -249,6 +253,14 @@ pub struct AccessTokenClaims {
     pub token_use: Option<String>,
 }
 
+/// Go's `tier` claim: the tier, or `""` when the token has none.
+fn tier_or_empty<S: serde::Serializer>(
+    tier: &Option<UserScope>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(tier.map_or("", |t| t.as_str()))
+}
+
 /// The access-token claims as they may arrive: Go's shape, or the shape
 /// Rust issued before it (the tier on `scope`, no `tier`, no `token_use`).
 #[derive(Deserialize)]
@@ -265,7 +277,7 @@ struct AccessTokenClaimsWire {
     #[serde(rename = "type")]
     principal_type: PrincipalType,
     #[serde(default)]
-    tier: Option<UserScope>,
+    tier: Option<String>,
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
@@ -291,11 +303,21 @@ impl TryFrom<AccessTokenClaimsWire> for AccessTokenClaims {
 
     fn try_from(w: AccessTokenClaimsWire) -> std::result::Result<Self, Self::Error> {
         // `tier` wins when present. Without it the token predates Go's shape
-        // and its `scope` is the tier, not permissions.
-        let (tier, scope) = match w.tier {
-            Some(tier) => (tier, w.scope.filter(|s| !s.trim().is_empty())),
+        // and its `scope` is the tier, not permissions. An empty `tier` is
+        // Go's portal access token (`redeemPortalCode`, a `ptu_` identity
+        // with no tenancy): accepted only on an identity-only token, which
+        // authorizes nothing, so it grants no tier at all.
+        let (tier, scope) = match w.tier.as_deref() {
+            Some("") if w.token_use.as_deref() == Some(TOKEN_USE_IDENTITY) => {
+                (None, w.scope.filter(|s| !s.trim().is_empty()))
+            }
+            Some("") => return Err("token carries no tier".to_string()),
+            Some(tier) => (
+                Some(tier.parse::<UserScope>().map_err(|e| e.to_string())?),
+                w.scope.filter(|s| !s.trim().is_empty()),
+            ),
             None => match w.scope.as_deref().map(str::parse::<UserScope>) {
-                Some(Ok(tier)) => (tier, None),
+                Some(Ok(tier)) => (Some(tier), None),
                 _ => return Err("token carries no tier".to_string()),
             },
         };
@@ -341,7 +363,7 @@ impl AccessTokenClaims {
 
     /// Check if the claims are for an anchor user.
     pub fn is_anchor(&self) -> bool {
-        self.tier.is_anchor()
+        self.tier.is_some_and(|t| t.is_anchor())
     }
 
     /// The principal ID (the `sub` claim).
@@ -961,6 +983,27 @@ impl AuthService {
         ))
     }
 
+    /// The access token of a PORTAL identity login (Go `redeemPortalCode`,
+    /// oauthapi/portal_token.go): identity-only like every interactive
+    /// login, minted from a transient view of the `ptu_` identity, and with
+    /// an empty `tier` — Go's synthetic principal has no tenancy.
+    pub fn generate_portal_access_token(
+        &self,
+        identity: &Principal,
+        azp: Option<&str>,
+    ) -> Result<String> {
+        let mut claims = self.access_token_claims(
+            identity,
+            self.config.access_token_expiry_secs,
+            &[],
+            false,
+            azp,
+            Utc::now(),
+        );
+        claims.tier = None;
+        self.sign_access(claims)
+    }
+
     /// The session cookie's token: the subject only, in Go's shape (see
     /// [`SessionTokenClaims`]), valid for the session lifetime. Go
     /// `provider.MintSessionToken` (auth/provider/provider.go:285-314).
@@ -1143,7 +1186,7 @@ impl AuthService {
             nbf: now.timestamp(),
             jti: crate::shared::tsid::generate_untyped(),
             principal_type: principal.principal_type,
-            tier: principal.scope,
+            tier: Some(principal.scope),
             scope: None,
             email: principal
                 .email()
@@ -1426,6 +1469,44 @@ mod tests {
         assert_eq!(v["azp"], "oc_hr");
     }
 
+    /// Go `redeemPortalCode`: a portal identity's access token is
+    /// identity-only with an empty `tier` (Go's synthetic principal has no
+    /// tenancy). Rust validates it, with no tier and no anchor reach, and
+    /// still refuses it as an API credential.
+    #[test]
+    fn a_portal_access_token_has_an_empty_tier_and_grants_nothing() {
+        let s = service();
+        let mut portal = Principal::new_user("pat@portal.test", UserScope::Client);
+        portal.id = "ptu_PAT".to_string();
+        portal.all_applications = false;
+        let token = s
+            .generate_portal_access_token(&portal, Some("oc_portal"))
+            .unwrap();
+        let v = payload_json(&token);
+        assert_eq!(v["tier"], "");
+        assert_eq!(v["token_use"], "identity");
+        assert_eq!(v["clients"], json!([]));
+        assert_eq!(v["roles"], json!([]));
+
+        let claims = s.validate_token(&token).expect("a portal token validates");
+        assert_eq!(claims.tier, None);
+        assert!(!claims.is_anchor());
+        assert!(claims.is_identity_only());
+        assert_eq!(wire(&claims)["tier"], "");
+    }
+
+    /// An empty `tier` is accepted only on an identity-only token: an API
+    /// token without a tier is refused rather than read as some tier.
+    #[test]
+    fn an_api_token_without_a_tier_is_refused() {
+        let s = service();
+        let mut claims = s.access_token_claims(&client_user(), 3600, &[], true, None, now());
+        claims.exp = Utc::now().timestamp() + 3600;
+        claims.tier = None;
+        let token = s.sign_access(claims).unwrap();
+        assert!(s.validate_token(&token).is_err());
+    }
+
     /// Go `buildClients` / `appAccessOf` for the other tiers: an anchor
     /// reaches `*` clients; all-applications is the `*` entry plus the
     /// deprecated flag; a partner's grants are paired where known.
@@ -1496,7 +1577,7 @@ mod tests {
             .validate_token(&s.generate_access_token(&p).unwrap())
             .unwrap();
         assert_eq!(claims.sub, "prn_ADA");
-        assert_eq!(claims.tier, UserScope::Client);
+        assert_eq!(claims.tier, Some(UserScope::Client));
         assert_eq!(claims.scope, None);
         assert_eq!(claims.token_use.as_deref(), Some(TOKEN_USE_API));
         assert_eq!(claims.applications, vec!["app_1:hr", "app_2"]);
@@ -1735,7 +1816,7 @@ mod tests {
             let token = encode(&header, &old, &s.encoding_key).unwrap();
             let claims = s.validate_token(&token).unwrap();
             assert_eq!(claims.principal_type, want_ty);
-            assert_eq!(claims.tier, want_tier);
+            assert_eq!(claims.tier, Some(want_tier));
             // The old scope was the tier, never permissions: they derive
             // from the roles, as before.
             assert!(claims.granted_permissions().is_empty());
@@ -1752,7 +1833,7 @@ mod tests {
             "type": "USER", "tier": "PARTNER", "scope": "ANCHOR"
         }))
         .unwrap();
-        assert_eq!(claims.tier, UserScope::Partner);
+        assert_eq!(claims.tier, Some(UserScope::Partner));
         assert_eq!(claims.granted_permissions(), vec!["ANCHOR"]);
 
         let untiered: std::result::Result<AccessTokenClaims, _> = serde_json::from_value(json!({

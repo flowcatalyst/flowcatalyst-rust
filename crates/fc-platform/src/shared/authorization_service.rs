@@ -70,7 +70,10 @@ impl AuthContext {
         Self {
             principal_id: claims.sub.clone(),
             principal_type: claims.principal_type,
-            scope: claims.tier,
+            // Only an identity-only token lacks a tier, and `build_context`
+            // refuses those; were one to get here, CLIENT with no clients
+            // reaches nothing.
+            scope: claims.tier.unwrap_or(UserScope::Client),
             email: claims.email.clone(),
             name: claims.name.clone(),
             accessible_clients: claims
@@ -1860,7 +1863,7 @@ mod tests {
             nbf: 1699996400,
             jti: "jwt-id-1".to_string(),
             principal_type: PrincipalType::Service,
-            tier: UserScope::Anchor,
+            tier: Some(UserScope::Anchor),
             scope: None,
             email: Some("svc@test.com".to_string()),
             name: "Service Account".to_string(),

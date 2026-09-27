@@ -118,8 +118,7 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
         service_account.updated_at = Utc::now();
 
         // Create domain event
-        let event =
-            ServiceAccountTokenRegenerated::new(&ctx, &service_account.id, &service_account.code);
+        let event = ServiceAccountTokenRegenerated::new(&ctx, &service_account);
 
         // Create result with one-time token
         let result = RegenerateAuthTokenResult {

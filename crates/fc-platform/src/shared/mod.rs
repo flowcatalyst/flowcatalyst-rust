@@ -56,6 +56,7 @@ pub mod rate_limit_store;
 
 // Services
 pub mod authorization_service;
+pub mod branding;
 pub mod email_service;
 pub mod encryption_service;
 pub mod integrity_scan;

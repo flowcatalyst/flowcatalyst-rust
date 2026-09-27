@@ -212,7 +212,8 @@ pub struct OAuthClientCredentials {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountCredentialsResponse {
-    /// Principal id of the service account (`sac_…`).
+    /// The service account's SERVICE principal (`prn_…`, Go
+    /// `result.ServicePrincipalID`).
     pub principal_id: String,
     /// Service account display name (used in the credentials dialog).
     pub name: String,
@@ -949,8 +950,8 @@ pub async fn provision_application_service_account(
 
             let ctx = crate::usecase::ExecutionContext::create(&principal_id);
 
-            // 1. Create the ServiceAccount (a Principal row is created
-            //    behind it; SA.id == Principal.id).
+            // 1. Create the ServiceAccount (a SERVICE principal is created
+            //    behind it, with an id of its own).
             let create_cmd = CreateServiceAccountCommand {
                 code: sa_code.clone(),
                 name: sa_name,
@@ -968,13 +969,18 @@ pub async fn provision_application_service_account(
                 .run(create_cmd, ctx.clone())
                 .await
                 .into_result()?;
-            let sa_id = created.event.service_account_id.clone();
+            // The event carries the account's id (`sac_…`), as Go's does; the
+            // application and the OAuth client point at its principal.
+            let sa_id = created.principal_id.clone();
 
-            // 2. Attach SA to Application — sets `application.service_account_id`.
+            // 2. Attach SA to Application — sets `application.service_account_id`
+            //    to the principal; the event names the account (Go
+            //    provision_service_account.go:175-182).
             let attach_cmd = AttachServiceAccountToApplicationCommand {
                 application_id: app_id.clone(),
-                service_account_id: sa_id.clone(),
+                service_account_id: created.event.service_account_id.clone(),
                 service_account_code: sa_code,
+                service_principal_id: sa_id.clone(),
             };
             attach_uc.run(attach_cmd, ctx.clone()).await.into_result()?;
 

@@ -2410,7 +2410,7 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
             sub: claims.sub,
             email: claims.email,
             name: claims.name,
-            tier: claims.tier.as_str().to_string(),
+            tier: claims.tier.map_or("", |t| t.as_str()).to_string(),
             scope: claims.scope.unwrap_or_default(),
             principal_type: claims.principal_type.as_str().to_string(),
             client_id,
@@ -2475,7 +2475,7 @@ pub async fn introspect(
                 // RFC 7662 `scope` = the granted permissions; the tier rides
                 // `tier` (Go Introspect, oauthapi/introspect_revoke.go:80-93).
                 scope: claims.scope.filter(|s| !s.is_empty()),
-                tier: Some(claims.tier.as_str().to_string()),
+                tier: Some(claims.tier.map_or("", |t| t.as_str()).to_string()),
                 client_id: claims.clients.first().cloned(),
                 email: claims.email,
                 name: Some(claims.name),

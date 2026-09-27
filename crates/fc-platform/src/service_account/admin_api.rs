@@ -146,7 +146,7 @@ pub async fn mint_service_account_token(
         .generate_access_token_with_scope(&principal, &granted, None)?;
     // Go stamps the account's last_used_at on a mint too ("handing out a
     // bearer is a use"); best-effort bookkeeping.
-    let account_row = sa.service_account_table_id.as_deref().unwrap_or(&sa.id);
+    let account_row = sa.account_id();
     if let Err(e) = state.repo.touch_last_used(account_row).await {
         tracing::warn!(error = %e, "Failed to stamp service account last_used_at");
     }
@@ -155,7 +155,7 @@ pub async fn mint_service_account_token(
         .record_mint_use_case
         .run(
             MintServiceAccountTokenCommand {
-                service_account_id: sa.id.clone(),
+                service_account_id: sa.account_id().to_string(),
                 code: sa.code.clone(),
             },
             ExecutionContext::from_auth(&auth.0),

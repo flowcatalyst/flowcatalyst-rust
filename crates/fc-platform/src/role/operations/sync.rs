@@ -129,7 +129,12 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;
         let mut synced_names: Vec<String> = Vec::new();
+        let mut saves: Vec<AuthRole> = Vec::new();
+        let mut deletes: Vec<AuthRole> = Vec::new();
         let mut rows: Vec<RecordedEvent> = Vec::new();
+
+        // Plan every row before anything is written (Go's `usecaseop.Sync`):
+        // a refused row fails the sync with nothing written.
 
         for input in &command.roles {
             // As Go (`splitRoleName`): a name that already carries this
@@ -157,17 +162,12 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                         }
                         updated.client_managed = input.client_managed;
                         updated.updated_at = chrono::Utc::now();
-                        if let Err(e) = self.role_repo.update(&updated).await {
-                            return Err(UseCaseError::commit(format!(
-                                "Failed to update role '{}': {}",
-                                full_name, e
-                            )));
-                        }
                         rows.push(RecordedEvent::of(&RoleUpdated::new(
                             &ctx,
                             &updated.id,
                             &updated.name,
                         ))?);
+                        saves.push(updated);
                         updated_count += 1;
                     }
                     // Skip CODE and DATABASE-sourced roles
@@ -183,15 +183,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                     role.description = input.description.clone();
                     role.permissions = input.permissions.iter().cloned().collect();
                     role.client_managed = input.client_managed;
-                    if let Err(e) = self.role_repo.insert(&role).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to create role '{}': {}",
-                            full_name, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&RoleCreated::new(
                         &ctx, &role.id, &role.name,
                     ))?);
+                    saves.push(role);
                     created_count += 1;
                 }
             }
@@ -216,15 +211,10 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                             ),
                         ));
                     }
-                    if let Err(e) = self.role_repo.delete(&role.id).await {
-                        return Err(UseCaseError::commit(format!(
-                            "Failed to delete role '{}': {}",
-                            role.name, e
-                        )));
-                    }
                     rows.push(RecordedEvent::of(&RoleDeleted::new(
                         &ctx, &role.id, &role.name,
                     ))?);
+                    deletes.push(role.clone());
                     deleted_count += 1;
                 }
             }
@@ -240,9 +230,11 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
             synced_codes: synced_names,
         };
 
-        // Go's usecaseop.Sync: a created/updated/deleted event per synced
-        // role, then the rollup.
-        self.unit_of_work.emit_events(rows, event, &command).await
+        // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
+        // synced role, then the rollup, in one transaction.
+        self.unit_of_work
+            .commit_sync(&*self.role_repo, &saves, &deletes, rows, event, &command)
+            .await
     }
 }
 

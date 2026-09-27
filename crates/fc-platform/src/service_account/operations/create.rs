@@ -133,6 +133,11 @@ impl crate::usecase::AuditMasked for CreateServiceAccountCommand {}
 pub struct CreateServiceAccountResult {
     #[serde(flatten)]
     pub event: ServiceAccountCreated,
+    /// The account's SERVICE principal (`prn_…`), the id OAuth clients and
+    /// applications point at. The event carries the account's own id
+    /// (`sac_…`), as Go's does, so callers take the principal from here.
+    #[serde(skip_serializing)]
+    pub principal_id: String,
     #[serde(skip_serializing)]
     pub auth_token: String,
     #[serde(skip_serializing)]
@@ -297,16 +302,12 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
 
         // Create domain event
-        let event = ServiceAccountCreated::new(
-            &ctx,
-            &service_account.id,
-            &service_account.code,
-            &service_account.name,
-        );
+        let event = ServiceAccountCreated::new(&ctx, &service_account);
 
         // Create result with one-time secrets
         let result = CreateServiceAccountResult {
             event: event.clone(),
+            principal_id: service_account.id.clone(),
             auth_token,
             signing_secret,
         };

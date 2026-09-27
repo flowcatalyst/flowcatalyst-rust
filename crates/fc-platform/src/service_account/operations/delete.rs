@@ -66,7 +66,7 @@ impl<U: UnitOfWork> UseCase for DeleteServiceAccountUseCase<U> {
             )?;
 
         // Create domain event
-        let event = ServiceAccountDeleted::new(&ctx, &service_account.id, &service_account.code);
+        let event = ServiceAccountDeleted::new(&ctx, &service_account);
 
         // Atomic commit with delete
         self.unit_of_work
