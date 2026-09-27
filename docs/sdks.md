@@ -167,6 +167,15 @@ queries in fc-sdk; Go's required booleans defaulted on role and scheduled-job cr
 members Go returns that the hand-written types lacked (all SDKs). Java's generated models come
 from Go's spec, so it needed the fewest changes.
 
+**Dispatch-job `descriptor` and `queue`** (with `feat/dispatch-descriptor`): the dispatch-job
+create routes take Go's optional `descriptor` (at most 255 characters) and `queue` (`DEFAULT` or
+`HIGH_PRIORITY`). The outbox dispatch-job builders carry both into the payload only when set: TS
+`withDescriptor()` and Laravel `withDescriptor()` (plus a trailing optional constructor
+parameter) beside their existing `queue`; `fc-sdk` (`.queue()`, `.descriptor()` on
+`CreateDispatchJobDto` and `DispatchJobPayload`) and Java (`withQueue()`, `withDescriptor()`) had
+no `queue` before. TS, Laravel and Java reject a descriptor over 255 characters; the Go SDK has no
+dispatch-job builder.
+
 **Platform gaps these fixes expose** (Go documents it, this platform does not do it; handler or
 data work, not done here): an application's per-client `baseUrlOverride`/`configJson` are not
 stored, so `configJson` reads empty; `clientScoped` on event-type create/update is ignored;
@@ -187,7 +196,8 @@ of the SDKs' generated clients. The document at `/q/openapi` (also `/api/openapi
   `shared::openapi_contract`; the annotations carry Go's ids.
 - **Schemas.** Component schemas carry Go's names through `#[schema(as = GoName)]` (Rust type
   names and serde wire names unchanged), with Go's required members, `date-time` formats, integer
-  formats, enums and any-typed members. This also fixed two collisions where two Rust structs
+  formats, enums and any-typed members. The dispatch-job schemas include Go's `descriptor`, list
+  `metadata` (`MetadataDTO`) and the create request's `descriptor` and `queue`. This also fixed two collisions where two Rust structs
   published under one name and one silently replaced the other (`RegenerateSecretResponse`,
   `ConfigResponse`).
 - **Go's document conventions**, applied to the published document by
@@ -200,7 +210,7 @@ of the SDKs' generated clients. The document at `/q/openapi` (also `/api/openapi
 
 `crates/fc-platform/tests/openapi_go_contract_test.rs` (no database) fails if an operation Go
 documents is missing, has another operationId, or names another request or success schema, or if
-a Go schema name is missing (three listed exceptions). `OPENAPI_DUMP=<file>` writes the document.
+a Go schema name is missing (Go's two orphan schemas excepted). `OPENAPI_DUMP=<file>` writes the document.
 
 **Measured against Go's lockfile** (`flowcatalyst-go` `73a6918`):
 
@@ -208,12 +218,12 @@ a Go schema name is missing (three listed exceptions). `OPENAPI_DUMP=<file>` wri
 |---|---:|---:|
 | Go operations documented | 175 of 256 | **256 of 256** |
 | with Go's operationId | 42 | **256** |
-| Go schema names present | 119 of 250 | **247 of 250** |
+| Go schema names present | 119 of 250 | **248 of 250** |
 | shared operations naming Go's request schema | 160 of 175 | **256 of 256** |
 | shared operations naming Go's success status and schema | 137 of 175 | **255 of 256** |
 | query-parameter sets equal | 165 of 175 | **247 of 256** |
 | TS client generated from it (`@hey-api/openapi-ts`, the TS SDK's generator), compared with one generated from Go's lockfile with `$schema` removed (#30), JSDoc and whitespace ignored: identical operation functions | 27 of 256 | **250 of 256** |
-| … identical types | 144 of 1530 | **1489 of 1530** |
+| … identical types | 144 of 1530 | **1492 of 1530** |
 
 **Remaining differences.** Decided:
 - **`$schema`** (#30): Go's response schemas carry a read-only `$schema` member (and the TS
@@ -245,15 +255,12 @@ Not decided (they keep the parity steps below DIFFs):
   against Go's API" above (per-client config, `clientScoped`, event `contextData`, service-account
   role and webhook-credential members, OAuth-client `principalId`); `LoginAttemptResponse.identifier`
   and `RolePermissionListResponse.permissions` may be null.
-- **Dispatch-job DTOs** (`DispatchJobRead`, `DispatchJobResponse`, `AttemptDTO`): `descriptor`,
-  `metadata` (Go's `MetadataDTO`, one of the three missing schema names), `priority`, `date-time`
-  formats, `request` as `RequestSummary`, `responseCode` int64, `dispatchMode` optional. Left to
-  the dispatch-job descriptor work, which owns those DTOs.
+- **`DispatchJobRead.priority`**: Go's list rows carry it; Rust's do not.
 - Go's two orphan schemas (`RawDispatchJobResponse`, `RawEventResponse`) are not reproduced, and a
   few schemas list members or `required` in another order.
 
 **Not regenerated.** Regenerating the SDKs from this document would remove `$schema` from every
-response type (and the TS `…Writable` types, 195 of them), change 38 more types and 6 functions,
+response type (and the TS `…Writable` types, 195 of them), change 36 more types and 6 functions,
 and add the Rust-only operations. That is not an empty or clearly intended diff, so the generated
 clients were left as published. Note also that the SDKs' vendored `openapi.json` is older than
 Go's current lockfile (regenerating TS from Go's own lockfile changes about 236 lines).
@@ -266,14 +273,15 @@ only, the `**/properties/$schema` members (#30) and `info.version` / the stored 
 cannot be scoped. Closing them needs an owner ruling on those classes (or a decision that the
 contract test, not a byte comparison, is the gate for the document).
 
-The full run on this branch (`target/parity-openapi`, Go `73a6918`) gives 1224 OK, 113 ACCEPTED,
-26 DIFF, 0 ERROR. The 19 DIFFs of run 5 are unchanged (the five OpenAPI steps now differ only in
-the undecided classes: 2190 members each instead of 2586). The 7 new ones are all the same
-token `scope` difference, from `main`'s router-auth merge (`956741d1`, before this branch): Rust's
-`platform:application-service` role now carries `platform:messaging:router:view` (ruling 2), so
-client-credentials tokens list it and Go's do not (`auth/oauth-code-flow` ×3, `authz`,
-`platform/profile-only`, `router-config` ×2). They need an allow-list entry citing ruling 2 /
-decision #43 from the router-auth owner.
+The full run on this branch after merging `main` (`target/parity-openapi`, Go `73a6918`) gives
+1227 OK, 113 ACCEPTED, 23 DIFF, 0 ERROR, with no stale allow-list entry. The 16 DIFFs of run 6
+(`docs/parity/api-run-6.md`) are unchanged; the five OpenAPI steps among them now differ in 1971
+members each (2586 before this branch; 194 `$schema` and the version are accepted, the rest is the
+undecided classes above). The 7 others are one token `scope` difference that `main` already has,
+from the router-auth merge (`956741d1`), not this branch: Rust's `platform:application-service`
+role carries `platform:messaging:router:view` (ruling 2), so client-credentials tokens list it and
+Go's do not (`auth/oauth-code-flow` ×3, `authz`, `platform/profile-only`, `router-config` ×2). They
+need an allow-list entry citing ruling 2 / decision #43.
 
 ## Rust SDK: open item
 
@@ -289,11 +297,11 @@ tokens (`is_identity_token()`), but the session flow has not been changed.
 
 | SDK | Command | Result |
 |---|---|---|
-| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 261 tests, 0 failures |
-| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 177 tests, 0 failures |
-| Java | `mvn -o test` (Maven offline; deps cached) | 94 tests, 0 failures, 1 skipped (real-PG, needs `FC_JAVA_SDK_TEST_PG_URL`) |
+| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 264 tests, 0 failures |
+| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 180 tests, 0 failures |
+| Java | `mvn -o test` (Maven offline; deps cached) | 96 tests, 0 failures, 1 skipped (real-PG, needs `FC_JAVA_SDK_TEST_PG_URL`) |
 | Go | `go vet ./... && go test ./...` | all packages pass (167 top-level tests) |
-| Rust | `cargo test -p fc-sdk --all-features` | all pass (338 unit tests) |
+| Rust | `cargo test -p fc-sdk --all-features` | all pass (340 unit tests) |
 | Platform document | `cargo test -p fc-platform --test openapi_go_contract_test` | 2 tests pass |
 
 ## Publishing from here
