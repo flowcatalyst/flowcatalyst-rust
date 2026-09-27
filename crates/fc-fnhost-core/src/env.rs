@@ -553,6 +553,28 @@ mod tests {
     }
 
     #[test]
+    fn database_settings_default_and_must_be_sane() {
+        let env = load(base()).unwrap();
+        assert_eq!(env.db_max_connections_per_invocation, 2);
+        assert_eq!(env.db_secret_refresh_seconds, 300);
+        let mut pairs = base();
+        pairs.push(("FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION", "4"));
+        pairs.push(("FC_FN_DB_SECRET_REFRESH_SECONDS", "0"));
+        let env = load(pairs).unwrap();
+        assert_eq!(env.db_max_connections_per_invocation, 4);
+        assert_eq!(env.db_secret_refresh_seconds, 0);
+        for (name, value) in [
+            ("FC_FN_MAX_DB_POOLS", "0"),
+            ("FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION", "0"),
+            ("FC_FN_DB_SECRET_REFRESH_SECONDS", "-1"),
+        ] {
+            let mut pairs = base();
+            pairs.push((name, value));
+            assert!(load(pairs).unwrap_err().0.contains(name), "{name}");
+        }
+    }
+
+    #[test]
     fn max_executing_defaults_to_cores_minus_one_and_must_be_positive() {
         assert_eq!(load(base()).unwrap().max_executing, default_max_executing());
         assert!(default_max_executing() >= 1);

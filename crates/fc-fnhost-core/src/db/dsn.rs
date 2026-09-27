@@ -226,13 +226,15 @@ impl Dsn {
                 query.append_pair(k, v);
             }
         }
-        let options = PgConnectOptions::from_str(url.as_str())
+        let mut options = PgConnectOptions::from_str(url.as_str())
             .map_err(|_| "unsupported database url parameters".to_owned())?
             // DISCARD ALL on every release deallocates server-side prepared
             // statements, so the statement cache is per borrow: see
             // `pools::reset_session`.
-            .statement_cache_capacity(100)
-            .application_name("flowcatalyst-function");
+            .statement_cache_capacity(100);
+        if !params.contains_key("application_name") {
+            options = options.application_name("flowcatalyst-function");
+        }
         let mut identity = format!("{host}|{port}|{database}|{user}|");
         identity.push_str(password.as_deref().unwrap_or(""));
         for (k, v) in &params {
