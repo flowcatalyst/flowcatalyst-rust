@@ -51,6 +51,14 @@ before, so no working call breaks.
 - The vendored `openapi/openapi.json` carries both fields. The generated
   models were edited by hand to match: regenerating with today's Jane
   rewrites ~530 generated files, so it is left for a deliberate regen.
+- `CreateDispatchJobDto::withDescriptor($descriptor)` and a trailing
+  optional `descriptor` constructor parameter (after `queue`, so positional
+  callers are unaffected): what the job is, in words (e.g. "Notify Value of
+  user logins"), shown in the platform's dispatch-jobs grid. It travels in
+  the outbox payload as `descriptor` and is left out when unset, like
+  `queue`. At most 255 characters (`CreateDispatchJobDto::MAX_DESCRIPTOR_LENGTH`);
+  a longer one throws `InvalidArgumentException`, where the platform would
+  answer 400 `VALIDATION`.
 
 ### Changed
 - The OIDC session refresh (`TokenRefresher`, used by the refresh route and

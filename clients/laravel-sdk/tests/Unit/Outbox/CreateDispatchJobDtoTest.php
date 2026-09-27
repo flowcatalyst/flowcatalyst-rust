@@ -49,4 +49,44 @@ final class CreateDispatchJobDtoTest extends TestCase
         $this->assertSame('HIGH_PRIORITY', $payload['queue'], 'a later wither must not drop queue');
         $this->assertSame('grp-1', $payload['messageGroup']);
     }
+
+    public function test_descriptor_is_omitted_when_unset_but_carried_when_set(): void
+    {
+        $base = CreateDispatchJobDto::create(
+            source: 'svc',
+            code: 'app:sub:agg:act',
+            targetUrl: 'https://example.com/hook',
+            payload: '{"k":1}',
+            dispatchPoolId: 'pool-1',
+        );
+
+        $this->assertArrayNotHasKey('descriptor', $base->toPayload());
+
+        // A later wither must not drop it.
+        $job = $base->withDescriptor('Notify Value of user logins')->withQueue('HIGH_PRIORITY');
+        $payload = $job->toPayload();
+        $this->assertSame('Notify Value of user logins', $payload['descriptor']);
+        $this->assertSame('HIGH_PRIORITY', $payload['queue']);
+    }
+
+    public function test_descriptor_is_at_most_255_characters(): void
+    {
+        $base = CreateDispatchJobDto::create(
+            source: 'svc',
+            code: 'app:sub:agg:act',
+            targetUrl: 'https://example.com/hook',
+            payload: '{"k":1}',
+            dispatchPoolId: 'pool-1',
+        );
+
+        // Characters, not bytes: 255 two-byte characters fit.
+        $this->assertSame(
+            str_repeat('é', 255),
+            $base->withDescriptor(str_repeat('é', 255))->toPayload()['descriptor'],
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('at most 255 characters');
+        $base->withDescriptor(str_repeat('x', 256));
+    }
 }

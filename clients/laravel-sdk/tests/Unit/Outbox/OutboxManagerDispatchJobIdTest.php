@@ -68,6 +68,25 @@ final class OutboxManagerDispatchJobIdTest extends TestCase
         }
     }
 
+    public function test_a_dispatch_job_payload_carries_descriptor_and_queue_when_set(): void
+    {
+        $driver = $this->capturingDriver();
+        $outbox = new OutboxManager($driver, 'clt_1');
+
+        $outbox->createDispatchJob(
+            $this->job()->withDescriptor('Notify Value of user logins')->withQueue('HIGH_PRIORITY'),
+        );
+        $outbox->createDispatchJobs([$this->job()]);
+
+        $set = json_decode($driver->messages[0]['payload'], true);
+        $this->assertSame('Notify Value of user logins', $set['descriptor']);
+        $this->assertSame('HIGH_PRIORITY', $set['queue']);
+
+        $unset = json_decode($driver->messages[1]['payload'], true);
+        $this->assertArrayNotHasKey('descriptor', $unset);
+        $this->assertArrayNotHasKey('queue', $unset);
+    }
+
     public function test_events_are_unchanged(): void
     {
         $driver = $this->capturingDriver();
