@@ -174,10 +174,11 @@ _fcdev-port-free *ARGS:
 #
 # The SDKs' generated clients (and their vendored openapi.json) are the
 # published ones, generated from the Go platform's spec. This platform's
-# spec still uses path-derived operationIds, so regenerating from it would
-# rename every generated class and break the published SDK API. Until its
-# operationIds match Go's (see docs/sdks.md), the SDK steps refuse to run
-# unless FC_SDK_REGEN_FROM_RUST_SPEC=1.
+# spec now carries Go's operationIds and schema names
+# (tests/openapi_go_contract_test.rs), but regenerating from it still
+# changes the generated code: it has no huma `$schema` member (owner
+# decision #30) and the residual differences listed in docs/sdks.md. The SDK
+# steps therefore refuse to run unless FC_SDK_REGEN_FROM_RUST_SPEC=1.
 #
 # The frontend is not regenerated here: the SPA is Go's and is typed against
 # Go's OpenAPI lockfile (frontend/openapi/openapi.json, a copy of
@@ -188,7 +189,7 @@ regen-sdks:
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi >/dev/null \
         || (echo "✗ Platform not reachable at http://localhost:{{ FC_API_PORT }}/q/openapi — run 'just run' (or 'just dev') first."; exit 1)
     @[ "${FC_SDK_REGEN_FROM_RUST_SPEC:-}" = "1" ] \
-        || (echo "✗ Not regenerating the SDKs from this platform's spec: its operationIds differ from the published SDKs' (docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
+        || (echo "✗ Not regenerating the SDKs from this platform's spec: the generated code would still differ from the published SDKs' (no \$schema member, #30; residuals in docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
     @echo "▸ Refreshing SDK OpenAPI snapshots from /q/openapi"
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/typescript-sdk/openapi/openapi.json
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o clients/laravel-sdk/openapi/openapi.json

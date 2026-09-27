@@ -209,17 +209,19 @@ fn error_model() -> Value {
 ///    with `ErrorModel` per operation. The per-status error responses the
 ///    handlers annotate (mostly without a body) are replaced by that
 ///    `default`, and `ErrorModel` is added.
-/// 2. **Optional members are not nullable.** Go types an optional member as
+/// 2. **Parameters.** `required` appears only when true, and query
+///    parameters are `explode: false`, as in Go's document.
+/// 3. **Optional members are not nullable.** Go types an optional member as
 ///    its plain type (absent when unset) and uses `[T, "null"]` only for a
 ///    required member that may be null. `Option<T>` makes utoipa emit
 ///    `[T, "null"]` (or `oneOf [null, T]`) everywhere; for members that are not
 ///    required, optional query parameters and optional request bodies, the
 ///    `null` is dropped.
-/// 3. **Closed objects.** Go marks each operation's top-level request body
+/// 4. **Closed objects.** Go marks each operation's top-level request body
 ///    schema `additionalProperties: true` (a body may carry members the
 ///    platform ignores, as serde here does) and every other object schema
 ///    `additionalProperties: false`; the component schemas get the same.
-/// 4. **No orphans of this document's own making.** Component schemas no
+/// 5. **No orphans of this document's own making.** Component schemas no
 ///    operation reaches (e.g. `ErrorResponse`, `PaginationParams`, the
 ///    shapes of the error responses dropped in 1) are removed.
 ///
@@ -255,7 +257,7 @@ fn reshape(doc: &mut Value) {
     mark_additional_properties(doc);
 }
 
-/// Rule 3: `additionalProperties` on the component object schemas.
+/// Rule 4: `additionalProperties` on the component object schemas.
 fn mark_additional_properties(doc: &mut Value) {
     let mut request_bodies = Vec::new();
     if let Some(paths) = doc.get("paths").and_then(Value::as_object) {
@@ -312,8 +314,16 @@ fn shape_operation(op: &mut Value) {
                     unwrap_nullable(schema);
                 }
             }
-            if let Some(schema) = param.get_mut("schema") {
-                strip_optional_nulls(schema);
+            // Go leaves `required` out unless true, and serialises query
+            // parameters unexploded (`a=x,y`, which is how this platform
+            // reads its CSV filters too).
+            if let Some(obj) = param.as_object_mut() {
+                if obj.get("required") == Some(&Value::Bool(false)) {
+                    obj.remove("required");
+                }
+                if obj.get("in").and_then(Value::as_str) == Some("query") {
+                    obj.insert("explode".to_string(), Value::Bool(false));
+                }
             }
         }
     }
@@ -332,15 +342,11 @@ fn shape_operation(op: &mut Value) {
 }
 
 /// Every object schema reachable inside `schema`: its members that are not
-/// required lose their `null`, and integers lose the `minimum: 0` of an
-/// unsigned Rust type (Go documents no bounds).
+/// required lose their `null`.
 fn strip_optional_nulls(schema: &mut Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
-    if obj.get("minimum") == Some(&json!(0)) {
-        obj.remove("minimum");
-    }
     let required: Vec<String> = obj
         .get("required")
         .and_then(Value::as_array)
@@ -489,6 +495,8 @@ mod tests {
         );
         let op = &doc["paths"]["/x"]["get"];
         assert_eq!(op["parameters"][0]["schema"]["type"], json!("string"));
+        assert_eq!(op["parameters"][0]["explode"], json!(false));
+        assert!(op["parameters"][0].get("required").is_none());
         assert!(op["responses"].get("404").is_none());
         assert_eq!(
             op["responses"]["default"]["content"]["application/json"]["schema"]["$ref"],

@@ -153,8 +153,10 @@ pub struct SyncSubscriptionInputRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
     #[serde(default)]
     pub data_only: bool,
@@ -190,8 +192,10 @@ pub struct SyncDispatchPoolInputRequest {
     pub description: Option<String>,
     /// Optional. `None` / omitted = concurrency-only (no rate limit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub rate_limit: Option<u32>,
     #[serde(default = "default_concurrency")]
+    #[schema(value_type = i32)]
     pub concurrency: u32,
 }
 

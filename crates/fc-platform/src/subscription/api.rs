@@ -115,10 +115,12 @@ pub struct CreateSubscriptionRequest {
 
     /// Timeout in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
 
     /// Maximum retry attempts
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
 
     /// Send raw event data only (absent: true, as Go's default)
@@ -159,9 +161,11 @@ pub struct UpdateSubscriptionRequest {
     pub connection_id: Option<String>,
 
     /// Timeout in seconds
+    #[schema(value_type = Option<i32>)]
     pub timeout_seconds: Option<u32>,
 
     /// Maximum retry attempts
+    #[schema(value_type = Option<i32>)]
     pub max_retries: Option<u32>,
 
     /// Event types (replace the existing bindings when given)

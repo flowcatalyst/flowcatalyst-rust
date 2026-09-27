@@ -81,7 +81,7 @@ pub struct CorsState {
 #[utoipa::path(
     post,
     path = "",
-    tag = "cors",
+    tag = "cors-origins",
     operation_id = "addCorsOrigin",
     request_body = CreateCorsOriginRequest,
     responses(
@@ -124,7 +124,7 @@ pub async fn create_cors_origin(
 #[utoipa::path(
     get,
     path = "",
-    tag = "cors",
+    tag = "cors-origins",
     operation_id = "listCorsOrigins",
     responses(
         (status = 200, description = "List of CORS origins", body = CorsOriginsListResponse)
@@ -149,7 +149,7 @@ pub async fn list_cors_origins(
 #[utoipa::path(
     get,
     path = "/allowed",
-    tag = "cors",
+    tag = "cors-origins",
     operation_id = "publicAllowedOrigins",
     responses(
         (status = 200, description = "Allowed origins list", body = AllowedOriginsResponse)
@@ -168,7 +168,7 @@ pub async fn get_allowed_origins(
 #[utoipa::path(
     get,
     path = "/{id}",
-    tag = "cors",
+    tag = "cors-origins",
     operation_id = "getCorsOrigin",
     params(
         ("id" = String, Path, description = "CORS origin ID")
@@ -198,7 +198,7 @@ pub async fn get_cors_origin(
 #[utoipa::path(
     delete,
     path = "/{id}",
-    tag = "cors",
+    tag = "cors-origins",
     operation_id = "deleteCorsOrigin",
     params(
         ("id" = String, Path, description = "CORS origin ID")

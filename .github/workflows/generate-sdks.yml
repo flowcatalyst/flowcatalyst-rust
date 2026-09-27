@@ -16,8 +16,9 @@ on:
       allow_rust_spec:
         description: >-
           Regenerate the TS/Laravel SDKs from this platform's spec. Off by
-          default: its operationIds differ from the published SDKs', so the
-          generated classes would be renamed (see docs/sdks.md).
+          default: its operationIds and schema names now match Go's, but the
+          generated code still differs (no huma $schema member, owner
+          decision #30, and the residuals in docs/sdks.md).
         required: false
         default: false
         type: boolean
@@ -47,8 +48,8 @@ jobs:
         if: (inputs.targets == 'all' || inputs.targets == 'typescript-sdk' || inputs.targets == 'laravel-sdk') && !inputs.allow_rust_spec
         run: |
           echo "::error::The SDKs' generated clients are the published ones (generated from the Go platform's spec)."
-          echo "::error::This platform's operationIds differ, so regenerating would break the SDKs' public API. See docs/sdks.md."
-          echo "::error::Run with targets=frontend-api, or set allow_rust_spec once the operationIds match."
+          echo "::error::This platform's spec carries Go's operationIds and schema names, but the generated code still differs (no \$schema member, #30; residuals in docs/sdks.md)."
+          echo "::error::Run with targets=frontend-api, or set allow_rust_spec after reviewing the generated diff."
           exit 1
 
       - uses: actions/checkout@v4

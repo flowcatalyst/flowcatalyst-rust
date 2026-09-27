@@ -170,6 +170,7 @@ pub struct AuditLogsQuery {
 
     /// Page size (default 50; a value outside 1..=200 means 50).
     #[serde(default = "default_page_size")]
+    #[param(value_type = Option<i64>)]
     pub page_size: i32,
 
     /// Filter by entity type
