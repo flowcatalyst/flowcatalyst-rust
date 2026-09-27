@@ -98,8 +98,11 @@ async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
                 j.scheduled_for, j.expires_at,
                 j.attempt_count, j.last_attempt_at, j.completed_at,
                 j.duration_millis, j.last_error, j.idempotency_key,
-                j.status IN ('SUCCESS', 'FAILED', 'IGNORED', 'CANCELLED', 'EXPIRED') AS is_completed,
-                j.status IN ('FAILED', 'IGNORED', 'CANCELLED', 'EXPIRED') AS is_terminal,
+                -- Go's projector: is_completed is the one success terminal
+                -- (COMPLETED), is_terminal any non-retryable end state.
+                -- SUCCESS and IGNORED are statuses nothing writes.
+                j.status = 'COMPLETED' AS is_completed,
+                j.status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED') AS is_terminal,
                 split_part(j.code, ':', 1),
                 NULLIF(split_part(j.code, ':', 2), ''),
                 NULLIF(split_part(j.code, ':', 3), ''),

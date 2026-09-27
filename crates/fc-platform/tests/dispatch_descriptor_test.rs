@@ -324,4 +324,51 @@ async fn a_directly_created_job_carries_the_descriptor_and_metadata_it_is_sent()
     );
     let mapped = find(&body, "code", "t:direct:job:mapped");
     assert!(mapped.get("descriptor").is_none(), "{mapped}");
+
+    // A status change re-projects the row; the read flags follow Go's:
+    // is_completed only for COMPLETED, is_terminal for any end state. The
+    // descriptor and metadata stay.
+    sqlx::query(
+        "UPDATE msg_dispatch_jobs SET updated_at = NOW() + INTERVAL '1 second', \
+         status = CASE code WHEN 't:direct:job:single' THEN 'COMPLETED' \
+                            WHEN 't:direct:job:listed' THEN 'FAILED' ELSE status END",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    project(pool).await;
+    let flags: Vec<(String, String, bool, bool, Option<String>)> = sqlx::query_as(
+        "SELECT code, status, is_completed, is_terminal, descriptor FROM msg_dispatch_jobs_read \
+         WHERE code IN ('t:direct:job:single', 't:direct:job:listed', 't:direct:job:mapped') \
+         ORDER BY code",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        flags,
+        vec![
+            (
+                "t:direct:job:listed".into(),
+                "FAILED".into(),
+                false,
+                true,
+                Some("Ship order 42".into())
+            ),
+            (
+                "t:direct:job:mapped".into(),
+                "PENDING".into(),
+                false,
+                false,
+                None
+            ),
+            (
+                "t:direct:job:single".into(),
+                "COMPLETED".into(),
+                true,
+                true,
+                Some("Rebuild the ledger".into())
+            ),
+        ]
+    );
 }
