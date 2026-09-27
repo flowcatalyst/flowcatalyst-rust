@@ -155,6 +155,7 @@ export type {
 	ListJobsFilters,
 	ListInstancesFilters,
 	FireRequest,
+	FireResponse,
 	InstanceLogRequest,
 	InstanceCompleteRequest,
 	PaginatedJobs,

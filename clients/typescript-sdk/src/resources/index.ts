@@ -37,6 +37,7 @@ export {
 	type ListJobsFilters,
 	type ListInstancesFilters,
 	type FireRequest,
+	type FireResponse,
 	type InstanceLogRequest,
 	type InstanceCompleteRequest,
 	type PaginatedJobs,

@@ -210,7 +210,7 @@ Past-tense matters — events are **facts**, not commands. `orders:fulfillment:s
 **The SDK sync endpoint does not upload JSON schemas for event types.** If you want schemas attached, use the admin UI or the per-resource API:
 
 ```ts
-await client.eventTypes().addSchema(eventTypeId, {
+await client.eventTypes().addSchemaVersion(eventTypeId, {
 	version: "1.0",
 	schema: { /* JSON Schema */ },
 });
@@ -705,7 +705,7 @@ console.log("Synced:", result.value.applicationCode);
 
 ### What about schemas?
 
-SDK sync doesn't upload JSON schemas. Use `client.eventTypes().addSchema(...)` for each schema, or the admin UI. Schemas evolve on their own cadence — conflating them with the event-type list makes both harder to reason about.
+SDK sync doesn't upload JSON schemas. Use `client.eventTypes().addSchemaVersion(...)` for each schema, or the admin UI. Schemas evolve on their own cadence — conflating them with the event-type list makes both harder to reason about.
 
 ### Can I sync across multiple applications from one deployment?
 

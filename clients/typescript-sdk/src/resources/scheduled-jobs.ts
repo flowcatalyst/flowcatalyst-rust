@@ -31,6 +31,8 @@ export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export interface ScheduledJob {
 	id: string;
 	clientId?: string | null;
+	/** The registered Application that owns this job, when set. */
+	applicationId?: string | null;
 	code: string;
 	name: string;
 	description?: string;
@@ -74,6 +76,8 @@ export interface ScheduledJobInstance {
 export interface ScheduledJobInstanceLog {
 	id: string;
 	instanceId: string;
+	scheduledJobId?: string;
+	clientId?: string | null;
 	level: LogLevel;
 	message: string;
 	metadata?: unknown;
@@ -85,7 +89,10 @@ export interface PaginatedJobs {
 	page: number;
 	size: number;
 	total: number;
+	/** Copied from the platform's `total_pages`. */
 	totalPages: number;
+	/** The platform's own member name for `totalPages`. */
+	total_pages?: number;
 }
 
 export interface PaginatedInstances {
@@ -93,7 +100,18 @@ export interface PaginatedInstances {
 	page: number;
 	size: number;
 	total: number;
+	/** Copied from the platform's `total_pages`. */
 	totalPages: number;
+	/** The platform's own member name for `totalPages`. */
+	total_pages?: number;
+}
+
+/** Response of `fire`: the new instance's id. */
+export interface FireResponse {
+	/** The new instance's id (same as `instanceId`). */
+	id: string;
+	instanceId?: string;
+	scheduledJobId?: string;
 }
 
 export interface CreateScheduledJobRequest {
@@ -106,7 +124,9 @@ export interface CreateScheduledJobRequest {
 	crons: string[];
 	timezone?: string;
 	payload?: unknown;
+	/** Required by the platform; `create` sends `false` when omitted. */
 	concurrent?: boolean;
+	/** Required by the platform; `create` sends `false` when omitted. */
 	tracksCompletion?: boolean;
 	timeoutSeconds?: number;
 	deliveryMaxAttempts?: number;
@@ -136,8 +156,14 @@ export interface ListJobsFilters {
 
 export interface ListInstancesFilters {
 	status?: InstanceStatus;
+	/**
+	 * @deprecated The platform's instance list has no `triggerKind` filter
+	 * and ignores it.
+	 */
 	triggerKind?: TriggerKind;
+	/** @deprecated The platform's instance list has no `from` filter and ignores it. */
 	from?: string;
+	/** @deprecated The platform's instance list has no `to` filter and ignores it. */
 	to?: string;
 	page?: number;
 	size?: number;
@@ -149,6 +175,7 @@ export interface FireRequest {
 
 export interface InstanceLogRequest {
 	message: string;
+	/** Required by the platform; `logForInstance` sends `INFO` when omitted. */
 	level?: LogLevel;
 	metadata?: unknown;
 }
@@ -169,16 +196,25 @@ export class ScheduledJobsResource {
 		this.client = client;
 	}
 
-	/** Create a new scheduled job. Returns the new job's id. */
+	/**
+	 * Create a new scheduled job. Returns the new job's id.
+	 *
+	 * The platform requires `concurrent` and `tracksCompletion`; each is
+	 * sent as `false` when omitted.
+	 */
 	create(req: CreateScheduledJobRequest): ResultAsync<{ id: string }, SdkError> {
-		return this.fetch<{ id: string }>("POST", PATH, req);
+		return this.fetch<{ id: string }>("POST", PATH, {
+			...req,
+			concurrent: req.concurrent ?? false,
+			tracksCompletion: req.tracksCompletion ?? false,
+		});
 	}
 
 	list(filters: ListJobsFilters = {}): ResultAsync<PaginatedJobs, SdkError> {
 		return this.fetch<PaginatedJobs>(
 			"GET",
 			`${PATH}${qs(filters as Record<string, unknown>)}`,
-		);
+		).map(withTotalPages);
 	}
 
 	get(id: string): ResultAsync<ScheduledJob, SdkError> {
@@ -217,8 +253,8 @@ export class ScheduledJobsResource {
 	}
 
 	/** Manually fire a scheduled job. Returns the new instance's id. */
-	fire(id: string, req: FireRequest = {}): ResultAsync<{ id: string }, SdkError> {
-		return this.fetch<{ id: string }>(
+	fire(id: string, req: FireRequest = {}): ResultAsync<FireResponse, SdkError> {
+		return this.fetch<FireResponse>(
 			"POST",
 			`${PATH}/${encodeURIComponent(id)}/fire`,
 			req,
@@ -232,7 +268,7 @@ export class ScheduledJobsResource {
 		return this.fetch<PaginatedInstances>(
 			"GET",
 			`${PATH}/${encodeURIComponent(jobId)}/instances${qs(filters as Record<string, unknown>)}`,
-		);
+		).map(withTotalPages);
 	}
 
 	getInstance(instanceId: string): ResultAsync<ScheduledJobInstance, SdkError> {
@@ -260,7 +296,7 @@ export class ScheduledJobsResource {
 		return this.fetch<void>(
 			"POST",
 			`${PATH}/instances/${encodeURIComponent(instanceId)}/log`,
-			req,
+			{ ...req, level: req.level ?? "INFO" },
 		);
 	}
 
@@ -313,6 +349,16 @@ export class ScheduledJobsResource {
 			return { data, response };
 		});
 	}
+}
+
+/** Fill `totalPages` from the platform's `total_pages`. */
+function withTotalPages<T extends { totalPages: number; total_pages?: number }>(
+	page: T,
+): T {
+	if (page.totalPages === undefined && page.total_pages !== undefined) {
+		return { ...page, totalPages: page.total_pages };
+	}
+	return page;
 }
 
 /** Build a `?key=value&...` querystring from a flat object. Skips nullish. */

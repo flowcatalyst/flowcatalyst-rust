@@ -36,11 +36,12 @@ export interface MyApplication {
 	id: string;
 	code: string;
 	name: string;
-	description: string | null;
-	iconUrl: string | null;
-	baseUrl: string | null;
-	website: string | null;
-	logoMimeType: string | null;
+	/** The optional members below are omitted by the platform when unset. */
+	description?: string | null;
+	iconUrl?: string | null;
+	baseUrl?: string | null;
+	website?: string | null;
+	logoMimeType?: string | null;
 }
 
 /**

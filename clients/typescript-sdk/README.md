@@ -72,7 +72,7 @@ result.match(
   (error) => console.error('Error:', error.type, error.message),
 );
 
-// Create a new event type
+// Create a new event type (creates answer `{ id }`; `get(id)` reads the entity)
 const created = await client.eventTypes().create({
   code: 'orders:fulfillment:order:created',
   name: 'Order Created',
@@ -117,7 +117,7 @@ router host for `client.router()`, defaults to `baseUrl`).
 The API surface hangs off resource accessors, each wrapping the generated
 typed client with auth, retries, and neverthrow results:
 
-- `client.eventTypes()` — `list()`, `get(id)`, `getByCode(code)`, `create(...)`, `update(...)`, `addSchemaVersion(...)`, `archive(id)`, `sync(...)`
+- `client.eventTypes()` — `list()`, `get(id)`, `getByCode(code)`, `create(...)`, `update(...)`, `addSchemaVersion(...)`, `delete(id)`, `sync(...)` (`archive(id)` is deprecated: the platform has no archive route for event types, so it deletes)
 - `client.subscriptions()`, `client.dispatchPools()`, `client.connections()`, `client.processes()`
 - `client.roles()`, `client.permissions()`, `client.applications()`, `client.clients()`, `client.principals()`, `client.me()`
 - `client.scheduledJobs()`, `client.auditLogs()`, `client.router()`, `client.definitions()`
