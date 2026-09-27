@@ -69,7 +69,7 @@ Each role is a flag, with Go's names and truth table (`1/true/yes/on`, `0/false/
 | `FC_STREAM_PROCESSOR_ENABLED` | `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor + fan-out + partition manager |
 | `FC_OUTBOX_ENABLED` | `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the embedded outbox processor (uncommon — outbox usually runs as application sidecar) |
 | `FC_MCP_ENABLED` | — | `false` | Run the read-only MCP server on its own listener ([MCP](#mcp-server-fc-server-with-fc_mcp_enabledtrue)) |
-| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the WASM function host ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
+| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the function host: WASI components and JS bundles ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
 
 ---
 
@@ -235,7 +235,7 @@ Locally: `fc-dev mcp` (stdio or `--http`) or `fc-dev --mcp`.
 
 ## Function host (`fc-server` with `FC_FUNCTION_HOST_ENABLED=true`)
 
-The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). It reads its own `FC_FN_*` environment:
+The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). It loads WASI 0.2 components (`runtime: component` / `wasm`) and, with fc-server's default `js` cargo feature, JS bundles in V8 isolates (`runtime: js`, `crates/fc-fnhost-js`); its heartbeat reports the runtimes it loads (`["component","js","wasm"]`). It reads its own `FC_FN_*` environment:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -245,13 +245,14 @@ The WASM function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost
 | `FC_FN_HOST_ID` | `<hostname>-<random>` | The id its heartbeats carry |
 | `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` | Artifact signature policy (`off` only with `FLOWCATALYST_DEV_MODE=true`) |
 | `FC_FN_CACHE_DIR` | `<tmp>/fc-fn-cache` | Artifact and compiled-module cache |
-| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits |
+| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_EXECUTING` | `200` / `512` / cores − 1 | Capacity limits. `FC_FN_MAX_EXECUTING` sizes each runtime's own threads: the WASM guests' runtime and the JS workers (so a host busy with both kinds can execute up to twice that many at once) |
 | `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
 | `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown |
 | `FC_FN_PORT` | `8080` host only / `8095` beside other roles | Private function listener (`/functions/<address>/…`) |
 | `FC_FN_PUBLIC_PORT` | `8081` host only / `8096` beside other roles | Public listener for claimed hostnames (`off` disables) |
 | `FC_METRICS_PORT` (host only) / `FC_FN_METRICS_PORT` (beside other roles) | `9090` / `9091` | The host's `/health`, `/ready`, `/metrics` |
 | `FC_EXIT_AFTER_START` | `false` | Host only: exit 0 right after start-up |
+| `FC_FN_JS_SNAPSHOT` | `true` on Linux, `false` elsewhere | JS runtime: make each request's isolate from V8's base snapshot (≈0.7 ms) rather than from scratch (≈2.5 ms). Off by default outside Linux: on macOS, disposing thousands of snapshot-made isolates aborted the process (`docs/function-runner-density.md` §9.1) |
 
 **Host only** (this flag on, every other role off — `FC_PLATFORM_ENABLED=false` too): `fc-server` is exactly the former `fc-fnhost` daemon — no database, none of `fc-server`'s own listeners, exit 2 naming every bad variable. **Beside other roles** the host runs in the process on its own ports (a port another listener of the process holds refuses the boot), starts once the API listener is bound, and drains first at shutdown.
 

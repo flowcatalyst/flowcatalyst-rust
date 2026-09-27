@@ -77,6 +77,7 @@ fc-dev upgrade --force   # reinstall even if current
 | `fc-dev outbox init` | One-time setup: writes `FC_OUTBOX_*` keys to the project's `.env`. |
 | `fc-dev outbox poll` | The earlier form of the poller, from the keys `init` writes. |
 | `fc-dev mcp` | Read-only MCP server for LLM clients (stdio or HTTP). `fc-dev --mcp` runs it inside the dev server. |
+| `fc-dev fn` | Functions against the running fc-dev's host: `init --lang rust\|ts\|js`, `build`, `publish`, `deploy`, `promote`, `invoke`, `validate`, `config`, `secret` (see [functions.md](functions.md)). |
 | `fc-dev upgrade` | Replace the running binary with the latest GitHub release. |
 
 `fc-dev --help` and `fc-dev <subcommand> --help` are authoritative for
@@ -212,7 +213,7 @@ Go/Java-migrated dev cluster (goose 54, Flyway V17): fc-dev applied
 |---|---|
 | `CREATE TABLE _schema_migrations` | fc-dev's tracker; neither reads it |
 | `ALTER TABLE aud_logs ALTER COLUMN entity_id TYPE VARCHAR(100)` (was 17) | Java's V18 is the same statement; a wider column accepts everything Go writes |
-| `fn_functions_runtime_check` re-created allowing `COMPONENT` besides `JVM`, `WASM` | widening only; rows Java writes still pass |
+| `fn_functions_runtime_check` re-created allowing `COMPONENT` besides `JVM`, `WASM` (037), then `JS` too (056) | widening only; rows Java writes still pass |
 | `ALTER TABLE fn_hosts ADD COLUMN IF NOT EXISTS runtimes JSONB` | nullable; Java's inserts leave it NULL; no Go/Java migration adds the column |
 | `CREATE TABLE/INDEX IF NOT EXISTS queue_messages…`, monthly partitions `CREATE TABLE IF NOT EXISTS … PARTITION OF` | no-ops there (already present) |
 

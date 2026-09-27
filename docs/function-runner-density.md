@@ -391,3 +391,125 @@ The bar comes from the language assessment.
 - In the spike's component call path, the handler runs in its own task and the caller awaits the outparam, as
   `wasmtime serve` does. Joining the handler and the response in one task worked for the Rust guest but hung
   StarlingMonkey.
+
+---
+
+## 9. The JS runtime as built (H9, `runtime: js`, 2026-09-27)
+
+Owner decisions 6 and 27 chose V8 isolates (`deno_core`) for JS/TS functions. `crates/fc-fnhost-js` is the result
+(`docs/function-runner-plan.md` H9). It is **not** the spike's shape (e), one long-lived isolate per function: it is
+the `wasi:http` model, **a fresh isolate per request**. The bundle is compiled from a V8 code cache made at load, and
+its top-level code runs in every isolate.
+
+**Versions.** `deno_core =0.412.0`, V8 150.4 (the prebuilt static library `librusty_v8.a`: 147 MB on macOS arm64,
+185 MB on Linux arm64, 187 MB on Linux x86_64; a 39 MB download per target, cached under `target/`).
+
+### 9.1 Two findings that shaped it
+
+1. **No snapshot per version.** V8's snapshot creator writes the read-only heap space V8 shares between all isolates
+   of a process. Creating one while other isolates ran crashed the host (a request isolate allocating into
+   `ReadOnlySpace`, `StringForwardingTable` checks failing, a protection fault in
+   `ReadOnlySpace::RepairFreeSpacesBeforeSerialization` even for a creator started from an existing snapshot). A host
+   that loads a function while serving others always has isolates running, so it makes at most one snapshot, the
+   **base** (deno_core's JS plus the bootstrap, warmed by one request so its bytecode is in it), before any other
+   isolate exists. The price is the bundle's top-level code in every request (§9.3).
+2. **No snapshot at all on macOS.** Creating and disposing isolates from a snapshot aborts the process on macOS arm64
+   in most runs of 2,000-3,000 isolates (`pointer being freed was not allocated`, `BackingStore::~BackingStore` from
+   `Heap::TearDown`). It reproduces with deno_core alone and its own snapshot, with V8's default allocator and with
+   our platform; never without a snapshot (0 of 32 runs) and never on Linux arm64 (0 of 26). So isolates are made
+   from the base snapshot on **Linux** (0.7 ms) and without one elsewhere (2.5 ms: deno_core's start-up and the
+   bootstrap each time); `FC_FN_JS_SNAPSHOT=true|false` overrides. Production hosts run Linux; macOS is fc-dev's.
+
+Also: deno_core's V8 platform lets a delayed V8 task outlive its isolate (a tokio task keeps the queue it lands in),
+and a task's destructor reaches into its isolate. With isolates per request that is every request that allocates, so
+`fc-fnhost-js` runs its own platform (`src/platform.rs`): immediate tasks run on the isolate's thread at each poll,
+delayed ones are held, and everything left is destroyed before the isolate is.
+
+### 9.2 Method
+
+`crates/fc-fnhost-js/tests/js_density.rs` (ignored tests), release:
+
+```
+cargo test --release -p fc-fnhost-js --test js_density -- --ignored --nocapture --test-threads 1
+```
+
+- *Loaded functions*: N copies of a bundle as distinct warm functions in one host (`limits.wasmMemoryMb` 32), memory
+  after N=100 and after N=1000; the slope is the per-function cost. macOS: `proc_pid_rusage` (`ri_resident_size`,
+  `ri_phys_footprint`) as in §1; Linux: `/proc/self/status` `VmRSS` and `RssAnon` (anonymous: the analogue of fp).
+- *In flight*: 64 requests to one function, each awaiting a 1.5 s timer (64 isolates alive), against the same
+  process idle.
+- *Latency*: the phases of one request in process (no HTTP); `invoke` in process (worker hand-off and watchdog
+  included); and through the real listener, loopback HTTP included, `FC_FN_MAX_EXECUTING=4`.
+- *Bundles*: `hello.mjs` (the TypeScript template built by esbuild, 988 B; code cache 1,320 B), and the same padded to
+  256 KiB and 1 MiB with generated exported functions, the way a bundle with inlined npm dependencies grows.
+- *Machines*: Linux arm64 in Docker Desktop's VM on the M4 Pro of §1 (14 vCPUs, 4 KiB pages, `rust:1-bookworm`): the
+  production configuration (base snapshot). And the M4 Pro itself (macOS 15.6, 16 KiB pages): fc-dev's
+  configuration (no snapshot), at low load (load average ≈ 5). One run per point: treat absolute latencies as
+  indicative; H7 should redo them on dedicated hosts.
+
+### 9.3 Numbers
+
+**Memory**
+
+| | Linux arm64 (snapshot), RSS / anonymous | macOS arm64 (no snapshot), RSS / fp |
+|---|---:|---:|
+| the engine (V8 platform, base snapshot if any, 4 workers): process delta | 18.6 / 3.6 MiB | 4.8 / 1.0 MiB |
+| **per loaded function, 1 KiB bundle** (slope 100→1000) | **24 / 24 KiB** | 29 / 29 KiB |
+| per loaded function, 256 KiB bundle | 546 / 546 KiB | 457 / 226 KiB |
+| **per request in flight** (one live isolate) | **1.84 MiB** | 3.4 MiB |
+
+- An idle JS function holds its bundle, its main module and its code cache, nothing else: **≈ 43,000 idle 1 KiB
+  functions per GiB** on Linux, ≈ 1,900 per GiB at 256 KiB each. The WASM component is ≈ 7,200 per GiB anonymous
+  from `.cwasm` (§2.1). A JS function's idle cost is about twice its bundle.
+- A request in flight costs an isolate: 1.84 MiB from the snapshot (the spike measured 1.65 MB), 3.4 MiB without (the
+  spike: 3.5 MB). Memory scales with **concurrent requests**, not loaded functions: 1,000 in flight ≈ 1.8 GiB.
+  `FC_FN_MAX_CONCURRENCY` (512 by default) and each function's `maxConcurrency` bound it.
+
+**One request's phases**, in process (1 KiB bundle, 1,800 samples):
+
+| phase | Linux, snapshot: p50 / p99 | macOS, no snapshot: p50 / p99 | macOS, snapshot (`FC_FN_JS_SNAPSHOT=true`) |
+|---|---:|---:|---:|
+| create the isolate | 0.74 / 0.85 ms | 2.54 / 3.04 ms | 0.68 / 0.84 ms |
+| load the bundle from its code cache, run its top-level code | 0.045 / 0.066 ms | 0.078 / 0.110 ms | 0.045 / 0.087 ms |
+| the call (dispatcher, `Request`, handler, `Response`) | 0.13 / 0.28 ms | 0.34 / 0.44 ms | 0.11 / 0.28 ms |
+| teardown (after the answer is sent) | 0.06 / 0.16 ms | 0.07 / 0.15 ms | 0.06 / 0.17 ms |
+| `invoke` in process (hand-off to a worker, watchdog) | 1.07 / 1.49 ms | 2.96 / 3.53 ms | |
+
+**Through the listener** (loopback HTTP included):
+
+| bundle | lazy first call (check + code cache + request) | steady c=1 p50 / p99 | c=16, 4 workers |
+|---|---:|---:|---:|
+| 1 KiB, Linux | 3.1 ms | 1.09 / 1.41 ms | 4,015 calls/s |
+| 256 KiB, Linux | 8.1 ms | 1.81 / 2.24 ms | 2,272 calls/s |
+| 1 MiB, Linux | 23.2 ms | 4.39 / 5.84 ms | 870 calls/s |
+| 1 KiB, macOS (no snapshot) | 55 ms¹ | 3.24 / 3.80 ms | 1,257 calls/s |
+| 256 KiB, macOS | 12.1 ms | 4.23 / 4.92 ms | 958 calls/s |
+| 1 MiB, macOS | 29.4 ms | 6.97 / 7.59 ms | 527 calls/s |
+| *WASM `echo` component, Linux, same VM* | *19.8 ms compiled, 1.8 ms from `.cwasm`* | *0.12 / 0.19 ms* | *37,986 calls/s* |
+
+¹ The first function of the process: V8's first isolate without a snapshot.
+
+- **About 1 ms of work per request for a small bundle on Linux**, three quarters of it creating the isolate. The
+  spike's warm call (2.3 µs) is what a *reused* isolate costs; a fresh isolate per request is what the other ~1 ms
+  buys. A WASM component is ≈ 10× cheaper per request.
+- **A bundle's size is paid per request**: its top-level code runs in every isolate (on Linux, a 256 KiB bundle of
+  declarations costs about +0.7 ms, 1 MiB about +3.3 ms). A snapshot per version would remove this; the read-only-space
+  crash rules it out in-process today (§9.1).
+
+### 9.4 Build and binary
+
+| fc-server, release, macOS arm64 | without `js` | with `js` (default) | difference |
+|---|---:|---:|---:|
+| binary | 100.8 MB | 160.1 MB | +59.3 MB |
+| stripped | 83.3 MB | 127.2 MB | **+43.8 MB** |
+| gzip of stripped | 33.0 MB | 49.1 MB | **+16.1 MB** |
+
+- Build time: a clean release build of fc-server without `js` took 17 m 46 s; adding `js` then took 11 m 47 s
+  (deno_core, the V8 link, and the crates whose features unify differently), both on a heavily loaded machine. A clean
+  debug build of `fc-fnhost-js`'s tests took 5 m 19 s on macOS and 2 m 31 s on Linux arm64 (Docker).
+- V8's prebuilt archive is fetched by the `v8` crate's build script from GitHub at build time (`RUSTY_V8_ARCHIVE` /
+  `RUSTY_V8_MIRROR` point it at a local file or a mirror). Prebuilts exist for macOS, Linux (glibc) and Windows on
+  x86_64 and arm64; **not for musl**.
+- Verified: macOS arm64 (all tests), Linux arm64 (all tests, Docker), Linux x86_64 (all tests serially under
+  emulation; three timing assertions failed in parallel under emulation and were widened). Windows is untested.
+- fc-server and fc-dev without the `js` feature carry no V8.
