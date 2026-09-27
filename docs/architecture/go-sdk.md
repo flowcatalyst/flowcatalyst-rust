@@ -3,7 +3,7 @@
 Design document for the fourth FlowCatalyst SDK, alongside `crates/fc-sdk`
 (Rust), `clients/typescript-sdk`, and `clients/laravel-sdk`. Lives at
 `clients/go-sdk/`. Module path:
-`github.com/flowcatalyst/flowcatalyst/clients/go-sdk`.
+`github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`.
 
 Status: Phases 1 + 2 + 3 + client-parity rewrite landed. Phase 1 —
 `usecase`, `usecasepgx`, `usecasesql`, `outboxpgx`, `outboxsql`,

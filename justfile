@@ -486,7 +486,15 @@ release-java-sdk bump:
     set -euo pipefail
     just _release-sdk java "{{ bump }}"
 
-# Shared SDK-release driver. `kind` is `ts`, `laravel` or `java`.
+# Bumps VERSION, tags `clients/go-sdk/vX.Y.Z` (Go's subdirectory-module
+# tag form), pushes. The Go module proxy serves it from this repo.
+# Cut a Go SDK release (`patch`, `minor`, `major`, or `X.Y.Z`)
+release-go-sdk bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just _release-sdk go "{{ bump }}"
+
+# Shared SDK-release driver. `kind` is `ts`, `laravel`, `java` or `go`.
 [private]
 _release-sdk kind bump:
     #!/usr/bin/env bash
@@ -494,13 +502,19 @@ _release-sdk kind bump:
 
     manifest=""
     manifest_pom=""
+    tag_prefix=""
     case "{{ kind }}" in
         ts)      prefix="typescript-sdk"; manifest="clients/typescript-sdk/package.json" ;;
         laravel) prefix="laravel-sdk" ;;
         java)    prefix="java-sdk";       manifest_pom="clients/java-sdk/pom.xml" ;;
+        # A Go module in a subdirectory is versioned by tags named after the
+        # subdirectory (`clients/go-sdk/vX.Y.Z`); no mirror, the proxy
+        # fetches the subdirectory.
+        go)      prefix="go-sdk";         tag_prefix="clients/go-sdk" ;;
         *) echo "✗ unknown SDK kind: {{ kind }}" >&2; exit 1 ;;
     esac
     version_file="clients/$prefix/VERSION"
+    tag_prefix="${tag_prefix:-$prefix}"
 
     if [ -n "$(git status --porcelain)" ]; then
         echo "✗ Working tree is dirty. Commit or stash first." >&2
@@ -513,8 +527,8 @@ _release-sdk kind bump:
     file_version="$(tr -d '[:space:]' < "$version_file")"
 
     # Highest existing $prefix/vX.Y.Z tag (plain semver only).
-    tag_version="$(git tag --list "$prefix/v*" \
-        | sed "s|^$prefix/v||" \
+    tag_version="$(git tag --list "$tag_prefix/v*" \
+        | sed "s|^$tag_prefix/v||" \
         | awk -F. '/^[0-9]+\.[0-9]+\.[0-9]+$/ { printf "%010d%010d%010d %s\n", $1, $2, $3, $0 }' \
         | sort -r | awk 'NR==1 {print $2}')"
 
@@ -553,8 +567,8 @@ _release-sdk kind bump:
         echo "✗ Computed version $new equals current. Nothing to bump." >&2
         exit 1
     fi
-    if git rev-parse -q --verify "refs/tags/$prefix/v$new" >/dev/null; then
-        echo "✗ Tag $prefix/v$new already exists." >&2
+    if git rev-parse -q --verify "refs/tags/$tag_prefix/v$new" >/dev/null; then
+        echo "✗ Tag $tag_prefix/v$new already exists." >&2
         exit 1
     fi
 
@@ -600,7 +614,7 @@ _release-sdk kind bump:
     git --no-pager diff --stat -- "$version_file" $manifest $manifest_pom
     echo ""
     echo "  Did you move the CHANGELOG's 'Unreleased' section under v$new?"
-    read -r -p "Commit '$prefix v$new', tag $prefix/v$new, and push? [y/N] " confirm || confirm="n"
+    read -r -p "Commit '$prefix v$new', tag $tag_prefix/v$new, and push? [y/N] " confirm || confirm="n"
     case "$confirm" in
         y|Y|yes|YES) ;;
         *)
@@ -612,7 +626,7 @@ _release-sdk kind bump:
 
     git add -- "$version_file" $manifest $manifest_pom
     git commit -m "$prefix v$new"
-    git tag "$prefix/v$new"
+    git tag "$tag_prefix/v$new"
     # JitPack (the Java SDK's distribution, jitpack.yml) builds a git ref and
     # uses its name as the Maven version, which cannot contain '/': the Java
     # release also gets a slash-free tag, java-sdk-vX.Y.Z, on the same commit.
@@ -621,12 +635,15 @@ _release-sdk kind bump:
         jitpack_tag="$prefix-v$new"
         git tag "$jitpack_tag"
     fi
-    git push origin HEAD "$prefix/v$new" $jitpack_tag
+    git push origin HEAD "$tag_prefix/v$new" $jitpack_tag
 
     echo ""
     echo "✓ Released $prefix v$new"
     echo ""
-    if [ -n "$jitpack_tag" ]; then
+    if [ "{{ kind }}" = "go" ]; then
+        echo "  go get github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk@v$new"
+        echo "  Docs:      https://pkg.go.dev/github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk@v$new"
+    elif [ -n "$jitpack_tag" ]; then
         echo "  JitPack:   https://jitpack.io/#flowcatalyst/flowcatalyst-rust/$jitpack_tag"
         echo "             (the first request for that version builds it)"
     else

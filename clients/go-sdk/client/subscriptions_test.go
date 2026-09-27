@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
 )
 
 // Source is a plain string, not a closed enum — a FUNCTION-sourced

@@ -3,7 +3,7 @@ package usecasesql
 import (
 	"context"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecase"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecase"
 )
 
 // Sink is the destination for domain events and audit logs. The

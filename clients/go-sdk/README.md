@@ -4,7 +4,7 @@ Go SDK for the FlowCatalyst platform. Sibling of `crates/fc-sdk` (Rust),
 `clients/typescript-sdk`, and `clients/laravel-sdk`. Module path:
 
 ```
-github.com/flowcatalyst/flowcatalyst/clients/go-sdk
+github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk
 ```
 
 Wire-compatible with the other three SDKs — a token, event payload,
@@ -126,8 +126,8 @@ Apps that talk to Postgres via pgx (most performance-sensitive choice):
 
 ```go
 import (
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecasepgx"
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/outboxpgx"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecasepgx"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/outboxpgx"
 )
 
 sink := outboxpgx.NewSink(outboxpgx.Config{
@@ -145,8 +145,8 @@ Apps that need MySQL (or want one code path across drivers via
 
 ```go
 import (
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecasesql"
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/outboxsql"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecasesql"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/outboxsql"
 )
 
 sink := outboxsql.NewSink(outboxsql.Config{ /* ... */ })
@@ -164,8 +164,8 @@ For server-side apps calling the platform with a confidential client:
 
 ```go
 import (
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/auth"
-    "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/auth"
+    "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
 )
 
 cc := auth.NewClientCredentialsProvider(auth.ClientCredentialsConfig{

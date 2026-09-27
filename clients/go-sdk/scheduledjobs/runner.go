@@ -42,8 +42,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/lock"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/lock"
 )
 
 // DefaultLockTTL is how long a job's serialisation lock is held when

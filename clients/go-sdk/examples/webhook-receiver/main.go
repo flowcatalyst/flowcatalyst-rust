@@ -25,7 +25,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/webhook"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/webhook"
 )
 
 func main() {

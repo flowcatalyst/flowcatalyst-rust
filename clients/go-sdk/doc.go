@@ -1,6 +1,6 @@
 // Package gosdk is the entry-point overview for the FlowCatalyst Go
 // SDK. There is no Go code in the root — this file exists so that
-// `go doc github.com/flowcatalyst/flowcatalyst/clients/go-sdk`
+// `go doc github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`
 // returns a useful map of what's where.
 //
 // The SDK has byte-for-byte wire parity with the Rust, TypeScript,

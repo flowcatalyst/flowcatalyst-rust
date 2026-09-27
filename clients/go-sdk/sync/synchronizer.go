@@ -3,7 +3,7 @@ package sync
 import (
 	"context"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
 )
 
 // Synchronizer orchestrates per-category sync calls against a

@@ -23,7 +23,7 @@ non-2xx response. There are no sentinels; all branching is by
 status code on the typed value.
 
 ```go
-import "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
+import "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
 
 err := c.Principals().Update(ctx, id, &req)
 var apiErr *client.APIError
@@ -52,7 +52,7 @@ functions to build them in `Validate` / `Authorize` / `Execute`:
 `Internal`.
 
 ```go
-import "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecase"
+import "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecase"
 
 event, err := usecase.Into(usecase.Run(ctx, useCase, cmd, ec))
 if err != nil {

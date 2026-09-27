@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/tsid"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecase"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecasesql"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/tsid"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecase"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecasesql"
 )
 
 // Config configures the outbox Sink.

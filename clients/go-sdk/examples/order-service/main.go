@@ -65,10 +65,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/outboxpgx"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/tsid"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecase"
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/usecasepgx"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/outboxpgx"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/tsid"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecase"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/usecasepgx"
 )
 
 // ───────────────────────────────────────────────────────────────────

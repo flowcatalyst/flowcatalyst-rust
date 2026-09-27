@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The module path is now `github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`
+(it named the Go platform's repo, where `go get` could not resolve it).
+Releases are tagged `clients/go-sdk/vX.Y.Z` (`just release-go-sdk`).
+
 The `client` package now follows the Go platform's API contract
 (`flowcatalyst-go` `api/openapi.lock.json`). The SDK has not been
 published, so the breaking changes below affect no released version.

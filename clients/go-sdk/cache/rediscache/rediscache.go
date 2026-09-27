@@ -16,7 +16,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/cache"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/cache"
 )
 
 // Cache is a Redis-backed implementation of cache.Cache. Pass any

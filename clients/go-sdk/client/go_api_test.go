@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/client"
 )
 
 // newStatusSrv is newMockSrv with an explicit status code (e.g. 204).

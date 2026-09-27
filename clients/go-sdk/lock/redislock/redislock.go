@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/lock"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/lock"
 )
 
 // DefaultPrefix prepended to every lock key when New is used.

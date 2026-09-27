@@ -24,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/lock"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/lock"
 )
 
 // DefaultTable is the lock table name when New is used.

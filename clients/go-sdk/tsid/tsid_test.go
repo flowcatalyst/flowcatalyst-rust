@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/flowcatalyst/flowcatalyst/clients/go-sdk/tsid"
+	"github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/tsid"
 )
 
 func TestGenerateTypedID(t *testing.T) {

@@ -13,7 +13,7 @@
 // a Success without going through a UnitOfWork.
 package usecase
 
-import "github.com/flowcatalyst/flowcatalyst/clients/go-sdk/internal/sealed"
+import "github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk/internal/sealed"
 
 // Result is the outcome of a use case execution. It's a sealed sum with
 // exactly two implementors: success[E] (constructible only via Success)

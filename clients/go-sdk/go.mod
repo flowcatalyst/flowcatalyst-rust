@@ -1,4 +1,4 @@
-module github.com/flowcatalyst/flowcatalyst/clients/go-sdk
+module github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk
 
 go 1.24
 

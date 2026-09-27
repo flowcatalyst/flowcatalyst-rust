@@ -12,7 +12,7 @@ switch.
 | Laravel | `flowcatalyst/laravel-sdk` (composer) | `github.com/flowcatalyst/laravel-sdk`, a split mirror tagged `vX.Y.Z` | Composer `vcs` repository on that GitHub repo; **not on Packagist** (packagist.org 404s) | **0.10.26** (2026-09-22) | `flowcatalyst-go` tag `laravel-sdk/v0.10.26` |
 | TypeScript | `@flowcatalyst/sdk` | `github.com/flowcatalyst/typescript-sdk`, a split mirror with a built `dist/` commit, tagged `vX.Y.Z` | git dependency on that repo; **not on the npm registry** (`npm view` 404s) | **0.11.27** (2026-09-22) | `flowcatalyst-go` tag `typescript-sdk/v0.11.27` |
 | Java | `io.flowcatalyst:flowcatalyst-sdk` (Maven) | **nowhere** yet: source tags only. From this repo: **JitPack** (owner decision; set up, see "Java SDK on JitPack") | building from source | **0.0.10** | `flowcatalyst-go` tag `java-sdk/v0.0.10` |
-| Go | module `github.com/flowcatalyst/flowcatalyst/clients/go-sdk` | **never published** | n/a | none | exists only in this repo |
+| Go | module `github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk` | **never published** | n/a | none | exists only in this repo |
 | Rust | crate `fc-sdk` | **never published** (workspace version, no crates.io metadata) | git dependency on this repo | none | this repo |
 
 The mechanism in `flowcatalyst-go` is `make release-<sdk> BUMP=…`, which runs `scripts/release.sh`.
@@ -383,26 +383,19 @@ use. The repository must stay public for JitPack to build it without a token.
 
 ### Go SDK module path
 
-`clients/go-sdk/go.mod` declares **`module github.com/flowcatalyst/flowcatalyst/clients/go-sdk`**,
-and every package in it imports itself under that path (e.g.
-`github.com/flowcatalyst/flowcatalyst/clients/go-sdk/client`). That names the Go platform's repo,
-`github.com/flowcatalyst/flowcatalyst`, which has no `clients/go-sdk`, so `go get` cannot resolve
-it. Today the SDK is usable only with a `replace` directive pointing at a checkout. It has never
-been published, so a rename breaks no one. Options (owner decision pending; nothing changed here):
+**Decided (owner, 2026-09-27): a subdirectory module in this repo.**
+`clients/go-sdk/go.mod` declares `module github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`,
+and every package imports itself under that path (e.g. `…/flowcatalyst-rust/clients/go-sdk/client`).
+Before this it named the Go platform's repo, which has no `clients/go-sdk`, so `go get` could not
+resolve it; it had never been published, so the rename broke no one.
 
-1. **Subdirectory module in this repo:** `module github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk`.
-   Consumers `go get github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk@v0.1.0` and import
-   `…/flowcatalyst-rust/clients/go-sdk/client`. Go requires release tags named after the
-   subdirectory, `clients/go-sdk/vX.Y.Z` (not `go-sdk/vX.Y.Z` like the other SDKs). No mirror or
-   workflow is needed; the module proxy fetches only the subdirectory.
-2. **Split mirror repo**, like Laravel and TS: `github.com/flowcatalyst/go-sdk`, module
-   `github.com/flowcatalyst/go-sdk`, tags `vX.Y.Z` on the mirror (a `split-go-sdk.yml` like the
-   others, pushing a tag per `go-sdk/vX.Y.Z` here). Shortest import path; one more repo to own.
-3. **Vanity path**, e.g. `go.flowcatalyst.io/sdk`, served by a `go-import` meta tag that points at
-   either layout. Decouples the import path from where the code lives; needs a hosted page.
-
-Any of them is a one-line `go.mod` change plus rewriting the SDK's own imports (a `sed` over
-`clients/go-sdk`). From v2 on, the path also needs a `/v2` suffix.
+- **Install:** `go get github.com/flowcatalyst/flowcatalyst-rust/clients/go-sdk@vX.Y.Z`.
+- **Release:** `just release-go-sdk <patch|minor|major|X.Y.Z>` bumps `clients/go-sdk/VERSION` and
+  tags **`clients/go-sdk/vX.Y.Z`**, the tag form Go requires for a module in a subdirectory (not
+  `go-sdk/vX.Y.Z` like the other SDKs). No mirror or workflow: the module proxy fetches only the
+  subdirectory from this repo. The first release is `just release-go-sdk 0.1.0`.
+- **v2 and later:** the module path needs a `/v2` suffix (`…/clients/go-sdk/v2`) and the tags
+  become `clients/go-sdk/v2.X.Y`.
 
 ### Cutover steps (owner), in order
 
@@ -439,7 +432,7 @@ publishing moved from this repo to Go. Old tags keep pointing at their old commi
   (decision #10). The Java SDK still has no licence file or pom `<licenses>` at all.
 - **Java distribution (decided: JitPack).** Set up; see "Java SDK on JitPack". The first
   `just release-java-sdk` after this merge publishes 0.0.11 there on first request.
-- **Go SDK module path.** Options in "Go SDK module path"; unchanged until decided.
+- **Go SDK module path (decided: subdirectory module).** See "Go SDK module path"; first release with `just release-go-sdk 0.1.0`.
 - **Unpublished work in `flowcatalyst-javalin`.** Its TS and Laravel webhook `check()` /
   `WebhookVerification`, router bearer handling and single-flight refresh are now ported here
   (see "SDK rulings of 2026-09-25"), and so is its Java SDK router bearer change. Not merged: a
