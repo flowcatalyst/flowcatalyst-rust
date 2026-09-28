@@ -128,7 +128,7 @@ pin-project-lite = "0.2"
 url = "2"
 arc-swap = "1"
 lapin = "2.5"
-async-nats = "0.38"
+async-nats = "0.50"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport"] }
 openidconnect = "4.0"
 aws-sdk-elasticloadbalancingv2 = { version = "1.91", default-features = false, features = ["rt-tokio", "default-https-client"] }
@@ -144,8 +144,8 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 utoipa-axum = "0.2"
 
 # Test dependencies
-testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres", "nats"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["localstack", "redis", "postgres", "nats"] }
 wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3.19"
