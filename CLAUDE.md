@@ -140,6 +140,16 @@ Every repository follows one pattern:
 - Domain entities stay in `*/entity.rs`, row mapping stays in `*/repository.rs`
 - Connection: use `shared::database::create_pool()`
 
+## Imports
+Import with `use` at the top of the file and write the short name
+(`HashMap<String, Application>`, not `std::collections::HashMap<…>`; `Arc`, not
+`std::sync::Arc`; `EventType`, not `crate::event_type::entity::EventType`).
+Inline paths only to disambiguate two same-named items (or `use … as …`), and
+for handler paths inside `routes!(…)`, which stay fully qualified for the
+route-auth scanner. The codebase still has many inline paths; clean them up in
+files you touch. (Clippy's `absolute_paths` lint will enforce this once the
+existing ones are removed.)
+
 ## Dependencies (supply chain)
 Read `docs/operations/supply-chain.md` before adding or updating a crate.
 - crates.io only, declared once in `[workspace.dependencies]`, `default-features = false`
