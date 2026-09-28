@@ -45,6 +45,7 @@ pub(crate) mod config;
 pub use config::ConfigReloader;
 pub(crate) mod dashboard;
 pub mod dashboard_sign_in;
+pub mod diagnostics;
 pub(crate) mod group_monitoring;
 pub(crate) mod health;
 pub(crate) mod messages;
@@ -91,6 +92,9 @@ pub struct AppState {
     /// Shown on the health and monitoring output while the API is open
     /// outside dev mode (decision #43's transitional `AUTH_MODE=NONE`).
     pub auth_warning: Option<Arc<str>>,
+    /// Whether `/diagnostics/*` answers: only behind an authenticating
+    /// guard, or in dev mode — never on an API left open outside dev mode.
+    pub diagnostics_allowed: bool,
 }
 
 /// Cumulative per-queue counters captured at a point in time; used to compute
@@ -469,6 +473,12 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         config_reloader,
     } = options;
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
+    // Diagnostics are never anonymous outside dev mode.
+    let diagnostics_allowed = dev_routes
+        || platform_auth.is_some()
+        || auth_state
+            .as_ref()
+            .is_some_and(|a| a.config.mode != AuthMode::None);
 
     // Background refresh of cached broker stats. The task holds only a `Weak`
     // reference, so it exits on its own when the router (and the `AppState` that
@@ -504,6 +514,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         cached_broker_stats,
         config_reloader,
         auth_warning: auth_warning.map(Arc::from),
+        diagnostics_allowed,
     };
 
     // Public routes — no authentication required
@@ -662,6 +673,23 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             "/monitoring/stream-health/ready",
             get(health::stream_readiness_handler),
         )
+        // Runtime diagnostics (a stuck router): the runtime and process,
+        // a task dump (router:operate), message / group lookups and the
+        // flight recorder.
+        .route("/diagnostics/runtime", get(diagnostics::runtime_handler))
+        .route(
+            "/diagnostics/task-dump",
+            get(diagnostics::task_dump_handler),
+        )
+        .route(
+            "/diagnostics/messages/{messageId}",
+            get(diagnostics::message_handler),
+        )
+        .route(
+            "/diagnostics/groups/{group}",
+            get(diagnostics::group_handler),
+        )
+        .route("/diagnostics/events", get(diagnostics::events_handler))
         // Configuration management
         .route("/config/reload", post(config::reload_config))
         .route("/api/config", get(config::get_local_config))
@@ -679,6 +707,11 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
             post(warnings::acknowledge_all_warnings),
         )
         .route("/warnings/critical", get(warnings::get_critical_warnings))
+        // Go and Java serve the severity filter here too.
+        .route(
+            "/warnings/severity/{severity}",
+            get(warnings::get_warnings_by_severity),
+        )
         .route(
             "/warnings/unacknowledged",
             get(warnings::get_unacknowledged_warnings),

@@ -400,6 +400,11 @@ pub struct QueueManager {
     /// Handed to every pool this manager creates (ledger A-01) — see
     /// [`QueueManagerBuilder::settled_reporter`].
     settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
+
+    /// What happened to each message recently (routing, dispatch, group
+    /// decisions, settlement), shared with every pool and callback — see
+    /// [`crate::flight_recorder`].
+    flight_recorder: Arc<crate::flight_recorder::FlightRecorder>,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -425,6 +430,7 @@ pub struct QueueManagerBuilder {
     rebuild_timeout: std::time::Duration,
     deferral_budget: usize,
     settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
+    flight_recorder: Arc<crate::flight_recorder::FlightRecorder>,
 }
 
 impl QueueManagerBuilder {
@@ -444,7 +450,19 @@ impl QueueManagerBuilder {
             rebuild_timeout: QueueManager::DEFAULT_REBUILD_TIMEOUT,
             deferral_budget: QueueManager::DEFAULT_DEFERRAL_BUDGET,
             settled_reporter: None,
+            flight_recorder: Arc::new(crate::flight_recorder::FlightRecorder::default()),
         }
+    }
+
+    /// The flight recorder the manager, its pools and its callbacks record
+    /// into (default: [`crate::flight_recorder::DEFAULT_CAPACITY`] events;
+    /// `FlightRecorder::new(0)` turns recording off).
+    pub fn flight_recorder(
+        mut self,
+        recorder: Arc<crate::flight_recorder::FlightRecorder>,
+    ) -> Self {
+        self.flight_recorder = recorder;
+        self
     }
 
     /// Ledger A-01 (Go `Manager.SetSettledReporter`): every pool this
@@ -575,6 +593,7 @@ impl QueueManagerBuilder {
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
             settled_reporter: self.settled_reporter,
+            flight_recorder: self.flight_recorder,
         }
     }
 }
@@ -634,6 +653,11 @@ impl QueueManager {
     /// eviction so they observe/act on the real breaker state.
     pub fn circuit_breaker_registry(&self) -> &Arc<CircuitBreakerRegistry> {
         &self.circuit_breaker_registry
+    }
+
+    /// The flight recorder (see [`crate::flight_recorder`]).
+    pub fn flight_recorder(&self) -> &Arc<crate::flight_recorder::FlightRecorder> {
+        &self.flight_recorder
     }
 
     /// Get warning service reference

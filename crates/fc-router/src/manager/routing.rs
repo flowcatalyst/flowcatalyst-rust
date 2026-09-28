@@ -8,7 +8,7 @@ use futures::future;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use dashmap::DashMap;
 use fc_common::{
@@ -17,6 +17,7 @@ use fc_common::{
 use fc_queue::QueueConsumer;
 
 use crate::error::RouterError;
+use crate::flight_recorder::{EventContext, EventKind, FlightRecorder};
 use crate::Result;
 
 use super::tracking::Tracked;
@@ -99,6 +100,10 @@ struct QueueMessageCallback {
     /// happened. AcqRel ordering: the load in Drop must observe stores from
     /// any thread that called ack/nack.
     completed: std::sync::atomic::AtomicBool,
+    /// Where settlement is recorded, with this message's pool, group and
+    /// queue (see [`crate::flight_recorder`]).
+    recorder: Arc<FlightRecorder>,
+    event_ctx: EventContext,
 }
 
 /// Whose tracker entry sits under this callback's pipeline key.
@@ -221,6 +226,20 @@ impl MessageCallback for QueueMessageCallback {
                 Ok(r) => r.map_err(|e| e.to_string()),
                 Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
             };
+        match &acked {
+            Ok(()) => self.recorder.record(
+                &self.app_message_id,
+                EventKind::Acked,
+                &self.event_ctx,
+                None,
+            ),
+            Err(e) => self.recorder.record(
+                &self.app_message_id,
+                EventKind::AckFailed,
+                &self.event_ctx,
+                Some(e.clone()),
+            ),
+        }
         if let Err(e) = acked {
             if let Some(ref bid) = broker_id {
                 warn!(
@@ -265,6 +284,15 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
         if let Some(handle) = handle {
+            self.recorder.record(
+                &self.app_message_id,
+                EventKind::Nacked,
+                &self.event_ctx,
+                Some(match delay_seconds {
+                    Some(d) => format!("visible again in {d}s"),
+                    None => "visible again at once".to_string(),
+                }),
+            );
             match tokio::time::timeout(
                 BROKER_OP_TIMEOUT,
                 self.consumer().nack(&handle, delay_seconds),
@@ -312,7 +340,18 @@ impl Drop for QueueMessageCallback {
         warn!(
             pipeline_key = %self.pipeline_key,
             app_message_id = %self.app_message_id,
+            panicking = std::thread::panicking(),
             "Callback dropped without ack/nack — fallback cleanup ran (likely mediator panic or task cancel)"
+        );
+        self.recorder.record(
+            &self.app_message_id,
+            EventKind::Abandoned,
+            &self.event_ctx,
+            Some(if std::thread::panicking() {
+                "worker panicked; fallback nack in 10s".to_string()
+            } else {
+                "dropped unresolved (cancelled); fallback nack in 10s".to_string()
+            }),
         );
 
         if let Some(handle) = handle {
@@ -324,6 +363,18 @@ impl Drop for QueueMessageCallback {
             }
         }
     }
+}
+
+/// The span one polled batch is routed in (queue, batch id, size), so the
+/// routing decisions logged for it — duplicates, deferrals, rejections —
+/// carry where they came from.
+fn batch_span(queue: &str, size: usize) -> tracing::Span {
+    tracing::info_span!(
+        "router.route_batch",
+        queue = %queue,
+        batch = tracing::field::Empty,
+        size,
+    )
 }
 
 /// Reports why `msg` is malformed under strict routing
@@ -357,7 +408,9 @@ impl QueueManager {
         messages: Vec<QueuedMessage>,
         consumer: Arc<dyn QueueConsumer>,
     ) -> Result<()> {
+        let span = batch_span(consumer.identifier(), messages.len());
         self.route_batch_inner(messages, consumer, 0)
+            .instrument(span)
             .await
             .map(|_| ())
     }
@@ -371,8 +424,10 @@ impl QueueManager {
         messages: Vec<QueuedMessage>,
         rc: &RunningConsumer,
     ) -> Result<()> {
+        let span = batch_span(rc.identifier(), messages.len());
         let outcome = self
             .route_batch_inner(messages, rc.consumer.clone(), rc.generation)
+            .instrument(span)
             .await?;
         rc.set_dest_pools(outcome.fed_pools);
         let due =
@@ -419,6 +474,7 @@ impl QueueManager {
                 .to_string()
                 .as_str(),
         );
+        tracing::Span::current().record("batch", &*batch_id);
 
         // Phase 0: Check for messages that need immediate deletion (previously processed but ACK failed)
         // First, identify which messages need deletion. `pending_delete_broker_ids`
@@ -455,6 +511,8 @@ impl QueueManager {
                     let handle = msg.receipt_handle.clone();
                     let broker_id = msg.broker_message_id.clone();
                     let app_id = msg.message.id.clone();
+                    let recorder = self.flight_recorder.clone();
+                    let ctx = EventContext::new().queue(msg.queue_identifier.as_str());
                     async move {
                         info!(
                             broker_message_id = ?broker_id,
@@ -462,6 +520,12 @@ impl QueueManager {
                             "Message was previously processed - deleting from queue now"
                         );
                         let _ = consumer.ack(&handle).await;
+                        recorder.record(
+                            &app_id,
+                            EventKind::Acked,
+                            &ctx,
+                            Some("already processed; its earlier ack had failed, deleted on redelivery".to_string()),
+                        );
                     }
                 })
                 .collect();
@@ -488,6 +552,17 @@ impl QueueManager {
                 count = filtered.duplicates.len(),
                 "Duplicate messages (redelivery) — receipt handles updated, no SQS action needed"
             );
+            for dup in &filtered.duplicates {
+                self.flight_recorder.record(
+                    &dup.message.message.id,
+                    EventKind::Redelivered,
+                    &EventContext::new().queue(dup.message.queue_identifier.as_str()),
+                    Some(
+                        "broker redelivered it while in the pipeline; receipt handle refreshed"
+                            .to_string(),
+                    ),
+                );
+            }
         }
 
         // Handle requeued - these were already completed, ACK them
@@ -498,6 +573,12 @@ impl QueueManager {
                 let handle = req.message.receipt_handle.clone();
                 let msg_id = req.message.message.id.clone();
                 let key = req.existing_pipeline_key.clone();
+                self.flight_recorder.record(
+                    &msg_id,
+                    EventKind::DuplicateAcked,
+                    &EventContext::new().queue(req.message.queue_identifier.as_str()),
+                    Some("a new copy of a message already in the pipeline; acked".to_string()),
+                );
                 async move {
                     debug!(message_id = %msg_id, pipeline_key = %key, "Requeued duplicate, ACKing");
                     let _ = consumer.ack(&handle).await;
@@ -522,6 +603,12 @@ impl QueueManager {
             let mut malformed_futs = Vec::new();
             for msg in filtered.unique {
                 if let Some(reason) = malformed_routing_reason(&msg.message) {
+                    self.flight_recorder.record(
+                        &msg.message.id,
+                        EventKind::Rejected,
+                        &EventContext::new().queue(msg.queue_identifier.as_str()),
+                        Some(format!("strict routing: {reason}; acked without delivery")),
+                    );
                     warn!(
                         message_id = %msg.message.id,
                         queue = %consumer.identifier(),
@@ -574,6 +661,16 @@ impl QueueManager {
                     error!(pool_code = %pool_code, error = %e, "Failed to get/create pool");
                     // NACK all messages for this pool
                     for msg in pool_messages {
+                        self.flight_recorder.record(
+                            &msg.message.id,
+                            EventKind::Rejected,
+                            &EventContext::new()
+                                .pool(pool_code.as_str())
+                                .queue(msg.queue_identifier.as_str()),
+                            Some(format!(
+                                "pool could not be created ({e}); nacked, visible in 5s"
+                            )),
+                        );
                         let _ = consumer.nack(&msg.receipt_handle, Some(5)).await;
                     }
                     continue;
@@ -623,6 +720,18 @@ impl QueueManager {
                                 "QueueManager".to_string(),
                             );
                         }
+                        self.flight_recorder.record(
+                            &msg.message.id,
+                            EventKind::DeferredCapacity,
+                            &EventContext::new()
+                                .pool(pool_code.as_str())
+                                .group(msg.message.message_group_id.as_deref())
+                                .queue(msg.queue_identifier.as_str()),
+                            Some(format!(
+                                "pool full; deferred {}s",
+                                Self::CAPACITY_DEFER_SECONDS
+                            )),
+                        );
                         let _ = consumer
                             .defer(&msg.receipt_handle, Some(Self::CAPACITY_DEFER_SECONDS))
                             .await;
@@ -637,6 +746,15 @@ impl QueueManager {
                             message_id = %msg.message.id,
                             group_id = %group_id,
                             "NACKing message - previous message in group failed submission"
+                        );
+                        self.flight_recorder.record(
+                            &msg.message.id,
+                            EventKind::Rejected,
+                            &EventContext::new()
+                                .pool(pool_code.as_str())
+                                .group(msg.message.message_group_id.as_deref())
+                                .queue(msg.queue_identifier.as_str()),
+                            Some("the message ahead of it in its group failed submission; nacked, visible in 5s".to_string()),
                         );
                         let _ = consumer.nack(&msg.receipt_handle, Some(5)).await;
                         continue;
@@ -662,6 +780,11 @@ impl QueueManager {
                         });
 
                     let receipt_handle = msg.receipt_handle.clone();
+
+                    let event_ctx = EventContext::new()
+                        .pool(pool_code.as_str())
+                        .group(msg.message.message_group_id.as_deref())
+                        .queue(msg.queue_identifier.as_str());
 
                     // Track in pipeline with receipt handle
                     let queue_identifier = msg.queue_identifier.clone();
@@ -697,6 +820,8 @@ impl QueueManager {
                         app_message_to_pipeline_key: self.app_message_to_pipeline_key.clone(),
                         pending_delete: self.pending_delete_broker_ids.clone(),
                         completed: std::sync::atomic::AtomicBool::new(false),
+                        recorder: self.flight_recorder.clone(),
+                        event_ctx: event_ctx.clone(),
                     };
 
                     let batch_msg = BatchMessage {
@@ -708,6 +833,15 @@ impl QueueManager {
                         callback: Box::new(callback),
                     };
 
+                    // Recorded before the submit: a fast worker may settle the
+                    // message before `submit` returns.
+                    self.flight_recorder.record(
+                        &app_message_id,
+                        EventKind::Routed,
+                        &event_ctx,
+                        Some(format!("batch {batch_id}")),
+                    );
+
                     // Submit to pool — pool worker calls callback.ack()/nack() when done
                     if let Err(e) = pool.submit(batch_msg).await {
                         error!(
@@ -715,6 +849,12 @@ impl QueueManager {
                             group_id = %group_id,
                             error = %e,
                             "Failed to submit to pool - NACKing this and remaining messages in group"
+                        );
+                        self.flight_recorder.record(
+                            &app_message_id,
+                            EventKind::Rejected,
+                            &event_ctx,
+                            Some(format!("submit failed ({e}); nacked, visible in 5s")),
                         );
 
                         // Remove from pipeline since we're NACKing
@@ -1068,6 +1208,8 @@ mod callback_drop_tests {
             app_message_to_pipeline_key: app_index.clone(),
             pending_delete,
             completed: std::sync::atomic::AtomicBool::new(false),
+            recorder: Arc::new(FlightRecorder::new(64)),
+            event_ctx: EventContext::new().queue("queue-id"),
         };
         (cb, in_pipeline, app_index)
     }

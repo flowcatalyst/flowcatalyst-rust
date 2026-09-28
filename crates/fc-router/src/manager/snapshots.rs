@@ -104,6 +104,36 @@ impl QueueManager {
             .collect()
     }
 
+    /// Where `message_id` is buffered behind its group's head, in any pool.
+    pub fn find_buffered(&self, message_id: &str) -> Option<crate::pool::BufferedMessage> {
+        self.all_pools()
+            .iter()
+            .find_map(|p| p.find_buffered(message_id))
+    }
+
+    /// `group`'s buffer on every pool that holds it: `(pool, [(message id,
+    /// attempts)])`, head first.
+    pub fn group_buffers(&self, group: &str) -> Vec<(String, Vec<(String, u32)>)> {
+        self.all_pools()
+            .iter()
+            .filter_map(|p| p.group_buffer(group).map(|b| (p.code().to_string(), b)))
+            .collect()
+    }
+
+    /// Restart every parked group (buffered messages, no drainer) in every
+    /// active pool — the backstop sweep the lifecycle reaper runs. Returns
+    /// how many groups it restarted.
+    pub fn resume_parked_groups(&self) -> usize {
+        self.pools
+            .iter()
+            .filter(|e| e.value().state == PoolState::Active)
+            .map(|e| e.value().pool.clone())
+            .collect::<Vec<_>>()
+            .iter()
+            .map(|p| p.resume_parked_groups())
+            .sum()
+    }
+
     /// Every live message group across every pool this manager is
     /// tracking — the operator "blocked groups" view (ledger R-04).
     pub fn blocked_groups(&self) -> Vec<crate::pool::GroupInfo> {
@@ -192,6 +222,18 @@ impl QueueManager {
 
         self.in_pipeline.remove(&pipeline_key);
         self.app_message_to_pipeline_key.remove(message_id);
+        self.flight_recorder.record(
+            &entry.message_id,
+            crate::flight_recorder::EventKind::Untracked,
+            &crate::flight_recorder::EventContext::new()
+                .pool(entry.pool_code.as_str())
+                .group(entry.message_group_id.as_deref())
+                .queue(entry.queue_identifier.as_str()),
+            Some(format!(
+                "force-acked by an operator (broker ack {})",
+                if broker_acked { "succeeded" } else { "failed" }
+            )),
+        );
 
         warn!(
             message_id = %entry.message_id,
@@ -238,21 +280,9 @@ impl QueueManager {
             .app_message_to_pipeline_key
             .get(app_message_id)
             .map(|e| e.value().clone())?;
-        self.in_pipeline.get(&pipeline_key).map(|entry| {
-            let msg = entry.value();
-            let elapsed = msg.started_at.elapsed();
-            InFlightMessageInfo {
-                message_id: msg.message_id.clone(),
-                broker_message_id: msg.broker_message_id.clone(),
-                queue_id: msg.queue_identifier.clone(),
-                pool_code: msg.pool_code.clone(),
-                elapsed_time_ms: elapsed.as_millis() as u64,
-                added_to_in_pipeline_at: chrono::Utc::now()
-                    - chrono::Duration::milliseconds(elapsed.as_millis() as i64),
-                message_group: msg.message_group_id.clone().unwrap_or_default(),
-                attempts: 0,
-            }
-        })
+        self.in_pipeline
+            .get(&pipeline_key)
+            .map(|entry| InFlightMessageInfo::of(entry.value()))
     }
 
     pub fn get_in_flight_messages(
@@ -284,22 +314,7 @@ impl QueueManager {
                 }
                 true
             })
-            .map(|entry| {
-                let msg = entry.value();
-                InFlightMessageInfo {
-                    message_id: msg.message_id.clone(),
-                    broker_message_id: msg.broker_message_id.clone(),
-                    queue_id: msg.queue_identifier.clone(),
-                    pool_code: msg.pool_code.clone(),
-                    elapsed_time_ms: msg.started_at.elapsed().as_millis() as u64,
-                    added_to_in_pipeline_at: chrono::Utc::now()
-                        - chrono::Duration::milliseconds(
-                            msg.started_at.elapsed().as_millis() as i64
-                        ),
-                    message_group: msg.message_group_id.clone().unwrap_or_default(),
-                    attempts: 0,
-                }
-            })
+            .map(|entry| InFlightMessageInfo::of(entry.value()))
             .collect();
 
         // Sort by elapsed time descending (oldest first)
@@ -335,12 +350,46 @@ pub struct InFlightMessageInfo {
     /// matches Go's `InFlightMessageInfo.MessageGroup`.
     #[serde(rename = "messageGroup")]
     pub message_group: String,
-    /// In-pipeline retry count. **Always 0 in this port** — see
-    /// `MediatingEntry::attempts`'s doc for why: this Rust port's pool has
-    /// no in-pipeline retry-with-front-reinsertion concept at all, unlike
-    /// Go's `InFlightTracker.MarkRetrying`. Additive field, matches Go's
-    /// `InFlightMessageInfo.Attempts`.
+    /// In-place retry attempts the pool has recorded for this admission
+    /// (Go's `InFlightTracker.MarkRetrying`, `InFlightMessageInfo.Attempts`).
     pub attempts: u32,
+    /// When the broker last (re)delivered it — refreshed on every
+    /// redelivery; the reaper's idle clock (Go `LastSeenAt`, the "phantom
+    /// entry" signal: an entry whose last-seen keeps ageing is no longer
+    /// being redelivered).
+    #[serde(rename = "lastSeenAt")]
+    pub last_seen_at: chrono::DateTime<chrono::Utc>,
+    #[serde(rename = "lastSeenElapsedMs")]
+    pub last_seen_elapsed_ms: u64,
+    /// A live in-place retry (an attempt recorded within the reaper's
+    /// grace): the detail view's `RETRY_BACKOFF`.
+    #[serde(skip)]
+    pub retrying: bool,
+}
+
+impl InFlightMessageInfo {
+    fn of(t: &super::tracking::Tracked) -> Self {
+        let now = std::time::Instant::now();
+        let wall = chrono::Utc::now();
+        let ago = |i: std::time::Instant| {
+            wall - chrono::Duration::milliseconds(
+                now.saturating_duration_since(i).as_millis() as i64
+            )
+        };
+        Self {
+            message_id: t.message_id.clone(),
+            broker_message_id: t.broker_message_id.clone(),
+            queue_id: t.queue_identifier.clone(),
+            pool_code: t.pool_code.clone(),
+            elapsed_time_ms: now.saturating_duration_since(t.started_at).as_millis() as u64,
+            added_to_in_pipeline_at: ago(t.started_at),
+            message_group: t.message_group_id.clone().unwrap_or_default(),
+            attempts: t.attempts,
+            last_seen_at: ago(t.last_seen),
+            last_seen_elapsed_ms: now.saturating_duration_since(t.last_seen).as_millis() as u64,
+            retrying: t.is_retrying(now),
+        }
+    }
 }
 
 /// Reports what [`QueueManager::force_ack_in_flight`] did: the entry as it

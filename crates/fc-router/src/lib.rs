@@ -18,6 +18,7 @@ pub mod bootstrap;
 pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
+pub mod flight_recorder;
 pub mod group_flush;
 pub mod health;
 pub mod http_pool;

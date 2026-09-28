@@ -4,7 +4,9 @@
 //! `token_use = api`, and the permission the route needs.
 //!
 //! - `GET`/`HEAD`, and the in-flight check done over `POST`, need
-//!   [`ROUTER_VIEW`]: the SDKs' stuck-message recovery calls these.
+//!   [`ROUTER_VIEW`]: the SDKs' stuck-message recovery calls these. The
+//!   exception is the task dump (`GET /diagnostics/task-dump`), which
+//!   needs [`ROUTER_OPERATE`]: it pauses the runtime.
 //! - Every other method needs [`ROUTER_OPERATE`]: publish, breaker resets,
 //!   in-flight ACK, group-flush clear, pool update, config reload, warning
 //!   acknowledge and clear, broker-stats refresh.
@@ -41,6 +43,10 @@ pub const REALM: &str = "FlowCatalyst Router";
 /// Reads done over `POST`: their body is too large for a query string.
 const POST_READS: &[&str] = &["/monitoring/in-flight-messages/check-batch"];
 
+/// `GET`s that need [`ROUTER_OPERATE`]: a task dump pauses the runtime's
+/// workers while it walks every task.
+const OPERATE_READS: &[&str] = &["/diagnostics/task-dump"];
+
 /// What `AUTH_MODE=NONE` outside dev mode says, at startup and on the
 /// health and monitoring output (decision #43).
 pub const UNAUTHENTICATED_WARNING: &str =
@@ -49,8 +55,8 @@ pub const UNAUTHENTICATED_WARNING: &str =
 /// The permission a request needs (rule 2): reads need `view`, everything
 /// else `operate`. `path` is relative to the router's mount.
 pub fn required_permission(method: &Method, path: &str) -> &'static str {
-    let read = method == Method::GET
-        || method == Method::HEAD
+    let read = ((method == Method::GET || method == Method::HEAD)
+        && !OPERATE_READS.contains(&path))
         || (method == Method::POST && POST_READS.contains(&path));
     if read {
         ROUTER_VIEW

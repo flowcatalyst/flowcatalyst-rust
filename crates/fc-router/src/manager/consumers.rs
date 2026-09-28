@@ -8,7 +8,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use fc_common::{WarningCategory, WarningSeverity};
 use fc_queue::QueueMetrics;
@@ -191,6 +191,13 @@ impl QueueManager {
         rc.beat();
 
         let manager = self.clone();
+        // Every line the loop logs carries its queue.
+        let span = tracing::info_span!(
+            parent: None,
+            "router.consumer",
+            queue = %rc.identifier(),
+            generation = rc.generation,
+        );
         tokio::spawn(async move {
             // Signals the exit however the loop ends (panics included).
             let _exited = rc.poll_exited.clone().drop_guard();
@@ -252,8 +259,33 @@ impl QueueManager {
                     PollOutcome::Cancelled => break,
                     PollOutcome::Messages(messages) => {
                         rc.beat();
-                        if let Err(e) = manager.route_batch_from(messages, &rc).await {
-                            error!(error = %e, consumer = %id, "Error routing batch");
+                        let count = messages.len();
+                        // A panic while routing one batch must not take the
+                        // queue's intake down until the watchdog notices
+                        // (60–90 s): the panic hook has logged it with the
+                        // batch's span; messages already handed to a pool
+                        // are settled by their workers, the rest return at
+                        // the broker's visibility timeout.
+                        match fc_common::diagnostics::catch_panic(
+                            manager.route_batch_from(messages, &rc),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                error!(error = %e, consumer = %id, "Error routing batch")
+                            }
+                            Err(payload) => {
+                                fc_common::diagnostics::supervise::note_task_panic(
+                                    "router.route_batch",
+                                );
+                                error!(
+                                    consumer = %id,
+                                    batch_size = count,
+                                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                                    "Routing a batch panicked; the poll loop continues"
+                                );
+                            }
                         }
                         // G12: re-poll immediately after any batch.
                     }
@@ -279,7 +311,7 @@ impl QueueManager {
                 }
             }
             debug!(consumer = %id, generation = rc.generation, "Poll loop exited");
-        })
+        }.instrument(span))
     }
 
     /// Raise a CONFIGURATION/ERROR warning for every message the consumer

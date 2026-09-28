@@ -30,6 +30,9 @@ struct Callback {
     log: Log,
     honours: bool,
     settled: std::sync::atomic::AtomicBool,
+    /// Panic when the pool asks it for the disposition (after mediating):
+    /// a panic in the worker outside the mediator.
+    panics: bool,
 }
 
 impl Callback {
@@ -49,6 +52,9 @@ impl MessageCallback for Callback {
         self.record(Event::Nack(delay_seconds));
     }
     fn honours_delayed_return(&self) -> bool {
+        if self.panics {
+            panic!("scripted callback panic for {}", self.id);
+        }
         self.honours
     }
 }
@@ -155,8 +161,23 @@ fn batch(
             log: log.clone(),
             honours,
             settled: std::sync::atomic::AtomicBool::new(false),
+            panics: false,
         }),
     }
+}
+
+/// An ordered message whose callback panics once the pool has mediated it.
+fn ordered_panicking(id: &str, log: &Log) -> BatchMessage {
+    // The callback `ordered` built is replaced; it logs its drop elsewhere.
+    let mut b = ordered(id, &Log::default());
+    b.callback = Box::new(Callback {
+        id: id.to_string(),
+        log: log.clone(),
+        honours: true,
+        settled: std::sync::atomic::AtomicBool::new(false),
+        panics: true,
+    });
+    b
 }
 
 fn ordered(id: &str, log: &Log) -> BatchMessage {
@@ -405,11 +426,12 @@ async fn release_remainder_hands_back_a_group_waiting_to_retry() {
     assert_eq!(pool.queue_size(), 0);
 }
 
-/// A drain task that panics gives back every queue slot it held (the
-/// message in hand and everything buffered behind it), its worker count and
-/// its `mediating` entry; the abandoned messages are nacked as they drop.
+/// A mediator that panics is caught: the head and everything buffered
+/// behind it are released to the broker in order (the head with the panic
+/// delay, the siblings never sooner), every slot is given back, and the
+/// group is usable again.
 #[tokio::test(start_paused = true)]
-async fn panicking_drain_task_releases_its_slots() {
+async fn a_panicking_mediator_releases_the_group_in_order() {
     let mediator = Scripted::new(vec![("m1", vec![None])]);
     let pool = pool(mediator.clone());
     pool.start().await;
@@ -419,9 +441,13 @@ async fn panicking_drain_task_releases_its_slots() {
     pool.submit(ordered("m3", &log)).await.unwrap();
 
     let events = settled(&log, 3).await;
-    assert!(
-        events.iter().all(|(_, e)| *e == Event::Dropped),
-        "{events:?}"
+    assert_eq!(
+        events,
+        vec![
+            ("m1".into(), Event::Nack(Some(10))),
+            ("m2".into(), Event::Nack(Some(10))),
+            ("m3".into(), Event::Nack(Some(10))),
+        ]
     );
     assert_eq!(pool.queue_size(), 0, "no slot leaked");
     assert_eq!(pool.active_workers(), 0);
@@ -433,7 +459,41 @@ async fn panicking_drain_task_releases_its_slots() {
     assert_eq!(events[3], ("m4".into(), Event::Ack));
 }
 
-/// The IMMEDIATE path has the same guarantee.
+/// A drain task that panics outside the mediator gives back every queue
+/// slot it held (the message in hand and everything buffered behind it),
+/// its worker count and its `mediating` entry; the abandoned messages are
+/// nacked as they drop, and no emptied handler is left behind.
+#[tokio::test(start_paused = true)]
+async fn panicking_drain_task_releases_its_slots() {
+    let mediator = Scripted::new(vec![]);
+    let pool = pool(mediator.clone());
+    pool.start().await;
+    let log: Log = Default::default();
+    pool.submit(ordered_panicking("m1", &log)).await.unwrap();
+    pool.submit(ordered("m2", &log)).await.unwrap();
+    pool.submit(ordered("m3", &log)).await.unwrap();
+
+    let events = settled(&log, 3).await;
+    assert!(
+        events.iter().all(|(_, e)| *e == Event::Dropped),
+        "{events:?}"
+    );
+    assert_eq!(pool.queue_size(), 0, "no slot leaked");
+    assert_eq!(pool.active_workers(), 0);
+    assert!(pool.mediating_snapshot().is_empty());
+    assert!(
+        pool.group_snapshot().is_empty(),
+        "the emptied group is not left parked"
+    );
+
+    // The group is usable again.
+    pool.submit(ordered("m4", &log)).await.unwrap();
+    let events = settled(&log, 4).await;
+    assert_eq!(events[3], ("m4".into(), Event::Ack), "{events:?}");
+}
+
+/// The IMMEDIATE path has the same guarantee: a panicking mediator's
+/// message is released, and nothing leaks.
 #[tokio::test(start_paused = true)]
 async fn panicking_immediate_task_releases_its_slot() {
     let mediator = Scripted::new(vec![("m1", vec![None])]);
@@ -444,7 +504,10 @@ async fn panicking_immediate_task_releases_its_slot() {
         .await
         .unwrap();
 
-    assert_eq!(settled(&log, 1).await, vec![("m1".into(), Event::Dropped)]);
+    assert_eq!(
+        settled(&log, 1).await,
+        vec![("m1".into(), Event::Nack(Some(10)))]
+    );
     assert_eq!(pool.queue_size(), 0);
     assert_eq!(pool.active_workers(), 0);
     assert!(pool.mediating_snapshot().is_empty());

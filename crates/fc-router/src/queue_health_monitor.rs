@@ -183,24 +183,34 @@ pub fn spawn_queue_health_monitor(
 ) -> tokio::task::JoinHandle<()> {
     let interval = monitor.config.check_interval;
 
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Supervised: a panic is logged and the loop restarted.
+    fc_common::diagnostics::spawn_supervised(
+        "router.queue_health_monitor",
+        fc_common::diagnostics::OnPanic::Restart,
+        move || {
+            let monitor = monitor.clone();
+            let manager = manager.clone();
+            let shutdown = shutdown.clone();
+            async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    debug!("Running queue health check");
-                    let metrics = manager.get_queue_metrics().await;
-                    monitor.check_queue_health(&metrics);
-                }
-                _ = shutdown.cancelled() => {
-                    info!("Queue health monitor shutting down");
-                    break;
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            debug!("Running queue health check");
+                            let metrics = manager.get_queue_metrics().await;
+                            monitor.check_queue_health(&metrics);
+                        }
+                        _ = shutdown.cancelled() => {
+                            info!("Queue health monitor shutting down");
+                            break;
+                        }
+                    }
                 }
             }
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
