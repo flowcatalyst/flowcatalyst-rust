@@ -7,8 +7,8 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use super::api::EventTypeGoState;
 use super::api::EventTypesState;
-use super::go_api::EventTypeGoState;
 use super::operations::{
     AddSchemaUseCase, CreateEventTypeUseCase, DeleteEventTypeUseCase, SyncEventTypesUseCase,
     UpdateEventTypeUseCase,
@@ -81,8 +81,8 @@ pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
 /// Full-path router; merged at the root.
 pub fn event_type_go_router(state: EventTypeGoState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(crate::event_type::go_api::add_event_type_schema))
-        .routes(routes!(crate::event_type::go_api::bff_put_event_type))
+        .routes(routes!(crate::event_type::api::add_event_type_schema))
+        .routes(routes!(crate::event_type::bff::bff_put_event_type))
         .with_state(state)
 }
 

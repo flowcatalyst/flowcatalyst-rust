@@ -6,7 +6,6 @@ pub mod api;
 pub mod client_config;
 pub mod client_config_repository;
 pub mod entity;
-pub mod go_api;
 pub mod operations;
 pub mod repository;
 pub mod routes;

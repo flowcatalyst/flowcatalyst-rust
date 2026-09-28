@@ -8,7 +8,6 @@ pub mod entity;
 pub mod operations;
 pub mod repository;
 pub mod routes;
-pub mod search_api;
 
 // Re-export main types
 pub use api::ClientsState;

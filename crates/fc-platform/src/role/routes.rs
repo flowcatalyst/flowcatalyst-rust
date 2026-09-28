@@ -1,5 +1,5 @@
 //! Role routes: `/api/roles`, Go's per-role permission grants and the
-//! permission catalogue writes at their full paths (`permission_api`), and
+//! permission catalogue writes at their full paths, and
 //! `/bff/roles` (plain).
 
 use std::sync::Arc;
@@ -8,9 +8,9 @@ use axum::routing::{delete, get};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use super::api::RolePermissionsState;
 use super::api::RolesState;
 use super::operations::{CreateRoleUseCase, DeleteRoleUseCase, UpdateRoleUseCase};
-use super::permission_api::RolePermissionsState;
 use super::permission_repository::PermissionCatalogRepository;
 use crate::role::bff::BffRolesState;
 use crate::shared::application_roles_sdk_api::ApplicationRolesSdkState;
@@ -89,7 +89,7 @@ pub fn roles_router(state: RolesState) -> OpenApiRouter {
             crate::role::api::update_role,
             crate::role::api::delete_role
         ))
-        // Grant/revoke by role name: `role::permission_api` (Go's operations).
+        // Grant/revoke by role name: `role_permissions_router` (Go's operations).
         .with_state(state)
 }
 
@@ -97,17 +97,15 @@ pub fn roles_router(state: RolesState) -> OpenApiRouter {
 pub fn role_permissions_router(state: RolePermissionsState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::role::permission_api::list_role_permissions,
-            crate::role::permission_api::grant_role_permission_by_body
+            crate::role::api::list_role_permissions,
+            crate::role::api::grant_role_permission_by_body
         ))
         .routes(routes!(
-            crate::role::permission_api::grant_role_permission,
-            crate::role::permission_api::revoke_role_permission
+            crate::role::api::grant_role_permission,
+            crate::role::api::revoke_role_permission
         ))
-        .routes(routes!(
-            crate::role::permission_api::delete_catalog_permission
-        ))
-        .routes(routes!(crate::role::permission_api::bff_create_permission))
+        .routes(routes!(crate::role::api::delete_catalog_permission))
+        .routes(routes!(crate::role::bff::bff_create_permission))
         .with_state(state)
 }
 

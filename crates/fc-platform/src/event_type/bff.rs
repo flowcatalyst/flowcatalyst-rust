@@ -3,15 +3,18 @@
 //! Backend-For-Frontend endpoints for event type management.
 //! Provides a UI-friendly view of event types at `/bff/event-types`.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::event_type::api::EventTypeGoState;
 use crate::event_type::entity::{EventType, EventTypeStatus, SpecVersion};
 use crate::event_type::operations::{
     AddSchemaCommand, AddSchemaUseCase, ArchiveEventTypeCommand, ArchiveEventTypeUseCase,
@@ -20,6 +23,7 @@ use crate::event_type::operations::{
     SyncEventTypesUseCase, UpdateEventTypeCommand, UpdateEventTypeUseCase,
 };
 use crate::event_type::repository::EventTypeRepository;
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -928,6 +932,26 @@ pub async fn get_filter_aggregates(
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
+
+/// Update an event type's name and description (Go's PUT; Rust's PATCH).
+#[utoipa::path(
+    put,
+    path = "/bff/event-types/{id}",
+    tag = "bff-event-types",
+    operation_id = "putBffEventTypesById",
+    params(("id" = String, Path, description = "Event type id")),
+    request_body = BffUpdateEventTypeRequest,
+    responses((status = 204, description = "Updated"))
+)]
+pub async fn bff_put_event_type(
+    State(state): State<EventTypeGoState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<BffUpdateEventTypeRequest>,
+) -> Result<StatusCode, PlatformError> {
+    checks::can_update_event_types(&auth.0)?;
+    crate::event_type::bff::update_event_type(State(state.bff), auth, Path(id), Json(req)).await
+}
 
 #[cfg(test)]
 mod tests {

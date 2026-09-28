@@ -3,22 +3,27 @@
 //! Backend-For-Frontend endpoints for role management.
 //! Provides a UI-friendly view of roles at `/bff/roles`.
 
+use std::sync::Arc;
+
+use axum::http::StatusCode;
 use axum::{
     extract::{Path, Query, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::application::repository::ApplicationRepository;
+use crate::role::api::RolePermissionsState;
 use crate::role::entity::AuthRole;
+use crate::role::operations::DefinePermissionCommand;
 use crate::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase, UpdateRoleCommand,
     UpdateRoleUseCase,
 };
 use crate::role::repository::RoleRepository;
 use crate::shared::api_common::CreatedResponse;
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -98,18 +103,6 @@ pub struct BffApplicationOption {
 #[serde(rename_all = "camelCase")]
 pub struct BffApplicationOptionsResponse {
     pub options: Vec<BffApplicationOption>,
-}
-
-/// Permission response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct BffPermissionResponse {
-    pub permission: String,
-    pub application: String,
-    pub context: String,
-    pub aggregate: String,
-    pub action: String,
-    pub description: String,
 }
 
 /// Permission list response
@@ -885,3 +878,75 @@ pub async fn sync_platform_roles(
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
+
+/// Go `bffCreatePermissionRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BffCreatePermissionRequest {
+    #[serde(default)]
+    pub application: String,
+    #[serde(default)]
+    pub context: String,
+    #[serde(default)]
+    pub aggregate: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Go `bffPermissionResponse`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BffPermissionResponse {
+    pub permission: String,
+    pub application: String,
+    pub context: String,
+    pub aggregate: String,
+    pub action: String,
+    pub description: String,
+}
+
+/// Define a catalogue permission from its four segments (Go BFF
+/// `createPermission`, anchor-gated). Idempotent by code: 201 either way.
+#[utoipa::path(
+    post,
+    path = "/bff/roles/permissions",
+    tag = "bff-roles",
+    operation_id = "bffCreatePermission",
+    request_body = BffCreatePermissionRequest,
+    responses(
+        (status = 201, description = "Defined", body = BffPermissionResponse),
+        (status = 400, description = "A segment is not a lowercase token")
+    )
+)]
+pub async fn bff_create_permission(
+    State(state): State<RolePermissionsState>,
+    auth: Authenticated,
+    Json(body): Json<BffCreatePermissionRequest>,
+) -> Result<(StatusCode, Json<BffPermissionResponse>), PlatformError> {
+    checks::require_anchor(&auth.0)?;
+    let cmd = DefinePermissionCommand {
+        application: body.application.trim().to_string(),
+        context: body.context.trim().to_string(),
+        aggregate: body.aggregate.trim().to_string(),
+        action: body.action.trim().to_string(),
+        description: body.description,
+    };
+    let event = state
+        .define_use_case
+        .run(cmd.clone(), ExecutionContext::from_auth(&auth.0))
+        .await
+        .into_result()?;
+    Ok((
+        StatusCode::CREATED,
+        Json(BffPermissionResponse {
+            permission: event.permission,
+            application: cmd.application,
+            context: cmd.context,
+            aggregate: cmd.aggregate,
+            action: cmd.action,
+            description: event.description.unwrap_or_default(),
+        }),
+    ))
+}

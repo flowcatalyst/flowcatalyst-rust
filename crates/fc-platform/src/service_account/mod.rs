@@ -2,7 +2,6 @@
 //!
 //! Machine-to-machine identity management.
 
-pub mod admin_api;
 pub mod api;
 pub mod entity;
 pub mod operations;

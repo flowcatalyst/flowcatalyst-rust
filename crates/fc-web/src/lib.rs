@@ -78,7 +78,7 @@ pub struct WebDeps {
 #[derive(Clone)]
 pub struct UserAdminStates {
     pub principals: fc_platform::principal::PrincipalsState,
-    pub principal_go: fc_platform::principal::go_api::PrincipalGoState,
+    pub principal_go: fc_platform::principal::api::PrincipalGoState,
     pub two_factor: Arc<fc_platform::mfa::TwoFactorLogin>,
     pub developer_credentials: fc_platform::developer_credential::api::DeveloperCredentialsState,
 }

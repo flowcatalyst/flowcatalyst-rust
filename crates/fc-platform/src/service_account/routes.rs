@@ -1,5 +1,5 @@
 //! Service account routes: `/api/service-accounts` (plain), and Go's
-//! deactivate and token-mint routes at their full paths (`admin_api`).
+//! deactivate and token-mint routes at their full paths.
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::admin_api::ServiceAccountAdminState;
+use super::api::ServiceAccountAdminState;
 use super::api::ServiceAccountsState;
 use super::operations::mint_token::RecordServiceAccountTokenMintUseCase;
 use super::operations::{
@@ -146,10 +146,10 @@ pub fn service_accounts_router<U: UnitOfWork + Clone>(state: ServiceAccountsStat
 pub fn service_account_admin_router(state: ServiceAccountAdminState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::service_account::admin_api::deactivate_service_account
+            crate::service_account::api::deactivate_service_account
         ))
         .routes(routes!(
-            crate::service_account::admin_api::mint_service_account_token
+            crate::service_account::api::mint_service_account_token
         ))
         .with_state(state)
 }

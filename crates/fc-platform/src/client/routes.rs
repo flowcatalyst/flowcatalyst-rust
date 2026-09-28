@@ -11,7 +11,7 @@ use super::operations::{
     ActivateClientUseCase, AddClientNoteUseCase, CreateClientUseCase, DeleteClientUseCase,
     SuspendClientUseCase, UpdateClientUseCase,
 };
-use super::search_api::ClientSearchState;
+use super::api::ClientSearchState;
 use crate::application::operations::{
     DisableApplicationForClientUseCase, EnableApplicationForClientUseCase,
     UpdateClientApplicationsUseCase,
@@ -109,6 +109,6 @@ pub fn clients_router(state: ClientsState) -> OpenApiRouter {
 /// Full-path router; merged at the root.
 pub fn client_search_router(state: ClientSearchState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(crate::client::search_api::search_clients_by_body))
+        .routes(routes!(crate::client::api::search_clients_by_body))
         .with_state(state)
 }

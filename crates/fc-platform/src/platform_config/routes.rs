@@ -1,5 +1,6 @@
 //! Platform config routes: `/api/config` and `/api/config-access` (plain),
-//! and Go's property and access routes at their full paths (`go_api`).
+//! and Go's property and access routes at their full paths
+//! (`go_platform_config_router`).
 
 use std::sync::Arc;
 
@@ -7,8 +8,8 @@ use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::access_api::ConfigAccessState;
+use super::api::GoPlatformConfigState;
 use super::api::PlatformConfigState;
-use super::go_api::GoPlatformConfigState;
 use super::operations::{
     GrantPlatformConfigAccessUseCase, RevokePlatformConfigAccessUseCase,
     SetPlatformConfigPropertyUseCase,
@@ -90,7 +91,7 @@ pub fn admin_platform_config_router(state: PlatformConfigState) -> OpenApiRouter
     OpenApiRouter::new()
         .routes(routes!(crate::platform_config::api::list_configs))
         .routes(routes!(crate::platform_config::api::get_section))
-        // The property routes are Go's: `platform_config::go_api`.
+        // The property routes are Go's: `go_platform_config_router`.
         .with_state(state)
 }
 
@@ -111,19 +112,17 @@ pub fn config_access_router(state: ConfigAccessState) -> OpenApiRouter {
 pub fn go_platform_config_router(state: GoPlatformConfigState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::platform_config::go_api::get_config_property,
-            crate::platform_config::go_api::set_config_property,
-            crate::platform_config::go_api::delete_config_property
+            crate::platform_config::api::get_config_property,
+            crate::platform_config::api::set_config_property,
+            crate::platform_config::api::delete_config_property
+        ))
+        .routes(routes!(crate::platform_config::api::list_platform_config))
+        .routes(routes!(
+            crate::platform_config::api::list_platform_config_access,
+            crate::platform_config::api::grant_platform_config_access
         ))
         .routes(routes!(
-            crate::platform_config::go_api::list_platform_config
-        ))
-        .routes(routes!(
-            crate::platform_config::go_api::list_platform_config_access,
-            crate::platform_config::go_api::grant_platform_config_access
-        ))
-        .routes(routes!(
-            crate::platform_config::go_api::revoke_platform_config_access
+            crate::platform_config::api::revoke_platform_config_access
         ))
         .with_state(state)
 }

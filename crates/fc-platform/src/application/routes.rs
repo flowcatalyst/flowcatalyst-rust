@@ -1,6 +1,6 @@
 //! Application routes: `/api/applications` (plain), and Go's
 //! service-account attach and client-config read at their full paths
-//! (`go_api`).
+//! (`application_go_router`).
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::ApplicationsState;
-use super::go_api::ApplicationGoState;
+use super::api::ApplicationGoState;
 use super::operations::{
     ActivateApplicationUseCase, AttachServiceAccountToApplicationUseCase, CreateApplicationUseCase,
     DeactivateApplicationUseCase, DisableApplicationForClientUseCase,
@@ -153,10 +153,10 @@ pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -
 pub fn application_go_router(state: ApplicationGoState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::application::go_api::attach_application_service_account
+            crate::application::api::attach_application_service_account
         ))
         .routes(routes!(
-            crate::application::go_api::get_application_client_config
+            crate::application::api::get_application_client_config
         ))
         .with_state(state)
 }

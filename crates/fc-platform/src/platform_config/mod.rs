@@ -7,7 +7,6 @@ pub mod access_entity;
 pub mod access_repository;
 pub mod api;
 pub mod entity;
-pub mod go_api;
 pub mod operations;
 pub mod repository;
 pub mod routes;

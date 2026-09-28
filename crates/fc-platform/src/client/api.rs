@@ -2,18 +2,20 @@
 //!
 //! REST endpoints for client management.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::entity::{Client, ClientStatus};
 use super::repository::ClientRepository;
 use crate::shared::api_common::PaginationParams;
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -879,6 +881,57 @@ pub async fn update_client_applications(
     use_case.run(command, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── Go-parity search (formerly search_api.rs) ────────────────────────────────
+//
+// `POST /api/clients/search` (Go `client/api/api.go:39`, `searchClients`):
+// `{term}` → `{clients, total}`, at most 50 by identifier. Go's gate is
+// `CanReadClients` = anchor and `platform:admin:client:view`.
+
+#[derive(Clone)]
+pub struct ClientSearchState {
+    pub client_repo: std::sync::Arc<ClientRepository>,
+}
+
+/// Go `SearchClientRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchClientRequest {
+    pub term: String,
+}
+
+/// Search clients by name or identifier.
+#[utoipa::path(
+    post,
+    path = "/api/clients/search",
+    tag = "clients",
+    operation_id = "searchClients",
+    request_body = SearchClientRequest,
+    responses(
+        (status = 200, description = "Matching clients", body = ClientListResponse),
+        (status = 403, description = "Not an anchor holding platform:admin:client:view")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn search_clients_by_body(
+    State(state): State<ClientSearchState>,
+    auth: Authenticated,
+    Json(req): Json<SearchClientRequest>,
+) -> Result<Json<ClientListResponse>, PlatformError> {
+    checks::require_anchor_scope(&auth.0)?;
+    checks::require_permission(&auth.0, crate::permissions::admin::CLIENT_READ)?;
+    let clients: Vec<ClientResponse> = state
+        .client_repo
+        .search_top(&req.term)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(ClientListResponse {
+        total: clients.len(),
+        clients,
+    }))
 }
 
 #[cfg(test)]

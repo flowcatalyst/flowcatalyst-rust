@@ -1,6 +1,6 @@
 //! Principal routes: `/api/principals`, and Go's bulk import, version and
-//! client-association routes at their full paths (`go_api`). The two-factor
-//! reset and the developer credentials nest under the same prefix from
+//! client-association routes at their full paths (`principal_go_router`).
+//! The two-factor reset and the developer credentials nest under the same prefix from
 //! their own modules (`mfa`, `developer_credential`).
 
 use std::sync::Arc;
@@ -8,8 +8,8 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use super::api::PrincipalGoState;
 use super::api::PrincipalsState;
-use super::go_api::PrincipalGoState;
 use super::operations::set_client_association::SetClientAssociationUseCase;
 use super::operations::{
     ActivateUserUseCase, AssignApplicationAccessUseCase, AssignUserRolesUseCase, CreateUserUseCase,
@@ -174,10 +174,10 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
 /// Full-path router; merged at the root.
 pub fn principal_go_router(state: PrincipalGoState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(crate::principal::go_api::bulk_import_principals))
-        .routes(routes!(crate::principal::go_api::get_principal_version))
+        .routes(routes!(crate::principal::api::bulk_import_principals))
+        .routes(routes!(crate::principal::api::get_principal_version))
         .routes(routes!(
-            crate::principal::go_api::set_principal_client_association
+            crate::principal::api::set_principal_client_association
         ))
         .with_state(state)
 }

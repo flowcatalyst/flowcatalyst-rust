@@ -1,6 +1,6 @@
 //! Email domain mapping routes: `/api/email-domain-mappings` (plain), and
 //! Go's lookup and provider-move routes at their full paths
-//! (`lookup_api`).
+//! (`edm_lookup_router`).
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::EmailDomainMappingsState;
-use super::lookup_api::EdmLookupState;
+use super::api::EdmLookupState;
 use super::operations::move_provider::MoveMappingToProviderUseCase;
 use super::operations::{
     CreateEmailDomainMappingUseCase, DeleteEmailDomainMappingUseCase,
@@ -90,13 +90,13 @@ pub fn email_domain_mappings_router(state: EmailDomainMappingsState) -> OpenApiR
 pub fn edm_lookup_router(state: EdmLookupState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::email_domain_mapping::lookup_api::lookup_email_domain_mapping_by_query
+            crate::email_domain_mapping::api::lookup_email_domain_mapping_by_query
         ))
         .routes(routes!(
-            crate::email_domain_mapping::lookup_api::get_email_domain_mapping_by_domain
+            crate::email_domain_mapping::api::get_email_domain_mapping_by_domain
         ))
         .routes(routes!(
-            crate::email_domain_mapping::lookup_api::move_email_domain_mapping_provider
+            crate::email_domain_mapping::api::move_email_domain_mapping_provider
         ))
         .with_state(state)
 }
