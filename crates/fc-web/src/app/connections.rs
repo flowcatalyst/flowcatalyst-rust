@@ -524,7 +524,6 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                     external_id: opt(&form.external_id),
                     client_id: opt(&form.client_id),
                     application_code: None,
-                    caller: Some(auth.clone()),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -715,7 +714,6 @@ fn status_command(id: &str, status: ConnectionStatus) -> UpdateConnectionCommand
         service_account_id: None,
         application_code: None,
         replace_details: false,
-        caller: None,
     }
 }
 
@@ -750,7 +748,6 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
             service_account_id: None,
             application_code: None,
             replace_details: false,
-            caller: None,
         },
     )
     .await;

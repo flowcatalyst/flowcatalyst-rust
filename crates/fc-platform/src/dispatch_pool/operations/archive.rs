@@ -43,11 +43,20 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored pool (Go checks it post-load): a
+    /// client's pool needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing pool is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &ArchiveDispatchPoolCommand,
-        _ctx: &ExecutionContext,
+        command: &ArchiveDispatchPoolCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 

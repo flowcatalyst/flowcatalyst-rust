@@ -149,11 +149,22 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         Ok(())
     }
 
+    /// The target client must be one the caller holds (Go's use case: 403 `No
+    /// access to client: …`). The SDK handler resolves the client reference (404
+    /// for an unknown one) and the `/{appCode}` application within the caller's
+    /// scope before the body.
     async fn authorize(
         &self,
-        _command: &SyncSubscriptionsCommand,
-        _ctx: &ExecutionContext,
+        command: &SyncSubscriptionsCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(client_id) = command.client_id.as_deref() {
+            if !ctx.caller().can_access_client(client_id) {
+                return Err(UseCaseError::verbatim(crate::PlatformError::forbidden(
+                    format!("No access to client: {client_id}"),
+                )));
+            }
+        }
         Ok(())
     }
 

@@ -165,7 +165,6 @@ pub async fn create_connection(
         external_id: req.external_id,
         client_id: req.client_id,
         application_code,
-        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
@@ -313,7 +312,6 @@ pub async fn update_connection(
         service_account_id: None,
         application_code,
         replace_details: true,
-        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
@@ -345,13 +343,8 @@ pub async fn delete_connection(
 
     crate::checks::can_delete_connections(&auth.0)?;
 
-    // Go: 404 for a missing connection, then the caller's scope on it.
-    let conn = state
-        .connection_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Connection", &id)?;
-    crate::shared::caller_reach::require_scope_access(&auth.0, conn.client_id.as_deref())?;
+    // The use case answers 404 for a missing connection, then checks the
+    // caller's scope on it (Go's order).
 
     let cmd = DeleteConnectionCommand { connection_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -394,7 +387,6 @@ pub async fn pause_connection(
         service_account_id: None,
         application_code: None,
         replace_details: false,
-        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
@@ -441,7 +433,6 @@ pub async fn activate_connection(
         service_account_id: None,
         application_code: None,
         replace_details: false,
-        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;

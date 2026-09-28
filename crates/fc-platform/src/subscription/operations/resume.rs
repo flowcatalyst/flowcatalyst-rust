@@ -48,11 +48,24 @@ impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored subscription (Go checks it post-load): a
+    /// client's subscription needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing subscription is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &ResumeSubscriptionCommand,
-        _ctx: &ExecutionContext,
+        command: &ResumeSubscriptionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self
+            .subscription_repo
+            .find_by_id(&command.subscription_id)
+            .await?
+        {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 

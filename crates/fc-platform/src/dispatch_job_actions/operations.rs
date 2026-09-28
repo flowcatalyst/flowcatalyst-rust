@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use super::repository::{DispatchJobActionsRepository, JobStatusFlip, JobsRequeue};
 use crate::impl_domain_event;
+use crate::shared::authorization_service::Authority;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
@@ -40,6 +41,27 @@ impl_domain_event!(DispatchJobSettled);
 pub const CANCELLED_EVENT: &str = "platform:messaging:dispatch-job:cancelled";
 pub const COMPLETED_EVENT: &str = "platform:messaging:dispatch-job:completed";
 
+/// Go `CanAccessScope`: a client's job needs that client; a client-less
+/// one anchor or super-admin.
+pub fn reaches(caller: &impl Authority, client_id: Option<&str>) -> bool {
+    match client_id {
+        Some(c) => caller.can_access_client(c),
+        None => caller.is_anchor() || caller.has_permission(crate::permissions::ADMIN_ALL),
+    }
+}
+
+/// Go `CheckScopeAccess`'s refusal: 403 `SCOPE_FORBIDDEN`.
+pub fn scope_forbidden(client_id: Option<&str>) -> UseCaseError {
+    UseCaseError::forbidden(
+        "SCOPE_FORBIDDEN",
+        if client_id.is_some() {
+            "no access to this resource's client"
+        } else {
+            "anchor scope required for this resource"
+        },
+    )
+}
+
 /// Go `ResendCommand`: the jobs the caller may reach, already resolved.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResendCommand {
@@ -70,11 +92,20 @@ impl<U: UnitOfWork> UseCase for RequeueDispatchJobsUseCase<U> {
         Ok(())
     }
 
+    /// Every job must be one the caller reaches (Go `CanAccessScope`). The
+    /// handler drops unreachable and unknown ids silently before building the
+    /// command (Go's bulk contract, and the ids the audit row records), so this
+    /// never refuses an HTTP request; it holds the rule for any other caller.
     async fn authorize(
         &self,
-        _c: &ResendCommand,
-        _ctx: &ExecutionContext,
+        command: &ResendCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        for head in self.repo.heads(&command.ids).await? {
+            if !reaches(ctx.caller(), head.client_id.as_deref()) {
+                return Err(scope_forbidden(head.client_id.as_deref()));
+            }
+        }
         Ok(())
     }
 
@@ -140,11 +171,26 @@ impl<U: UnitOfWork> UseCase for SettleDispatchJobUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored job (post-load): a client's job needs
+    /// that client, a client-less one anchor scope or super-admin (403
+    /// `SCOPE_FORBIDDEN`). The handler loads the job first (404) to build the
+    /// command.
     async fn authorize(
         &self,
-        _c: &StatusFlipCommand,
-        _ctx: &ExecutionContext,
+        command: &StatusFlipCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(head) = self
+            .repo
+            .heads(std::slice::from_ref(&command.id))
+            .await?
+            .into_iter()
+            .next()
+        {
+            if !reaches(ctx.caller(), head.client_id.as_deref()) {
+                return Err(scope_forbidden(head.client_id.as_deref()));
+            }
+        }
         Ok(())
     }
 

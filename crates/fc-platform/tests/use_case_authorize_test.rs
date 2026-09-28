@@ -332,3 +332,106 @@ async fn developer_credentials_are_confined_to_the_callers_clients() {
         render(PlatformError::not_found("User", &other.id)).await
     );
 }
+
+// ── Messaging ────────────────────────────────────────────────────────────
+
+/// Go `CheckScopeAccess` on a stored event type, now in the use case: the
+/// `/bff` and fc-web routes (which never checked it) get it too. Event
+/// types are stored platform-wide (no client column), so a non-anchor
+/// caller is refused them.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn event_type_writes_check_the_stored_types_scope() {
+    use fc_platform::event_type::entity::{EventType, EventTypeCode};
+    use fc_platform::event_type::operations::{UpdateEventTypeCommand, UpdateEventTypeUseCase};
+    let app = setup().await;
+    let et = EventType::new(
+        EventTypeCode::parse("authz:orders:order:placed").unwrap(),
+        "Order placed",
+    );
+    app.repos.event_type_repo.insert(&et).await.unwrap();
+    let use_case =
+        UpdateEventTypeUseCase::new(app.repos.event_type_repo.clone(), app.unit_of_work.clone());
+    let err = refusal(
+        use_case
+            .run(
+                UpdateEventTypeCommand {
+                    event_type_id: et.id.clone(),
+                    name: Some("Renamed".to_string()),
+                    description: None,
+                    client_scoped: None,
+                },
+                caller(
+                    UserScope::Client,
+                    &["clt_mine"],
+                    &["platform:messaging:event-type:update"],
+                ),
+            )
+            .await,
+    );
+    assert_eq!(err.http_status_code(), 403);
+    assert_eq!(err.code(), "SCOPE_FORBIDDEN");
+    assert_eq!(err.message(), "anchor scope required for this resource");
+    assert_eq!(app.audit_count_for(&et.id).await, 0);
+}
+
+/// A platform pool is an anchor's: archiving it as a client caller is 403
+/// `SCOPE_FORBIDDEN`, and a non-anchor may not sweep pools by sync.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn dispatch_pool_writes_check_scope_in_the_use_case() {
+    use fc_platform::dispatch_pool::operations::{
+        ArchiveDispatchPoolCommand, ArchiveDispatchPoolUseCase, SyncDispatchPoolsCommand,
+        SyncDispatchPoolsUseCase,
+    };
+    let app = setup().await;
+    let pool = fc_platform::DispatchPool::new("authz-pool", "Authz pool");
+    app.repos.dispatch_pool_repo.insert(&pool).await.unwrap();
+    let client_admin = || {
+        caller(
+            UserScope::Client,
+            &["clt_mine"],
+            &["platform:messaging:dispatch-pool:update"],
+        )
+    };
+    let err = refusal(
+        ArchiveDispatchPoolUseCase::new(
+            app.repos.dispatch_pool_repo.clone(),
+            app.unit_of_work.clone(),
+        )
+        .run(
+            ArchiveDispatchPoolCommand {
+                id: pool.id.clone(),
+            },
+            client_admin(),
+        )
+        .await,
+    );
+    assert_eq!(
+        (err.http_status_code(), err.code(), err.message()),
+        (
+            403,
+            "SCOPE_FORBIDDEN",
+            "anchor scope required for this resource"
+        )
+    );
+
+    let err = refusal(
+        SyncDispatchPoolsUseCase::new(
+            app.repos.dispatch_pool_repo.clone(),
+            app.unit_of_work.clone(),
+        )
+        .run(
+            SyncDispatchPoolsCommand {
+                application_code: "authz".to_string(),
+                pools: vec![],
+                remove_unlisted: true,
+                protected_ids: Default::default(),
+            },
+            client_admin(),
+        )
+        .await,
+    );
+    assert_eq!(err.code(), "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP");
+    assert_eq!(app.audit_count_for(&pool.id).await, 0);
+}

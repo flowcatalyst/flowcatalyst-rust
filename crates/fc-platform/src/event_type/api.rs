@@ -222,18 +222,8 @@ pub async fn create_event_type(
         client_scoped: req.client_scoped,
         schema: req.schema,
     };
-    // Go's `CreateEventType`: the command is validated (the code parsed
-    // above, the rest here), then the scope is checked (`CheckScopeAccess`:
-    // a client-scoped type needs that client, a platform one anchor).
-    state
-        .create_use_case
-        .validate(&cmd)
-        .await
-        .map_err(PlatformError::from)?;
-    crate::shared::authorization_service::checks::check_scope_access(
-        &auth.0,
-        cmd.client_id.as_deref(),
-    )?;
+    // Go's `CreateEventType`: the use case validates the command (the code
+    // parsed above), then checks the scope (`CheckScopeAccess`).
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
@@ -416,18 +406,8 @@ pub async fn update_event_type(
             "Event type name is required",
         ));
     }
-    // Resource-level access check on the stored event type (Go
-    // `CheckScopeAccess`).
-    let event_type = state
-        .event_type_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("EventType", &id)?;
-    crate::shared::authorization_service::checks::check_scope_access(
-        &auth.0,
-        event_type.client_id.as_deref(),
-    )?;
-
+    // The use case loads the type (404) and checks the caller's scope on it
+    // (Go `CheckScopeAccess`).
     let cmd = UpdateEventTypeCommand {
         event_type_id: id,
         name: Some(req.name),
@@ -502,16 +482,7 @@ pub async fn delete_event_type(
 
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
-    let event_type = state
-        .event_type_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("EventType", &id)?;
-    crate::shared::authorization_service::checks::check_scope_access(
-        &auth.0,
-        event_type.client_id.as_deref(),
-    )?;
-
+    // The use case loads the type (404) and checks the caller's scope on it.
     let cmd = DeleteEventTypeCommand { event_type_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
@@ -582,8 +553,9 @@ pub async fn add_event_type_schema(
 }
 
 /// Go's `addSchema` (eventtype/api/api.go), shared by `/schemas` and
-/// `/versions` once the permission is checked: validate, load (404), scope
-/// (`CheckScopeAccess`), add the caller's version, answer the event type.
+/// `/versions` once the permission is checked: validate, then the use case
+/// loads (404), checks the scope (`CheckScopeAccess`) and adds the caller's
+/// version; answer the event type.
 pub(crate) async fn add_schema(
     repo: &EventTypeRepository,
     use_case: &AddSchemaUseCase<PgUnitOfWork>,
@@ -600,11 +572,7 @@ pub(crate) async fn add_schema(
     let schema = Some(req.schema).filter(|s| !s.is_null()).ok_or_else(|| {
         PlatformError::bad_request_code("SCHEMA_REQUIRED", "schema payload is required")
     })?;
-    let event_type = repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found_code("EventType", &id))?;
-    checks::check_scope_access(&auth.0, event_type.client_id.as_deref())?;
+    // The use case loads the type (404) and checks the caller's scope on it.
     use_case
         .run(
             AddSchemaCommand {

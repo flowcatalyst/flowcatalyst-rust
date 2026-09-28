@@ -91,11 +91,20 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored job (Go checks it post-load): a
+    /// client's job needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing job is `execute`'s 404.
     async fn authorize(
         &self,
-        _cmd: &Self::Command,
-        _ctx: &ExecutionContext,
+        command: &UpdateScheduledJobCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(job) = self.repo.find_by_id(&command.scheduled_job_id).await? {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                job.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 

@@ -764,7 +764,6 @@ async fn create_subscription(
                     delay_seconds: None,
                     max_age_seconds: None,
                     custom_config: None,
-                    caller: Some(auth.clone()),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1073,7 +1072,6 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
             delay_seconds: None,
             max_age_seconds: None,
             custom_config: None,
-            caller: Some(auth.clone()),
         },
         ExecutionContext::from_auth(auth),
     )

@@ -707,7 +707,6 @@ impl TriggerSync {
                     description: None,
                     rate_limit: None,
                     concurrency: Some(desired),
-                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -734,7 +733,6 @@ impl TriggerSync {
                     client_id: None,
                     rate_limit: None,
                     concurrency: Some(desired),
-                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -810,9 +808,6 @@ impl TriggerSync {
                     delay_seconds: None,
                     max_age_seconds: None,
                     custom_config: None,
-                    // Platform-authored: a function subscription names no
-                    // account or connection, so no signer is checked.
-                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -862,7 +857,6 @@ impl TriggerSync {
                     delay_seconds: None,
                     max_age_seconds: None,
                     custom_config: None,
-                    caller: None,
                 };
                 self.commit_linked(
                     uow,

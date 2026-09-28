@@ -31,11 +31,6 @@ pub struct UpdateDispatchPoolCommand {
     /// Updated max concurrent dispatches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<i32>,
-
-    /// Who is updating it, for Go's scope check on the loaded pool (never
-    /// serialised). `None` is a platform-authored update.
-    #[serde(skip)]
-    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for UpdateDispatchPoolCommand {}
@@ -74,11 +69,20 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         super::create::validate_counts(command.rate_limit, command.concurrency)
     }
 
+    /// Go `CheckScopeAccess` on the stored pool (Go checks it post-load): a
+    /// client's pool needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing pool is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &UpdateDispatchPoolCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateDispatchPoolCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 
@@ -96,11 +100,6 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
                 "DISPATCH_POOL_NOT_FOUND",
                 format!("Dispatch pool with ID '{}' not found", command.id),
             )?;
-        // Go: per-resource scope on the loaded pool.
-        if let Some(ref caller) = command.caller {
-            crate::shared::caller_reach::check_scope_access(caller, pool.client_id.as_deref())?;
-        }
-
         // Apply name update
         if let Some(ref name) = command.name {
             let name = name.trim();
@@ -148,7 +147,6 @@ mod tests {
             description: None,
             rate_limit: Some(2000),
             concurrency: Some(20),
-            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

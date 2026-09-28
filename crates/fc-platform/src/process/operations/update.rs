@@ -67,12 +67,15 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         Ok(())
     }
 
+    /// A process has no client or owner to reach (Go authorizes nothing beyond
+    /// the permission). The handler checks `can_update_processes` before the body; asserted here
+    /// too so any other caller needs it.
     async fn authorize(
         &self,
         _command: &UpdateProcessCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::can_update_processes(ctx.caller())?)
     }
 
     async fn execute(

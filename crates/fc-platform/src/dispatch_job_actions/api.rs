@@ -24,7 +24,7 @@ use super::operations::{
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::api::DispatchJobResponse;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
-use crate::shared::authorization_service::{checks, AuthContext};
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::shared::webhook_signer;
@@ -82,26 +82,6 @@ pub struct DeliveryPlan {
     pub body: String,
 }
 
-/// Go `CanAccessScope`: a client's job needs that client; a client-less
-/// one anchor or super-admin.
-fn reaches(ctx: &AuthContext, client_id: Option<&str>) -> bool {
-    match client_id {
-        Some(c) => ctx.can_access_client(c),
-        None => ctx.is_anchor() || ctx.has_permission(crate::permissions::ADMIN_ALL),
-    }
-}
-
-fn scope_forbidden(client_id: Option<&str>) -> PlatformError {
-    PlatformError::forbidden_code(
-        "SCOPE_FORBIDDEN",
-        if client_id.is_some() {
-            "no access to this resource's client"
-        } else {
-            "anchor scope required for this resource"
-        },
-    )
-}
-
 async fn requeue(
     state: &DispatchJobActionsState,
     auth: &Authenticated,
@@ -116,7 +96,7 @@ async fn requeue(
         .heads(&ids)
         .await?
         .into_iter()
-        .filter(|j| reaches(&auth.0, j.client_id.as_deref()))
+        .filter(|j| super::operations::reaches(&auth.0, j.client_id.as_deref()))
         .map(|j| (j.id, j.created_at))
         .collect();
     let command = ResendCommand {
@@ -146,9 +126,8 @@ async fn settle(
         .into_iter()
         .next()
         .ok_or_else(|| PlatformError::not_found_code("DispatchJob", &id))?;
-    if !reaches(&auth.0, head.client_id.as_deref()) {
-        return Err(scope_forbidden(head.client_id.as_deref()));
-    }
+    // The use case checks the caller's scope on the job (Go
+    // `CheckScopeAccess`, post-load).
     state
         .settle_use_case
         .run(
@@ -213,8 +192,8 @@ async fn sign(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found_code("DispatchJob", &id))?;
-    if !reaches(&auth.0, job.client_id.as_deref()) {
-        return Err(scope_forbidden(job.client_id.as_deref()));
+    if !super::operations::reaches(&auth.0, job.client_id.as_deref()) {
+        return Err(super::operations::scope_forbidden(job.client_id.as_deref()).into());
     }
     let client_code = match job.client_id.as_deref() {
         Some(c) => state

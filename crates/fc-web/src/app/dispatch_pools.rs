@@ -583,7 +583,6 @@ async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl Vie
                     client_id,
                     rate_limit: rate_limit.map(|r| r as i32),
                     concurrency: Some(concurrency as i32),
-                    caller: None,
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -774,7 +773,6 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
                 description: Some(form.description).filter(|d| !d.is_empty()),
                 rate_limit: rate_limit.map(|r| r as i32),
                 concurrency: concurrency.map(|c| c as i32),
-                caller: None,
             },
             ExecutionContext::from_auth(auth),
         )

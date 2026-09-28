@@ -125,12 +125,7 @@ pub async fn sync_connections(
                 }
             };
             let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
-            if !auth.0.can_access_client(&client.id) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    client.id
-                )));
-            }
+            // The use case checks the caller holds it (403).
             Some(client.id)
         }
         _ => None,
@@ -154,7 +149,8 @@ pub async fn sync_connections(
                     .collect(),
                 remove_unlisted: query.remove_unlisted,
             },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_auth(&auth.0)
+                .with_application_scope(state.app_access.scope_for(&auth.0.principal_id).await?),
         )
         .await
         .into_result()?;

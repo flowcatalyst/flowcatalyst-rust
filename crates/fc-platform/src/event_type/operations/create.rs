@@ -122,12 +122,15 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the requested client (Go's `CreateEventType`
+    /// authorize): a client-scoped type needs that client, a platform one anchor
+    /// scope (403 `SCOPE_FORBIDDEN`).
     async fn authorize(
         &self,
-        _command: &CreateEventTypeCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateEventTypeCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        crate::shared::caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     async fn execute(

@@ -536,12 +536,7 @@ pub(super) async fn sync_subscriptions(
                 }
             };
             let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
-            if !auth.0.can_access_client(&client.id) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    client.id
-                )));
-            }
+            // The use case checks the caller holds it (403).
             Some(client.id)
         }
         _ => None,
@@ -631,18 +626,8 @@ pub(super) async fn sync_dispatch_pools(
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
-    // Dispatch pools are platform-global, so removeUnlisted is a
-    // platform-wide sweep: anchor or super-admin only, with Go's code and
-    // message (dispatchpool/operations/sync.go:96-108).
-    if query.remove_unlisted
-        && !auth.0.is_anchor()
-        && !auth.0.has_permission(crate::permissions::ADMIN_ALL)
-    {
-        return Err(PlatformError::forbidden_code(
-            "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP",
-            "Only anchor users may sweep (removeUnlisted) dispatch pools — they are platform-global",
-        ));
-    }
+    // The use case refuses a non-anchor's platform-wide sweep
+    // (removeUnlisted), as Go's does.
 
     let command = SyncDispatchPoolsCommand {
         application_code: app_code,
@@ -799,25 +784,8 @@ pub(super) async fn sync_scheduled_jobs(
         .require_application_access(&auth.0, &app_code)
         .await?;
 
-    // Resource-level scope check: caller must have access to the target client
-    // (or be anchor when targeting platform-scoped jobs).
-    match req.client_id.as_deref() {
-        Some(cid) => {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
-        }
-        None => {
-            if !auth.0.is_anchor() && !auth.0.has_permission(crate::permissions::ADMIN_ALL) {
-                return Err(PlatformError::forbidden(
-                    "Only anchor users can sync platform-scoped scheduled jobs",
-                ));
-            }
-        }
-    }
+    // The use case checks the caller's scope on the target client (a
+    // client's jobs need it; platform jobs an anchor).
 
     let command = SyncScheduledJobsCommand {
         scope: app_code.clone(),
