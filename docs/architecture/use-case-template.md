@@ -65,18 +65,24 @@ impl<U: UnitOfWork> UseCase for CreateWidgetUseCase<U> {
 
     /// Resource-level authorization: may *this caller* act on *this target*?
     /// Client reach, application scope, anchor-only, ownership, ceilings.
-    /// Use the `checks::*` helpers so the rule text lives in one place.
-    /// The coarse permission gate (`can_create_widgets`) stays in the handler,
-    /// where Go checks it before decoding the body.
-    /// An empty `Ok(())` needs an allowlist entry with a reason in the
-    /// authorize convention test.
+    /// `ctx.caller()` is a `Caller`: the request's principal (tier, clients,
+    /// permissions, credential, and the application scope when the handler
+    /// attached it) or the explicit `Caller::system()`, which passes every
+    /// rule. Use the `checks::*` / `caller_reach::*` / `role::ceiling`
+    /// helpers (they take any `Authority`) so the rule text lives in one
+    /// place. The coarse permission gate (`can_create_widgets`) stays in the
+    /// handler, where Go checks it before decoding the body.
+    /// A rule on the stored target loads it here and leaves a missing row to
+    /// `execute`'s 404 (Go's order: load → 404 → 403). A handler's exact
+    /// refusal carries through with `UseCaseError::verbatim`.
+    /// An empty `Ok(())` needs an entry, with a reason, in
+    /// `tests/use_case_shape_convention_test.rs`'s `EMPTY_AUTHORIZE`.
     async fn authorize(
         &self,
         command: &CreateWidgetCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        crate::checks::require_scope_access(&ctx.caller, command.client_id.as_deref())?; // (phase 2)
-        Ok(())
+        crate::shared::caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     /// Load, apply business rules, build the event, commit. The happy path
@@ -111,10 +117,23 @@ mod tests { /* validation order, error codes; Docker tests live in tests/ */ }
 | Rule | Test |
 |---|---|
 | Every `execute` happy path reaches a `unit_of_work.*` call | `tests/uow_convention_test.rs` (and `Committed` is sealed, so skipping it doesn't compile) |
-| `authorize` is not an empty `Ok(())` without an allowlisted reason | authorize convention test (platform-uniformity phase 2) |
-| File shape: command, struct + `new`, `impl UseCase` with `validate`, `authorize`, `execute` in that order | shape convention test (platform-uniformity phase 2) |
+| `authorize` is not an empty `Ok(())` without an allowlisted reason | `tests/use_case_shape_convention_test.rs` (`every_use_case_authorizes_or_says_why_not`) |
+| File shape: command, struct + `new`, `impl UseCase` with `validate`, `authorize`, `execute` in that order | `tests/use_case_shape_convention_test.rs` (`use_cases_follow_the_template_shape`) |
 | Every `/api` write handler calls a permission check | `tests/route_auth_convention_test.rs` |
 | Sync use cases write only through `commit_sync` | `tests/uow_convention_test.rs` |
+
+## Building the context
+
+- A handler: `ExecutionContext::from_auth(&auth.0)`, plus
+  `.with_application_scope(scope)` when the use case checks application
+  scope (the scope costs a query, so it is attached only where needed; an
+  unresolved scope reaches no application).
+- A platform-internal path (startup sync, login and reset outcomes, a
+  scheduler): `ExecutionContext::system(principal_id)`, where the principal
+  id is only what the event and audit rows record.
+- A handler that already built a `Caller` (the function API resolves the
+  application scope first): `ExecutionContext::from_caller(caller)`.
+- There is no other constructor, and the caller field is private.
 
 ## What not to do
 

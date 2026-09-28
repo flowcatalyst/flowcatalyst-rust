@@ -81,8 +81,17 @@ fn require_id(id: &str) -> Result<(), UseCaseError> {
 }
 
 pub struct SetDeveloperCredentialUseCase<U: UnitOfWork> {
-    pub principal_repo: Arc<PrincipalRepository>,
-    pub unit_of_work: Arc<U>,
+    principal_repo: Arc<PrincipalRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> SetDeveloperCredentialUseCase<U> {
+    pub fn new(principal_repo: Arc<PrincipalRepository>, unit_of_work: Arc<U>) -> Self {
+        Self {
+            principal_repo,
+            unit_of_work,
+        }
+    }
 }
 
 #[async_trait]
@@ -144,8 +153,17 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
 }
 
 pub struct RevokeDeveloperCredentialUseCase<U: UnitOfWork> {
-    pub principal_repo: Arc<PrincipalRepository>,
-    pub unit_of_work: Arc<U>,
+    principal_repo: Arc<PrincipalRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> RevokeDeveloperCredentialUseCase<U> {
+    pub fn new(principal_repo: Arc<PrincipalRepository>, unit_of_work: Arc<U>) -> Self {
+        Self {
+            principal_repo,
+            unit_of_work,
+        }
+    }
 }
 
 #[async_trait]

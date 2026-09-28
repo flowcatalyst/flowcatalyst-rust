@@ -309,10 +309,10 @@ async fn developer_credentials_are_confined_to_the_callers_clients() {
     let app = setup().await;
     let theirs = insert_client(&app, "authz-dev-theirs").await;
     let other = insert_user(&app, "dev@authz.test", UserScope::Client, Some(&theirs)).await;
-    let use_case = RevokeDeveloperCredentialUseCase {
-        principal_repo: app.repos.principal_repo.clone(),
-        unit_of_work: app.unit_of_work.clone(),
-    };
+    let use_case = RevokeDeveloperCredentialUseCase::new(
+        app.repos.principal_repo.clone(),
+        app.unit_of_work.clone(),
+    );
     let err = refusal(
         use_case
             .run(
