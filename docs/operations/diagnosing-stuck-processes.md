@@ -2,7 +2,7 @@
 
 What to look at, in order, when messages stop moving: which endpoint answers
 which question, which metric shows what, and how to turn on the deeper tools
-(task dumps, tokio-console, OTLP traces). Written so that an operator, or an
+(task dumps, OTLP traces). Written so that an operator, or an
 agent holding a read-only token, can triage without shell access to the task.
 
 Background: in Rust a stuck async task leaves no thread to dump, and a panic
@@ -170,7 +170,7 @@ These roles have no router API; use fc-server's metrics port.
 - Beside other roles (`FC_FUNCTION_HOST_ENABLED` with others), fc-server's
   `:9090/diagnostics/*` covers the host too: it is the same runtime. A
   host-only node has no authenticated diagnostics endpoint of its own; use
-  its `/metrics`, the logs, and tokio-console when needed.
+  its `/metrics` and the logs.
 
 ---
 
@@ -314,38 +314,14 @@ cannot be set per Cargo profile on stable, so it is a build choice:
   schedule. It adds four crates to the image (`backtrace`, `addr2line`,
   `gimli`, `object`; cargo-vet exemptions recorded in `supply-chain/`).
 
-## tokio-console (live task inspection)
+### tokio-console, locally
 
-Not in the production image: its instrumentation records every task's
-spawns, polls and wakes, which costs throughput. Build a debugging image with
-it and run that in place of the stuck task's image. In the builder stage:
-
-```sh
-RUSTFLAGS="--cfg tokio_unstable" \
-  cargo build --release -p fc-server --bin fc-server --features taskdump,tokio-console
-```
-
-Run with `FC_TOKIO_CONSOLE=true`. The console's gRPC server binds
-`FC_TOKIO_CONSOLE_BIND`, default `127.0.0.1:6669`, **localhost only**; never
-put it on a public interface. Reach it through an SSM port-forward (ECS Exec
-enabled on the service):
-
-```sh
-aws ssm start-session \
-  --target "ecs:${CLUSTER}_${TASK_ID}_${RUNTIME_ID}" \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters '{"portNumber":["6669"],"localPortNumber":["6669"]}'
-# then, locally:
-tokio-console http://127.0.0.1:6669
-```
-
-(`RUNTIME_ID` is the container's runtime id from `aws ecs describe-tasks`.)
-In the console, sort tasks by busy time to find one that holds a worker, and
-look for idle tasks with no wakers to find one nothing will wake.
-`fc-dev --features tokio-console` works the same way locally. The feature
-adds three crates to the lockfile (`console-subscriber`, `console-api`,
-`humantime`) and links `tonic`/`prost`, which were already in it as test
-dependencies.
+Not in any build (owner decision, 2026-09-28). To chase runtime starvation on
+your own machine, add it for the session and do not commit it:
+`cargo add console-subscriber -p fc-dev`, call `console_subscriber::init()`
+in place of `fc_common::logging::init_logging` in `main`, run with
+`RUSTFLAGS="--cfg tokio_unstable"`, and attach `tokio-console` (default
+`127.0.0.1:6669`).
 
 ## OpenTelemetry traces
 
@@ -368,15 +344,12 @@ Spans are flushed at shutdown.
 | `FC_ROUTER_FLIGHT_RECORDER_EVENTS` | `16384` | router | Events the flight recorder keeps; `0` = off |
 | `FC_DIAGNOSTICS_PLATFORM_URL` | `FC_ROUTER_PLATFORM_URL`, else the in-process platform | fc-server | The platform whose JWKS verifies metrics-port diagnostics tokens |
 | `FC_LOG_SPAN_EVENTS` | unset | all | `close`: a line per closed span, with its duration; `full`: open/enter/exit/close |
-| `FC_TOKIO_CONSOLE` | `false` | builds with `tokio-console` | Start the console server |
-| `FC_TOKIO_CONSOLE_BIND` | `127.0.0.1:6669` | same | Its address |
 | `FC_OTEL_ENABLED` | `false` | builds with `otel` | Export spans over OTLP/HTTP |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | same | Collector (`/v1/traces` is appended) |
 | `OTEL_SERVICE_NAME` | the binary's name | same | `service.name` |
 
 Build: `FC_TASKDUMP` (Docker build argument, default `1`); Cargo features
-`taskdump`, `tokio-console`, `otel` on fc-server (fc-dev and
-fc-outbox-processor: `tokio-console`, `otel`).
+`taskdump` and `otel` on fc-server (fc-dev and fc-outbox-processor: `otel`).
 
 ## Overhead
 

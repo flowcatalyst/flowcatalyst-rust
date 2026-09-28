@@ -26,8 +26,6 @@ testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["mysql"] }
 
 [features]
-# Diagnostics (docs/operations/diagnosing-stuck-processes.md): tokio-console
-# (needs RUSTFLAGS="--cfg tokio_unstable" and FC_TOKIO_CONSOLE=true) and
-# OTLP span export (FC_OTEL_ENABLED=true).
-tokio-console = ["fc-common/tokio-console"]
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md): OTLP span
+# export (FC_OTEL_ENABLED=true).
 otel = ["fc-common/otel"]

@@ -23,8 +23,6 @@ opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry-http = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-# tokio-console (feature `tokio-console`, off by default).
-console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
@@ -38,9 +36,6 @@ default = []
 # Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable";
 # the production image builds with both (Dockerfile, FC_TASKDUMP).
 taskdump = ["tokio/taskdump"]
-# tokio-console's instrumentation layer, started by FC_TOKIO_CONSOLE=true.
-# Also needs RUSTFLAGS="--cfg tokio_unstable" for task data.
-tokio-console = ["dep:console-subscriber"]
 # OTLP span export, started by FC_OTEL_ENABLED=true.
 otel = [
     "dep:opentelemetry",

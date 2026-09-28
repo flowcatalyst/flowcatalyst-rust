@@ -47,7 +47,6 @@
 //! }
 //! ```
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
@@ -65,8 +64,8 @@ use tracing_subscriber::{
 /// FC_LOG_LEVEL (debug/warn/error, default info).
 ///
 /// Also installs the diagnostics panic hook ([`crate::diagnostics::init`])
-/// and, when built in and switched on, the tokio-console and OTLP layers
-/// (see [`extra_layers`]).
+/// and, when built in and switched on, the OTLP layer (see
+/// [`extra_layers`]).
 pub fn init_logging(service_name: &str) {
     let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
     install(service_name, log_format.eq_ignore_ascii_case("json"));
@@ -152,8 +151,7 @@ macro_rules! text_layer {
 
 /// Install the subscriber: the env filter and the chosen line format,
 /// plus [`extra_layers`]. With no extra layer the filter is global (as it
-/// always was); with one it filters the log lines only, so tokio-console
-/// still sees the runtime's own trace-level events.
+/// always was); with one, each layer carries its own copy of it.
 fn install(service_name: &str, json: bool) {
     let extras = extra_layers(service_name);
     let result = if extras.is_empty() {
@@ -188,13 +186,6 @@ fn install(service_name: &str, json: bool) {
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
 
-static TOKIO_CONSOLE: AtomicBool = AtomicBool::new(false);
-
-/// Whether the tokio-console layer is running in this process.
-pub fn tokio_console_enabled() -> bool {
-    TOKIO_CONSOLE.load(Ordering::Relaxed)
-}
-
 fn env_true(name: &str) -> bool {
     matches!(
         std::env::var(name)
@@ -210,9 +201,6 @@ fn env_true(name: &str) -> bool {
 /// by an environment variable, so a build that has them costs nothing
 /// until an operator asks:
 ///
-/// - `tokio-console` + `FC_TOKIO_CONSOLE=true`: the console's gRPC server
-///   on `FC_TOKIO_CONSOLE_BIND` (default `127.0.0.1:6669`, localhost only;
-///   reach it through an SSM port-forward).
 /// - `otel` + `FC_OTEL_ENABLED=true`: spans exported over OTLP/HTTP to
 ///   `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`), as
 ///   `OTEL_SERVICE_NAME` (default the binary's name).
@@ -221,18 +209,6 @@ fn env_true(name: &str) -> bool {
 /// reported on stderr and skipped.
 fn extra_layers(service_name: &str) -> Vec<BoxedLayer> {
     let mut layers: Vec<BoxedLayer> = Vec::new();
-    if env_true("FC_TOKIO_CONSOLE") {
-        match console_layer() {
-            Some(layer) => {
-                TOKIO_CONSOLE.store(true, Ordering::Relaxed);
-                layers.push(layer);
-            }
-            None => eprintln!(
-                "FC_TOKIO_CONSOLE is set but this build has no tokio-console support \
-                 (build with --features tokio-console and RUSTFLAGS=\"--cfg tokio_unstable\")"
-            ),
-        }
-    }
     if env_true("FC_OTEL_ENABLED") {
         match otel::layer(service_name) {
             Ok(Some(layer)) => layers.push(layer),
@@ -244,31 +220,6 @@ fn extra_layers(service_name: &str) -> Vec<BoxedLayer> {
         }
     }
     layers
-}
-
-#[cfg(feature = "tokio-console")]
-fn console_layer() -> Option<BoxedLayer> {
-    let bind = std::env::var("FC_TOKIO_CONSOLE_BIND")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "127.0.0.1:6669".to_string());
-    let addr: std::net::SocketAddr = match bind.trim().parse() {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("FC_TOKIO_CONSOLE_BIND={bind:?} is not an address ({e}); tokio-console off");
-            return None;
-        }
-    };
-    Some(Box::new(
-        console_subscriber::ConsoleLayer::builder()
-            .server_addr(addr)
-            .spawn(),
-    ))
-}
-
-#[cfg(not(feature = "tokio-console"))]
-fn console_layer() -> Option<BoxedLayer> {
-    None
 }
 
 /// Flush and stop whatever the optional layers buffer (the OTLP batch

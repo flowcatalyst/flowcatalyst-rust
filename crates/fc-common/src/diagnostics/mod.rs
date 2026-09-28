@@ -46,7 +46,6 @@ pub struct RuntimeReport {
     /// Panics caught per supervised background task.
     pub task_restarts: std::collections::BTreeMap<&'static str, u64>,
     pub taskdump_available: bool,
-    pub tokio_console: bool,
 }
 
 /// A report on `handle`'s runtime (the current one when `None`), sampled
@@ -66,7 +65,6 @@ pub async fn report(handle: Option<&Handle>, window: Duration) -> RuntimeReport 
         panics: panic_count(),
         task_restarts: supervise::restart_counts().into_iter().collect(),
         taskdump_available: TASKDUMP_AVAILABLE,
-        tokio_console: crate::logging::tokio_console_enabled(),
     }
 }
 
