@@ -47,11 +47,21 @@ async fn fresh_postgres() -> (PgPool, ContainerAsync<Postgres>) {
         .expect("start PostgreSQL");
     let host = container.get_host().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let pool = create_pool(&format!(
-        "postgresql://test:test@{host}:{port}/flowcatalyst_test"
-    ))
-    .await
-    .expect("connect");
+    let url = format!("postgresql://test:test@{host}:{port}/flowcatalyst_test");
+    // Under a loaded Docker daemon the server can take a moment after its
+    // ready line; retry rather than flake.
+    let mut attempt = 0;
+    let pool = loop {
+        match create_pool(&url).await {
+            Ok(pool) => break pool,
+            Err(e) if attempt < 10 => {
+                attempt += 1;
+                eprintln!("connect attempt {attempt} failed: {e}; retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => panic!("connect: {e}"),
+        }
+    };
     (pool, container)
 }
 
