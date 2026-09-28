@@ -1,0 +1,199 @@
+//! EmailDomainMapping Entity
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ScopeType {
+    Anchor,
+    Partner,
+    Client,
+}
+
+fc_platform_core::shared::enum_str::str_enum!(ScopeType, "scope type", {
+    Anchor => "ANCHOR",
+    Partner => "PARTNER",
+    Client => "CLIENT",
+});
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailDomainMapping {
+    pub id: String,
+    pub email_domain: String,
+    pub identity_provider_id: String,
+    pub scope_type: ScopeType,
+    pub primary_client_id: Option<String>,
+    pub additional_client_ids: Vec<String>,
+    pub granted_client_ids: Vec<String>,
+    pub required_oidc_tenant_id: Option<String>,
+    pub allowed_role_ids: Vec<String>,
+    pub sync_roles_from_idp: bool,
+    /// Internal (password) users of this domain must pass a second factor
+    /// (Go's `require_2fa`; inert for a domain mapped to an OIDC provider).
+    pub require_2fa: bool,
+    /// The second factors the domain allows (`TOTP`, `EMAIL_PIN`); at least
+    /// one when `require_2fa` is set.
+    pub allowed_2fa_methods: Vec<String>,
+    /// A browser may be remembered to skip the challenge.
+    pub remember_device_enabled: bool,
+    /// How long a remembered browser skips it, in days.
+    pub remember_device_days: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The second-factor methods a domain may allow (Go `mfa.ValidMethodType`).
+pub const TWO_FACTOR_METHODS: [&str; 2] = ["TOTP", "EMAIL_PIN"];
+
+/// Go `validate2FA` (emaildomainmapping/operations/create.go:28-42): every
+/// method is known, and a domain requiring 2FA allows at least one.
+pub fn validate_two_factor(
+    require_2fa: bool,
+    methods: &[String],
+) -> Result<(), fc_platform_core::usecase::UseCaseError> {
+    if methods
+        .iter()
+        .any(|m| !TWO_FACTOR_METHODS.contains(&m.as_str()))
+    {
+        return Err(fc_platform_core::usecase::UseCaseError::validation(
+            "INVALID_2FA_METHOD",
+            "allowed2faMethods entries must be TOTP or EMAIL_PIN",
+        ));
+    }
+    if require_2fa && methods.is_empty() {
+        return Err(fc_platform_core::usecase::UseCaseError::validation(
+            "2FA_METHOD_REQUIRED",
+            "at least one 2FA method must be allowed when require2fa is set",
+        ));
+    }
+    Ok(())
+}
+
+impl EmailDomainMapping {
+    pub fn new(
+        email_domain: impl Into<String>,
+        identity_provider_id: impl Into<String>,
+        scope_type: ScopeType,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: fc_platform_core::shared::tsid::generate(
+                fc_platform_core::shared::tsid::EntityType::EmailDomainMapping,
+            ),
+            email_domain: email_domain.into(),
+            identity_provider_id: identity_provider_id.into(),
+            scope_type,
+            primary_client_id: None,
+            additional_client_ids: Vec::new(),
+            granted_client_ids: Vec::new(),
+            required_oidc_tenant_id: None,
+            allowed_role_ids: Vec::new(),
+            sync_roles_from_idp: false,
+            require_2fa: false,
+            allowed_2fa_methods: Vec::new(),
+            remember_device_enabled: false,
+            remember_device_days: 30,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Whether the mapping pins the OIDC tenant (`tid`) a login must come
+    /// from. A blank value pins nothing.
+    pub fn is_tenant_pinned(&self) -> bool {
+        self.required_oidc_tenant_id
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_new_email_domain_mapping() {
+        let edm = EmailDomainMapping::new("example.com", "idp-123", ScopeType::Anchor);
+
+        assert!(!edm.id.is_empty());
+        assert!(
+            edm.id.starts_with("edm_"),
+            "ID should have edm_ prefix, got: {}",
+            edm.id
+        );
+        assert_eq!(edm.email_domain, "example.com");
+        assert_eq!(edm.identity_provider_id, "idp-123");
+        assert_eq!(edm.scope_type, ScopeType::Anchor);
+        assert!(edm.primary_client_id.is_none());
+        assert!(edm.additional_client_ids.is_empty());
+        assert!(edm.granted_client_ids.is_empty());
+        assert!(edm.required_oidc_tenant_id.is_none());
+        assert!(edm.allowed_role_ids.is_empty());
+        assert!(!edm.sync_roles_from_idp);
+        assert_eq!(edm.created_at, edm.updated_at);
+    }
+
+    #[test]
+    fn test_scope_type_as_str() {
+        assert_eq!(ScopeType::Anchor.as_str(), "ANCHOR");
+        assert_eq!(ScopeType::Partner.as_str(), "PARTNER");
+        assert_eq!(ScopeType::Client.as_str(), "CLIENT");
+    }
+
+    #[test]
+    fn test_scope_type_from_str() {
+        assert_eq!(ScopeType::from_str("PARTNER"), Ok(ScopeType::Partner));
+        assert_eq!(ScopeType::from_str("CLIENT"), Ok(ScopeType::Client));
+        // Unknown values are rejected (X-06)
+        assert_eq!(ScopeType::from_str("ANCHOR"), Ok(ScopeType::Anchor));
+        assert!(ScopeType::from_str("unknown").is_err());
+        assert!(ScopeType::from_str("").is_err());
+    }
+
+    #[test]
+    fn test_scope_type_serialization() {
+        let json = serde_json::to_string(&ScopeType::Anchor).unwrap();
+        assert_eq!(json, "\"ANCHOR\"");
+
+        let json = serde_json::to_string(&ScopeType::Partner).unwrap();
+        assert_eq!(json, "\"PARTNER\"");
+
+        let json = serde_json::to_string(&ScopeType::Client).unwrap();
+        assert_eq!(json, "\"CLIENT\"");
+    }
+
+    #[test]
+    fn test_scope_type_deserialization() {
+        let anchor: ScopeType = serde_json::from_str("\"ANCHOR\"").unwrap();
+        assert_eq!(anchor, ScopeType::Anchor);
+
+        let partner: ScopeType = serde_json::from_str("\"PARTNER\"").unwrap();
+        assert_eq!(partner, ScopeType::Partner);
+
+        let client: ScopeType = serde_json::from_str("\"CLIENT\"").unwrap();
+        assert_eq!(client, ScopeType::Client);
+    }
+
+    #[test]
+    fn test_email_domain_mapping_unique_ids() {
+        let edm1 = EmailDomainMapping::new("a.com", "idp-1", ScopeType::Anchor);
+        let edm2 = EmailDomainMapping::new("b.com", "idp-2", ScopeType::Client);
+        assert_ne!(edm1.id, edm2.id);
+    }
+
+    #[test]
+    fn test_email_domain_mapping_serialization() {
+        let edm = EmailDomainMapping::new("test.org", "idp-1", ScopeType::Partner);
+
+        let json = serde_json::to_string(&edm).unwrap();
+        assert!(json.contains("emailDomain"));
+        assert!(json.contains("test.org"));
+        assert!(json.contains("identityProviderId"));
+        assert!(json.contains("idp-1"));
+        assert!(json.contains("PARTNER"));
+        assert!(json.contains("syncRolesFromIdp"));
+    }
+}

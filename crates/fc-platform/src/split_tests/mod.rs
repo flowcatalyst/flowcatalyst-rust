@@ -4,3 +4,4 @@
 
 mod enum_str;
 mod event_persistence_snapshot;
+mod function_documents;

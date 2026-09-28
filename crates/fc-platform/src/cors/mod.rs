@@ -1,14 +1,9 @@
-//! CORS Allowed Origins
+//! The `cors` aggregate (fc-platform-iam), and its routes.
 //!
-//! CORS origin management for platform.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::cors::*;
+
 pub mod routes;
-
-pub use api::CorsState;
-pub use entity::CorsAllowedOrigin;
-pub use repository::CorsOriginRepository;
 pub use routes::{cors_router, routes};

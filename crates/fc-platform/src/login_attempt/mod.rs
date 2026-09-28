@@ -1,13 +1,9 @@
-//! Login Attempt Aggregate
+//! The `login_attempt` aggregate (fc-platform-iam), and its routes.
 //!
-//! Tracks authentication attempts for auditing.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod entity;
-pub mod repository;
+pub use fc_platform_iam::login_attempt::*;
+
 pub mod routes;
-
-pub use api::LoginAttemptsState;
-pub use entity::{AttemptType, LoginAttempt, LoginOutcome};
-pub use repository::LoginAttemptRepository;
 pub use routes::{login_attempts_router, routes};

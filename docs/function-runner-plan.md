@@ -447,7 +447,7 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - The Invoke tab only shows curl commands, as in Java.
 
 > **As built** (branch `feat/fn-p7-frontend`):
-> - Types are generated from `crates/fc-platform/resources/openapi/functions.openapi.json` into
+> - Types are generated from `crates/fc-platform-functions/resources/openapi/functions.openapi.json` into
 >   `frontend/src/api/generated-functions` (types only; identical to Java's). `api/functions.ts`
 >   wraps every management operation; the 204 routes are `Promise<void>`.
 > - Java's drawers became routed pages, in this SPA's conventions: `/functions` (list, pools card),

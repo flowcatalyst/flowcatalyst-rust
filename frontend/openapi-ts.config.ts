@@ -20,7 +20,7 @@ const openApiInput =
 // (crates/fc-platform/src/function/openapi.rs). Types only —
 // `api/functions.ts` wraps them over the hand-rolled `api/client.ts`.
 const functionsOpenApiInput =
-	"../crates/fc-platform/resources/openapi/functions.openapi.json";
+	"../crates/fc-platform-functions/resources/openapi/functions.openapi.json";
 
 export default defineConfig([
 	{

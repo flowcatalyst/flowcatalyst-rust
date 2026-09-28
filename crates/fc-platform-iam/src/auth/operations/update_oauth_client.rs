@@ -1,0 +1,171 @@
+//! Update OAuth Client Use Case (generic field update).
+//!
+//! Handles partial updates of an OAuth client. The narrower activate /
+//! deactivate / rotate-secret operations live in their own use cases so
+//! the emitted event is specific to the action taken.
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::OAuthClientUpdated;
+use crate::auth::oauth_client_repository::OAuthClientRepository;
+use crate::auth::oauth_entity::GrantType;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOAuthClientCommand {
+    pub oauth_client_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_types: Option<Vec<GrantType>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pkce_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_origins: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<bool>,
+    /// Empty clears the portal flag (and the portal app); a value sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_client_id: Option<String>,
+    /// Empty unlinks the portal app; a value links it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_app_id: Option<String>,
+    /// Replaces the scope list when `Some` (Go `Scopes`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_scopes: Option<Vec<String>>,
+    /// Authority-bearing interactive tokens (Go `APIAccess`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_access: Option<bool>,
+}
+
+impl fc_platform_core::usecase::AuditMasked for UpdateOAuthClientCommand {}
+
+pub struct UpdateOAuthClientUseCase<U: UnitOfWork> {
+    oauth_client_repo: Arc<OAuthClientRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
+    pub fn new(oauth_client_repo: Arc<OAuthClientRepository>, unit_of_work: Arc<U>) -> Self {
+        Self {
+            oauth_client_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
+    type Command = UpdateOAuthClientCommand;
+    type Event = OAuthClientUpdated;
+
+    async fn validate(&self, command: &UpdateOAuthClientCommand) -> Result<(), UseCaseError> {
+        if command.oauth_client_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "OAUTH_CLIENT_ID_REQUIRED",
+                "OAuth client id is required",
+            ));
+        }
+        if command
+            .client_name
+            .as_deref()
+            .is_some_and(|n| n.trim().is_empty())
+        {
+            return Err(UseCaseError::validation(
+                "CLIENT_NAME_REQUIRED",
+                "clientName cannot be empty",
+            ));
+        }
+        Ok(())
+    }
+
+    /// OAuth clients are platform-owner data, written by anchors only (Go's
+    /// `Can*OAuthClients` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
+    async fn authorize(
+        &self,
+        _command: &UpdateOAuthClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(
+            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
+                ctx.caller(),
+            )?,
+        )
+    }
+
+    async fn execute(
+        &self,
+        command: UpdateOAuthClientCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<OAuthClientUpdated>, UseCaseError> {
+        let mut client = self
+            .oauth_client_repo
+            .find_by_id(&command.oauth_client_id)
+            .await
+            .or_not_found(
+                "OAUTH_CLIENT_NOT_FOUND",
+                format!("OAuth client '{}' not found", command.oauth_client_id),
+            )?;
+
+        if let Some(ref name) = command.client_name {
+            client.client_name = name.clone();
+        }
+        if let Some(ref uris) = command.redirect_uris {
+            client.redirect_uris = uris.clone();
+        }
+        if let Some(ref uris) = command.post_logout_redirect_uris {
+            client.post_logout_redirect_uris = uris.clone();
+        }
+        if let Some(ref grants) = command.grant_types {
+            client.grant_types = grants.clone();
+        }
+        if let Some(pkce) = command.pkce_required {
+            client.pkce_required = pkce;
+        }
+        if let Some(ref apps) = command.application_ids {
+            client.application_ids = apps.clone();
+        }
+        if let Some(ref origins) = command.allowed_origins {
+            client.allowed_origins = origins.clone();
+        }
+        if let Some(active) = command.active {
+            client.active = active;
+        }
+        if let Some(portal_client_id) = &command.portal_client_id {
+            client.portal_client_id = crate::portal::trimmed_or_none(Some(portal_client_id));
+            if client.portal_client_id.is_none() {
+                client.portal_app_id = None; // no portal, no portal app
+            }
+        }
+        if let Some(portal_app_id) = &command.portal_app_id {
+            client.portal_app_id = crate::portal::trimmed_or_none(Some(portal_app_id));
+        }
+        if let Some(ref scopes) = command.default_scopes {
+            client.default_scopes = scopes.clone();
+        }
+        if let Some(api_access) = command.api_access {
+            client.api_access = api_access;
+        }
+        crate::portal::validate_oauth_client_plane(&client)?;
+        client.updated_at = chrono::Utc::now();
+
+        let event = OAuthClientUpdated::new(&ctx, &client.id, &client.client_name);
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
+    }
+}

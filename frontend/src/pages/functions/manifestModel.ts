@@ -6,7 +6,7 @@ import type { FunctionRuntime, PublishManifestRequest } from "@/api/functions";
 export type ManifestModel = PublishManifestRequest;
 
 // The JSON Schema's own property order
-// (crates/fc-platform/resources/schemas/function-manifest.schema.json, a copy
+// (crates/fc-platform-functions/resources/schemas/function-manifest.schema.json, a copy
 // of Java's): Export reproduces it so the file reads the way the schema does.
 export const TOP_ORDER = [
 	"runtime",

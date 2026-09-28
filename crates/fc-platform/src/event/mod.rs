@@ -1,13 +1,9 @@
-//! Event Aggregate
+//! The `event` aggregate (fc-platform-iam), and its routes.
 //!
-//! Platform events.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod entity;
-pub mod repository;
+pub use fc_platform_iam::event::*;
+
 pub mod routes;
-
-// Re-export main types
 pub use routes::{events_router, routes};
-pub use entity::Event;
-pub use repository::EventRepository;

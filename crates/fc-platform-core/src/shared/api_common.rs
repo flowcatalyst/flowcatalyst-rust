@@ -216,3 +216,19 @@ impl CreatedResponse {
         Self { id: id.into() }
     }
 }
+
+/// Sync result response (shared across all sync endpoints)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResultResponse {
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_codes: Vec<String>,
+    /// Principal sync only: the emails whose `passwordHash` was ignored
+    /// because the user already existed (decision #22). Omitted when empty,
+    /// as Java's `passwordHashIgnored`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub password_hash_ignored: Vec<String>,
+}

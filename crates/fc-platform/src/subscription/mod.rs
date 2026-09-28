@@ -1,16 +1,9 @@
-//! Subscription Aggregate
+//! The `subscription` aggregate (fc-platform-iam), and its routes.
 //!
-//! Event subscription management.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::subscription::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::SubscriptionsState;
-pub use entity::{Subscription, SubscriptionStatus};
-pub use repository::SubscriptionRepository;
 pub use routes::{routes, subscriptions_router};

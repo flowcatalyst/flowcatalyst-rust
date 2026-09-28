@@ -1,16 +1,9 @@
-//! Connection Aggregate
+//! The `connection` aggregate (fc-platform-iam), and its routes.
 //!
-//! Named endpoint connections for dispatch.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::connection::*;
+
 pub mod routes;
-pub mod sync_plan;
-
-pub use api::ConnectionsState;
-pub use entity::{Connection, ConnectionStatus};
-pub use repository::ConnectionRepository;
 pub use routes::{connections_router, routes};

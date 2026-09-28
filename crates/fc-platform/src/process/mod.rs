@@ -1,15 +1,9 @@
-//! Process Aggregate
+//! The `process` aggregate (fc-platform-iam), and its routes.
 //!
-//! Free-form workflow / process documentation. The `body` field stores
-//! diagram source verbatim (typically Mermaid); the platform renders it
-//! client-side. Code format mirrors EventType: `{application}:{subdomain}:{process-name}`.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::process::*;
+
 pub mod routes;
-
-pub use entity::{Process, ProcessCode, ProcessCodeError, ProcessSource, ProcessStatus};
-pub use repository::ProcessRepository;
 pub use routes::{processes_router, routes};

@@ -1,19 +1,9 @@
-//! WebAuthn / Passkeys
+//! The `webauthn` aggregate (fc-platform-iam), and its routes.
 //!
-//! Public-key credential support for internal-auth users (those whose email
-//! domain has no row in `email_domain_mapping`). Federated users never have
-//! credentials here — see `project_passkeys_scope.md` for rationale.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod ceremony_repository;
-pub mod entity;
-pub mod gate;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::webauthn::*;
+
 pub mod routes;
-pub mod webauthn_service;
-
-pub use api::WebauthnApiState;
 pub use routes::{routes, webauthn_router};
-pub use ceremony_repository::WebauthnCeremonyRepository;
-pub use webauthn_service::WebauthnService;

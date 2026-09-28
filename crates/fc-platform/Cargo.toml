@@ -8,6 +8,10 @@ description = "FlowCatalyst Platform - Core domain models, services, and APIs"
 [dependencies]
 # The kernel: use cases, errors, the authorization context, middleware.
 fc-platform-core = { path = "../fc-platform-core" }
+# The domain crates; this one assembles them (routes, context, OpenAPI).
+fc-platform-iam = { path = "../fc-platform-iam" }
+fc-platform-scheduled-jobs = { path = "../fc-platform-scheduled-jobs" }
+fc-platform-functions = { path = "../fc-platform-functions" }
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }

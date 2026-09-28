@@ -1,0 +1,300 @@
+//! Update Email Domain Mapping Use Case
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::EmailDomainMappingUpdated;
+use crate::email_domain_mapping::entity::ScopeType;
+use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+use crate::identity_provider::repository::IdentityProviderRepository;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+/// Command for updating an email domain mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEmailDomainMappingCommand {
+    pub mapping_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_type: Option<ScopeType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_roles_from_idp: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_client_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub granted_client_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_oidc_tenant_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_role_ids: Option<Vec<String>>,
+    /// Go's 2FA policy fields: absent = unchanged
+    /// (emaildomainmapping/operations/update.go:24-29).
+    #[serde(default, flatten)]
+    pub two_factor: TwoFactorPolicyUpdate,
+}
+
+/// The per-domain second-factor policy on update; `None` leaves a field as
+/// it is.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoFactorPolicyUpdate {
+    #[serde(
+        default,
+        rename = "require2fa",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub require_2fa: Option<bool>,
+    #[serde(
+        default,
+        rename = "allowed2faMethods",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allowed_2fa_methods: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remember_device_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remember_device_days: Option<i32>,
+}
+
+impl fc_platform_core::usecase::AuditMasked for UpdateEmailDomainMappingCommand {}
+
+pub struct UpdateEmailDomainMappingUseCase<U: UnitOfWork> {
+    edm_repo: Arc<EmailDomainMappingRepository>,
+    idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
+    pub fn new(
+        edm_repo: Arc<EmailDomainMappingRepository>,
+        idp_repo: Arc<IdentityProviderRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self {
+            edm_repo,
+            idp_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
+    type Command = UpdateEmailDomainMappingCommand;
+    type Event = EmailDomainMappingUpdated;
+
+    async fn validate(
+        &self,
+        command: &UpdateEmailDomainMappingCommand,
+    ) -> Result<(), UseCaseError> {
+        if command.mapping_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "MAPPING_ID_REQUIRED",
+                "Mapping ID is required",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Email-domain mappings are platform-owner data, written by anchors only
+    /// (Go's `Can*EmailDomainMappings` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
+    async fn authorize(
+        &self,
+        _command: &UpdateEmailDomainMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(
+            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
+                ctx.caller(),
+            )?,
+        )
+    }
+
+    async fn execute(
+        &self,
+        command: UpdateEmailDomainMappingCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<EmailDomainMappingUpdated>, UseCaseError> {
+        let mut mapping = self
+            .edm_repo
+            .find_by_id(&command.mapping_id)
+            .await
+            .or_not_found(
+                "NOT_FOUND",
+                format!(
+                    "Email domain mapping with ID '{}' not found",
+                    command.mapping_id
+                ),
+            )?;
+
+        // Selectively update fields
+        if let Some(ref idp_id) = command.identity_provider_id {
+            mapping.identity_provider_id = idp_id.clone();
+        }
+        if let Some(scope_type) = command.scope_type {
+            mapping.scope_type = scope_type;
+        }
+        // A blank value clears the link (the SPA sends `null` for an ANCHOR
+        // mapping, which the handler passes as blank).
+        if let Some(ref primary_client_id) = command.primary_client_id {
+            mapping.primary_client_id =
+                Some(primary_client_id.clone()).filter(|c| !c.trim().is_empty());
+        }
+        if let Some(sync_roles) = command.sync_roles_from_idp {
+            mapping.sync_roles_from_idp = sync_roles;
+        }
+        if let Some(ref additional) = command.additional_client_ids {
+            mapping.additional_client_ids = additional.clone();
+        }
+        if let Some(ref granted) = command.granted_client_ids {
+            mapping.granted_client_ids = granted.clone();
+        }
+        if let Some(ref tenant) = command.required_oidc_tenant_id {
+            mapping.required_oidc_tenant_id = Some(tenant.clone()).filter(|t| !t.trim().is_empty());
+        }
+        if let Some(ref roles) = command.allowed_role_ids {
+            mapping.allowed_role_ids = roles.clone();
+        }
+        let two_factor = &command.two_factor;
+        if let Some(require) = two_factor.require_2fa {
+            mapping.require_2fa = require;
+        }
+        if let Some(ref methods) = two_factor.allowed_2fa_methods {
+            mapping.allowed_2fa_methods = methods.clone();
+        }
+        if let Some(enabled) = two_factor.remember_device_enabled {
+            mapping.remember_device_enabled = enabled;
+        }
+        if let Some(days) = two_factor.remember_device_days {
+            mapping.remember_device_days = days;
+        }
+        // The resulting policy, not just the change, must hold.
+        crate::email_domain_mapping::entity::validate_two_factor(
+            mapping.require_2fa,
+            &mapping.allowed_2fa_methods,
+        )?;
+        mapping.updated_at = chrono::Utc::now();
+
+        // The mapping as saved, on the provider it now routes to (a move
+        // included), must pin the tenant when that provider is multi-tenant.
+        // Go does not require the provider to exist (a mapping may name one
+        // not created yet); an unknown provider pins nothing.
+        let multi_tenant = self
+            .idp_repo
+            .find_by_id(&mapping.identity_provider_id)
+            .await?
+            .is_some_and(|idp| idp.oidc_multi_tenant);
+        super::require_tenant_pin(multi_tenant, &mapping)?;
+
+        let event = EmailDomainMappingUpdated::new(&ctx, &mapping.id, &mapping.email_domain);
+
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = UpdateEmailDomainMappingCommand {
+            mapping_id: "edm-123".to_string(),
+            scope_type: Some(ScopeType::Partner),
+            primary_client_id: Some("client-456".to_string()),
+            sync_roles_from_idp: Some(true),
+            additional_client_ids: Some(vec!["c1".to_string(), "c2".to_string()]),
+            granted_client_ids: Some(vec!["g1".to_string()]),
+            allowed_role_ids: Some(vec!["r1".to_string(), "r2".to_string()]),
+            identity_provider_id: None,
+            required_oidc_tenant_id: None,
+            two_factor: Default::default(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("mappingId"));
+        assert!(json.contains("edm-123"));
+        assert!(json.contains("scopeType"));
+        assert!(json.contains("PARTNER"));
+        assert!(json.contains("additionalClientIds"));
+        assert!(json.contains("grantedClientIds"));
+        assert!(json.contains("allowedRoleIds"));
+
+        let deserialized: UpdateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.mapping_id, "edm-123");
+        assert_eq!(deserialized.scope_type, Some(ScopeType::Partner));
+        assert_eq!(deserialized.sync_roles_from_idp, Some(true));
+    }
+
+    #[test]
+    fn test_command_serialization_none_fields_skipped() {
+        let cmd = UpdateEmailDomainMappingCommand {
+            mapping_id: "edm-1".to_string(),
+            scope_type: None,
+            primary_client_id: None,
+            sync_roles_from_idp: None,
+            additional_client_ids: None,
+            granted_client_ids: None,
+            allowed_role_ids: None,
+            identity_provider_id: None,
+            required_oidc_tenant_id: None,
+            two_factor: Default::default(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("mappingId"));
+        assert!(!json.contains("scopeType"));
+        assert!(!json.contains("primaryClientId"));
+        assert!(!json.contains("syncRolesFromIdp"));
+        assert!(!json.contains("additionalClientIds"));
+        assert!(!json.contains("grantedClientIds"));
+        assert!(!json.contains("allowedRoleIds"));
+    }
+
+    #[test]
+    fn test_validate_empty_mapping_id() {
+        let cmd = UpdateEmailDomainMappingCommand {
+            mapping_id: "   ".to_string(),
+            scope_type: None,
+            primary_client_id: None,
+            sync_roles_from_idp: None,
+            additional_client_ids: None,
+            granted_client_ids: None,
+            allowed_role_ids: None,
+            identity_provider_id: None,
+            required_oidc_tenant_id: None,
+            two_factor: Default::default(),
+        };
+        assert!(
+            cmd.mapping_id.trim().is_empty(),
+            "Whitespace-only mapping_id should be treated as empty"
+        );
+    }
+
+    #[test]
+    fn test_validate_valid_mapping_id() {
+        let cmd = UpdateEmailDomainMappingCommand {
+            mapping_id: "edm-123".to_string(),
+            scope_type: None,
+            primary_client_id: None,
+            sync_roles_from_idp: None,
+            additional_client_ids: None,
+            granted_client_ids: None,
+            allowed_role_ids: None,
+            identity_provider_id: None,
+            required_oidc_tenant_id: None,
+            two_factor: Default::default(),
+        };
+        assert!(!cmd.mapping_id.trim().is_empty());
+    }
+}

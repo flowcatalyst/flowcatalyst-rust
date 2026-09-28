@@ -1,16 +1,9 @@
-//! Event Type Aggregate
+//! The `event_type` aggregate (fc-platform-iam), and its routes.
 //!
-//! Event type definitions and schemas.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod api;
-pub mod bff;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::event_type::*;
+
 pub mod routes;
-
-// Re-export main types
 pub use routes::{event_types_router, routes};
-pub use entity::{EventType, EventTypeCode, EventTypeCodeError, EventTypeStatus};
-pub use repository::EventTypeRepository;

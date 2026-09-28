@@ -1,19 +1,9 @@
-//! Application Aggregate
+//! The `application` aggregate (fc-platform-iam), and its routes.
 //!
-//! Platform applications and integrations.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod client_config;
-pub mod client_config_repository;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::application::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::ApplicationsState;
 pub use routes::{applications_router, routes};
-pub use client_config::ApplicationClientConfig;
-pub use client_config_repository::ApplicationClientConfigRepository;
-pub use entity::{Application, ApplicationType};
-pub use repository::ApplicationRepository;

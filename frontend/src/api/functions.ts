@@ -33,7 +33,7 @@ import type {
 } from "./generated-functions";
 
 // The function API's types are generated from the platform's function
-// document (`crates/fc-platform/resources/openapi/functions.openapi.json`,
+// document (`crates/fc-platform-functions/resources/openapi/functions.openapi.json`,
 // served at `GET /api/openapi-functions.json`: Java's, plus Rust's
 // backward-compatible additions), so `vue-tsc` fails when the contract
 // drifts. Every operation of that document is wrapped below except the four `/control/functions/*`

@@ -1,0 +1,2043 @@
+//! Applications Admin API
+//!
+//! REST endpoints for application management.
+//! Applications are global platform entities (not client-scoped).
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+
+use crate::application::operations::attach_service_account::{
+    AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
+};
+use crate::application::operations::{
+    ActivateApplicationCommand, ActivateApplicationUseCase, CreateApplicationCommand,
+    CreateApplicationUseCase, DeactivateApplicationCommand, DeactivateApplicationUseCase,
+    UpdateApplicationCommand, UpdateApplicationUseCase,
+};
+use crate::auth::oauth_entity::{GrantType, OAuthClientType};
+use crate::auth::operations::CreateOAuthClientUseCase;
+use crate::principal::repository::PrincipalRepository;
+use crate::{
+    application::entity::Application, auth::oauth_client_repository::OAuthClientRepository,
+    role::entity::AuthRole, service_account::entity::ServiceAccount,
+};
+use crate::{
+    application::{
+        client_config_repository::ApplicationClientConfigRepository,
+        repository::ApplicationRepository,
+    },
+    client::repository::ClientRepository,
+    role::repository::RoleRepository,
+    service_account::repository::ServiceAccountRepository,
+};
+use fc_platform_core::shared::authorization_service::{checks, AuthContext};
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
+use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
+
+/// Create application request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApplicationRequest {
+    /// Unique identifier/code (URL-safe)
+    pub code: String,
+
+    /// Human-readable name
+    pub name: String,
+
+    /// Description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Application type: APPLICATION or INTEGRATION
+    #[serde(rename = "type")]
+    pub application_type: Option<String>,
+
+    /// Default base URL
+    pub default_base_url: Option<String>,
+
+    /// Icon URL
+    pub icon_url: Option<String>,
+
+    /// Website URL
+    pub website: Option<String>,
+
+    /// Inline SVG logo content
+    pub logo: Option<String>,
+
+    /// Logo MIME type
+    pub logo_mime_type: Option<String>,
+}
+
+/// Update application request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateApplicationRequest {
+    /// Human-readable name
+    pub name: Option<String>,
+
+    /// Description
+    pub description: Option<String>,
+
+    /// Default base URL
+    pub default_base_url: Option<String>,
+
+    /// Icon URL
+    pub icon_url: Option<String>,
+
+    /// Website URL
+    pub website: Option<String>,
+
+    /// Inline SVG logo content
+    pub logo: Option<String>,
+
+    /// Logo MIME type
+    pub logo_mime_type: Option<String>,
+}
+
+/// Application response DTO: Go's `ApplicationResponse`
+/// (application/api/dto.go), optional members absent when unset.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationResponse {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub application_type: String,
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_id: Option<String>,
+    pub active: bool,
+    /// True iff this application has a login OAuth client provisioned (used
+    /// to gate the "Provision Login Client" button in the UI). Computed by
+    /// the detail endpoint only; every other response carries `false`, as
+    /// Go's does (no N+1 lookup across list rows).
+    pub has_login_client: bool,
+    #[schema(format = DateTime)]
+    pub created_at: String,
+    #[schema(format = DateTime)]
+    pub updated_at: String,
+}
+
+impl From<Application> for ApplicationResponse {
+    fn from(a: Application) -> Self {
+        Self {
+            id: a.id,
+            application_type: a.application_type.as_str().to_string(),
+            code: a.code,
+            name: a.name,
+            description: a.description,
+            icon_url: a.icon_url,
+            website: a.website,
+            logo: a.logo,
+            logo_mime_type: a.logo_mime_type,
+            default_base_url: a.default_base_url,
+            service_account_id: a.service_account_id,
+            active: a.active,
+            has_login_client: false,
+            created_at: a.created_at.to_rfc3339(),
+            updated_at: a.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Query parameters for applications list
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct ApplicationsQuery {
+    /// Filter by type (`APPLICATION` | `INTEGRATION`)
+    #[serde(rename = "type")]
+    pub application_type: Option<String>,
+
+    /// Filter by active status: absent lists every application, `true` the
+    /// active ones, any other value the inactive ones (Go's repository,
+    /// application/repository.go:58-67). Taken as a string: a typed bool
+    /// beside a flattened struct rejects `?active=true`.
+    pub active: Option<String>,
+}
+
+/// Service account response DTO
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccountResponse {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub active: bool,
+    pub application_id: Option<String>,
+    pub created_at: String,
+}
+
+impl From<ServiceAccount> for ServiceAccountResponse {
+    fn from(sa: ServiceAccount) -> Self {
+        Self {
+            id: sa.id,
+            code: sa.code,
+            name: sa.name,
+            description: sa.description,
+            active: sa.active,
+            application_id: sa.application_id,
+            created_at: sa.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// OAuth client credentials returned from a provisioning endpoint.
+///
+/// The `clientSecret` is only populated for CONFIDENTIAL clients and only at
+/// the moment of creation — the platform stores it encrypted and never
+/// returns it again. Rotate via `POST /api/oauth-clients/{id}/regenerate-secret`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationOAuthClientCredentials)]
+pub struct OAuthClientCredentials {
+    /// OAuth client row id (`oac_…`).
+    pub id: String,
+    /// Public `clientId` used in the OAuth flows.
+    pub client_id: String,
+    /// Plaintext client secret — only on creation, only for CONFIDENTIAL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+/// Wrapper returned from `POST /api/applications/{id}/provision-service-account`.
+///
+/// Matches the frontend's existing `ServiceAccountCredentials` shape so the
+/// page can display the freshly-minted credentials in one modal.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationServiceAccountCredentials)]
+pub struct ServiceAccountCredentialsResponse {
+    /// The service account's SERVICE principal (`prn_…`, Go
+    /// `result.ServicePrincipalID`).
+    pub principal_id: String,
+    /// Service account display name (used in the credentials dialog).
+    pub name: String,
+    /// OAuth client minted alongside the service account, with the only
+    /// chance to read the plaintext secret.
+    pub oauth_client: OAuthClientCredentials,
+}
+
+/// Wrapper response from `POST /api/applications/{id}/provision-service-account`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionServiceAccountResponse)]
+pub struct ProvisionServiceAccountResponse {
+    pub message: String,
+    pub service_account: ServiceAccountCredentialsResponse,
+}
+
+/// Request body for `POST /api/applications/{id}/provision-login-client`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionLoginClientRequest {
+    /// `"PUBLIC"` (default, PKCE-only) or `"CONFIDENTIAL"` (has a client secret).
+    /// PUBLIC is the right choice for SPAs and native apps; CONFIDENTIAL is for
+    /// server-rendered apps that can keep a secret.
+    #[serde(default)]
+    pub client_type: Option<String>,
+    /// One or more URLs the application redirects to after login. At least one is required.
+    pub redirect_uris: Vec<String>,
+    /// Origins permitted by the browser for CORS preflight on the auth endpoints.
+    /// Optional; defaults to the redirect URI origins.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+}
+
+/// Response from `POST /api/applications/{id}/provision-login-client`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationProvisionLoginClientResponse)]
+pub struct ProvisionLoginClientResponse {
+    pub message: String,
+    pub login_client: LoginClientCredentialsResponse,
+}
+
+/// Login-client credentials returned at provision time. `clientSecret` is
+/// populated only for CONFIDENTIAL clients.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ApplicationLoginClientCredentials)]
+pub struct LoginClientCredentialsResponse {
+    pub client_type: String,
+    pub oauth_client: OAuthClientCredentials,
+    pub redirect_uris: Vec<String>,
+}
+
+/// Application role response DTO
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationRoleResponse {
+    pub id: String,
+    pub code: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub application_code: String,
+    pub permissions: Vec<String>,
+    pub source: String,
+    pub client_managed: bool,
+}
+
+impl From<AuthRole> for ApplicationRoleResponse {
+    fn from(r: AuthRole) -> Self {
+        Self {
+            id: r.id,
+            code: r.name,
+            display_name: r.display_name,
+            description: r.description,
+            application_code: r.application_code,
+            permissions: r.permissions.into_iter().collect(),
+            source: r.source.as_str().to_string(),
+            client_managed: r.client_managed,
+        }
+    }
+}
+
+/// Applications service state
+#[derive(Clone)]
+pub struct ApplicationsState<U: UnitOfWork + 'static> {
+    pub application_repo: Arc<ApplicationRepository>,
+    pub service_account_repo: Arc<ServiceAccountRepository>,
+    pub role_repo: Arc<RoleRepository>,
+    pub client_config_repo: Arc<ApplicationClientConfigRepository>,
+    pub client_repo: Arc<ClientRepository>,
+    pub create_use_case: Arc<CreateApplicationUseCase<U>>,
+    pub update_use_case: Arc<UpdateApplicationUseCase<U>>,
+    pub activate_use_case: Arc<ActivateApplicationUseCase<U>>,
+    pub deactivate_use_case: Arc<DeactivateApplicationUseCase<U>>,
+    pub enable_for_client_use_case:
+        Arc<crate::application::operations::EnableApplicationForClientUseCase<U>>,
+    pub disable_for_client_use_case:
+        Arc<crate::application::operations::DisableApplicationForClientUseCase<U>>,
+    pub update_client_config_use_case:
+        Arc<crate::application::operations::UpdateApplicationClientConfigUseCase<U>>,
+    /// OAuth client repo + create use case — used by the provision-service-account
+    /// and provision-login-client endpoints to mint a client_credentials or
+    /// authorization_code OAuth client for the application.
+    pub oauth_client_repo: Arc<OAuthClientRepository>,
+    pub create_oauth_client_use_case: Arc<CreateOAuthClientUseCase<U>>,
+    /// Concrete `PgUnitOfWork` for orchestrated operations (provision-service-account)
+    /// that span two aggregates. Routed via `run(closure)` — handler owns the
+    /// tx boundary. Trait-backed use cases still go through `U`.
+    pub pg_unit_of_work: Arc<fc_platform_core::usecase::PgUnitOfWork>,
+}
+
+/// Create a new application
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "applications",
+    operation_id = "createApplication",
+    request_body = CreateApplicationRequest,
+    responses(
+        (status = 201, description = "Application created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 400, description = "Validation error"),
+        (status = 409, description = "Duplicate code")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn create_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Json(req): Json<CreateApplicationRequest>,
+) -> Result<
+    (
+        StatusCode,
+        Json<fc_platform_core::shared::api_common::CreatedResponse>,
+    ),
+    PlatformError,
+> {
+    // Go's permission check first (PERMISSION_REQUIRED), then Rust's anchor
+    // gate: only anchor users manage applications.
+    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    let command = CreateApplicationCommand {
+        code: req.code,
+        name: req.name,
+        description: req.description,
+        application_type: fc_platform_core::shared::enum_str::parse_opt(
+            req.application_type.as_deref(),
+        )?,
+        default_base_url: req.default_base_url,
+        icon_url: req.icon_url,
+        website: req.website,
+        logo: req.logo,
+        logo_mime_type: req.logo_mime_type,
+    };
+
+    let ctx = ExecutionContext::from_auth(&auth.0);
+
+    match state.create_use_case.run(command, ctx).await.into_result() {
+        Ok(event) => Ok((
+            StatusCode::CREATED,
+            Json(fc_platform_core::shared::api_common::CreatedResponse::new(
+                event.application_id,
+            )),
+        )),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Get application by ID
+#[utoipa::path(
+    get,
+    path = "/{id}",
+    tag = "applications",
+    operation_id = "getApplication",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Application found", body = ApplicationResponse),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ApplicationResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+
+    // Populate `hasLoginClient` so the UI can hide the "Provision Login
+    // Client" button when one is already in place. Only computed for the
+    // detail endpoint — list responses leave it absent.
+    let has_login_client = app_has_login_client(&state.oauth_client_repo, &app.id).await?;
+    let mut response: ApplicationResponse = app.into();
+    response.has_login_client = has_login_client;
+    Ok(Json(response))
+}
+
+/// Applications list response (wrapped)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationListResponse {
+    pub applications: Vec<ApplicationResponse>,
+    #[schema(value_type = i64)]
+    pub total: usize,
+}
+
+/// List applications
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "applications",
+    operation_id = "listApplications",
+    params(ApplicationsQuery),
+    responses(
+        (status = 200, description = "List of applications", body = ApplicationListResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_applications<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Query(query): Query<ApplicationsQuery>,
+) -> Result<Json<ApplicationListResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    // Go lists every application, filtered only when asked, ordered by code
+    // and unpaginated (application/api/api.go:63-81).
+    let want_type = fc_platform_core::shared::enum_str::parse_opt::<
+        crate::application::entity::ApplicationType,
+    >(fc_platform_core::shared::enum_str::non_empty(
+        query.application_type.as_deref(),
+    ))?;
+    let want_active =
+        fc_platform_core::shared::enum_str::non_empty(query.active.as_deref()).map(|a| a == "true");
+    let mut apps: Vec<_> = state
+        .application_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .filter(|a| want_type.is_none_or(|t| a.application_type == t))
+        .filter(|a| want_active.is_none_or(|active| a.active == active))
+        .collect();
+    apps.sort_by(|a, b| a.code.cmp(&b.code));
+
+    let applications: Vec<ApplicationResponse> = apps.into_iter().map(|a| a.into()).collect();
+    let total = applications.len();
+
+    Ok(Json(ApplicationListResponse {
+        applications,
+        total,
+    }))
+}
+
+/// Update application
+#[utoipa::path(
+    put,
+    path = "/{id}",
+    tag = "applications",
+    operation_id = "updateApplication",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    request_body = UpdateApplicationRequest,
+    responses(
+        (status = 204, description = "Application updated"),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateApplicationRequest>,
+) -> Result<StatusCode, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    let command = UpdateApplicationCommand {
+        id: id.clone(),
+        name: req.name,
+        description: req.description,
+        default_base_url: req.default_base_url,
+        icon_url: req.icon_url,
+        website: req.website,
+        logo: req.logo,
+        logo_mime_type: req.logo_mime_type,
+    };
+
+    let ctx = ExecutionContext::from_auth(&auth.0);
+
+    match state.update_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Delete application (deactivate)
+#[utoipa::path(
+    delete,
+    path = "/{id}",
+    tag = "applications",
+    operation_id = "deleteApplication",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 204, description = "Application deleted"),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<StatusCode, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    delete_application_cascade(
+        &state.pg_unit_of_work,
+        &state.service_account_repo,
+        &state.application_repo,
+        &id,
+        &auth.0,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete an application and every service account it owns, in one
+/// transaction. The body of `DELETE /api/applications/{id}` after its
+/// permission checks, shared with the server-rendered `fc-web` UI.
+pub async fn delete_application_cascade(
+    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    application_repo: &Arc<ApplicationRepository>,
+    id: &str,
+    auth: &AuthContext,
+) -> Result<(), PlatformError> {
+    use crate::application::operations::{DeleteApplicationCommand, DeleteApplicationUseCase};
+    use crate::service_account::operations::{
+        DeleteServiceAccountCommand, DeleteServiceAccountUseCase,
+    };
+
+    // Pre-fetch the SAs owned by this application. The SA delete repo
+    // (and migration 027 / 028) handles the rest of the cascade —
+    // `oauth_clients` rows pointing at each SA's principal are deleted
+    // via FK CASCADE, and `app_applications.service_account_id` is
+    // cleared via FK SET NULL.
+    let sas = service_account_repo.find_by_application(id).await?;
+
+    let auth = auth.clone();
+    let app_id_for_closure = id.to_owned();
+    let sa_repo = service_account_repo.clone();
+    let app_repo = application_repo.clone();
+
+    // Single transaction: delete every SA then the application. If any
+    // step fails, everything rolls back (no half-deleted state).
+    let result = pg_unit_of_work
+        .run(|session| async move {
+            let delete_sa_uc = DeleteServiceAccountUseCase::new(sa_repo, session.clone());
+            let delete_app_uc = DeleteApplicationUseCase::new(app_repo, session);
+
+            let ctx = ExecutionContext::from_auth(&auth);
+
+            for sa in sas {
+                delete_sa_uc
+                    .run(
+                        DeleteServiceAccountCommand { id: sa.id.clone() },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()?;
+            }
+
+            delete_app_uc
+                .run(
+                    DeleteApplicationCommand {
+                        application_id: app_id_for_closure,
+                    },
+                    ctx,
+                )
+                .await
+                .into_committed()
+        })
+        .await;
+
+    result.map(|_| ()).map_err(Into::into)
+}
+
+/// Activate application
+#[utoipa::path(
+    post,
+    path = "/{id}/activate",
+    tag = "applications",
+    operation_id = "activateApplication",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Application activated", body = ApplicationResponse),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn activate_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ApplicationResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    let command = ActivateApplicationCommand { id: id.clone() };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+
+    match state
+        .activate_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(_event) => {
+            let app = state
+                .application_repo
+                .find_by_id(&id)
+                .await?
+                .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+            Ok(Json(app.into()))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Deactivate application
+#[utoipa::path(
+    post,
+    path = "/{id}/deactivate",
+    tag = "applications",
+    operation_id = "deactivateApplication",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Application deactivated", body = ApplicationResponse),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn deactivate_application<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ApplicationResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    deactivate_application_cascade(
+        &state.pg_unit_of_work,
+        &state.service_account_repo,
+        &state.oauth_client_repo,
+        &state.application_repo,
+        &id,
+        &auth.0,
+    )
+    .await?;
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+    Ok(Json(app.into()))
+}
+
+/// Deactivate an application with its service accounts and their OAuth
+/// clients, in one transaction. The body of `POST
+/// /api/applications/{id}/deactivate` after its permission checks, shared
+/// with the server-rendered `fc-web` UI.
+pub async fn deactivate_application_cascade(
+    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    oauth_client_repo: &Arc<OAuthClientRepository>,
+    application_repo: &Arc<ApplicationRepository>,
+    id: &str,
+    auth: &AuthContext,
+) -> Result<(), PlatformError> {
+    use crate::auth::operations::{DeactivateOAuthClientCommand, DeactivateOAuthClientUseCase};
+    use crate::service_account::operations::{
+        DeactivateServiceAccountCommand, DeactivateServiceAccountUseCase,
+    };
+
+    // Pre-fetch the dependents we'll cascade-deactivate so the work
+    // inside the tx closure stays small. Reads are tolerable outside
+    // the tx — the worst case (someone provisions a new SA mid-call)
+    // gets caught the next time the operator deactivates.
+    let sas = service_account_repo.find_by_application(id).await?;
+    let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
+    for sa in &sas {
+        let clients = oauth_client_repo
+            .find_by_service_account_principal_id(&sa.id)
+            .await?;
+        oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
+    }
+
+    let auth = auth.clone();
+    let app_id_for_closure = id.to_owned();
+    let sa_repo = service_account_repo.clone();
+    let oauth_repo = oauth_client_repo.clone();
+    let app_repo = application_repo.clone();
+
+    // Single transaction: app + SAs + their oauth clients either all
+    // flip to inactive or none do.
+    let result = pg_unit_of_work
+        .run(|session| async move {
+            let deactivate_sa_uc = DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
+            let deactivate_oauth_uc =
+                DeactivateOAuthClientUseCase::new(oauth_repo, session.clone());
+            let deactivate_app_uc =
+                crate::application::operations::DeactivateApplicationUseCase::new(
+                    app_repo, session,
+                );
+
+            let ctx = ExecutionContext::from_auth(&auth);
+
+            for sa in sas {
+                if !sa.active {
+                    continue;
+                }
+                deactivate_sa_uc
+                    .run(
+                        DeactivateServiceAccountCommand { id: sa.id.clone() },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()?;
+            }
+
+            for oauth_id in oauth_clients_to_deactivate {
+                deactivate_oauth_uc
+                    .run(
+                        DeactivateOAuthClientCommand {
+                            oauth_client_id: oauth_id,
+                        },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()?;
+            }
+
+            deactivate_app_uc
+                .run(
+                    DeactivateApplicationCommand {
+                        id: app_id_for_closure,
+                    },
+                    ctx,
+                )
+                .await
+                .into_committed()
+        })
+        .await;
+
+    result.map(|_| ()).map_err(Into::into)
+}
+
+/// Get application by code
+#[utoipa::path(
+    get,
+    path = "/by-code/{code}",
+    tag = "applications",
+    operation_id = "getApplicationByCode",
+    params(
+        ("code" = String, Path, description = "Application code")
+    ),
+    responses(
+        (status = 200, description = "Application found", body = ApplicationResponse),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application_by_code<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(code): Path<String>,
+) -> Result<Json<ApplicationResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    let app = state
+        .application_repo
+        .find_by_code(&code)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &code))?;
+
+    Ok(Json(app.into()))
+}
+
+/// Provision a service account for an application.
+///
+/// Three-aggregate operation in a single PG transaction (via
+/// `PgUnitOfWork::run`): creates a `ServiceAccount`, attaches it to the
+/// `Application`, and mints a CONFIDENTIAL OAuth client with
+/// `grant_types: ["client_credentials"]` so consumer apps can authenticate
+/// AS the service account. All three commits land together or all roll back.
+///
+/// The plaintext `clientSecret` is included in the response **only on this
+/// call** — the platform stores only the encrypted form and can never
+/// return it again. The frontend's credentials dialog is the user's only
+/// chance to capture it. Rotate later via
+/// `POST /api/oauth-clients/{id}/regenerate-secret` if needed.
+#[utoipa::path(
+    post,
+    path = "/{id}/provision-service-account",
+    tag = "applications",
+    operation_id = "provisionApplicationServiceAccount",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 201, description = "Service account provisioned", body = ProvisionServiceAccountResponse),
+        (status = 404, description = "Application not found"),
+        (status = 409, description = "Service account already exists")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn provision_service_account<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<ProvisionServiceAccountResponse>), PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    // Java 6068fe6b S1.2: it mints a service account and binds it.
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::SERVICE_ACCOUNT_CREATE,
+    )?;
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
+    )?;
+
+    let service_account = provision_application_service_account(
+        &state.pg_unit_of_work,
+        &state.application_repo,
+        &state.service_account_repo,
+        &state.client_repo,
+        &state.oauth_client_repo,
+        &id,
+        &auth.0,
+    )
+    .await?;
+
+    // 201, as Go answers (application/api/api.go:57).
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionServiceAccountResponse {
+            message: "Service account provisioned".to_string(),
+            service_account,
+        }),
+    ))
+}
+
+/// Provision an application's service account: create it, attach it and
+/// mint its `client_credentials` OAuth client in one transaction. The body
+/// of `POST /api/applications/{id}/provision-service-account` after its
+/// permission checks, shared with the server-rendered `fc-web` UI. The
+/// plaintext secret in the result is the only chance to read it.
+pub async fn provision_application_service_account(
+    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    application_repo: &Arc<ApplicationRepository>,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    client_repo: &Arc<ClientRepository>,
+    oauth_client_repo: &Arc<OAuthClientRepository>,
+    id: &str,
+    auth: &AuthContext,
+) -> Result<ServiceAccountCredentialsResponse, PlatformError> {
+    use crate::application::operations::{
+        AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
+    };
+    use crate::auth::operations::CreateOAuthClientCommand;
+    use crate::service_account::operations::{
+        CreateServiceAccountCommand, CreateServiceAccountUseCase,
+    };
+
+    // Pre-validate: fail early before opening a tx. Mirrors the business
+    // rule inside AttachServiceAccountToApplicationUseCase.
+    let app = application_repo
+        .find_by_id(id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", id))?;
+    if app.service_account_id.is_some() {
+        return Err(PlatformError::business_rule(
+            "ALREADY_PROVISIONED",
+            "Application already has a service account provisioned",
+        ));
+    }
+
+    // Mint the OAuth client identifiers and a fresh secret BEFORE opening
+    // the tx. We hand the hashed ref into the closure and keep the
+    // plaintext to return in the response.
+    let oauth_row_id = fc_platform_core::shared::tsid::generate(
+        fc_platform_core::shared::tsid::EntityType::OAuthClient,
+    );
+    let oauth_public_client_id = fc_platform_core::shared::tsid::generate(
+        fc_platform_core::shared::tsid::EntityType::OAuthClient,
+    );
+    let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
+
+    let sa_code = format!("app:{}", app.code);
+    let sa_name = format!("{} Service Account", app.name);
+    let sa_description = format!("Service account for application: {}", app.name);
+    let oauth_client_name = format!("{} Service Account Client", app.name);
+
+    let app_id = app.id.clone();
+    let auth = auth.clone();
+    let sa_repo = service_account_repo.clone();
+    let client_repo = client_repo.clone();
+    let app_repo = application_repo.clone();
+    let oauth_client_repo = oauth_client_repo.clone();
+    // The SA's webhook credentials are encrypted before storage.
+    // `generate_client_secret` above already failed if no key
+    // is configured.
+    let encryption =
+        fc_platform_core::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
+
+    let oauth_row_id_for_cmd = oauth_row_id.clone();
+    let oauth_public_client_id_for_cmd = oauth_public_client_id.clone();
+
+    // One DB tx for all three use cases. If any step fails, all rows
+    // (SA insert, Application update, OAuth client insert) roll back. Each
+    // writes its own event; the audit rows all record Go's one
+    // `ProvisionServiceAccountCommand`.
+    let provision_cmd = crate::application::operations::ProvisionServiceAccountCommand {
+        application_id: app_id.clone(),
+    };
+    let result = pg_unit_of_work
+        .run_as(&provision_cmd, |session| async move {
+            let create_sa_uc =
+                CreateServiceAccountUseCase::new(sa_repo, client_repo, session.clone(), encryption);
+            let attach_uc =
+                AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
+            let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);
+
+            let ctx = fc_platform_core::usecase::ExecutionContext::from_auth(&auth);
+
+            // 1. Create the ServiceAccount (a SERVICE principal is created
+            //    behind it, with an id of its own).
+            let create_cmd = CreateServiceAccountCommand {
+                code: sa_code.clone(),
+                name: sa_name,
+                description: Some(sa_description),
+                // No requested scope and no client links, as Go provisions it
+                // (provision_service_account.go:106-114: `serviceaccount.New`
+                // leaves Scope nil and `principal.NewService` is ANCHOR). Its
+                // reach is confined by application instead.
+                scope: None,
+                client_ids: Vec::new(),
+                application_id: Some(app_id.clone()),
+                all_applications: false,
+            };
+            let created = create_sa_uc
+                .run(create_cmd, ctx.clone())
+                .await
+                .into_result()?;
+            // The event carries the account's id (`sac_…`), as Go's does; the
+            // application and the OAuth client point at its principal.
+            let sa_id = created.principal_id.clone();
+
+            // 2. Attach SA to Application — sets `application.service_account_id`
+            //    to the principal; the event names the account (Go
+            //    provision_service_account.go:175-182).
+            let attach_cmd = AttachServiceAccountToApplicationCommand {
+                application_id: app_id.clone(),
+                service_account_id: created.event.service_account_id.clone(),
+                service_account_code: sa_code,
+                service_principal_id: sa_id.clone(),
+            };
+            attach_uc.run(attach_cmd, ctx.clone()).await.into_result()?;
+
+            // 3. Mint the OAuth client (client_credentials grant) so the
+            //    consumer can actually authenticate AS this service account.
+            let oauth_cmd = CreateOAuthClientCommand {
+                oauth_client_id: oauth_row_id_for_cmd,
+                client_id: oauth_public_client_id_for_cmd,
+                client_name: oauth_client_name,
+                client_type: OAuthClientType::Confidential,
+                client_secret_ref: Some(client_secret_ref),
+                redirect_uris: Vec::new(),
+                post_logout_redirect_uris: Vec::new(),
+                // provision_service_account.go:124-125
+                grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
+                default_scopes: vec!["openid".to_string()],
+                // Go's entity default (auth.NewOAuthClient); PKCE only
+                // applies at /oauth/authorize, which this client never uses.
+                pkce_required: true,
+                application_ids: vec![app_id],
+                allowed_origins: Vec::new(),
+                service_account_principal_id: Some(sa_id.clone()),
+                created_by: Some(auth.principal_id.clone()),
+                portal_client_id: None,
+                portal_app_id: None,
+                api_access: false,
+            };
+            create_oauth_uc
+                .run(oauth_cmd, ctx)
+                .await
+                .map(move |_| sa_id)
+                .into_committed()
+        })
+        .await;
+
+    let sa_id = result?.into_inner();
+
+    // Fetch the SA for its display name. The OAuth client id + client_id
+    // are the ones we minted above, so we don't need to re-read the row.
+    let service_account = service_account_repo
+        .find_by_id(&sa_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
+
+    Ok(ServiceAccountCredentialsResponse {
+        principal_id: service_account.id,
+        name: service_account.name,
+        oauth_client: OAuthClientCredentials {
+            id: oauth_row_id,
+            client_id: oauth_public_client_id,
+            client_secret: Some(client_secret_plaintext),
+        },
+    })
+}
+
+/// Provision an OAuth Login Client for an application.
+///
+/// Creates a single OAuth client with `grant_types: ["authorization_code"]`
+/// scoped to this application. Used for OIDC-driven user login flows in the
+/// app's frontend — separate from `provision-service-account`, which mints
+/// a CONFIDENTIAL `client_credentials` client for M2M auth.
+///
+/// `clientType` defaults to `"PUBLIC"` (PKCE enforced — right answer for
+/// SPAs / native apps). Pass `"CONFIDENTIAL"` for server-rendered apps that
+/// can keep a secret; in that case the response includes a plaintext
+/// `clientSecret` exactly once.
+///
+/// 409 if a login client (any OAuth client with `grant_types` containing
+/// `authorization_code` AND no service-account link) already exists for
+/// the application. Rotate or delete the existing one via the OAuth
+/// Clients page before re-provisioning.
+#[utoipa::path(
+    post,
+    path = "/{id}/provision-login-client",
+    tag = "applications",
+    operation_id = "provisionApplicationLoginClient",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    request_body = ProvisionLoginClientRequest,
+    responses(
+        (status = 201, description = "Login client provisioned", body = ProvisionLoginClientResponse),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found"),
+        (status = 409, description = "Login client already exists")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn provision_login_client<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<ProvisionLoginClientRequest>,
+) -> Result<(StatusCode, Json<ProvisionLoginClientResponse>), PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    // Java 6068fe6b S1.2: it mints an OAuth client for the application.
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::auth::OAUTH_CLIENT_CREATE,
+    )?;
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
+    )?;
+
+    let login_client = provision_application_login_client(
+        &state.create_oauth_client_use_case,
+        &state.application_repo,
+        &state.oauth_client_repo,
+        &id,
+        &auth.0,
+        req,
+    )
+    .await?;
+
+    // 201, as Go answers (application/api/api.go:58).
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionLoginClientResponse {
+            message: "Login client provisioned".to_string(),
+            login_client,
+        }),
+    ))
+}
+
+/// Provision an application's login OAuth client (`authorization_code`).
+/// The body of `POST /api/applications/{id}/provision-login-client` after
+/// its permission checks, shared with the server-rendered `fc-web` UI. A
+/// CONFIDENTIAL client's plaintext secret in the result is the only chance
+/// to read it.
+pub async fn provision_application_login_client<U: UnitOfWork>(
+    create_oauth_client_use_case: &CreateOAuthClientUseCase<U>,
+    application_repo: &ApplicationRepository,
+    oauth_client_repo: &OAuthClientRepository,
+    id: &str,
+    auth: &AuthContext,
+    req: ProvisionLoginClientRequest,
+) -> Result<LoginClientCredentialsResponse, PlatformError> {
+    use crate::auth::operations::CreateOAuthClientCommand;
+
+    // Go provisionLoginClient (application/api/api.go): the redirect URIs
+    // are checked before the application is looked up.
+    if req.redirect_uris.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "REDIRECT_URIS_REQUIRED",
+            "At least one redirect URI is required",
+        ));
+    }
+
+    // Go: `CONFIDENTIAL` asks for a confidential client, anything else is
+    // PUBLIC.
+    let client_type = if req.client_type.as_deref() == Some("CONFIDENTIAL") {
+        OAuthClientType::Confidential
+    } else {
+        OAuthClientType::Public
+    };
+
+    // An application may carry more than one login client, as in Go (each
+    // provision mints a new one).
+    let app = application_repo
+        .find_by_id(id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", id))?;
+    let _ = oauth_client_repo;
+
+    let oauth_row_id = fc_platform_core::shared::tsid::generate(
+        fc_platform_core::shared::tsid::EntityType::OAuthClient,
+    );
+    let oauth_public_client_id = fc_platform_core::shared::tsid::generate(
+        fc_platform_core::shared::tsid::EntityType::OAuthClient,
+    );
+    let client_name = format!("{} Login", app.name);
+
+    // CONFIDENTIAL clients get a secret at the edge (only confidential
+    // clients have one — PUBLIC clients use PKCE alone).
+    let (client_secret_plaintext, client_secret_ref) =
+        if client_type == OAuthClientType::Confidential {
+            let (plaintext, stored_ref) = generate_client_secret()?;
+            (Some(plaintext), Some(stored_ref))
+        } else {
+            (None, None)
+        };
+
+    let cmd = CreateOAuthClientCommand {
+        oauth_client_id: oauth_row_id.clone(),
+        client_id: oauth_public_client_id.clone(),
+        client_name,
+        client_type,
+        client_secret_ref,
+        redirect_uris: req.redirect_uris.clone(),
+        post_logout_redirect_uris: Vec::new(),
+        grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
+        default_scopes: vec![
+            "openid".to_string(),
+            "profile".to_string(),
+            "email".to_string(),
+        ],
+        // Go's entity default (auth.NewOAuthClient), for both types.
+        pkce_required: true,
+        application_ids: vec![app.id.clone()],
+        allowed_origins: req.allowed_origins.clone(),
+        service_account_principal_id: None,
+        created_by: Some(auth.principal_id.clone()),
+        portal_client_id: None,
+        portal_app_id: None,
+        api_access: false,
+    };
+    let ctx = ExecutionContext::from_auth(auth);
+    create_oauth_client_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    Ok(LoginClientCredentialsResponse {
+        client_type: client_type.as_str().to_string(),
+        oauth_client: OAuthClientCredentials {
+            id: oauth_row_id,
+            client_id: oauth_public_client_id,
+            client_secret: client_secret_plaintext,
+        },
+        redirect_uris: req.redirect_uris,
+    })
+}
+
+/// Check whether the application already has an OAuth client provisioned
+/// for the user-login flow (authorization_code grant + NOT linked to a
+/// service account). Filters in-memory off `find_by_application` — the
+/// list is small per app, so no extra index needed.
+pub async fn app_has_login_client(
+    repo: &OAuthClientRepository,
+    app_id: &str,
+) -> Result<bool, PlatformError> {
+    let clients = repo.find_by_application(app_id).await?;
+    Ok(clients.iter().any(|c| {
+        c.service_account_principal_id.is_none()
+            && c.grant_types.contains(&GrantType::AuthorizationCode)
+    }))
+}
+
+/// Generate a fresh 32-byte client secret and its stored form. Returns
+/// `(plaintext, stored_ref)`, where `stored_ref` is the verify-only
+/// `hashed:v1:` ref from `EncryptionService::hash_secret` (the same form
+/// the OAuth client API stores).
+fn generate_client_secret() -> Result<(String, String), PlatformError> {
+    use base64::Engine;
+    let mut secret_bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
+    let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+
+    let enc = fc_platform_core::shared::encryption_service::EncryptionService::from_env()
+        .ok_or_else(|| {
+            PlatformError::internal(
+                "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
+            )
+        })?;
+    let stored_ref = enc.hash_secret(&plaintext);
+    Ok((plaintext, stored_ref))
+}
+
+/// Get service account for an application
+#[utoipa::path(
+    get,
+    path = "/{id}/service-account",
+    tag = "applications",
+    operation_id = "getApiApplicationsByIdServiceAccount",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Service account found", body = ServiceAccountResponse),
+        (status = 404, description = "Application or service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application_service_account<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    // Get the application
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+
+    // Get the service account
+    let sa_id = app
+        .service_account_id
+        .ok_or_else(|| PlatformError::not_found("ServiceAccount", "for application"))?;
+
+    let service_account = state
+        .service_account_repo
+        .find_by_id(&sa_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
+
+    Ok(Json(service_account.into()))
+}
+
+/// List roles for an application (admin, by TSID).
+///
+/// Mounted under a `/by-id` prefix so it doesn't collide with the SDK's
+/// `/{appCode}/roles` route. The SDK path takes the application code;
+/// this admin path takes the TSID (which the frontend has on hand).
+#[utoipa::path(
+    get,
+    path = "/by-id/{id}/roles",
+    tag = "applications",
+    operation_id = "listApplicationRoles",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Application role names", body = ApplicationRolesResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_application_roles<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ApplicationRolesResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    // Go lists the role names registered against the application id; an
+    // unknown application simply has none.
+    let roles = match state.application_repo.find_by_id(&id).await? {
+        Some(app) => state
+            .role_repo
+            .find_by_application(&app.code)
+            .await?
+            .into_iter()
+            .map(|r| r.name)
+            .collect(),
+        None => Vec::new(),
+    };
+    Ok(Json(ApplicationRolesResponse { roles }))
+}
+
+/// Go's `ApplicationRolesResponse`: the role names.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApplicationRolesResponse {
+    pub roles: Vec<String>,
+}
+
+/// The answer to `PUT /api/applications/{id}/clients/{clientId}` (a route
+/// Go does not have): Go's `ClientConfigResponse` members, plus the client's
+/// name and identifier, the base URL in effect, and `config` (a copy of
+/// `configJson`, the member this route answered before it carried Go's).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = UpdateClientConfigResponse)]
+pub struct ClientConfigResponse {
+    pub id: String,
+    pub application_id: String,
+    pub client_id: String,
+    pub client_name: String,
+    pub client_identifier: String,
+    pub enabled: bool,
+    pub base_url_override: Option<String>,
+    pub effective_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub config_json: Option<serde_json::Value>,
+    /// Deprecated: a copy of `configJson`.
+    pub config: Option<serde_json::Value>,
+    #[schema(format = DateTime)]
+    pub created_at: String,
+    #[schema(format = DateTime)]
+    pub updated_at: String,
+}
+
+/// Client configs list response: Go's `{items}` of `ClientConfigResponse`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigListResponse)]
+pub struct ClientConfigsResponse {
+    pub items: Vec<crate::application::api::GoClientConfigResponse>,
+}
+
+/// Client config request. `baseUrlOverride: ""` clears the override;
+/// absent members are left as they are. The configuration document is
+/// `configJson` (Go's response member) or `config`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientConfigRequest {
+    pub enabled: Option<bool>,
+    pub base_url_override: Option<String>,
+    #[serde(alias = "configJson")]
+    pub config: Option<serde_json::Value>,
+}
+
+/// List client configs for an application
+#[utoipa::path(
+    get,
+    path = "/{id}/clients",
+    tag = "applications",
+    operation_id = "listApplicationClientConfigs",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Client configurations", body = ClientConfigsResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_client_configs<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ClientConfigsResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+
+    // Go lists the application's configs as stored; an unknown application
+    // has none (200 `{items: []}`).
+    let items = state
+        .client_config_repo
+        .find_by_application(&id)
+        .await?
+        .into_iter()
+        .map(crate::application::api::GoClientConfigResponse::from)
+        .collect();
+    Ok(Json(ClientConfigsResponse { items }))
+}
+
+/// Update client config for an application.
+/// Routes through UpdateApplicationClientConfigUseCase so the change is
+/// atomic with an `ApplicationClientConfigUpdated` event + audit log.
+#[utoipa::path(
+    put,
+    path = "/{id}/clients/{clientId}",
+    tag = "applications",
+    operation_id = "putApiApplicationsByIdClientsByClientId",
+    params(
+        ("id" = String, Path, description = "Application ID"),
+        ("clientId" = String, Path, description = "Client ID")
+    ),
+    request_body = ClientConfigRequest,
+    responses(
+        (status = 200, description = "Configuration updated", body = ClientConfigResponse),
+        (status = 404, description = "Application or client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_client_config<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path((id, client_id)): Path<(String, String)>,
+    Json(req): Json<ClientConfigRequest>,
+) -> Result<Json<ClientConfigResponse>, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
+    )?;
+
+    let cmd = crate::application::operations::UpdateApplicationClientConfigCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
+        enabled: req.enabled,
+        base_url_override: req.base_url_override,
+        config: req.config,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state
+        .update_client_config_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    // Refetch to build the response — the use case returns an event, not the
+    // hydrated config, and the response carries the application's effective
+    // base URL + client name/identifier alongside the updated config.
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+    let client = state
+        .client_repo
+        .find_by_id(&client_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
+    let config = state
+        .client_config_repo
+        .find_by_application_and_client(&id, &client_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("ApplicationClientConfig", "for (app, client)"))?;
+
+    Ok(Json(ClientConfigResponse {
+        id: config.id,
+        application_id: config.application_id,
+        client_id: config.client_id,
+        client_name: client.name,
+        client_identifier: client.identifier,
+        enabled: config.enabled,
+        base_url_override: config.base_url_override.clone(),
+        effective_base_url: config.base_url_override.or(app.default_base_url),
+        config_json: config.config_json.clone(),
+        config: config.config_json,
+        created_at: config.created_at.to_rfc3339(),
+        updated_at: config.updated_at.to_rfc3339(),
+    }))
+}
+
+/// Enable application for a client.
+/// Routes through EnableApplicationForClientUseCase (UoW-backed).
+#[utoipa::path(
+    post,
+    path = "/{id}/clients/{clientId}/enable",
+    tag = "applications",
+    operation_id = "enableApplicationForClient",
+    params(
+        ("id" = String, Path, description = "Application ID"),
+        ("clientId" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 204, description = "Application enabled for client"),
+        (status = 404, description = "Application or client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn enable_for_client<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path((id, client_id)): Path<(String, String)>,
+) -> Result<StatusCode, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_ENABLE_CLIENT,
+    )?;
+
+    let cmd = crate::application::operations::EnableApplicationForClientCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state
+        .enable_for_client_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    // 204, as Go answers (application/api/api.go:55).
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Disable application for a client.
+/// Routes through DisableApplicationForClientUseCase (UoW-backed).
+#[utoipa::path(
+    post,
+    path = "/{id}/clients/{clientId}/disable",
+    tag = "applications",
+    operation_id = "disableApplicationForClient",
+    params(
+        ("id" = String, Path, description = "Application ID"),
+        ("clientId" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 204, description = "Application disabled for client"),
+        (status = 404, description = "Application or client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn disable_for_client<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path((id, client_id)): Path<(String, String)>,
+) -> Result<StatusCode, PlatformError> {
+    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    fc_platform_core::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_DISABLE_CLIENT,
+    )?;
+
+    let cmd = crate::application::operations::DisableApplicationForClientCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state
+        .disable_for_client_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── Go-parity routes (formerly go_api.rs) ────────────────────────────────────
+//
+// Application routes Go serves that Rust lacked (`application/api/api.go:53,60`):
+//
+// - `POST /api/applications/{id}/service-account` → 204: attach an existing
+//   service account (`{serviceAccountId, serviceAccountCode}`)
+// - `GET  /api/applications/{id}/clients/{clientId}` → the client config
+
+#[derive(Clone)]
+pub struct ApplicationGoState {
+    pub principal_repo: Arc<PrincipalRepository>,
+    pub client_config_repo: Arc<ApplicationClientConfigRepository>,
+    pub attach_use_case: Arc<AttachServiceAccountToApplicationUseCase<PgUnitOfWork>>,
+}
+
+/// Go `AttachServiceAccountRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachServiceAccountRequest {
+    #[serde(default)]
+    #[schema(required = true)]
+    pub service_account_id: String,
+    #[serde(default)]
+    #[schema(required = true)]
+    pub service_account_code: String,
+}
+
+/// Go `ClientConfigResponse`. Go documents `baseUrlOverride` and
+/// `configJson` but has no column for them, so it never answers them; this
+/// platform stores both (migration 058) and answers them when set.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ClientConfigResponse)]
+pub struct GoClientConfigResponse {
+    pub id: String,
+    pub application_id: String,
+    pub client_id: String,
+    pub enabled: bool,
+    /// The base URL this client reaches the application at, when it is not
+    /// the application's default. Absent: the default applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url_override: Option<String>,
+    /// The application's configuration document for this client. Absent
+    /// when none was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub config_json: Option<serde_json::Value>,
+    #[schema(format = DateTime)]
+    pub created_at: String,
+    #[schema(format = DateTime)]
+    pub updated_at: String,
+}
+
+/// Attach an existing service account (Go `attachApplicationServiceAccount`).
+/// The application stores the account's principal id (the column is a
+/// foreign key to `iam_principals`). Go asks anchor scope alone; Rust asks
+/// anchor and `application:update`, as for provisioning one (Java S1.2).
+#[utoipa::path(
+    post,
+    path = "/api/applications/{id}/service-account",
+    tag = "applications",
+    operation_id = "attachApplicationServiceAccount",
+    params(("id" = String, Path, description = "Application id")),
+    request_body = AttachServiceAccountRequest,
+    responses(
+        (status = 204, description = "Attached"),
+        (status = 404, description = "Unknown application or service account"),
+        (status = 409, description = "The application already has one")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn attach_application_service_account(
+    State(state): State<ApplicationGoState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<AttachServiceAccountRequest>,
+) -> Result<StatusCode, PlatformError> {
+    checks::require_anchor_scope(&auth.0)?;
+    checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
+    )?;
+    let sa_id = req.service_account_id.trim().to_string();
+    // Go validates the ids before resolving the principal.
+    let principal_id = if sa_id.is_empty() || id.trim().is_empty() {
+        sa_id.clone()
+    } else {
+        state
+            .principal_repo
+            .find_by_service_account(&sa_id)
+            .await?
+            .ok_or_else(|| PlatformError::not_found_code("ServiceAccountPrincipal", &sa_id))?
+            .id
+    };
+    state
+        .attach_use_case
+        .run(
+            AttachServiceAccountToApplicationCommand {
+                application_id: id,
+                service_account_id: sa_id,
+                service_account_code: req.service_account_code,
+                service_principal_id: principal_id,
+            },
+            ExecutionContext::from_auth(&auth.0),
+        )
+        .await
+        .into_result()?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// One client's config for an application (Go `getApplicationClientConfig`).
+#[utoipa::path(
+    get,
+    path = "/api/applications/{id}/clients/{clientId}",
+    tag = "applications",
+    operation_id = "getApplicationClientConfig",
+    params(
+        ("id" = String, Path, description = "Application id"),
+        ("clientId" = String, Path, description = "Client id")
+    ),
+    responses(
+        (status = 200, description = "The config", body = GoClientConfigResponse),
+        (status = 404, description = "No config for the pair")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application_client_config(
+    State(state): State<ApplicationGoState>,
+    auth: Authenticated,
+    Path((id, client_id)): Path<(String, String)>,
+) -> Result<Json<GoClientConfigResponse>, PlatformError> {
+    checks::require_permission(
+        &auth.0,
+        fc_platform_core::permissions::admin::APPLICATION_READ,
+    )?;
+    let c = state
+        .client_config_repo
+        .find_by_application_and_client(&id, &client_id)
+        .await?
+        .ok_or_else(|| {
+            PlatformError::not_found_code("ClientConfig", format!("{id}:{client_id}"))
+        })?;
+    Ok(Json(c.into()))
+}
+
+impl From<crate::application::ApplicationClientConfig> for GoClientConfigResponse {
+    fn from(c: crate::application::ApplicationClientConfig) -> Self {
+        Self {
+            id: c.id,
+            application_id: c.application_id,
+            client_id: c.client_id,
+            enabled: c.enabled,
+            base_url_override: c.base_url_override,
+            config_json: c.config_json,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `?active=true` parses (a typed bool beside a flattened struct didn't).
+    #[test]
+    fn the_applications_query_parses_through_the_real_query_parser() {
+        let uri: axum::http::Uri = "/api/applications?active=true&type=APPLICATION"
+            .parse()
+            .unwrap();
+        let q = axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri)
+            .unwrap()
+            .0;
+        assert_eq!(q.active.as_deref(), Some("true"));
+        assert_eq!(q.application_type.as_deref(), Some("APPLICATION"));
+        let uri: axum::http::Uri = "/api/applications?page=0&size=20".parse().unwrap();
+        assert!(axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri).is_ok());
+    }
+    use crate::application::entity::{Application, ApplicationType};
+    use chrono::Utc;
+
+    fn make_test_application() -> Application {
+        let now = Utc::now();
+        Application {
+            id: "app_ABCDEFGHIJKLM".to_string(),
+            application_type: ApplicationType::Application,
+            code: "my-app".to_string(),
+            name: "My Application".to_string(),
+            description: Some("A test application".to_string()),
+            icon_url: Some("https://example.com/icon.png".to_string()),
+            website: None,
+            logo: None,
+            logo_mime_type: None,
+            default_base_url: Some("https://api.example.com".to_string()),
+            service_account_id: Some("sac_SERVICEID12345".to_string()),
+            active: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // --- ApplicationResponse serialization ---
+
+    #[test]
+    fn test_application_response_serialization() {
+        let app = make_test_application();
+        let response = ApplicationResponse::from(app);
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(json["id"], "app_ABCDEFGHIJKLM");
+        assert_eq!(json["code"], "my-app");
+        assert_eq!(json["name"], "My Application");
+        assert_eq!(json["description"], "A test application");
+        assert_eq!(json["type"], "APPLICATION");
+        assert_eq!(json["defaultBaseUrl"], "https://api.example.com");
+        assert_eq!(json["iconUrl"], "https://example.com/icon.png");
+        assert_eq!(json["serviceAccountId"], "sac_SERVICEID12345");
+        assert_eq!(json["active"], true);
+        // Verify camelCase field names
+        assert!(json.get("createdAt").is_some());
+        assert!(json.get("updatedAt").is_some());
+        // Verify no snake_case leak
+        assert!(json.get("application_type").is_none());
+        assert!(json.get("default_base_url").is_none());
+        assert!(json.get("icon_url").is_none());
+        assert!(json.get("service_account_id").is_none());
+    }
+
+    #[test]
+    fn test_application_response_integration_type() {
+        let mut app = make_test_application();
+        app.application_type = ApplicationType::Integration;
+
+        let response = ApplicationResponse::from(app);
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(json["type"], "INTEGRATION");
+    }
+
+    #[test]
+    fn test_application_response_null_optionals() {
+        let now = Utc::now();
+        let app = Application {
+            id: "app_MINIMALAPPTEST".to_string(),
+            application_type: ApplicationType::Application,
+            code: "minimal".to_string(),
+            name: "Minimal".to_string(),
+            description: None,
+            icon_url: None,
+            website: None,
+            logo: None,
+            logo_mime_type: None,
+            default_base_url: None,
+            service_account_id: None,
+            active: false,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let response = ApplicationResponse::from(app);
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert!(json["description"].is_null());
+        assert!(json["defaultBaseUrl"].is_null());
+        assert!(json["iconUrl"].is_null());
+        assert!(json["serviceAccountId"].is_null());
+        assert_eq!(json["active"], false);
+    }
+
+    // --- CreateApplicationRequest deserialization ---
+
+    #[test]
+    fn test_create_application_request_deserialization() {
+        let json = serde_json::json!({
+            "code": "new-app",
+            "name": "New Application",
+            "description": "A new app",
+            "type": "INTEGRATION",
+            "defaultBaseUrl": "https://api.example.com",
+            "iconUrl": "https://example.com/icon.png"
+        });
+
+        let req: CreateApplicationRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.code, "new-app");
+        assert_eq!(req.name, "New Application");
+        assert_eq!(req.description, Some("A new app".to_string()));
+        assert_eq!(req.application_type, Some("INTEGRATION".to_string()));
+        assert_eq!(
+            req.default_base_url,
+            Some("https://api.example.com".to_string())
+        );
+        assert_eq!(
+            req.icon_url,
+            Some("https://example.com/icon.png".to_string())
+        );
+    }
+
+    #[test]
+    fn test_create_application_request_minimal() {
+        let json = serde_json::json!({
+            "code": "app",
+            "name": "App"
+        });
+
+        let req: CreateApplicationRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.code, "app");
+        assert_eq!(req.name, "App");
+        assert!(req.description.is_none());
+        assert!(req.application_type.is_none());
+        assert!(req.default_base_url.is_none());
+        assert!(req.icon_url.is_none());
+    }
+
+    #[test]
+    fn test_create_application_request_missing_code() {
+        let json = serde_json::json!({
+            "name": "Test"
+        });
+
+        let result = serde_json::from_value::<CreateApplicationRequest>(json);
+        assert!(result.is_err(), "Should fail without code");
+    }
+
+    #[test]
+    fn test_create_application_request_missing_name() {
+        let json = serde_json::json!({
+            "code": "test"
+        });
+
+        let result = serde_json::from_value::<CreateApplicationRequest>(json);
+        assert!(result.is_err(), "Should fail without name");
+    }
+
+    #[test]
+    fn test_create_application_request_empty_json() {
+        let json = serde_json::json!({});
+        let result = serde_json::from_value::<CreateApplicationRequest>(json);
+        assert!(result.is_err(), "Should fail with empty JSON");
+    }
+
+    // --- UpdateApplicationRequest ---
+
+    #[test]
+    fn test_update_application_request_deserialization() {
+        let json = serde_json::json!({
+            "name": "Updated Name",
+            "description": "Updated description"
+        });
+
+        let req: UpdateApplicationRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.name, Some("Updated Name".to_string()));
+        assert_eq!(req.description, Some("Updated description".to_string()));
+    }
+
+    #[test]
+    fn test_update_application_request_empty() {
+        let json = serde_json::json!({});
+        let req: UpdateApplicationRequest = serde_json::from_value(json).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.description.is_none());
+        assert!(req.default_base_url.is_none());
+        assert!(req.icon_url.is_none());
+    }
+
+    // --- ApplicationListResponse ---
+
+    #[test]
+    fn test_application_list_response_serialization() {
+        let app = make_test_application();
+        let list = ApplicationListResponse {
+            applications: vec![ApplicationResponse::from(app)],
+            total: 1,
+        };
+
+        let json = serde_json::to_value(&list).unwrap();
+        assert!(json["applications"].is_array());
+        assert_eq!(json["applications"].as_array().unwrap().len(), 1);
+        assert_eq!(json["total"], 1);
+    }
+
+    // --- ClientConfigRequest ---
+
+    #[test]
+    fn test_client_config_request_deserialization() {
+        let json = serde_json::json!({
+            "enabled": true,
+            "baseUrlOverride": "https://custom.example.com",
+            "config": {"key": "value"}
+        });
+
+        let req: ClientConfigRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.enabled, Some(true));
+        assert_eq!(
+            req.base_url_override,
+            Some("https://custom.example.com".to_string())
+        );
+        assert!(req.config.is_some());
+    }
+
+    #[test]
+    fn client_config_request_takes_gos_member_name_for_the_document() {
+        let req: ClientConfigRequest =
+            serde_json::from_value(serde_json::json!({"configJson": {"theme": "dark"}})).unwrap();
+        assert_eq!(req.config, Some(serde_json::json!({"theme": "dark"})));
+    }
+
+    #[test]
+    fn go_client_config_answers_the_overrides_only_when_set() {
+        let mut config =
+            crate::application::client_config::ApplicationClientConfig::new("app_1", "clt_1");
+        let bare = serde_json::to_value(crate::application::api::GoClientConfigResponse::from(
+            config.clone(),
+        ))
+        .unwrap();
+        assert!(bare.get("baseUrlOverride").is_none());
+        assert!(bare.get("configJson").is_none());
+
+        config.base_url_override = Some("https://acme.example.com".to_string());
+        config.config_json = Some(serde_json::json!({"flags": {"beta": true}}));
+        let set = serde_json::to_value(crate::application::api::GoClientConfigResponse::from(
+            config,
+        ))
+        .unwrap();
+        assert_eq!(set["baseUrlOverride"], "https://acme.example.com");
+        assert_eq!(
+            set["configJson"],
+            serde_json::json!({"flags": {"beta": true}})
+        );
+    }
+}

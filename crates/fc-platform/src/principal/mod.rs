@@ -1,16 +1,9 @@
-//! Principal Aggregate
+//! The `principal` aggregate (fc-platform-iam), and its routes.
 //!
-//! User and service account identity management.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod admin;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::principal::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::PrincipalsState;
 pub use routes::{principals_router, routes};
-pub use entity::{Principal, PrincipalType, UserIdentity, UserScope};
-pub use repository::PrincipalRepository;

@@ -1,13 +1,21 @@
-//! FlowCatalyst Platform
+//! FlowCatalyst Platform: the assembly crate.
 //!
-//! Core platform providing:
-//! - Event management (CloudEvents spec)
-//! - Event type definitions with schema versioning
-//! - Dispatch job lifecycle management
-//! - Subscription-based event routing
-//! - Multi-tenant identity and access control
-//! - Service account management for webhooks
-//! - Use Case pattern with guaranteed audit logging
+//! The platform is split into crates (docs/plans/build-speed-2026-09-28.md,
+//! section 6), each keeping its modules at their historical paths:
+//!
+//! - `fc-platform-core`: `usecase`, the kernel half of `shared` (errors,
+//!   ids, the authorization context and checks, middleware, database,
+//!   encryption, email, rate limiting), the permission catalogue;
+//! - `fc-platform-iam`: tenancy, identity and access, and (until they move
+//!   to their own crates) the sign-in flows and messaging;
+//! - `fc-platform-scheduled-jobs`: `scheduled_job`;
+//! - `fc-platform-functions`: `function`.
+//!
+//! This crate re-exports every module at `fc_platform::<module>` and adds
+//! what assembles them: each aggregate's `routes.rs` (wiring: it builds the
+//! states and use cases from the `PlatformContext`), `router`, the
+//! `PlatformContext` and server setup, the OpenAPI documents, the startup
+//! seeding, and the cross-aggregate endpoints in `shared`.
 //!
 //! ## Module Organization (Aggregate-based)
 //!
@@ -16,11 +24,12 @@
 //! - `repository` - Data access
 //! - `api` - REST endpoints
 //! - `operations` - Use case operations (where applicable)
+//! - `routes` - its routes (here, in the assembly)
 
 // Core aggregates
 pub mod app_docs;
 pub mod application;
-pub mod application_openapi_spec;
+pub use fc_platform_iam::application_openapi_spec;
 pub mod client;
 pub mod principal;
 pub mod role;
@@ -50,7 +59,7 @@ pub mod cors;
 pub mod email_domain_mapping;
 pub mod identity_provider;
 pub mod login_attempt;
-pub mod password_reset;
+pub use fc_platform_iam::password_reset;
 pub mod platform_config;
 pub mod portal;
 
@@ -58,13 +67,12 @@ pub mod portal;
 pub mod shared;
 
 // Cross-cutting concerns
-pub mod seed;
-/// The permission catalogue's home module and the principal kinds
-/// (fc-platform-core).
+/// The principal kinds an `AuthContext` carries (fc-platform-core).
 pub use fc_platform_core::principal_kind;
 /// The use-case contract and the unit of work (fc-platform-core).
 pub use fc_platform_core::usecase;
 pub use fc_platform_core::{details, impl_domain_event};
+pub use fc_platform_iam::seed;
 
 // Unit tests of the lower crates' code that exercise it with the platform's
 // aggregates (they can't live in the crate that defines the code).
@@ -72,7 +80,7 @@ pub use fc_platform_core::{details, impl_domain_event};
 mod split_tests;
 
 // Dispatch scheduler (polls PENDING jobs → queue → router → webhook)
-pub mod scheduler;
+pub use fc_platform_iam::scheduler;
 
 // Centralized router builder
 pub mod router;
@@ -276,6 +284,21 @@ pub mod repository {
         /// endpoint) can run ad-hoc queries that don't fit a single
         /// repository. Cloning is cheap; sqlx already Arcs internally.
         pub pool: PgPool,
+    }
+
+    impl From<&Repositories> for crate::function::operations::TriggerSyncRepositories {
+        fn from(repos: &Repositories) -> Self {
+            Self {
+                subscriptions: repos.subscription_repo.clone(),
+                pools: repos.dispatch_pool_repo.clone(),
+                jobs: repos.scheduled_job_repo.clone(),
+                trigger_objects: repos.function_trigger_object_repo.clone(),
+                applications: repos.application_repo.clone(),
+                versions: repos.function_version_repo.clone(),
+                functions: repos.function_repo.clone(),
+                routes: repos.function_route_repo.clone(),
+            }
+        }
     }
 
     impl Repositories {

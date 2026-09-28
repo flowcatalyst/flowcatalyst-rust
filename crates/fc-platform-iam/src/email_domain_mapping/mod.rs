@@ -1,0 +1,13 @@
+//! Email Domain Mapping Aggregate
+//!
+//! Maps email domains to identity providers and client access.
+
+pub mod api;
+pub mod entity;
+pub mod operations;
+pub mod provider_move_repository;
+pub mod repository;
+
+pub use api::EmailDomainMappingsState;
+pub use entity::{EmailDomainMapping, ScopeType};
+pub use repository::EmailDomainMappingRepository;
