@@ -13,7 +13,6 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::audit::operations::{RedactExistingAuditLogsCommand, RedactExistingAuditLogsUseCase};
 use crate::shared::error::PlatformError;
@@ -66,11 +65,4 @@ pub async fn redact_existing_audit_logs(
         scanned: event.scanned,
         redacted: event.redacted,
     }))
-}
-
-/// Create the BFF audit-logs router (mounted at `/bff/audit-logs`).
-pub fn bff_audit_logs_router(state: BffAuditLogsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(redact_existing_audit_logs))
-        .with_state(state)
 }

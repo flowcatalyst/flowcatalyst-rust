@@ -5,8 +5,9 @@
 pub mod api;
 pub mod entity;
 pub mod repository;
+pub mod routes;
 
 // Re-export main types
-pub use api::events_router;
+pub use routes::{events_router, routes};
 pub use entity::Event;
 pub use repository::EventRepository;

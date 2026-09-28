@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::event_type::entity::EventTypeStatus;
 use crate::shared::api_common::PaginationParams;
@@ -513,18 +512,4 @@ pub async fn delete_event_type(
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Create event types router
-pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_event_type, list_event_types))
-        .routes(routes!(
-            get_event_type,
-            update_event_type,
-            delete_event_type
-        ))
-        .routes(routes!(get_event_type_by_code))
-        .routes(routes!(add_schema_version))
-        .with_state(state)
 }

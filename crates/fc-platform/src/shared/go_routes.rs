@@ -14,12 +14,10 @@ use crate::usecase::PgUnitOfWork;
 /// Every state the Go-parity routes need.
 #[derive(Clone)]
 pub struct GoRoutesState {
-    pub role_permissions: crate::role::permission_api::RolePermissionsState,
     pub router_config: crate::shared::router_config_api::RouterConfigState,
     pub edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState,
     pub principals: crate::principal::go_api::PrincipalGoState,
     pub applications: crate::application::go_api::ApplicationGoState,
-    pub event_types: crate::event_type::go_api::EventTypeGoState,
     pub read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState,
     pub sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState,
     pub docs: crate::app_docs::api::DocsState,
@@ -119,25 +117,6 @@ impl GoRoutesState {
                         uow.clone(),
                     ),
                 ),
-            },
-            event_types: crate::event_type::go_api::EventTypeGoState {
-                event_type_repo: repos.event_type_repo.clone(),
-                add_schema_use_case: Arc::new(
-                    crate::event_type::operations::AddSchemaUseCase::new(
-                        repos.event_type_repo.clone(),
-                        uow.clone(),
-                    ),
-                ),
-                bff: crate::shared::bff_event_types_api::BffEventTypesState {
-                    event_type_repo: repos.event_type_repo.clone(),
-                    sync_use_case: Arc::new(
-                        crate::event_type::operations::SyncEventTypesUseCase::new(
-                            repos.event_type_repo.clone(),
-                            uow.clone(),
-                        ),
-                    ),
-                    unit_of_work: uow.clone(),
-                },
             },
             read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState {
                 events: crate::event::api::EventsState {
@@ -253,11 +232,6 @@ impl GoRoutesState {
                     ),
                 ),
             },
-            role_permissions: crate::role::permission_api::RolePermissionsState::new(
-                &repos.pool,
-                repos.role_repo.clone(),
-                uow.clone(),
-            ),
         }
     }
 }
@@ -274,9 +248,6 @@ pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
         .merge(crate::shared::sdk_sync_go_api::sdk_sync_go_router(
             state.sdk_sync,
         ))
-        .merge(crate::event_type::go_api::event_type_go_router(
-            state.event_types,
-        ))
         .merge(crate::shared::go_read_aliases_api::read_aliases_router(
             state.read_aliases,
         ))
@@ -291,9 +262,6 @@ pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
         ))
         .merge(crate::shared::router_config_api::router_config_router(
             state.router_config,
-        ))
-        .merge(crate::role::permission_api::role_permissions_router(
-            state.role_permissions,
         ))
         .merge(
             crate::service_account::admin_api::service_account_admin_router(

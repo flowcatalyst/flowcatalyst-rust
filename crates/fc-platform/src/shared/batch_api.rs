@@ -6,12 +6,7 @@
 //! events are committed; the fan-out service picks them up off the
 //! partial `idx_msg_events_unfanned` index.
 
-use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -351,13 +346,6 @@ pub(crate) async fn batch_events(
 
     // Go answers 201 for an accepted batch.
     Ok((StatusCode::CREATED, Json(BatchResponse { results })))
-}
-
-pub fn sdk_events_batch_router(state: SdkEventsState) -> Router {
-    Router::new()
-        .route("/batch", post(batch_events))
-        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
-        .with_state(state)
 }
 
 #[cfg(test)]

@@ -21,7 +21,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::role::api::{GrantPermissionRequest, RoleResponse};
 use crate::role::operations::{
@@ -348,17 +347,4 @@ pub async fn bff_create_permission(
             description: event.description.unwrap_or_default(),
         }),
     ))
-}
-
-/// Full-path router; merged at the root.
-pub fn role_permissions_router(state: RolePermissionsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(
-            list_role_permissions,
-            grant_role_permission_by_body
-        ))
-        .routes(routes!(grant_role_permission, revoke_role_permission))
-        .routes(routes!(delete_catalog_permission))
-        .routes(routes!(bff_create_permission))
-        .with_state(state)
 }

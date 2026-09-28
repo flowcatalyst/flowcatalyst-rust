@@ -2,12 +2,7 @@
 //!
 //! Exposes dispatch job batch creation at `/api/dispatch-jobs/batch`.
 
-use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -38,7 +33,7 @@ pub struct SdkBatchDispatchJobsRequest {
     pub items: Vec<CreateDispatchJobRequest>,
 }
 
-async fn sdk_batch_create_dispatch_jobs(
+pub(crate) async fn sdk_batch_create_dispatch_jobs(
     State(state): State<SdkDispatchJobsState>,
     auth: Authenticated,
     Json(req): Json<SdkBatchDispatchJobsRequest>,
@@ -187,11 +182,4 @@ async fn sdk_batch_create_dispatch_jobs(
 
     // Go answers 201 for an accepted batch.
     Ok((StatusCode::CREATED, Json(BatchResponse { results })))
-}
-
-pub fn sdk_dispatch_jobs_batch_router(state: SdkDispatchJobsState) -> Router {
-    Router::new()
-        .route("/batch", post(sdk_batch_create_dispatch_jobs))
-        .layer(DefaultBodyLimit::max(32 * 1024 * 1024))
-        .with_state(state)
 }

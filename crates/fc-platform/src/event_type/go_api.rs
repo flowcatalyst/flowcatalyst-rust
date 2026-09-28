@@ -14,7 +14,6 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::event_type::api::EventTypeResponse;
 use crate::event_type::operations::{AddSchemaCommand, AddSchemaUseCase};
@@ -145,12 +144,4 @@ pub async fn bff_put_event_type(
         Json(req),
     )
     .await
-}
-
-/// Full-path router; merged at the root.
-pub fn event_type_go_router(state: EventTypeGoState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(add_event_type_schema))
-        .routes(routes!(bff_put_event_type))
-        .with_state(state)
 }

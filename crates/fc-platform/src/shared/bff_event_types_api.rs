@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::event_type::entity::{EventType, EventTypeStatus, SpecVersion};
 use crate::event_type::operations::{
@@ -929,26 +928,6 @@ pub async fn get_filter_aggregates(
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
-
-/// Create BFF event types router (mounted at `/bff/event-types`)
-pub fn bff_event_types_router(state: BffEventTypesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_event_type, list_event_types))
-        .routes(routes!(sync_platform))
-        .routes(routes!(get_filter_applications))
-        .routes(routes!(get_filter_subdomains))
-        .routes(routes!(get_filter_aggregates))
-        .routes(routes!(
-            get_event_type,
-            update_event_type,
-            delete_event_type
-        ))
-        .routes(routes!(archive_event_type))
-        .routes(routes!(add_schema))
-        .routes(routes!(finalise_schema))
-        .routes(routes!(deprecate_schema))
-        .with_state(state)
-}
 
 #[cfg(test)]
 mod tests {

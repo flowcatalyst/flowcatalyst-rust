@@ -355,7 +355,8 @@ pub mod api {
 
     // API state and router exports from each aggregate
     pub use crate::application::api::{applications_router, ApplicationsState};
-    pub use crate::audit::api::{audit_logs_router, AuditLogsState};
+    pub use crate::audit::api::AuditLogsState;
+    pub use crate::audit::routes::audit_logs_router;
     pub use crate::auth::auth_api::{auth_router, AuthState};
     pub use crate::auth::oauth_api::{oauth_router, OAuthState};
     pub use crate::auth::oauth_clients_api::{oauth_clients_router, OAuthClientsState};
@@ -369,17 +370,20 @@ pub mod api {
     };
     pub use crate::client::api::ClientsState;
     pub use crate::client::routes::clients_router;
-    pub use crate::dispatch_job::api::{
-        dispatch_jobs_api_router, dispatch_jobs_router, DispatchJobsState,
-    };
+    pub use crate::dispatch_job::api::DispatchJobsState;
+    pub use crate::dispatch_job::routes::{dispatch_jobs_api_router, dispatch_jobs_router};
     pub use crate::dispatch_pool::api::{dispatch_pools_router, DispatchPoolsState};
-    pub use crate::event::api::{events_api_router, events_router, EventsState};
-    pub use crate::event_type::api::{event_types_router, EventTypesState};
+    pub use crate::event::api::EventsState;
+    pub use crate::event::routes::{events_api_router, events_router};
+    pub use crate::event_type::api::EventTypesState;
+    pub use crate::event_type::routes::event_types_router;
     pub use crate::principal::api::{principals_router, PrincipalsState};
     pub use crate::process::api::ProcessesState;
     pub use crate::process::routes::processes_router;
-    pub use crate::role::api::{roles_router, RolesState};
-    pub use crate::scheduled_job::api::{scheduled_jobs_router, ScheduledJobsState};
+    pub use crate::role::api::RolesState;
+    pub use crate::role::routes::roles_router;
+    pub use crate::scheduled_job::api::ScheduledJobsState;
+    pub use crate::scheduled_job::routes::scheduled_jobs_router;
     pub use crate::service_account::api::{service_accounts_router, ServiceAccountsState};
     pub use crate::subscription::api::SubscriptionsState;
     pub use crate::subscription::routes::subscriptions_router;
@@ -398,20 +402,22 @@ pub mod api {
     pub use crate::login_attempt::routes::login_attempts_router;
     pub use crate::platform_config::access_api::{config_access_router, ConfigAccessState};
     pub use crate::platform_config::api::{admin_platform_config_router, PlatformConfigState};
-    pub use crate::shared::batch_api::{sdk_events_batch_router, SdkEventsState};
+    pub use crate::event::routes::sdk_events_batch_router;
+    pub use crate::shared::batch_api::SdkEventsState;
     pub use crate::shared::bff_dashboard_api::{bff_dashboard_router, BffDashboardState};
-    pub use crate::shared::bff_event_types_api::{bff_event_types_router, BffEventTypesState};
-    pub use crate::shared::bff_roles_api::{bff_roles_router, BffRolesState};
-    pub use crate::shared::bff_scheduled_jobs_api::{
-        bff_scheduled_jobs_router, BffScheduledJobsState,
-    };
+    pub use crate::event_type::routes::bff_event_types_router;
+    pub use crate::shared::bff_event_types_api::BffEventTypesState;
+    pub use crate::role::routes::bff_roles_router;
+    pub use crate::shared::bff_roles_api::BffRolesState;
+    pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
+    pub use crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState;
     pub use crate::shared::dispatch_process_api::{dispatch_process_router, DispatchProcessState};
     pub use crate::shared::me_api::{me_router, MeState};
     pub use crate::shared::public_api::{public_router, PublicApiState};
-    pub use crate::shared::sdk_audit_batch_api::{sdk_audit_batch_router, SdkAuditBatchState};
-    pub use crate::shared::sdk_dispatch_jobs_api::{
-        sdk_dispatch_jobs_batch_router, SdkDispatchJobsState,
-    };
+    pub use crate::audit::routes::sdk_audit_batch_router;
+    pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
+    pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
+    pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
     pub use crate::shared::sdk_sync_api::{sdk_sync_router, SdkSyncState};
 
     // Shared APIs

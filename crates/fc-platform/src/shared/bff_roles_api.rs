@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::repository::ApplicationRepository;
 use crate::role::entity::AuthRole;
@@ -886,15 +885,3 @@ pub async fn sync_platform_roles(
 }
 
 // ── Router ────────────────────────────────────────────────────────────────
-
-/// Create BFF roles router (mounted at `/bff/roles`)
-pub fn bff_roles_router(state: BffRolesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_role, list_roles))
-        .routes(routes!(get_filter_applications))
-        .routes(routes!(list_permissions))
-        .routes(routes!(get_permission))
-        .routes(routes!(sync_platform_roles))
-        .routes(routes!(get_role, update_role, delete_role))
-        .with_state(state)
-}

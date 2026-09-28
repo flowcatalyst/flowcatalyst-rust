@@ -19,14 +19,12 @@
 use std::sync::Arc;
 
 use crate::api::{
-    ApplicationRolesSdkState, ApplicationsState, AuditLogsState, AuthConfigState, AuthState,
-    BffEventTypesState, BffRolesState, CircuitBreakerRegistry, ClientSelectionState,
-    ConfigAccessState, DebugState, DispatchJobsState, DispatchPoolsState, DispatchProcessState,
-    EmailDomainMappingsState, EventTypesState, EventsState, FilterOptionsState, InFlightTracker,
-    LeaderState, MeState, MonitoringState, OAuthClientsState, OAuthState, OidcLoginApiState,
-    PasswordResetApiState, PlatformConfigState, PrincipalsState, PublicApiState, RolesState,
-    SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState, ServiceAccountsState,
-    WellKnownState,
+    ApplicationRolesSdkState, ApplicationsState, AuthConfigState, AuthState,
+    CircuitBreakerRegistry, ClientSelectionState, ConfigAccessState, DebugState,
+    DispatchPoolsState, DispatchProcessState, EmailDomainMappingsState, FilterOptionsState,
+    InFlightTracker, LeaderState, MeState, MonitoringState, OAuthClientsState, OAuthState,
+    OidcLoginApiState, PasswordResetApiState, PlatformConfigState, PrincipalsState, PublicApiState,
+    SdkSyncState, ServiceAccountsState, WellKnownState,
 };
 use crate::audit::service::AuditService;
 use crate::auth::session_cookie::SessionCookieConfig;
@@ -59,16 +57,7 @@ pub fn build_platform_routes(
     platform_application_id: String,
 ) -> PlatformRoutes<PgUnitOfWork> {
     let ctx = PlatformContext::new(repos, auth, unit_of_work, config, platform_application_id);
-    let signing_guard = ctx.signing_guard.clone();
-    let events_state = EventsState {
-        event_repo: repos.event_repo.clone(),
-        signing: signing_guard.clone(),
-    };
-    let dispatch_jobs_state = DispatchJobsState {
-        dispatch_job_repo: repos.dispatch_job_repo.clone(),
-        client_repo: repos.client_repo.clone(),
-        signing: signing_guard.clone(),
-    };
+    let _signing_guard = ctx.signing_guard.clone();
     let filter_options_state = FilterOptionsState {
         client_repo: repos.client_repo.clone(),
         event_type_repo: repos.event_type_repo.clone(),
@@ -83,83 +72,12 @@ pub fn build_platform_routes(
             repos.event_type_repo.clone(),
             unit_of_work.clone(),
         ));
-    let create_event_type_use_case =
-        Arc::new(crate::event_type::operations::CreateEventTypeUseCase::new(
-            repos.event_type_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let update_event_type_use_case =
-        Arc::new(crate::event_type::operations::UpdateEventTypeUseCase::new(
-            repos.event_type_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let delete_event_type_use_case =
-        Arc::new(crate::event_type::operations::DeleteEventTypeUseCase::new(
-            repos.event_type_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let add_schema_use_case = Arc::new(crate::event_type::operations::AddSchemaUseCase::new(
-        repos.event_type_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let event_types_state = EventTypesState {
-        event_type_repo: repos.event_type_repo.clone(),
-        create_use_case: create_event_type_use_case,
-        update_use_case: update_event_type_use_case,
-        delete_use_case: delete_event_type_use_case,
-        add_schema_use_case,
-    };
 
     // ── Process documentation (use cases + API state) ────────────────────
     let sync_processes_use_case = Arc::new(crate::process::operations::SyncProcessesUseCase::new(
         repos.process_repo.clone(),
         unit_of_work.clone(),
     ));
-
-    // ── Scheduled jobs (use cases + API state) ────────────────────────────
-    let scheduled_jobs_state = {
-        use crate::scheduled_job::operations::*;
-        let create_uc = Arc::new(CreateScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let update_uc = Arc::new(UpdateScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let pause_uc = Arc::new(PauseScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let resume_uc = Arc::new(ResumeScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let archive_uc = Arc::new(ArchiveScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let delete_uc = Arc::new(DeleteScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        let fire_uc = Arc::new(FireScheduledJobUseCase::new(
-            repos.scheduled_job_repo.clone(),
-            repos.scheduled_job_instance_repo.clone(),
-            unit_of_work.clone(),
-        ));
-        crate::api::ScheduledJobsState {
-            repo: repos.scheduled_job_repo.clone(),
-            instance_repo: repos.scheduled_job_instance_repo.clone(),
-            create_use_case: create_uc,
-            update_use_case: update_uc,
-            pause_use_case: pause_uc,
-            resume_use_case: resume_uc,
-            archive_use_case: archive_uc,
-            delete_use_case: delete_uc,
-            fire_use_case: fire_uc,
-        }
-    };
 
     let audit_service = Arc::new(AuditService::new(repos.audit_log_repo.clone()));
     let email_service = ctx.email_service.clone();
@@ -253,28 +171,6 @@ pub fn build_platform_routes(
         assign_app_access_use_case,
         app_access: app_access.clone(),
         unit_of_work: unit_of_work.clone(),
-    };
-    let create_role_use_case = Arc::new(crate::role::operations::CreateRoleUseCase::new(
-        repos.role_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let update_role_use_case = Arc::new(crate::role::operations::UpdateRoleUseCase::new(
-        repos.role_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let delete_role_use_case = Arc::new(crate::role::operations::DeleteRoleUseCase::new(
-        repos.role_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let roles_state = RolesState {
-        role_repo: repos.role_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-        create_use_case: create_role_use_case,
-        update_use_case: update_role_use_case,
-        delete_use_case: delete_role_use_case,
-        permission_repo: Arc::new(
-            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
-        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
@@ -454,11 +350,6 @@ pub fn build_platform_routes(
         rate_limit_policies: ctx.config.rate_limit_policies.clone(),
         encryption_service: encryption_service.clone(),
         portal: Some(portal_state.clone()),
-    };
-
-    let audit_logs_state = AuditLogsState {
-        audit_log_repo: repos.audit_log_repo.clone(),
-        principal_repo: repos.principal_repo.clone(),
     };
 
     // ── Service Account use cases ─────────────────────────────────────────
@@ -761,46 +652,11 @@ pub fn build_platform_routes(
         unit_of_work: unit_of_work.clone(),
     };
 
-    let sdk_audit_batch_state = SdkAuditBatchState {
-        audit_log_repo: repos.audit_log_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-        client_repo: repos.client_repo.clone(),
-    };
-    let sdk_dispatch_jobs_state = SdkDispatchJobsState {
-        dispatch_job_repo: repos.dispatch_job_repo.clone(),
-        signing: signing_guard.clone(),
-    };
-
-    let sdk_events_state = SdkEventsState {
-        event_repo: repos.event_repo.clone(),
-        client_repo: repos.client_repo.clone(),
-        signing: signing_guard.clone(),
-    };
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
     };
 
-    let bff_roles_state = BffRolesState {
-        role_repo: repos.role_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-        unit_of_work: unit_of_work.clone(),
-        role_sync_service: Arc::new(crate::shared::role_sync_service::RoleSyncService::new(
-            repos.role_repo.clone(),
-        )),
-        permission_repo: Arc::new(
-            crate::role::permission_repository::PermissionCatalogRepository::new(&repos.pool),
-        ),
-    };
-    // Temporary (docs/spec/audit-redaction.md, Java repo).
-    let bff_audit_logs_state = crate::shared::bff_audit_logs_api::BffAuditLogsState {
-        redact_existing_use_case: Arc::new(
-            crate::audit::operations::RedactExistingAuditLogsUseCase::new(
-                repos.audit_log_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
-    };
     let outbound_credentials = ctx.outbound_credentials.clone();
     // ── Function registry ─────────────────────────────────────────────────
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
@@ -888,19 +744,6 @@ pub fn build_platform_routes(
         unit_of_work: functions_state.ops.unit_of_work.clone(),
     };
 
-    let bff_scheduled_jobs_state = crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState {
-        repo: repos.scheduled_job_repo.clone(),
-        instance_repo: repos.scheduled_job_instance_repo.clone(),
-        client_repo: repos.client_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-    };
-
-    let bff_event_types_state = BffEventTypesState {
-        event_type_repo: repos.event_type_repo.clone(),
-        sync_use_case: sync_event_types_use_case.clone(),
-        unit_of_work: unit_of_work.clone(),
-    };
-
     let monitoring_state = MonitoringState {
         leader_state: LeaderState::new(uuid::Uuid::new_v4().to_string()),
         circuit_breakers: CircuitBreakerRegistry::new(),
@@ -937,23 +780,13 @@ pub fn build_platform_routes(
     };
 
     PlatformRoutes {
-        events: events_state,
-        event_types: event_types_state,
-        scheduled_jobs: scheduled_jobs_state,
         functions: functions_state,
         function_control: function_control_state,
-        dispatch_jobs: dispatch_jobs_state,
         filter_options: filter_options_state,
         principals: principals_state,
-        roles: roles_state,
         oauth_clients: oauth_clients_state,
-        audit_logs: audit_logs_state,
         monitoring: monitoring_state,
         auth: embedded_auth_state,
-        bff_roles: bff_roles_state,
-        bff_audit_logs: bff_audit_logs_state,
-        bff_event_types: bff_event_types_state,
-        bff_scheduled_jobs: bff_scheduled_jobs_state,
         bff_dashboard: bff_dashboard_state,
         debug: debug_state,
         auth_config: auth_config_state,
@@ -964,15 +797,12 @@ pub fn build_platform_routes(
         platform_config: platform_config_state,
         config_access: config_access_state,
         me: me_state,
-        sdk_events: sdk_events_state,
-        sdk_dispatch_jobs: sdk_dispatch_jobs_state,
         oidc_login: oidc_login_state,
         oauth: oauth_state,
         well_known: well_known_state,
         client_selection: client_selection_state,
         application_roles_sdk: application_roles_sdk_state,
         sdk_sync: sdk_sync_state,
-        sdk_audit_batch: sdk_audit_batch_state,
         public: public_api_state,
         password_reset: password_reset_state,
         portal: portal_state,

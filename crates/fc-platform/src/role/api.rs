@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::repository::ApplicationRepository;
 use crate::role::entity::{AuthRole, RoleSource};
@@ -601,19 +600,4 @@ pub async fn get_roles_by_application_id(
         .await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))
-}
-
-/// Create roles router
-pub fn roles_router(state: RolesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_role, list_roles))
-        .routes(routes!(get_filter_applications))
-        .routes(routes!(list_permissions))
-        .routes(routes!(get_permission))
-        .routes(routes!(get_role_by_code))
-        .routes(routes!(get_roles_by_source))
-        .routes(routes!(get_roles_by_application_id))
-        .routes(routes!(get_role, update_role, delete_role))
-        // Grant/revoke by role name: `role::permission_api` (Go's operations).
-        .with_state(state)
 }

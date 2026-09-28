@@ -17,27 +17,18 @@ use crate::api::{
     anchor_domains_router,
     application_roles_sdk_router,
     applications_router,
-    audit_logs_router,
     auth_router,
     bff_dashboard_router,
-    bff_event_types_router,
     // Plain Router routes
-    bff_roles_router,
-    bff_scheduled_jobs_router,
     client_auth_configs_router,
     client_selection_router,
     config_access_router,
     debug_dispatch_jobs_router,
     debug_events_router,
-    dispatch_jobs_api_router,
-    dispatch_jobs_router,
     dispatch_pools_router,
     dispatch_process_router,
     email_domain_mappings_router,
-    event_types_router,
-    events_api_router,
     // OpenApiRouter routes
-    events_router,
     filter_options_router,
     idp_role_mappings_router,
     me_router,
@@ -48,32 +39,20 @@ use crate::api::{
     password_reset_router,
     principals_router,
     public_router,
-    roles_router,
-    scheduled_jobs_router,
-    sdk_audit_batch_router,
-    sdk_dispatch_jobs_batch_router,
-    sdk_events_batch_router,
     sdk_sync_router,
     service_accounts_router,
     well_known_router,
     ApplicationRolesSdkState,
     ApplicationsState,
-    AuditLogsState,
     AuthConfigState,
     AuthState,
     BffDashboardState,
-    BffEventTypesState,
-    BffRolesState,
-    BffScheduledJobsState,
     ClientSelectionState,
     ConfigAccessState,
     DebugState,
-    DispatchJobsState,
     DispatchPoolsState,
     DispatchProcessState,
     EmailDomainMappingsState,
-    EventTypesState,
-    EventsState,
     FilterOptionsState,
     MeState,
     MonitoringState,
@@ -84,11 +63,6 @@ use crate::api::{
     PlatformConfigState,
     PrincipalsState,
     PublicApiState,
-    RolesState,
-    ScheduledJobsState,
-    SdkAuditBatchState,
-    SdkDispatchJobsState,
-    SdkEventsState,
     SdkSyncState,
     ServiceAccountsState,
     WellKnownState,
@@ -221,28 +195,17 @@ pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 /// call `build()`, then layer on middleware and static files.
 pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     // -- OpenApiRouter routes (collected in Swagger) --
-    pub events: EventsState,
-    pub event_types: EventTypesState,
-    pub dispatch_jobs: DispatchJobsState,
-    pub scheduled_jobs: ScheduledJobsState,
     /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
     pub functions: crate::function::api::FunctionsState,
     /// `/control/functions/*`: what a function host calls (not in Swagger).
     pub function_control: crate::function::control_api::FunctionControlState,
     pub filter_options: FilterOptionsState,
     pub principals: PrincipalsState,
-    pub roles: RolesState,
     pub oauth_clients: OAuthClientsState,
-    pub audit_logs: AuditLogsState,
     pub monitoring: MonitoringState,
     pub auth: AuthState,
 
     // -- Plain Router routes (NOT in Swagger) --
-    pub bff_roles: BffRolesState,
-    /// Temporary (docs/spec/audit-redaction.md, Java repo).
-    pub bff_audit_logs: crate::shared::bff_audit_logs_api::BffAuditLogsState,
-    pub bff_event_types: BffEventTypesState,
-    pub bff_scheduled_jobs: BffScheduledJobsState,
     pub bff_dashboard: BffDashboardState,
     pub debug: DebugState,
     pub auth_config: AuthConfigState,
@@ -253,15 +216,12 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub platform_config: PlatformConfigState,
     pub config_access: ConfigAccessState,
     pub me: MeState,
-    pub sdk_events: SdkEventsState,
-    pub sdk_dispatch_jobs: SdkDispatchJobsState,
     pub oidc_login: OidcLoginApiState,
     pub oauth: OAuthState,
     pub well_known: WellKnownState,
     pub client_selection: ClientSelectionState,
     pub application_roles_sdk: ApplicationRolesSdkState,
     pub sdk_sync: SdkSyncState,
-    pub sdk_audit_batch: SdkAuditBatchState,
     pub public: PublicApiState,
     pub password_reset: PasswordResetApiState,
     /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
@@ -383,6 +343,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // plain routes at their full paths.
         let ctx = &self.ctx;
         let modules = AggregateRoutes::new()
+            .merge(crate::event::routes(ctx))
+            .merge(crate::event_type::routes(ctx))
+            .merge(crate::scheduled_job::routes(ctx))
+            .merge(crate::dispatch_job::routes(ctx))
+            .merge(crate::role::routes(ctx))
+            .merge(crate::audit::routes(ctx))
             .merge(crate::process::routes(ctx))
             .merge(crate::client::routes(ctx))
             .merge(crate::subscription::routes(ctx))
@@ -398,34 +364,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
             .merge(module_documented)
-            // Same cursor-paginated read handlers serve both /api/events
-            // (bearer-auth, SDK consumers) and /bff/events (cookie-auth,
-            // SPA). The previous `admin_events_router` wrapped a duplicate
-            // offset+COUNT(*) path on the same `msg_events_read`; gone now.
-            //
-            // `events_api_router` excludes `batch_create_events` — SDK
-            // callers use the bulk-insert `sdk_events_batch_router::POST
-            // /batch` mounted further down at the same prefix. The two must
-            // not both register POST /batch (axum panics on overlap).
-            .nest(PATH_API_EVENTS, events_api_router(self.events.clone()))
-            .nest(PATH_BFF_EVENTS, events_router(self.events))
-            .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
-            .nest(
-                PATH_API_SCHEDULED_JOBS,
-                scheduled_jobs_router(self.scheduled_jobs),
-            )
-            // Cursor-paginated read handlers serve both API + BFF tiers.
-            // The API tier excludes `batch_create_dispatch_jobs` so it
-            // doesn't collide with `sdk_dispatch_jobs_batch_router::POST
-            // /batch` mounted at the same prefix below.
-            .nest(
-                PATH_API_DISPATCH_JOBS,
-                dispatch_jobs_api_router(self.dispatch_jobs.clone()),
-            )
-            .nest(
-                PATH_BFF_DISPATCH_JOBS,
-                dispatch_jobs_router(self.dispatch_jobs),
-            )
             .nest(
                 PATH_BFF_FILTER_OPTIONS,
                 filter_options_router(self.filter_options),
@@ -445,12 +383,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                     self.developer_credentials,
                 ),
             )
-            .nest(PATH_API_ROLES, roles_router(self.roles))
             .nest(
                 PATH_API_OAUTH_CLIENTS,
                 oauth_clients_router(self.oauth_clients),
             )
-            .nest(PATH_API_AUDIT_LOGS, audit_logs_router(self.audit_logs))
             .nest(PATH_MONITORING, monitoring_router(self.monitoring))
             // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
             // so the SDK code generators produce typed bindings for them.
@@ -543,22 +479,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 bff_developer_router(bff_developer_state),
             )
             .merge(module_plain)
-            // BFF
-            .nest(PATH_BFF_ROLES, bff_roles_router(self.bff_roles).into())
-            // Temporary (docs/spec/audit-redaction.md, Java repo).
-            .nest(
-                PATH_BFF_AUDIT_LOGS,
-                crate::shared::bff_audit_logs_api::bff_audit_logs_router(self.bff_audit_logs)
-                    .into(),
-            )
-            .nest(
-                PATH_BFF_EVENT_TYPES,
-                bff_event_types_router(self.bff_event_types).into(),
-            )
-            .nest(
-                PATH_BFF_SCHEDULED_JOBS,
-                bff_scheduled_jobs_router(self.bff_scheduled_jobs),
-            )
             .nest(PATH_BFF_DASHBOARD, bff_dashboard_router(self.bff_dashboard))
             .nest(
                 PATH_BFF_DEBUG_EVENTS,
@@ -668,12 +588,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_PORTAL,
                 crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
             )
-            // Batch ingest endpoints (merged into resource routers)
-            .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
-            .nest(
-                PATH_API_DISPATCH_JOBS,
-                sdk_dispatch_jobs_batch_router(self.sdk_dispatch_jobs),
-            )
             // Shared API
             .nest(
                 PATH_API_APPLICATIONS,
@@ -681,10 +595,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             // sdk_sync_router moved up into the OpenAPI chain so its routes
             // appear in /q/openapi and SDK generators pick them up.
-            .nest(
-                PATH_API_AUDIT_LOGS,
-                sdk_audit_batch_router(self.sdk_audit_batch),
-            )
             // Go's SPA-bootstrap alias of `/api/public/platform`.
             .nest(
                 PATH_API_CONFIG,
