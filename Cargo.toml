@@ -76,13 +76,23 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "derive", "chrono", "uuid"] }
 mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
-aws-sdk-sqs = "1.91"
-aws-sdk-secretsmanager = "1.78"
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls", "default-https-client", "http-1x"] }
+## AWS SDK: one HTTP client and one TLS stack for every service.
+##
+## Each service's default `rustls` feature is the *legacy* connector
+## (hyper 0.14 + rustls 0.21 + h2 0.3). With `BehaviorVersion::latest()`,
+## which every client here is built with, the SDK uses the
+## `default-https-client` (hyper 1 + rustls 0.23) and never the legacy one,
+## so `rustls` only compiled a second, unused HTTP/TLS stack. Defaults off,
+## `rt-tokio` + `default-https-client` on every service.
+aws-sdk-sqs = { version = "1.91", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-secretsmanager = { version = "1.78", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 # The fnhost `ecr` feature (owner decision #14): `GetAuthorizationToken`
 # against a private ECR registry, on the host's own IAM role.
-aws-sdk-ecr = "1"
-aws-config = "1.8"
+aws-sdk-ecr = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# aws-config's own defaults, spelled out: the SSO and credential-process
+# providers stay (local AWS profiles use them).
+aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "default-https-client", "credentials-process", "sso"] }
 aes-gcm = "0.10"
 async-trait = "0.1"
 anyhow = "1.0"
@@ -121,7 +131,7 @@ lapin = "2.5"
 async-nats = "0.38"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport"] }
 openidconnect = "4.0"
-aws-sdk-elasticloadbalancingv2 = "1.91"
+aws-sdk-elasticloadbalancingv2 = { version = "1.91", default-features = false, features = ["rt-tokio", "default-https-client"] }
 regex = "1.11"
 rand = "0.9"
 failsafe = "1.3"
