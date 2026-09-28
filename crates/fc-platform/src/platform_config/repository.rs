@@ -109,7 +109,9 @@ impl PlatformConfigRepository {
     ) -> Result<Vec<PlatformConfig>> {
         let mut qb: QueryBuilder<Postgres> =
             QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
-        qb.push_bind(app_code).push(" AND section = ").push_bind(section);
+        qb.push_bind(app_code)
+            .push(" AND section = ")
+            .push_bind(section);
         if let Some(s) = scope {
             qb.push(" AND scope = ").push_bind(s);
         }
