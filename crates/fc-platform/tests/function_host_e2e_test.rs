@@ -6,7 +6,7 @@
 //! talking to it over HTTP, authenticated
 //! with OAuth `client_credentials` as a service account holding the
 //! `function-host` role. The role's process shape (environment, exit codes,
-//! drain) is `bin/fc-server/tests/function_host_role.rs`.
+//! drain) is `bin/fc-server/tests/it/function_host_role.rs`.
 //!
 //! 1. A function is created and its artifact (the PDK test guest, a WASI 0.2
 //!    component with entrypoint `wasi_http_incoming_handler`) uploaded.
@@ -35,7 +35,7 @@
 //!
 //! Requires Docker. Its own test binary: it sets process environment.
 
-#[path = "support/mod.rs"]
+#[path = "it/support/mod.rs"]
 mod support;
 
 use std::net::SocketAddr;

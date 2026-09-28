@@ -7,7 +7,7 @@
 //! The repositories point at a pool that never connects: every case here
 //! must fail (or be inspected) before the use case touches the database,
 //! and one that did would fail with a connection error instead.
-//! Everything after the load is covered by `tests/function_api_test.rs`.
+//! Everything after the load is covered by `tests/it/function_api_test.rs`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

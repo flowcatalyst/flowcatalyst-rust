@@ -97,7 +97,7 @@ rm -rf crates/fc-function-pdk/wit/flowcatalyst-function
 cp -R wit/flowcatalyst-function crates/fc-function-pdk/wit/
 ```
 
-`crates/fc-fnhost-core/tests/pdk_wit_sync.rs` (part of the root workspace's
+`crates/fc-fnhost-core/tests/it/pdk_wit_sync.rs` (part of the root workspace's
 `cargo test`) fails while the two differ.
 
 ## Developing the crate

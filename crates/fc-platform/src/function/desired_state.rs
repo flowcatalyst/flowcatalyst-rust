@@ -11,7 +11,7 @@
 //! in field order, `null` members omitted (`Json.MAPPER`'s `NON_ABSENT`).
 //! Nothing here depends on row or hash-map order. The ETag is opaque to the
 //! hosts (they store and echo it), so it need not equal Java's; the golden
-//! test (`tests/function_desired_state_golden_test.rs`) holds the document's
+//! test (`tests/it/function_desired_state_golden_test.rs`) holds the document's
 //! content to what Java's own `DesiredState` writes for the same rows.
 //!
 //! What a pool's document holds, per `ACTIVE` function:

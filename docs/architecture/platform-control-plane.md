@@ -8,7 +8,7 @@ This document is for engineers working in `fc-platform`. For ops-level concerns 
 
 ## Layering
 
-Four layers, strict downward dependency only. CLAUDE.md states this rule and `tests/uow_convention_test.rs` enforces a subset of it at test time.
+Four layers, strict downward dependency only. CLAUDE.md states this rule and `tests/it/uow_convention_test.rs` enforces a subset of it at test time.
 
 | Layer | Lives in | Knows about | Does not import |
 |---|---|---|---|
@@ -102,7 +102,7 @@ Everything before the commit is ordinary `Result` code — `?` on repository cal
 - `unit_of_work.emit_event(event, command)` — emit event only (login, sync summary).
 - Any `.map(|c| c.map(|_| success_value))` chained onto one of the above.
 
-This is **stronger than the TypeScript runtime token check** — it's compile-time-guaranteed. A use case that "forgets" to call UoW fails to compile, not at test time. The convention test in `tests/uow_convention_test.rs` adds a second guard: it parses every `execute` body and asserts it reaches a `unit_of_work.*` call.
+This is **stronger than the TypeScript runtime token check** — it's compile-time-guaranteed. A use case that "forgets" to call UoW fails to compile, not at test time. The convention test in `tests/it/uow_convention_test.rs` adds a second guard: it parses every `execute` body and asserts it reaches a `unit_of_work.*` call.
 
 ### What UoW.commit does
 
@@ -390,7 +390,7 @@ This is one of the few infrastructure-write paths exempt from UoW — it runs at
 - Use case framework: `crates/fc-platform/src/usecase/{mod,result,context,error}.rs`.
 - UoW: `crates/fc-platform/src/usecase/unit_of_work.rs::PgUnitOfWork`.
 - UoW seal: search for `pub(in crate::usecase) fn success` in `usecase/result.rs`.
-- UoW convention test: `crates/fc-platform/tests/uow_convention_test.rs`.
+- UoW convention test: `crates/fc-platform/tests/it/uow_convention_test.rs`.
 - Authz service: `crates/fc-platform/src/shared/authorization_service.rs`.
 - Auth middleware: `crates/fc-platform/src/shared/middleware.rs` (`AuthLayer`).
 - DB pool + migrations + secret refresh + role seeding: `crates/fc-platform/src/shared/database.rs`.

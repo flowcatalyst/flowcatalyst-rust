@@ -1422,7 +1422,7 @@ mod tests {
     /// Compile-time assertion that `TxScopedOutboxUnitOfWork` implements
     /// the `UnitOfWork` trait. Constructing one requires a real `Transaction`
     /// from a live pool, so runtime behaviour is exercised by the postgres
-    /// integration tests in `fc-platform/tests/postgres_integration_tests.rs`.
+    /// integration tests in `fc-platform/tests/it/postgres_integration_tests.rs`.
     #[test]
     fn tx_scoped_outbox_uow_implements_unit_of_work() {
         fn assert_uow<T: UnitOfWork>() {}

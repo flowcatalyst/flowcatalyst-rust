@@ -4,7 +4,7 @@
 //! `/q/openapi` describes the same programmable surface as Go's huma document
 //! (`flowcatalyst-go/api/openapi.lock.json`, vendored as
 //! `frontend/openapi/openapi.json`). The SDKs' generated clients are
-//! generated from that document; `tests/openapi_go_contract_test.rs` pins the
+//! generated from that document; `tests/it/openapi_go_contract_test.rs` pins the
 //! operation ids.
 //!
 //! Only the handlers Go documents are listed. Routes Go lacks (e.g.

@@ -63,7 +63,7 @@ rsa = { version = "0.9", features = ["pem"] }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = { workspace = true }
-# The JVM function e2e (tests/jvm_function_host_e2e.rs) signs its artifacts
+# The JVM function e2e (tests/it/jvm_function_host_e2e.rs) signs its artifacts
 # with fc-function-signing's TestSigstore port, whose sources it includes.
 fc-function-signing = { path = "../../crates/fc-function-signing" }
 chrono = { workspace = true }

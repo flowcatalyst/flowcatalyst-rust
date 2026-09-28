@@ -2388,7 +2388,7 @@ mod disposition_tests {
     //! Go's `pool.go` (`DispositionOf`, `retryDelay`, `deferredDelay`,
     //! `retryOrRelease`, `nackDelay`). Pure/synchronous — no pool, mediator,
     //! or broker needed. End-to-end group behaviour is pinned in
-    //! `tests/cascade_dispatch_mode_test.rs` and `tests/pool_tests.rs`.
+    //! `tests/it/cascade_dispatch_mode_test.rs` and `tests/it/pool_tests.rs`.
     use super::*;
     use fc_common::MediationOutcome;
 

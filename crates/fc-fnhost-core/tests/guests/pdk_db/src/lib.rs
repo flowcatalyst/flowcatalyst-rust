@@ -1,5 +1,5 @@
 //! `pdk_db`: database access written with `fc-function-pdk`
-//! (`flowcatalyst:function/db`, 0.1.2), for `tests/wasm_db.rs`. The
+//! (`flowcatalyst:function/db`, 0.1.2), for `tests/it/wasm_db.rs`. The
 //! manifest declares one database, `main`. Every route answers 200 with
 //! JSON; a database error is `{"error": code, "message": …}`.
 //!

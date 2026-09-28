@@ -1,0 +1,73 @@
+//! Every integration test of this crate, in one test binary: one module
+//! per former `tests/<name>.rs` (docs/plans/build-speed-2026-09-28.md,
+//! section 7). One binary links once instead of once per file.
+//!
+//! `cargo test -p <crate> --test it <module>::` runs one former file;
+//! `-- --ignored` still selects the Docker tests.
+
+mod support;
+
+mod api_integration_tests;
+mod api_tests;
+mod app_compat_test;
+mod application_scope_test;
+mod audit_ingest_test;
+mod audit_redaction_test;
+mod auth_and_list_test;
+mod auth_purger_test;
+mod auth_security_test;
+mod bff_sync_platform_test;
+mod client_admin_test;
+mod developer_credential_test;
+mod developer_portal_scope_test;
+mod dispatch_descriptor_test;
+mod dispatch_fan_out_test;
+mod dispatch_ingest_pending_test;
+mod dispatch_pool_write_permission_test;
+mod dispatch_process_test;
+mod dispatch_scheduler_test;
+mod dispatch_schema_test;
+mod function_api_test;
+mod function_catalogue_test;
+mod function_control_test;
+mod function_desired_state_golden_test;
+mod function_events_golden_test;
+mod function_promote_golden_test;
+mod function_promote_test;
+mod function_publish_rules_golden_test;
+mod function_table_prefix_test;
+mod function_versions_test;
+mod go_field_gaps_test;
+mod go_routes_test;
+mod handler_write_convention_test;
+mod harness_smoke_test;
+mod iam_authority_test;
+mod ingest_security_test;
+mod junction_cascade_convention_test;
+mod load_tests;
+mod login_backoff_integration_tests;
+mod oauth_api_tests;
+mod oauth_secret_rotation_test;
+mod openapi_go_contract_test;
+mod password_flows_test;
+mod password_reset_rate_limit_test;
+mod permission_convention_test;
+mod portal_identity_test;
+mod postgres_integration_tests;
+mod principal_go_parity_test;
+mod profile_only_test;
+mod read_permissions_test;
+mod role_catalogue_go_parity_test;
+mod route_auth_convention_test;
+mod route_wiring_convention_test;
+mod router_token_contract_test;
+mod scheduled_job_cron_golden_test;
+mod service_account_scope_test;
+mod sync_atomicity_test;
+mod two_factor_admin_test;
+mod two_factor_test;
+mod uow_convention_test;
+mod uow_proof_test;
+mod use_case_authorize_test;
+mod use_case_shape_convention_test;
+mod webauthn_integration_tests;

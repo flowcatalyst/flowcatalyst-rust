@@ -177,7 +177,7 @@ no `queue` before. TS, Laravel and Java reject a descriptor over 255 characters;
 dispatch-job builder.
 
 **Platform gaps these fixes exposed, now closed** (Go documents the member; the platform now
-stores and answers it; `crates/fc-platform/tests/go_field_gaps_test.rs`). Where Go documents a
+stores and answers it; `crates/fc-platform/tests/it/go_field_gaps_test.rs`). Where Go documents a
 member it never fills, the platform implements the evident intent rather than Go's gap:
 - An application's per-client `baseUrlOverride` and `configJson` are stored (migration 058; Go has
   no column) and answered by both client-config reads; the Rust-only `PUT …/clients/{clientId}`
@@ -227,7 +227,7 @@ of the SDKs' generated clients. The document at `/q/openapi` (also `/api/openapi
   The document is served as JSON (and YAML through `serde_norway`), because utoipa's model cannot
   read back every schema it writes.
 
-`crates/fc-platform/tests/openapi_go_contract_test.rs` (no database) fails if an operation Go
+`crates/fc-platform/tests/it/openapi_go_contract_test.rs` (no database) fails if an operation Go
 documents is missing, has another operationId, or names another request or success schema, or if
 a Go schema name is missing. `OPENAPI_DUMP=<file>` writes the document.
 
@@ -327,7 +327,7 @@ tokens (`is_identity_token()`), but the session flow has not been changed.
 | Java | `mvn -o test` (Maven offline; deps cached) | 96 tests, 0 failures, 1 skipped (real-PG, needs `FC_JAVA_SDK_TEST_PG_URL`) |
 | Go | `go vet ./... && go test ./...` | all packages pass (167 top-level tests) |
 | Rust | `cargo test -p fc-sdk --all-features` | all pass (340 unit tests) |
-| Platform document | `cargo test -p fc-platform --test openapi_go_contract_test` | 2 tests pass |
+| Platform document | `cargo test -p fc-platform --test it openapi_go_contract_test::` | 2 tests pass |
 
 ## Publishing from here
 

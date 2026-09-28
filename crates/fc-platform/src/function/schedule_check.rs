@@ -374,7 +374,7 @@ mod tests {
         parse_cron(text).unwrap_err()
     }
 
-    /// Spot checks; `tests/function_publish_rules_golden_test.rs` holds the
+    /// Spot checks; `tests/it/function_publish_rules_golden_test.rs` holds the
     /// cases checked against Java itself.
     #[test]
     fn cron_grammar_follows_java() {

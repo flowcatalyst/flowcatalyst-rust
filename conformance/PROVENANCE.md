@@ -22,7 +22,7 @@ runner. That overrides the corpus README's "read, don't copy" advice.
 - **Do not edit these files here.** A change to the corpus is decided in the
   Java repo, then copied again with this note updated. Local edits would make
   the Rust result mean nothing to the other implementations.
-- The runner is `crates/fc-router/tests/mediation_conformance_test.rs`. It reads
+- The runner is `crates/fc-router/tests/it/mediation_conformance_test.rs`. It reads
   `conformance/mediation-outcomes.json` by default. Set `FC_CONFORMANCE_CORPUS`
   to point it at another copy. If a sibling `../flowcatalyst-javalin` checkout
   holds a different corpus, the runner prints a drift notice and still runs

@@ -27,7 +27,7 @@ Proof it works:
 
 JVM functions on Java's host (owner, 2026-09-28: the supported path for Java functions; branch
 `feat/fn-jvm-host-compat`, against javalin `65988b51`):
-- **Proven end to end.** `bin/fc-server/tests/jvm_function_host_e2e.rs` runs this platform (`fc-server`) with Java's
+- **Proven end to end.** `bin/fc-server/tests/it/jvm_function_host_e2e.rs` runs this platform (`fc-server`) with Java's
   `function-host` from a scratch build of the javalin checkout, in pool `jvm`, with signatures `required`.
   `function-hello` publishes, becomes READY, is promoted and serves (`none`, `platform` and `webhook` endpoints). Its
   config and secret reach it, its emit lands in `msg_events`, and a settings change reloads it. A scheduled firing
@@ -104,14 +104,14 @@ Function database access (owner decision #7, Java W4's author contract, 2026-09-
   (`commit`/`rollback`, drop rolls back), `params![…]`, `Rows::{json, values, parse}`, `DbError::code()`;
   `TestHost::db(name, responder)` + `db_events()`. Only a function that calls `ctx.db` imports
   `flowcatalyst:function/db`.
-- **Tests**: `tests/db_postgres.rs` (12, Docker: query/execute, the row mapping, typed and untyped
+- **Tests**: `tests/it/db_postgres.rs` (12, Docker: query/execute, the row mapping, typed and untyped
   parameters, commit/rollback/drop, a connection returned mid-transaction, the caps, the deadline, every
   code, the share limit, the per-invocation cap, the invocation's end, secret rotation) and
-  `tests/wasm_db.rs` (the committed PDK guest `pdk_db` through the listener; load failures without a
+  `tests/it/wasm_db.rs` (the committed PDK guest `pdk_db` through the listener; load failures without a
   database).
 
 PDK publishable (owner decision #15, 2026-09-27): `crates/fc-function-pdk` is self-contained (its WIT vendored and
-packaged, kept in step by `tests/pdk_wit_sync.rs`); `just pdk-publish-dry-run` runs `cargo publish --dry-run` for
+packaged, kept in step by `tests/it/pdk_wit_sync.rs`); `just pdk-publish-dry-run` runs `cargo publish --dry-run` for
 `fc-function-abi`, then the PDK workspace (`fc-function-pdk-macros`, `fc-function-pdk`) against it. Both verify; nothing
 is uploaded (the owner publishes, in that order). Licences stay MPL-2.0 (#10); git and path dependencies are unchanged.
 

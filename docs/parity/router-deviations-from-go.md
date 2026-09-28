@@ -11,7 +11,7 @@ here as a deliberate deviation from Go.
 - Go: `flowcatalyst-go@73a6918`, read only. Nothing in Go was built or run
   for this document. Every Go claim below comes from reading the source, and
   cites file and line.
-- Rust runner: `crates/fc-router/tests/mediation_conformance_test.rs`.
+- Rust runner: `crates/fc-router/tests/it/mediation_conformance_test.rs`.
   Result: 28 pass, 1 ruled (`unsupported-mediation-type`), 0 fail.
 
 ## 1. Corpus rows where Go differs from the corpus
