@@ -249,20 +249,11 @@ impl AggregateRoutes {
         }
     }
 
-    /// Add documented routes (after the ones already here).
-    pub fn documented(mut self, routes: OpenApiRouter) -> Self {
-        self.documented = self.documented.merge(routes);
-        self
-    }
-
-    /// Add plain routes (after the ones already here).
-    pub fn plain(mut self, routes: Router) -> Self {
-        self.plain = self.plain.merge(routes);
-        self
-    }
-
     /// Another module's routes after these, documented and plain alike.
     pub fn merge(self, other: AggregateRoutes) -> Self {
-        self.documented(other.documented).plain(other.plain)
+        Self {
+            documented: self.documented.merge(other.documented),
+            plain: self.plain.merge(other.plain),
+        }
     }
 }

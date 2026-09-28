@@ -25,7 +25,6 @@ pub struct GoRoutesState {
     pub docs: crate::app_docs::api::DocsState,
     pub dispatch_job_actions: crate::dispatch_job_actions::api::DispatchJobActionsState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
-    pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
 }
 
@@ -237,9 +236,6 @@ impl GoRoutesState {
                 application_repo: repos.application_repo.clone(),
                 app_access: app_access.clone(),
             },
-            client_search: crate::client::search_api::ClientSearchState {
-                client_repo: repos.client_repo.clone(),
-            },
             service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState {
                 repo: repos.service_account_repo.clone(),
                 principal_repo: repos.principal_repo.clone(),
@@ -304,9 +300,6 @@ pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
                 state.service_account_admin,
             ),
         )
-        .merge(crate::client::search_api::client_search_router(
-            state.client_search,
-        ))
         .merge(crate::platform_config::go_api::go_platform_config_router(
             state.platform_config,
         ))

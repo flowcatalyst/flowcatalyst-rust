@@ -26,10 +26,7 @@ use crate::api::{
     bff_scheduled_jobs_router,
     client_auth_configs_router,
     client_selection_router,
-    clients_router,
     config_access_router,
-    connections_router,
-    cors_router,
     debug_dispatch_jobs_router,
     debug_events_router,
     dispatch_jobs_api_router,
@@ -42,9 +39,7 @@ use crate::api::{
     // OpenApiRouter routes
     events_router,
     filter_options_router,
-    identity_providers_router,
     idp_role_mappings_router,
-    login_attempts_router,
     me_router,
     monitoring_router,
     oauth_clients_router,
@@ -52,7 +47,6 @@ use crate::api::{
     oidc_login_router,
     password_reset_router,
     principals_router,
-    processes_router,
     public_router,
     roles_router,
     scheduled_jobs_router,
@@ -61,7 +55,6 @@ use crate::api::{
     sdk_events_batch_router,
     sdk_sync_router,
     service_accounts_router,
-    subscriptions_router,
     well_known_router,
     ApplicationRolesSdkState,
     ApplicationsState,
@@ -73,10 +66,7 @@ use crate::api::{
     BffRolesState,
     BffScheduledJobsState,
     ClientSelectionState,
-    ClientsState,
     ConfigAccessState,
-    ConnectionsState,
-    CorsState,
     DebugState,
     DispatchJobsState,
     DispatchPoolsState,
@@ -85,8 +75,6 @@ use crate::api::{
     EventTypesState,
     EventsState,
     FilterOptionsState,
-    IdentityProvidersState,
-    LoginAttemptsState,
     MeState,
     MonitoringState,
     OAuthClientsState,
@@ -95,7 +83,6 @@ use crate::api::{
     PasswordResetApiState,
     PlatformConfigState,
     PrincipalsState,
-    ProcessesState,
     PublicApiState,
     RolesState,
     ScheduledJobsState,
@@ -104,10 +91,10 @@ use crate::api::{
     SdkEventsState,
     SdkSyncState,
     ServiceAccountsState,
-    SubscriptionsState,
     WellKnownState,
 };
 use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
+use crate::shared::platform_context::AggregateRoutes;
 use crate::shared::rate_limit_middleware::{rate_limit_per_ip, IpRateLimiterState};
 use crate::shared::rate_limit_store::{
     distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
@@ -236,7 +223,6 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     // -- OpenApiRouter routes (collected in Swagger) --
     pub events: EventsState,
     pub event_types: EventTypesState,
-    pub processes: ProcessesState,
     pub dispatch_jobs: DispatchJobsState,
     pub scheduled_jobs: ScheduledJobsState,
     /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
@@ -244,10 +230,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// `/control/functions/*`: what a function host calls (not in Swagger).
     pub function_control: crate::function::control_api::FunctionControlState,
     pub filter_options: FilterOptionsState,
-    pub clients: ClientsState,
     pub principals: PrincipalsState,
     pub roles: RolesState,
-    pub subscriptions: SubscriptionsState,
     pub oauth_clients: OAuthClientsState,
     pub audit_logs: AuditLogsState,
     pub monitoring: MonitoringState,
@@ -265,13 +249,9 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub applications: ApplicationsState<U>,
     pub dispatch_pools: DispatchPoolsState<U>,
     pub service_accounts: ServiceAccountsState<U>,
-    pub connections: ConnectionsState,
-    pub cors: CorsState,
-    pub identity_providers: IdentityProvidersState,
     pub email_domain_mappings: EmailDomainMappingsState,
     pub platform_config: PlatformConfigState,
     pub config_access: ConfigAccessState,
-    pub login_attempts: LoginAttemptsState,
     pub me: MeState,
     pub sdk_events: SdkEventsState,
     pub sdk_dispatch_jobs: SdkDispatchJobsState,
@@ -399,8 +379,25 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             crate::portal::oidc::intercept,
         );
 
+        // The route modules, in order. Each returns its documented and
+        // plain routes at their full paths.
+        let ctx = &self.ctx;
+        let modules = AggregateRoutes::new()
+            .merge(crate::process::routes(ctx))
+            .merge(crate::client::routes(ctx))
+            .merge(crate::subscription::routes(ctx))
+            .merge(crate::connection::routes(ctx))
+            .merge(crate::cors::routes(ctx))
+            .merge(crate::identity_provider::routes(ctx))
+            .merge(crate::login_attempt::routes(ctx));
+        let AggregateRoutes {
+            documented: module_documented,
+            plain: module_plain,
+        } = modules;
+
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
+            .merge(module_documented)
             // Same cursor-paginated read handlers serve both /api/events
             // (bearer-auth, SDK consumers) and /bff/events (cookie-auth,
             // SPA). The previous `admin_events_router` wrapped a duplicate
@@ -413,8 +410,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_EVENTS, events_api_router(self.events.clone()))
             .nest(PATH_BFF_EVENTS, events_router(self.events))
             .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
-            .nest(PATH_API_PROCESSES, processes_router(self.processes.clone()))
-            .nest(PATH_BFF_PROCESSES, processes_router(self.processes))
             .nest(
                 PATH_API_SCHEDULED_JOBS,
                 scheduled_jobs_router(self.scheduled_jobs),
@@ -435,7 +430,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_BFF_FILTER_OPTIONS,
                 filter_options_router(self.filter_options),
             )
-            .nest(PATH_API_CLIENTS, clients_router(self.clients))
             .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
             .nest(
                 PATH_API_PRINCIPALS,
@@ -452,10 +446,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 ),
             )
             .nest(PATH_API_ROLES, roles_router(self.roles))
-            .nest(
-                PATH_API_SUBSCRIPTIONS,
-                subscriptions_router(self.subscriptions),
-            )
             .nest(
                 PATH_API_OAUTH_CLIENTS,
                 oauth_clients_router(self.oauth_clients),
@@ -552,6 +542,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_BFF_DEVELOPER,
                 bff_developer_router(bff_developer_state),
             )
+            .merge(module_plain)
             // BFF
             .nest(PATH_BFF_ROLES, bff_roles_router(self.bff_roles).into())
             // Temporary (docs/spec/audit-redaction.md, Java repo).
@@ -604,15 +595,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 service_accounts_router(self.service_accounts),
             )
             .nest(
-                PATH_API_CONNECTIONS,
-                connections_router(self.connections).into(),
-            )
-            .nest(PATH_API_CORS, cors_router(self.cors))
-            .nest(
-                PATH_API_IDENTITY_PROVIDERS,
-                identity_providers_router(self.identity_providers),
-            )
-            .nest(
                 PATH_API_EMAIL_DOMAIN_MAPPINGS,
                 email_domain_mappings_router(self.email_domain_mappings).into(),
             )
@@ -623,10 +605,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_API_CONFIG_ACCESS,
                 config_access_router(self.config_access).into(),
-            )
-            .nest(
-                PATH_API_LOGIN_ATTEMPTS,
-                login_attempts_router(self.login_attempts),
             )
             // Auth
             .nest(PATH_API_ME, me_router(self.me))

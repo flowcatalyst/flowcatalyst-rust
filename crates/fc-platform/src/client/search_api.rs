@@ -5,7 +5,6 @@
 use axum::{extract::State, Json};
 use serde::Deserialize;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::client::api::{ClientListResponse, ClientResponse};
 use crate::client::repository::ClientRepository;
@@ -56,11 +55,4 @@ pub async fn search_clients_by_body(
         total: clients.len(),
         clients,
     }))
-}
-
-/// Full-path router; merged at the root.
-pub fn client_search_router(state: ClientSearchState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(search_clients_by_body))
-        .with_state(state)
 }

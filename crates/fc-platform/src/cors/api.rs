@@ -2,8 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -223,12 +222,4 @@ pub async fn delete_cors_origin(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-pub fn cors_router(state: CorsState) -> Router {
-    Router::new()
-        .route("/", post(create_cors_origin).get(list_cors_origins))
-        .route("/allowed", get(get_allowed_origins))
-        .route("/{id}", get(get_cors_origin).delete(delete_cors_origin))
-        .with_state(state)
 }

@@ -680,7 +680,9 @@ fn collect_routes(
     }
 
     // Nested and merged routers.
-    let call_re = regex::Regex::new(r"([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*(?:router|routes))\s*(?:::<[^>]*>)?\(").unwrap();
+    // A call whose last segment ends in `router` or `routes`, or is one of
+    // them (a module's `routes(ctx)` entry point).
+    let call_re = regex::Regex::new(r"((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z0-9_]*(?:router|routes))\s*(?:::<[^>]*>)?\(").unwrap();
     for (kind, args) in chain_calls(body, "nest")
         .into_iter()
         .map(|a| ("nest", a))

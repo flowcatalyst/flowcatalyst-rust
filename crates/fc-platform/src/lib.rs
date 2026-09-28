@@ -367,7 +367,8 @@ pub mod api {
         anchor_domains_router, client_auth_configs_router, idp_role_mappings_router,
         AuthConfigState,
     };
-    pub use crate::client::api::{clients_router, ClientsState};
+    pub use crate::client::api::ClientsState;
+    pub use crate::client::routes::clients_router;
     pub use crate::dispatch_job::api::{
         dispatch_jobs_api_router, dispatch_jobs_router, DispatchJobsState,
     };
@@ -375,20 +376,26 @@ pub mod api {
     pub use crate::event::api::{events_api_router, events_router, EventsState};
     pub use crate::event_type::api::{event_types_router, EventTypesState};
     pub use crate::principal::api::{principals_router, PrincipalsState};
-    pub use crate::process::api::{processes_router, ProcessesState};
+    pub use crate::process::api::ProcessesState;
+    pub use crate::process::routes::processes_router;
     pub use crate::role::api::{roles_router, RolesState};
     pub use crate::scheduled_job::api::{scheduled_jobs_router, ScheduledJobsState};
     pub use crate::service_account::api::{service_accounts_router, ServiceAccountsState};
-    pub use crate::subscription::api::{subscriptions_router, SubscriptionsState};
+    pub use crate::subscription::api::SubscriptionsState;
+    pub use crate::subscription::routes::subscriptions_router;
 
     // New domain APIs
-    pub use crate::connection::api::{connections_router, ConnectionsState};
-    pub use crate::cors::api::{cors_router, CorsState};
+    pub use crate::connection::api::ConnectionsState;
+    pub use crate::connection::routes::connections_router;
+    pub use crate::cors::api::CorsState;
+    pub use crate::cors::routes::cors_router;
     pub use crate::email_domain_mapping::api::{
         email_domain_mappings_router, EmailDomainMappingsState,
     };
-    pub use crate::identity_provider::api::{identity_providers_router, IdentityProvidersState};
-    pub use crate::login_attempt::api::{login_attempts_router, LoginAttemptsState};
+    pub use crate::identity_provider::api::IdentityProvidersState;
+    pub use crate::identity_provider::routes::identity_providers_router;
+    pub use crate::login_attempt::api::LoginAttemptsState;
+    pub use crate::login_attempt::routes::login_attempts_router;
     pub use crate::platform_config::access_api::{config_access_router, ConfigAccessState};
     pub use crate::platform_config::api::{admin_platform_config_router, PlatformConfigState};
     pub use crate::shared::batch_api::{sdk_events_batch_router, SdkEventsState};

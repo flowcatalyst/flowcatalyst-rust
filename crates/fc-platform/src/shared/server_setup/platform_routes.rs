@@ -20,14 +20,13 @@ use std::sync::Arc;
 
 use crate::api::{
     ApplicationRolesSdkState, ApplicationsState, AuditLogsState, AuthConfigState, AuthState,
-    BffEventTypesState, BffRolesState, CircuitBreakerRegistry, ClientSelectionState, ClientsState,
-    ConfigAccessState, ConnectionsState, CorsState, DebugState, DispatchJobsState,
-    DispatchPoolsState, DispatchProcessState, EmailDomainMappingsState, EventTypesState,
-    EventsState, FilterOptionsState, IdentityProvidersState, InFlightTracker, LeaderState,
-    LoginAttemptsState, MeState, MonitoringState, OAuthClientsState, OAuthState, OidcLoginApiState,
-    PasswordResetApiState, PlatformConfigState, PrincipalsState, ProcessesState, PublicApiState,
-    RolesState, SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState,
-    ServiceAccountsState, SubscriptionsState, WellKnownState,
+    BffEventTypesState, BffRolesState, CircuitBreakerRegistry, ClientSelectionState,
+    ConfigAccessState, DebugState, DispatchJobsState, DispatchPoolsState, DispatchProcessState,
+    EmailDomainMappingsState, EventTypesState, EventsState, FilterOptionsState, InFlightTracker,
+    LeaderState, MeState, MonitoringState, OAuthClientsState, OAuthState, OidcLoginApiState,
+    PasswordResetApiState, PlatformConfigState, PrincipalsState, PublicApiState, RolesState,
+    SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState, ServiceAccountsState,
+    WellKnownState,
 };
 use crate::audit::service::AuditService;
 use crate::auth::session_cookie::SessionCookieConfig;
@@ -116,30 +115,6 @@ pub fn build_platform_routes(
         repos.process_repo.clone(),
         unit_of_work.clone(),
     ));
-    let processes_state = {
-        use crate::process::operations::{
-            ArchiveProcessUseCase, CreateProcessUseCase, DeleteProcessUseCase, UpdateProcessUseCase,
-        };
-        ProcessesState {
-            process_repo: repos.process_repo.clone(),
-            create_use_case: Arc::new(CreateProcessUseCase::new(
-                repos.process_repo.clone(),
-                unit_of_work.clone(),
-            )),
-            update_use_case: Arc::new(UpdateProcessUseCase::new(
-                repos.process_repo.clone(),
-                unit_of_work.clone(),
-            )),
-            archive_use_case: Arc::new(ArchiveProcessUseCase::new(
-                repos.process_repo.clone(),
-                unit_of_work.clone(),
-            )),
-            delete_use_case: Arc::new(DeleteProcessUseCase::new(
-                repos.process_repo.clone(),
-                unit_of_work.clone(),
-            )),
-        }
-    };
 
     // ── Scheduled jobs (use cases + API state) ────────────────────────────
     let scheduled_jobs_state = {
@@ -187,66 +162,6 @@ pub fn build_platform_routes(
     };
 
     let audit_service = Arc::new(AuditService::new(repos.audit_log_repo.clone()));
-    let create_client_use_case = Arc::new(crate::client::operations::CreateClientUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let update_client_use_case = Arc::new(crate::client::operations::UpdateClientUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let delete_client_use_case = Arc::new(crate::client::operations::DeleteClientUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let activate_client_use_case = Arc::new(crate::client::operations::ActivateClientUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let suspend_client_use_case = Arc::new(crate::client::operations::SuspendClientUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let add_client_note_use_case = Arc::new(crate::client::operations::AddClientNoteUseCase::new(
-        repos.client_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let update_client_applications_use_case = Arc::new(
-        crate::application::operations::UpdateClientApplicationsUseCase::new(
-            repos.application_repo.clone(),
-            repos.client_repo.clone(),
-            repos.application_client_config_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let enable_application_for_client_use_case = Arc::new(
-        crate::application::operations::EnableApplicationForClientUseCase::new(
-            repos.application_repo.clone(),
-            repos.client_repo.clone(),
-            repos.application_client_config_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let disable_application_for_client_use_case = Arc::new(
-        crate::application::operations::DisableApplicationForClientUseCase::new(
-            repos.application_client_config_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let clients_state = ClientsState {
-        client_repo: repos.client_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-        application_client_config_repo: repos.application_client_config_repo.clone(),
-        create_use_case: create_client_use_case,
-        update_use_case: update_client_use_case,
-        delete_use_case: delete_client_use_case,
-        activate_use_case: activate_client_use_case,
-        suspend_use_case: suspend_client_use_case,
-        add_note_use_case: add_client_note_use_case,
-        update_applications_use_case: update_client_applications_use_case,
-        enable_application_use_case: enable_application_for_client_use_case,
-        disable_application_use_case: disable_application_for_client_use_case,
-    };
     let email_service = ctx.email_service.clone();
     let password_reset_emailer = ctx.password_reset_emailer.clone();
 
@@ -370,48 +285,6 @@ pub fn build_platform_routes(
             unit_of_work.clone(),
         ),
     );
-    let create_sub_use_case = Arc::new(
-        crate::subscription::operations::CreateSubscriptionUseCase::new(
-            repos.subscription_repo.clone(),
-            repos.service_account_repo.clone(),
-            repos.connection_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let update_sub_use_case = Arc::new(
-        crate::subscription::operations::UpdateSubscriptionUseCase::new(
-            repos.subscription_repo.clone(),
-            repos.service_account_repo.clone(),
-            repos.connection_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let delete_sub_use_case = Arc::new(
-        crate::subscription::operations::DeleteSubscriptionUseCase::new(
-            repos.subscription_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let pause_sub_use_case = Arc::new(
-        crate::subscription::operations::PauseSubscriptionUseCase::new(
-            repos.subscription_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let resume_sub_use_case = Arc::new(
-        crate::subscription::operations::ResumeSubscriptionUseCase::new(
-            repos.subscription_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let subscriptions_state = SubscriptionsState {
-        subscription_repo: repos.subscription_repo.clone(),
-        create_use_case: create_sub_use_case,
-        update_use_case: update_sub_use_case,
-        delete_use_case: delete_sub_use_case,
-        pause_use_case: pause_sub_use_case,
-        resume_use_case: resume_sub_use_case,
-    };
 
     let create_oauth_client_use_case =
         Arc::new(crate::auth::operations::CreateOAuthClientUseCase::new(
@@ -678,85 +551,6 @@ pub fn build_platform_routes(
         unit_of_work.clone(),
     ));
 
-    // ── Domain states ─────────────────────────────────────────────────────
-    let create_conn_use_case =
-        Arc::new(crate::connection::operations::CreateConnectionUseCase::new(
-            repos.connection_repo.clone(),
-            repos.service_account_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let update_conn_use_case =
-        Arc::new(crate::connection::operations::UpdateConnectionUseCase::new(
-            repos.connection_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let delete_conn_use_case =
-        Arc::new(crate::connection::operations::DeleteConnectionUseCase::new(
-            repos.connection_repo.clone(),
-            repos.subscription_repo.clone(),
-            unit_of_work.clone(),
-        ));
-    let connections_state = ConnectionsState {
-        connection_repo: repos.connection_repo.clone(),
-        app_access: app_access.clone(),
-        create_use_case: create_conn_use_case,
-        update_use_case: update_conn_use_case,
-        delete_use_case: delete_conn_use_case,
-    };
-    let add_cors_use_case = Arc::new(crate::cors::operations::AddCorsOriginUseCase::new(
-        repos.cors_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let delete_cors_use_case = Arc::new(crate::cors::operations::DeleteCorsOriginUseCase::new(
-        repos.cors_repo.clone(),
-        unit_of_work.clone(),
-    ));
-    let cors_state = CorsState {
-        cors_repo: repos.cors_repo.clone(),
-        add_use_case: add_cors_use_case,
-        delete_use_case: delete_cors_use_case,
-    };
-    let idp_domains = crate::identity_provider::operations::DomainDeps {
-        edm_repo: repos.edm_repo.clone(),
-        principal_repo: repos.principal_repo.clone(),
-        move_repo: Arc::new(
-            crate::email_domain_mapping::provider_move_repository::ProviderMoveRepository::new(
-                &repos.pool,
-                repos.principal_repo.clone(),
-            ),
-        ),
-    };
-    let create_idp_use_case = Arc::new(
-        crate::identity_provider::operations::CreateIdentityProviderUseCase::new(
-            repos.idp_repo.clone(),
-            idp_domains.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let update_idp_use_case = Arc::new(
-        crate::identity_provider::operations::UpdateIdentityProviderUseCase::new(
-            repos.idp_repo.clone(),
-            idp_domains.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let delete_idp_use_case = Arc::new(
-        crate::identity_provider::operations::DeleteIdentityProviderUseCase::new(
-            repos.idp_repo.clone(),
-            repos.edm_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
-    let idp_state = IdentityProvidersState {
-        idp_repo: repos.idp_repo.clone(),
-        domains: idp_domains,
-        role_repo: repos.role_repo.clone(),
-        pg_unit_of_work: unit_of_work.clone(),
-        create_use_case: create_idp_use_case,
-        update_use_case: update_idp_use_case,
-        delete_use_case: delete_idp_use_case,
-        encryption_service: encryption_service.clone(),
-    };
     let create_edm_use_case = Arc::new(
         crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase::new(
             repos.edm_repo.clone(),
@@ -819,9 +613,6 @@ pub fn build_platform_routes(
         app_access: app_access.clone(),
         grant_access_use_case: grant_platform_config_access_use_case,
         revoke_access_use_case: revoke_platform_config_access_use_case,
-    };
-    let login_attempts_state = LoginAttemptsState {
-        login_attempt_repo: repos.login_attempt_repo.clone(),
     };
     let me_state = MeState {
         client_repo: repos.client_repo.clone(),
@@ -1148,16 +939,13 @@ pub fn build_platform_routes(
     PlatformRoutes {
         events: events_state,
         event_types: event_types_state,
-        processes: processes_state,
         scheduled_jobs: scheduled_jobs_state,
         functions: functions_state,
         function_control: function_control_state,
         dispatch_jobs: dispatch_jobs_state,
         filter_options: filter_options_state,
-        clients: clients_state,
         principals: principals_state,
         roles: roles_state,
-        subscriptions: subscriptions_state,
         oauth_clients: oauth_clients_state,
         audit_logs: audit_logs_state,
         monitoring: monitoring_state,
@@ -1172,13 +960,9 @@ pub fn build_platform_routes(
         applications: applications_state,
         dispatch_pools: dispatch_pools_state,
         service_accounts: service_accounts_state,
-        connections: connections_state,
-        cors: cors_state,
-        identity_providers: idp_state,
         email_domain_mappings: edm_state,
         platform_config: platform_config_state,
         config_access: config_access_state,
-        login_attempts: login_attempts_state,
         me: me_state,
         sdk_events: sdk_events_state,
         sdk_dispatch_jobs: sdk_dispatch_jobs_state,

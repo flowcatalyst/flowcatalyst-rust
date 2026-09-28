@@ -7,7 +7,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::entity::{Connection, ConnectionStatus};
 use super::repository::ConnectionRepository;
@@ -452,18 +451,4 @@ pub async fn activate_connection(
         .await?
         .or_not_found("Connection", &id)?;
     Ok(Json(conn.into()))
-}
-
-/// Create connections router
-pub fn connections_router(state: ConnectionsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_connection, list_connections))
-        .routes(routes!(
-            get_connection,
-            update_connection,
-            delete_connection
-        ))
-        .routes(routes!(pause_connection))
-        .routes(routes!(activate_connection))
-        .with_state(state)
 }

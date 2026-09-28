@@ -8,7 +8,8 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 
-pub use api::processes_router;
 pub use entity::{Process, ProcessCode, ProcessCodeError, ProcessSource, ProcessStatus};
 pub use repository::ProcessRepository;
+pub use routes::{processes_router, routes};

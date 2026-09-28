@@ -6,7 +6,9 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 
-pub use api::{cors_router, CorsState};
+pub use api::CorsState;
 pub use entity::CorsAllowedOrigin;
 pub use repository::CorsOriginRepository;
+pub use routes::{cors_router, routes};
