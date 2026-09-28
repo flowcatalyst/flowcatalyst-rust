@@ -288,7 +288,7 @@ fn publish_body(artifact_ref: &str, digest: &str) -> Value {
 }
 
 async fn version_count(app: &TestApp, function_id: &str) -> i64 {
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fn_versions WHERE function_id = $1")
+    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fnr_versions WHERE function_id = $1")
         .bind(function_id)
         .fetch_one(&app.pool)
         .await
@@ -298,7 +298,7 @@ async fn version_count(app: &TestApp, function_id: &str) -> i64 {
 
 async fn set_alias(app: &TestApp, function_id: &str, alias: &str, version_id: &str) {
     sqlx::query(
-        "INSERT INTO fn_aliases (function_id, alias, version_id, updated_by) VALUES ($1, $2, $3, 'prn_t') \
+        "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by) VALUES ($1, $2, $3, 'prn_t') \
          ON CONFLICT (function_id, alias) DO UPDATE SET version_id = EXCLUDED.version_id",
     )
     .bind(function_id)
@@ -869,7 +869,7 @@ async fn publish_checks_and_the_manifest_check() {
     // A pool whose every live host reports its runtimes, none this one, is
     // refused; one host that says nothing makes it a warning instead.
     sqlx::query(
-        "INSERT INTO fn_hosts (id, pool, state, loaded, runtimes) \
+        "INSERT INTO fnr_hosts (id, pool, state, loaded, runtimes) \
          VALUES ('jvm-host', 'default', 'ACTIVE', '[]', '[\"jvm\"]')",
     )
     .execute(&app.pool)
@@ -889,7 +889,7 @@ async fn publish_checks_and_the_manifest_check() {
         "no live host in pool 'default' can load runtime 'wasm'"
     );
     sqlx::query(
-        "INSERT INTO fn_hosts (id, pool, state, loaded) VALUES ('silent-host', 'default', 'ACTIVE', '[]')",
+        "INSERT INTO fnr_hosts (id, pool, state, loaded) VALUES ('silent-host', 'default', 'ACTIVE', '[]')",
     )
     .execute(&app.pool)
     .await
@@ -906,7 +906,7 @@ async fn publish_checks_and_the_manifest_check() {
         unknown["plan"]["warnings"][0]["code"],
         "POOL_RUNTIME_UNKNOWN"
     );
-    sqlx::query("DELETE FROM fn_hosts WHERE id IN ('jvm-host', 'silent-host')")
+    sqlx::query("DELETE FROM fnr_hosts WHERE id IN ('jvm-host', 'silent-host')")
         .execute(&app.pool)
         .await
         .unwrap();
@@ -1035,7 +1035,7 @@ async fn publish_checks_and_the_manifest_check() {
         StatusCode::BAD_REQUEST,
         "PUBLIC_HOSTNAME_NOT_CLAIMED",
     );
-    sqlx::query("DELETE FROM fn_domains")
+    sqlx::query("DELETE FROM fnr_domains")
         .execute(&app.pool)
         .await
         .unwrap();
@@ -1048,7 +1048,7 @@ async fn publish_checks_and_the_manifest_check() {
     .await;
     assert_eq!(status, StatusCode::CREATED);
     sqlx::query(
-        "INSERT INTO fn_routes (id, function_id, hostname, path_prefix, alias_prefixes) \
+        "INSERT INTO fnr_routes (id, function_id, hostname, path_prefix, alias_prefixes) \
          VALUES ('fnr_t1', $1, 'api.acme.com', '/', '{}')",
     )
     .bind(other["id"].as_str().unwrap())
@@ -1140,7 +1140,7 @@ async fn required_signatures_and_the_signer_policy() {
     let (_, v) = get(&r, &format!("{path}/1"), &t).await;
     assert_eq!(v["signer"], json!({"issuer": ISSUER, "subject": SUBJECT}));
     let (bundle,): (Option<String>,) =
-        sqlx::query_as("SELECT signature_bundle FROM fn_versions WHERE id = $1")
+        sqlx::query_as("SELECT signature_bundle FROM fnr_versions WHERE id = $1")
             .bind(published["id"].as_str().unwrap())
             .fetch_one(&app.pool)
             .await
@@ -1175,7 +1175,7 @@ async fn signatures_off_in_dev_mode() {
     let (status, b) = post(&r, path, &t, body).await;
     assert_eq!(status, StatusCode::CREATED, "{b}");
     let (bundle, issuer): (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT signature_bundle, signer_issuer FROM fn_versions WHERE id = $1")
+        sqlx::query_as("SELECT signature_bundle, signer_issuer FROM fnr_versions WHERE id = $1")
             .bind(b["id"].as_str().unwrap())
             .fetch_one(&app.pool)
             .await

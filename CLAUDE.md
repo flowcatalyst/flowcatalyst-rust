@@ -232,7 +232,7 @@ so creating an event via UoW would mean emitting an event about the event):
   action; the instance row inserted alongside is still the infrastructure
   path.
 - **Function-host heartbeat**: `POST /control/functions/heartbeat`
-  (`function/control_api.rs::heartbeat`) upserts the host's `fn_hosts` row
+  (`function/control_api.rs::heartbeat`) upserts the host's `fnr_hosts` row
   and purges hosts silent for over a day, in one transaction, through
   `function/host_repository.rs::FunctionHostRepository::heartbeat`, with no
   event and no audit row. A heartbeat is telemetry, every 15 s per host;

@@ -33,7 +33,7 @@ crate::shared::enum_str::str_enum!(FunctionStatus, "function status", {
     Disabled => "DISABLED",
 });
 
-/// A named pointer from a function to one of its versions (`fn_aliases`).
+/// A named pointer from a function to one of its versions (`fnr_aliases`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionAlias {
     pub alias: String,
@@ -228,7 +228,7 @@ impl Function {
 }
 
 /// Every alias name, `live` included, is 1-63 characters of `a-z`, `0-9`
-/// and `-`, not starting or ending with `-`: `fn_aliases`' own check
+/// and `-`, not starting or ending with `-`: `fnr_aliases`' own check
 /// constraint (Java `Function.requireValidAliasName`, the rule's one home).
 /// `400 ALIAS_INVALID` otherwise.
 pub fn require_valid_alias_name(alias: &str) -> Result<(), UseCaseError> {
@@ -681,7 +681,7 @@ impl FunctionRoute {
 
 // ── Trigger objects (written at promote) ──────────────────────────────
 
-/// What a `fn_trigger_objects` row links a function to (Java
+/// What a `fnr_trigger_objects` row links a function to (Java
 /// `TriggerObjectKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TriggerObjectKind {
@@ -696,7 +696,7 @@ crate::shared::enum_str::str_enum!(TriggerObjectKind, "trigger object kind", {
     ScheduledJob => "SCHEDULED_JOB",
 });
 
-/// One `fn_trigger_objects` row (Java `TriggerObject`): an object a
+/// One `fnr_trigger_objects` row (Java `TriggerObject`): an object a
 /// function's live manifest created at promote, keyed by
 /// `(function, kind, trigger key)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -708,7 +708,7 @@ pub struct TriggerObject {
     pub created_at: DateTime<Utc>,
 }
 
-/// One `fn_trigger_objects` row, with whether the object it names still
+/// One `fnr_trigger_objects` row, with whether the object it names still
 /// exists in its own table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriggerObjectLink {
@@ -759,7 +759,7 @@ impl Serialize for SecretValue {
     }
 }
 
-/// A function's whole config map (`fn_config`), replaced wholesale by
+/// A function's whole config map (`fnr_config`), replaced wholesale by
 /// `PUT …/config`. Keys are in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionConfig {
@@ -775,7 +775,7 @@ impl HasId for FunctionConfig {
     }
 }
 
-/// One secret of a function (`fn_secrets`). The repository encrypts
+/// One secret of a function (`fnr_secrets`). The repository encrypts
 /// `value` on write; nothing ever reads a value back out through the API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSecret {
@@ -1053,7 +1053,7 @@ mod tests {
         assert_eq!(f.live_version_id(), Some(v.id.as_str()));
     }
 
-    /// `fn_aliases`' check constraint: 1-63 of `a-z0-9-`, no `-` at an end.
+    /// `fnr_aliases`' check constraint: 1-63 of `a-z0-9-`, no `-` at an end.
     #[test]
     fn alias_names_follow_the_check_constraint() {
         for ok in ["live", "qa", "a", "0", "a-b", "v2", &"a".repeat(63)] {

@@ -1,4 +1,4 @@
-//! `fn_trigger_objects` (Java `function/TriggerObjectRepository.java`): the
+//! `fnr_trigger_objects` (Java `function/TriggerObjectRepository.java`): the
 //! pool, subscriptions and scheduled jobs a function's live manifest
 //! created at promote.
 //!
@@ -32,7 +32,7 @@ impl TriggerObjectRepository {
     /// A function's links, by kind then trigger key (Java `listByFunction`).
     pub async fn list(&self, function_id: &str) -> Result<Vec<TriggerObject>> {
         let rows: Vec<(String, String, String, DateTime<Utc>)> = sqlx::query_as(
-            "SELECT kind, object_id, trigger_key, created_at FROM fn_trigger_objects \
+            "SELECT kind, object_id, trigger_key, created_at FROM fnr_trigger_objects \
              WHERE function_id = $1 ORDER BY kind ASC, trigger_key ASC",
         )
         .bind(function_id)
@@ -41,7 +41,7 @@ impl TriggerObjectRepository {
         rows.into_iter()
             .map(|(kind, object_id, trigger_key, created_at)| {
                 let kind: TriggerObjectKind =
-                    decode(&kind, "fn_trigger_objects", "kind", &object_id)?;
+                    decode(&kind, "fnr_trigger_objects", "kind", &object_id)?;
                 Ok(TriggerObject {
                     function_id: function_id.to_string(),
                     kind,
@@ -57,7 +57,7 @@ impl TriggerObjectRepository {
     /// `objectIds`): what an SDK sync must leave alone.
     pub async fn object_ids(&self, kind: TriggerObjectKind) -> Result<HashSet<String>> {
         let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT object_id FROM fn_trigger_objects WHERE kind = $1")
+            sqlx::query_as("SELECT object_id FROM fnr_trigger_objects WHERE kind = $1")
                 .bind(kind.as_str())
                 .fetch_all(&self.pool)
                 .await?;
@@ -80,7 +80,7 @@ impl TriggerObjectRepository {
                         (SELECT 1 FROM msg_scheduled_jobs j WHERE j.id = t.object_id) \
                     ELSE FALSE \
                 END \
-             FROM fn_trigger_objects t WHERE t.function_id = $1 \
+             FROM fnr_trigger_objects t WHERE t.function_id = $1 \
              ORDER BY t.kind ASC, t.trigger_key ASC",
         )
         .bind(function_id)
@@ -89,7 +89,7 @@ impl TriggerObjectRepository {
         rows.into_iter()
             .map(|(kind, trigger_key, object_id, present)| {
                 let kind: TriggerObjectKind =
-                    decode(&kind, "fn_trigger_objects", "kind", &object_id)?;
+                    decode(&kind, "fnr_trigger_objects", "kind", &object_id)?;
                 Ok(TriggerObjectLink {
                     kind,
                     trigger_key,
@@ -104,7 +104,7 @@ impl TriggerObjectRepository {
     /// the link to its new id (Java `link`).
     async fn link(&self, link: &TriggerObject, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "INSERT INTO fn_trigger_objects (function_id, kind, object_id, trigger_key, created_at) \
+            "INSERT INTO fnr_trigger_objects (function_id, kind, object_id, trigger_key, created_at) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (function_id, kind, trigger_key) DO UPDATE SET object_id = EXCLUDED.object_id",
         )
@@ -120,7 +120,7 @@ impl TriggerObjectRepository {
 
     async fn unlink(&self, link: &TriggerObject, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "DELETE FROM fn_trigger_objects \
+            "DELETE FROM fnr_trigger_objects \
              WHERE function_id = $1 AND kind = $2 AND trigger_key = $3",
         )
         .bind(&link.function_id)

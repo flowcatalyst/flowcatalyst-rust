@@ -19,7 +19,7 @@
 //!
 //! **What is not a use case here, and why** (CLAUDE.md's platform
 //! infrastructure exceptions, as Java):
-//! - The heartbeat's host upsert and stale-host purge write `fn_hosts`
+//! - The heartbeat's host upsert and stale-host purge write `fnr_hosts`
 //!   through its repository with no event and no audit: a heartbeat is
 //!   telemetry every 15 s per host, and an event per beat would swamp the
 //!   event log (Java: "the host row alone, no event, no audit").

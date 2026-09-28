@@ -223,7 +223,7 @@ async fn insert_version(
     let id = fc_platform::shared::tsid::generate(fc_platform::EntityType::FunctionVersion);
     let digest = format!("sha256:{:064x}", version);
     sqlx::query(
-        "INSERT INTO fn_versions (id, function_id, version, artifact_ref, digest, manifest, state, \
+        "INSERT INTO fnr_versions (id, function_id, version, artifact_ref, digest, manifest, state, \
          published_by, ready_at, retired_at) \
          VALUES ($1, $2, $3, 'file:///a.wasm', $4, $5::jsonb, $6, 'prn_pub', \
                  CASE WHEN $6 = 'READY' THEN NOW() END, CASE WHEN $6 = 'RETIRED' THEN NOW() END)",
@@ -243,7 +243,7 @@ async fn insert_version(
 /// Point `live` at a version, as promote (P5) would.
 async fn set_live(app: &TestApp, function_id: &str, version_id: &str) {
     sqlx::query(
-        "INSERT INTO fn_aliases (function_id, alias, version_id, updated_by) VALUES ($1, 'live', $2, 'prn_pub')",
+        "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by) VALUES ($1, 'live', $2, 'prn_pub')",
     )
     .bind(function_id)
     .bind(version_id)
@@ -735,7 +735,7 @@ async fn functions_crud_reach_and_pagination() {
         StatusCode::NOT_FOUND,
         "FUNCTION_NOT_FOUND",
     );
-    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fn_versions WHERE id = $1")
+    let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fnr_versions WHERE id = $1")
         .bind(&v)
         .fetch_one(&app.pool)
         .await
@@ -793,7 +793,7 @@ async fn status_pools_and_live() {
         ),
     ] {
         sqlx::query(
-            "INSERT INTO fn_hosts (id, pool, state, loaded, last_heartbeat) \
+            "INSERT INTO fnr_hosts (id, pool, state, loaded, last_heartbeat) \
              VALUES ($1, $2, 'ACTIVE', $3, NOW() - make_interval(secs => $4))",
         )
         .bind(id)
@@ -805,7 +805,7 @@ async fn status_pools_and_live() {
         .unwrap();
     }
     sqlx::query(
-        "INSERT INTO fn_trigger_objects (function_id, kind, object_id, trigger_key) \
+        "INSERT INTO fnr_trigger_objects (function_id, kind, object_id, trigger_key) \
          VALUES ($1, 'SUBSCRIPTION', 'sub_gone', 'fn-x-abcd1234')",
     )
     .bind(fid)
@@ -1047,7 +1047,7 @@ async fn config_and_secrets() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (value_ref,): (String,) = sqlx::query_as(
-        "SELECT value_ref FROM fn_secrets WHERE function_id = $1 AND key = 'API_KEY'",
+        "SELECT value_ref FROM fnr_secrets WHERE function_id = $1 AND key = 'API_KEY'",
     )
     .bind(&fid)
     .fetch_one(&app.pool)
@@ -1497,7 +1497,7 @@ async fn domains_and_routes() {
         ),
     ] {
         sqlx::query(
-            "INSERT INTO fn_routes (id, function_id, hostname, path_prefix, alias_prefixes) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fnr_routes (id, function_id, hostname, path_prefix, alias_prefixes) VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(id)
         .bind(fid)
@@ -1564,7 +1564,7 @@ async fn domains_and_routes() {
         in_use.1["message"],
         "domain is in use by: billing.invoices.create, billing.invoices.other"
     );
-    sqlx::query("DELETE FROM fn_routes")
+    sqlx::query("DELETE FROM fnr_routes")
         .execute(&app.pool)
         .await
         .unwrap();

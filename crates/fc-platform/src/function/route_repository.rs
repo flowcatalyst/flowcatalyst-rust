@@ -1,4 +1,4 @@
-//! `fn_routes` (Java `function/FunctionRouteRepository.java`). Routes are
+//! `fnr_routes` (Java `function/FunctionRouteRepository.java`). Routes are
 //! materialised wholesale from the live manifest at promote: not an
 //! aggregate with an event of its own but the `live` alias's projection, so
 //! they are written by [`PromotedFunctionRepository`], in the same
@@ -18,7 +18,7 @@ use crate::usecase::{DbTx, HasId, Persist};
 
 /// The unique `(hostname, path_prefix)` constraint (Java
 /// `PUBLIC_ROUTE_UNIQUE_CONSTRAINT`).
-const UNIQUE_CONSTRAINT: &str = "fn_routes_hostname_path_prefix_key";
+const UNIQUE_CONSTRAINT: &str = "fnr_routes_hostname_path_prefix_key";
 
 #[derive(sqlx::FromRow)]
 struct RouteRow {
@@ -43,7 +43,7 @@ impl FunctionRouteRepository {
 
     pub async fn list_by_function(&self, function_id: &str) -> Result<Vec<FunctionRoute>> {
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_routes WHERE function_id = $1 \
+            "SELECT {COLUMNS} FROM fnr_routes WHERE function_id = $1 \
              ORDER BY hostname ASC, path_prefix ASC"
         ))
         .bind(function_id)
@@ -64,7 +64,7 @@ impl FunctionRouteRepository {
             return Ok(out);
         }
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_routes WHERE function_id = ANY($1) \
+            "SELECT {COLUMNS} FROM fnr_routes WHERE function_id = ANY($1) \
              ORDER BY hostname ASC, path_prefix ASC"
         ))
         .bind(function_ids)
@@ -91,7 +91,7 @@ impl FunctionRouteRepository {
         let hostnames: Vec<&str> = keys.iter().map(|(h, _)| h.value()).collect();
         let prefixes: Vec<&str> = keys.iter().map(|(_, p)| p.value()).collect();
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_routes \
+            "SELECT {COLUMNS} FROM fnr_routes \
              WHERE (hostname, path_prefix) IN (SELECT * FROM UNNEST($1::text[], $2::text[]))"
         ))
         .bind(&hostnames)
@@ -103,7 +103,7 @@ impl FunctionRouteRepository {
 
     pub async fn list_by_hostname(&self, hostname: &Hostname) -> Result<Vec<FunctionRoute>> {
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_routes WHERE hostname = $1 \
+            "SELECT {COLUMNS} FROM fnr_routes WHERE hostname = $1 \
              ORDER BY hostname ASC, path_prefix ASC"
         ))
         .bind(hostname.value())
@@ -117,7 +117,7 @@ impl FunctionRouteRepository {
     pub async fn list_under(&self, zone: &Hostname) -> Result<Vec<FunctionRoute>> {
         let suffix = format!(".{}", zone.value());
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_routes \
+            "SELECT {COLUMNS} FROM fnr_routes \
              WHERE hostname = $1 OR right(hostname, char_length($2)) = $2 \
              ORDER BY hostname ASC, path_prefix ASC"
         ))
@@ -130,7 +130,7 @@ impl FunctionRouteRepository {
 }
 
 impl FunctionRouteRepository {
-    /// `fn_routes` for `function_id` := `routes` (Java `replaceForFunction`).
+    /// `fnr_routes` for `function_id` := `routes` (Java `replaceForFunction`).
     /// Two promotes racing for one route past the plan's own check meet the
     /// unique constraint: that one constraint, by name, is `409
     /// PUBLIC_ROUTE_TAKEN`, never a 500; any other failure stays a failure.
@@ -140,13 +140,13 @@ impl FunctionRouteRepository {
         routes: &[FunctionRoute],
         tx: &mut DbTx<'_>,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM fn_routes WHERE function_id = $1")
+        sqlx::query("DELETE FROM fnr_routes WHERE function_id = $1")
             .bind(function_id)
             .execute(&mut **tx.inner)
             .await?;
         for r in routes {
             let inserted = sqlx::query(
-                "INSERT INTO fn_routes \
+                "INSERT INTO fnr_routes \
                     (id, function_id, hostname, path_prefix, alias_prefixes, created_at) \
                  VALUES ($1, $2, $3, $4, $5, $6)",
             )
@@ -217,9 +217,9 @@ impl Persist<PromotedFunction> for PromotedFunctionRepository<'_> {
 
 fn to_entity(row: RouteRow) -> Result<FunctionRoute> {
     let hostname = Hostname::try_parse(&row.hostname)
-        .ok_or_else(|| corrupt_value("fn_routes", "hostname", &row.hostname, &row.id))?;
+        .ok_or_else(|| corrupt_value("fnr_routes", "hostname", &row.hostname, &row.id))?;
     let path_prefix = RoutePattern::try_parse(&row.path_prefix)
-        .ok_or_else(|| corrupt_value("fn_routes", "path_prefix", &row.path_prefix, &row.id))?;
+        .ok_or_else(|| corrupt_value("fnr_routes", "path_prefix", &row.path_prefix, &row.id))?;
     Ok(FunctionRoute {
         id: row.id,
         function_id: row.function_id,

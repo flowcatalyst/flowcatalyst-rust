@@ -455,7 +455,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
 
     // ── 6. runtime: component ────────────────────────────────────────────
     // The host says what it loads.
-    let (runtimes,): (Value,) = sqlx::query_as("SELECT runtimes FROM fn_hosts WHERE id = $1")
+    let (runtimes,): (Value,) = sqlx::query_as("SELECT runtimes FROM fnr_hosts WHERE id = $1")
         .bind(HOST_ID)
         .fetch_one(&app.pool)
         .await
@@ -585,7 +585,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     assert_eq!(gone.status().as_u16(), 404);
     // The host's next beat reports nothing loaded.
     host.reconciler().reconcile_once(Utc::now()).await;
-    let reported: (Value,) = sqlx::query_as("SELECT loaded FROM fn_hosts WHERE id = $1")
+    let reported: (Value,) = sqlx::query_as("SELECT loaded FROM fnr_hosts WHERE id = $1")
         .bind(HOST_ID)
         .fetch_one(&app.pool)
         .await

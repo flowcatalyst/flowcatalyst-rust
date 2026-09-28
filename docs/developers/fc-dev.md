@@ -213,8 +213,10 @@ Go/Java-migrated dev cluster (goose 54, Flyway V17): fc-dev applied
 |---|---|
 | `CREATE TABLE _schema_migrations` | fc-dev's tracker; neither reads it |
 | `ALTER TABLE aud_logs ALTER COLUMN entity_id TYPE VARCHAR(100)` (was 17) | Java's V18 is the same statement; a wider column accepts everything Go writes |
-| `fn_functions_runtime_check` re-created allowing `COMPONENT` besides `JVM`, `WASM` (037), then `JS` too (056) | widening only; rows Java writes still pass |
-| `ALTER TABLE fn_hosts ADD COLUMN IF NOT EXISTS runtimes JSONB` | nullable; Java's inserts leave it NULL; no Go/Java migration adds the column |
+| `fn_functions_runtime_check` re-created allowing `COMPONENT` besides `JVM`, `WASM` (037), then `JS` too (056) | widening only; rows Java writes still pass. **Before decision #48 only:** 037 and 056 are retired and no longer run (see [Retired migrations](#retired-migrations)) |
+| `ALTER TABLE fn_hosts ADD COLUMN IF NOT EXISTS runtimes JSONB` | nullable; Java's inserts leave it NULL; no Go/Java migration adds the column. **Before decision #48 only**, as above |
+| `CREATE TABLE/INDEX IF NOT EXISTS fnr_*` (062) | Rust's own function registry; neither Go nor Java reads it |
+| `chk_msg_subscriptions_source` re-created as `CODE`, `API`, `UI`, `FUNCTION` (062), only when it does not already admit `FUNCTION` | widening only; Java's V13 and Go's 059 create the same CHECK |
 | `CREATE TABLE/INDEX IF NOT EXISTS queue_messages…`, monthly partitions `CREATE TABLE IF NOT EXISTS … PARTITION OF` | no-ops there (already present) |
 
 No existing row is deleted. Seeding and start-up writes: built-in roles
@@ -233,6 +235,42 @@ type on every start. `fc-dev init` only adds rows.
 The cluster fc-dev used before (`<userCacheDir>/flowcatalyst-dev/pgdata`,
 port 15432, password `flowcatalyst`) is no longer used; fc-dev logs its path
 while it exists. Delete it when you no longer need its data.
+
+### Retired migrations
+
+A shipped migration is never edited, and never deleted from `migrations/`.
+When one must stop running, it moves from the runner's list
+(`core_migrations` in `crates/fc-platform/src/shared/database.rs`) to
+`RETIRED_MIGRATIONS`, which names what replaced it. A retired migration:
+
+- **never runs**, on a fresh database or one Go or Java migrated;
+- **keeps its recorded row** where it already ran: drift detection compares
+  only the migrations in the list, so the row and its checksum are never
+  checked, re-run or deleted (the runner logs that it ignores them);
+- **is never backfilled**: the first-contact backfill records only listed
+  migrations, so nothing claims it ran where it did not.
+
+Whatever it created stays in the database. Its replacement is an ordinary
+migration, with a probe, that brings every database to the state Rust needs.
+
+Retired so far: **034_functions, 037_function_component_runtime and
+056_function_js_runtime**, replaced by **062_function_registry_fnr** (owner
+decision #48, 2026-09-28). Go's function runner (its 059) has `fn_*` tables
+of its own, incompatible with the Java-shaped `fn_*` those three created and
+altered, so Rust's registry moved to `fnr_*` (Java keeps `fn_`, Go moves to
+`fng_`; see [functions.md](functions.md#the-registrys-tables-one-prefix-per-implementation-temporary)).
+What that does on each kind of database:
+
+| Database | What Rust does |
+|---|---|
+| Fresh | 062 creates `fnr_*`; no `fn_*` table exists |
+| Rust-migrated (034/037/056 recorded) | the three rows stay, 062 creates `fnr_*`; Rust's old `fn_*` tables and rows are left alone, and nothing is copied: publish those functions again |
+| Java-migrated | Java's `fn_*` are no longer touched (037 and 056 used to widen its runtime CHECK and add `fn_hosts.runtimes`); 062 creates `fnr_*` |
+| Go-migrated | Go's `fn_*` are never touched; 062 creates `fnr_*` and admits `FUNCTION` in `chk_msg_subscriptions_source` if Go's CHECK does not yet (Go before its 059) |
+
+`crates/fc-platform/tests/function_table_prefix_test.rs` runs Go's 059 before
+and after Rust's migrations, and a database with the retired migrations
+applied, and checks that `fnr_*` is their end state renamed.
 
 ---
 

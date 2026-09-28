@@ -2,7 +2,7 @@
 //! `function/operations/TriggerSync.java` and `FunctionTriggerSync.java`,
 //! spec `function-invocation.md` §4): its dispatch pool `fn-<fid>`, one
 //! subscription per event type (source `FUNCTION`), one scheduled job per
-//! `(cron, timezone)`, a `fn_trigger_objects` link for each, and `fn_routes`
+//! `(cron, timezone)`, a `fnr_trigger_objects` link for each, and `fnr_routes`
 //! for its public routes.
 //!
 //! - [`TriggerSync::plan`] reads current state and says what promoting a
@@ -487,7 +487,7 @@ impl TriggerSync {
 
     /// The same `PUBLIC_ROUTE_TAKEN` check publish makes (another function
     /// may have promoted in between), then the set-valued diff against
-    /// `fn_routes`.
+    /// `fnr_routes`.
     async fn classify_public_routes(
         &self,
         f: &Function,
@@ -541,7 +541,7 @@ impl TriggerSync {
         })
     }
 
-    /// The `fn_routes` rows promoting `manifest` to `live` writes, or `None`
+    /// The `fnr_routes` rows promoting `manifest` to `live` writes, or `None`
     /// when the plan leaves them as they are (no difference, no write) or
     /// the alias is a named one.
     pub fn routes_for(
@@ -1016,7 +1016,7 @@ impl TriggerSync {
     // ── delete and status change ────────────────────────────────────────────
 
     /// Deletes every object `f` owns, each through its own delete and event:
-    /// subscriptions, then scheduled jobs, then the pool. `fn_routes` and
+    /// subscriptions, then scheduled jobs, then the pool. `fnr_routes` and
     /// the links cascade with the function row itself.
     pub async fn on_delete<U: UnitOfWork>(
         &self,

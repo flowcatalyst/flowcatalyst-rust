@@ -149,7 +149,7 @@ fn is_unique_violation(e: &crate::shared::error::PlatformError) -> bool {
 /// A repository write that failed.
 ///
 /// - A write a repository refuses for a business reason of its own (a
-///   unique constraint it maps to a code, e.g. `fn_routes`'
+///   unique constraint it maps to a code, e.g. `fnr_routes`'
 ///   `PUBLIC_ROUTE_TAKEN`) keeps that code and its `409`.
 /// - Any other unique violation is `409 DUPLICATE_KEY` naming the
 ///   aggregate (Java 9d71ffd4): the use case's validate step checked for the

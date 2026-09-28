@@ -319,7 +319,7 @@ pub struct LoadedSummary {
     pub error: Option<String>,
 }
 
-/// One `fn_trigger_objects` row; `present` is false when the linked object
+/// One `fnr_trigger_objects` row; `present` is false when the linked object
 /// was deleted by hand.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

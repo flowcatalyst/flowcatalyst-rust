@@ -54,7 +54,7 @@ const MEMORY_BUCKETS: [f64; 13] = [
 ];
 
 /// The `client` label of a platform-owned function (the
-/// `fn_client_policies` key the platform uses for itself).
+/// `fnr_client_policies` key the platform uses for itself).
 pub const PLATFORM_CLIENT_LABEL: &str = fc_function_model::FunctionOwner::PLATFORM_KEY;
 
 pub const CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";

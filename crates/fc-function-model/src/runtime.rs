@@ -17,7 +17,7 @@
 //! itself.
 //!
 //! A new runtime is one line in the `runtimes!` table below, plus a
-//! migration widening `fn_functions_runtime_check` and the `runtime` enum
+//! migration widening `fnr_functions_runtime_check` and the `runtime` enum
 //! of `function-manifest.schema.json`.
 
 use crate::enum_str::str_enum;
@@ -195,12 +195,12 @@ impl ArtifactKind {
 }
 
 /// Declares [`Runtime`]: one line per runtime, giving its variant, stored
-/// spelling (the `fn_functions.runtime` column), manifest spelling, the
+/// spelling (the `fnr_functions.runtime` column), manifest spelling, the
 /// entrypoint rule, and whether `limits.wasmMemoryMb` applies to it.
 macro_rules! runtimes {
     ($($variant:ident => $stored:literal, $wire:literal, $rule:ident, wasm_memory: $wasm:literal;)+) => {
         /// The runtime a function executes in. Stored upper-case in
-        /// `fn_functions.runtime`; lower-case in the manifest's JSON.
+        /// `fnr_functions.runtime`; lower-case in the manifest's JSON.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum Runtime {
             $($variant,)+

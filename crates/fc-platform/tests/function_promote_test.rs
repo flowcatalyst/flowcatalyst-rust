@@ -226,7 +226,7 @@ async fn publish_ready(app: &TestApp, r: &Router, t: &str, path: &str, manifest:
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{out}");
-    sqlx::query("UPDATE fn_versions SET state = 'READY', ready_at = NOW() WHERE id = $1")
+    sqlx::query("UPDATE fnr_versions SET state = 'READY', ready_at = NOW() WHERE id = $1")
         .bind(out["id"].as_str().unwrap())
         .execute(&app.pool)
         .await
@@ -281,7 +281,7 @@ async fn events_of_type(app: &TestApp, event_type: &str) -> i64 {
 /// `(kind, trigger_key, object_id)` rows, in key order.
 async fn links(app: &TestApp, function_id: &str) -> Vec<(String, String, String)> {
     sqlx::query_as(
-        "SELECT kind, trigger_key, object_id FROM fn_trigger_objects WHERE function_id = $1 \
+        "SELECT kind, trigger_key, object_id FROM fnr_trigger_objects WHERE function_id = $1 \
          ORDER BY kind, trigger_key",
     )
     .bind(function_id)
@@ -450,7 +450,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
         ]
     );
     let route: (String, String, Vec<String>) = sqlx::query_as(
-        "SELECT hostname, path_prefix, alias_prefixes FROM fn_routes WHERE function_id = $1",
+        "SELECT hostname, path_prefix, alias_prefixes FROM fnr_routes WHERE function_id = $1",
     )
     .bind(&fid)
     .fetch_one(&app.pool)
@@ -581,7 +581,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     assert_eq!(
         count(
             &app,
-            "SELECT COUNT(*) FROM fn_routes WHERE function_id = $1",
+            "SELECT COUNT(*) FROM fnr_routes WHERE function_id = $1",
             &fid
         )
         .await,
@@ -611,7 +611,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     assert_eq!(
         count(
             &app,
-            "SELECT COUNT(*) FROM fn_routes WHERE function_id = $1",
+            "SELECT COUNT(*) FROM fnr_routes WHERE function_id = $1",
             &fid
         )
         .await,
@@ -724,7 +724,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     assert_eq!(
         count(
             &app,
-            "SELECT COUNT(*) FROM fn_routes WHERE function_id = $1",
+            "SELECT COUNT(*) FROM fnr_routes WHERE function_id = $1",
             &fid
         )
         .await,
@@ -804,7 +804,7 @@ async fn promote_and_remove_alias_codes() {
         "FUNCTION_NOT_FOUND",
     );
 
-    sqlx::query("UPDATE fn_versions SET state = 'READY', ready_at = NOW() WHERE function_id = $1")
+    sqlx::query("UPDATE fnr_versions SET state = 'READY', ready_at = NOW() WHERE function_id = $1")
         .bind(&fid)
         .execute(&app.pool)
         .await

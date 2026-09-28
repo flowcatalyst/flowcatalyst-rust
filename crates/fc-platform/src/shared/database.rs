@@ -379,23 +379,12 @@ pub enum MigrationProfile {
     Production,
 }
 
-/// Run all SQL migrations from the migrations/ directory.
+/// The migrations applied to every profile, in order: `(id, SQL)`.
 ///
-/// Each migration is applied at most once. Tracking lives in
-/// `_schema_migrations`; SQL execution and the tracker INSERT happen in the
-/// same transaction, so a partial migration never gets marked applied.
-///
-/// First-run on a pre-tracker DB: if the tracker is empty but a legacy
-/// table (`tnt_clients` from 001) exists, every defined migration is
-/// marked applied so the no-tracker era's idempotent migrations don't
-/// get re-run on top of schema mutations they predate (e.g. running
-/// migration 4's `CREATE UNIQUE INDEX … (deduplication_id)` on top of
-/// a partitioned `msg_events`).
-pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<(), sqlx::Error> {
-    info!(?profile, "Running database migrations...");
-
-    // Migrations applied to every profile.
-    let core_migrations: &[(&str, &str)] = &[
+/// A migration that is no longer applied is not deleted from here silently:
+/// it moves to [`RETIRED_MIGRATIONS`], which says what replaced it.
+fn core_migrations() -> &'static [(&'static str, &'static str)] {
+    &[
         (
             "001_tenant_tables",
             include_str!("../../../../migrations/001_tenant_tables.sql"),
@@ -546,12 +535,8 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "033_oauth_client_secret_grace",
             include_str!("../../../../migrations/033_oauth_client_secret_grace.sql"),
         ),
-        // Java's V13 + V15 - V16: the function registry's fn_* tables, and
-        // msg_subscriptions.source gaining FUNCTION.
-        (
-            "034_functions",
-            include_str!("../../../../migrations/034_functions.sql"),
-        ),
+        // 034_functions (Java's V13 + V15 - V16, the fn_* registry) is
+        // retired: see RETIRED_MIGRATIONS and 062.
         // Java's msg_scheduled_jobs.application_id: a function's schedules
         // are signed with its application's credentials.
         (
@@ -560,12 +545,7 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         ),
         // 036 is a data migration in Rust, not SQL, run after these:
         // `036_scheduled_job_cron_dialect` (see below).
-        // Owner decision 5: `runtime: component`, and the runtimes a host
-        // reports in its heartbeat.
-        (
-            "037_function_component_runtime",
-            include_str!("../../../../migrations/037_function_component_runtime.sql"),
-        ),
+        // 037_function_component_runtime is retired: see RETIRED_MIGRATIONS.
         // Java's V18: aud_logs.entity_id widened to 100, so a sync rollup's
         // audit row (keyed by the application code) fits.
         (
@@ -644,12 +624,7 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "055_identity_provider_role_sync",
             include_str!("../../../../migrations/055_identity_provider_role_sync.sql"),
         ),
-        // `runtime: js` (owner decisions 6 and 27): the runtime CHECK
-        // widens to JS.
-        (
-            "056_function_js_runtime",
-            include_str!("../../../../migrations/056_function_js_runtime.sql"),
-        ),
+        // 056_function_js_runtime is retired: see RETIRED_MIGRATIONS.
         // Go's 057 (the rest of it): a dispatch job's descriptor, and the
         // job's descriptor and metadata on the read projection.
         (
@@ -684,7 +659,65 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "061_dispatch_job_read_queue",
             include_str!("../../../../migrations/061_dispatch_job_read_queue.sql"),
         ),
-    ];
+        // Owner decision #48: the function registry as `fnr_*`, the end
+        // state of the retired 034 + 037 + 056 renamed, and
+        // msg_subscriptions.source admitting FUNCTION.
+        (
+            "062_function_registry_fnr",
+            include_str!("../../../../migrations/062_function_registry_fnr.sql"),
+        ),
+    ]
+}
+
+/// Migrations the runner no longer applies: `(id, what replaced it)`.
+///
+/// A retired migration's file stays in `migrations/`, unchanged (shipped
+/// migrations are immutable), but it is not in [`core_migrations`], so:
+///
+/// - **it never runs**: on a fresh database, or one another platform
+///   migrated, none of its SQL executes;
+/// - **a recorded row is tolerated**: a database that applied it keeps its
+///   `_schema_migrations` row and checksum. Drift detection only compares
+///   the migrations in the list, so the row is never checked, never
+///   re-run and never deleted; [`run_migrations`] logs that it is ignored;
+/// - **the pre-tracker backfill skips it**: no row is recorded for it, so
+///   nothing claims it ran where it did not.
+///
+/// Whatever it created stays in place; Rust just stops using it. Its
+/// replacement is an ordinary migration that brings every database to the
+/// state Rust now needs.
+///
+/// Owner decision #48 (2026-09-28): Rust's function registry moved from
+/// `fn_*`, which Java also uses and Go's own `fn_*` tables collide with, to
+/// `fnr_*`, until the owner picks one implementation. The three migrations
+/// that created and altered Rust's `fn_*` tables are retired, so Rust never
+/// creates or alters a `fn_*` table again (on a given database those are
+/// Java's or Go's), and 062 creates `fnr_*` in their end state.
+pub(crate) const RETIRED_MIGRATIONS: &[(&str, &str)] = &[
+    ("034_functions", "062_function_registry_fnr"),
+    (
+        "037_function_component_runtime",
+        "062_function_registry_fnr",
+    ),
+    ("056_function_js_runtime", "062_function_registry_fnr"),
+];
+
+/// Run all SQL migrations from the migrations/ directory.
+///
+/// Each migration is applied at most once. Tracking lives in
+/// `_schema_migrations`; SQL execution and the tracker INSERT happen in the
+/// same transaction, so a partial migration never gets marked applied.
+///
+/// First-run on a pre-tracker DB: if the tracker is empty but a legacy
+/// table (`tnt_clients` from 001) exists, every defined migration is
+/// marked applied so the no-tracker era's idempotent migrations don't
+/// get re-run on top of schema mutations they predate (e.g. running
+/// migration 4's `CREATE UNIQUE INDEX … (deduplication_id)` on top of
+/// a partitioned `msg_events`).
+pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<(), sqlx::Error> {
+    info!(?profile, "Running database migrations...");
+
+    let core_migrations = core_migrations();
 
     // No production-only migrations at the moment. Partitioning runs the
     // same way in every profile — bootstrapped by 019/022 (both core) and
@@ -795,23 +828,6 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
                AND table_name = 'oauth_clients' \
                AND column_name = 'previous_secret_last_used_at')",
         ),
-        // A database Java migrated to V16 has all of 034's effects: the last
-        // table, V15's column, V16's dropped column and the widened source
-        // CHECK.
-        (
-            "034_functions",
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-             WHERE table_schema = 'public' AND table_name = 'fn_secrets') \
-             AND EXISTS (SELECT 1 FROM information_schema.columns \
-             WHERE table_schema = 'public' AND table_name = 'fn_routes' \
-               AND column_name = 'alias_prefixes') \
-             AND NOT EXISTS (SELECT 1 FROM information_schema.columns \
-             WHERE table_schema = 'public' AND table_name = 'fn_domains' \
-               AND column_name = 'verification_token') \
-             AND EXISTS (SELECT 1 FROM pg_constraint \
-             WHERE conname = 'chk_msg_subscriptions_source' \
-               AND pg_get_constraintdef(oid) LIKE '%FUNCTION%')",
-        ),
         // A database Java migrated has the column from its baseline.
         (
             "035_scheduled_jobs_application_id",
@@ -819,16 +835,6 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'msg_scheduled_jobs' \
                AND column_name = 'application_id')",
-        ),
-        // Both effects: the widened CHECK and the hosts' runtimes column.
-        (
-            "037_function_component_runtime",
-            "SELECT EXISTS (SELECT 1 FROM pg_constraint \
-             WHERE conname = 'fn_functions_runtime_check' \
-               AND pg_get_constraintdef(oid) LIKE '%COMPONENT%') \
-             AND EXISTS (SELECT 1 FROM information_schema.columns \
-             WHERE table_schema = 'public' AND table_name = 'fn_hosts' \
-               AND column_name = 'runtimes')",
         ),
         // A database Java migrated to V18 already has the width.
         (
@@ -943,13 +949,6 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'oauth_identity_provider_allowed_roles')",
         ),
-        // The widened CHECK.
-        (
-            "056_function_js_runtime",
-            "SELECT EXISTS (SELECT 1 FROM pg_constraint \
-             WHERE conname = 'fn_functions_runtime_check' \
-               AND pg_get_constraintdef(oid) LIKE '%''JS''%')",
-        ),
         // A database Go migrated to 057 has all three columns.
         (
             "057_dispatch_job_descriptor_and_read_metadata",
@@ -986,6 +985,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'msg_dispatch_jobs_read' \
                AND column_name = 'queue')",
+        ),
+        // Only 062 creates fnr_*, in one transaction, so its last table
+        // means it ran; the source CHECK is its other effect.
+        (
+            "062_function_registry_fnr",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'fnr_secrets') \
+             AND EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'chk_msg_subscriptions_source' \
+               AND pg_get_constraintdef(oid) LIKE '%''FUNCTION''%')",
         ),
     ];
 
@@ -1042,6 +1051,28 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         } else {
             info!("Fresh DB — running all migrations.");
         }
+    }
+
+    // Retired migrations are never applied; a row one left behind stays as
+    // it is (see RETIRED_MIGRATIONS).
+    let retired_ids: Vec<&str> = RETIRED_MIGRATIONS.iter().map(|(id, _)| *id).collect();
+    let recorded_retired: Vec<(String,)> = sqlx::query_as(
+        "SELECT migration_id FROM _schema_migrations WHERE migration_id = ANY($1) \
+         ORDER BY migration_id",
+    )
+    .bind(&retired_ids)
+    .fetch_all(pool)
+    .await?;
+    for (id,) in recorded_retired {
+        let replaced_by = RETIRED_MIGRATIONS
+            .iter()
+            .find(|(r, _)| *r == id)
+            .map_or("", |(_, by)| *by);
+        info!(
+            migration = %id,
+            replaced_by,
+            "Retired migration recorded; ignored (not re-run, not drift-checked)"
+        );
     }
 
     // Apply each migration if not already tracked.
@@ -1344,6 +1375,50 @@ pub async fn seed_builtin_roles(pool: &PgPool) -> crate::shared::error::Result<(
         info!(count = inserted, "Built-in role seeding complete");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod migration_list_tests {
+    use super::{core_migrations, RETIRED_MIGRATIONS};
+
+    #[test]
+    fn a_retired_migration_is_never_applied_and_its_replacement_is() {
+        let ids: Vec<&str> = core_migrations().iter().map(|(id, _)| *id).collect();
+        for (retired, replaced_by) in RETIRED_MIGRATIONS {
+            assert!(
+                !ids.contains(retired),
+                "{retired} is retired but still listed"
+            );
+            assert!(
+                ids.contains(replaced_by),
+                "{retired}'s replacement {replaced_by} is not listed"
+            );
+        }
+    }
+
+    #[test]
+    fn migration_ids_are_unique_and_ascending() {
+        let ids: Vec<&str> = core_migrations().iter().map(|(id, _)| *id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(ids, sorted);
+    }
+
+    /// No applied migration creates or alters a `fn_*` table: those belong
+    /// to Java (`fn_`) or Go (`fn_`, later `fng_`) on a shared database.
+    #[test]
+    fn no_applied_migration_touches_a_fn_table() {
+        let fn_table = regex::Regex::new(r"(?i)\b(idx_)?fn_[a-z]").unwrap();
+        for (id, sql) in core_migrations() {
+            let code: String = sql
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(!fn_table.is_match(&code), "{id} names a fn_ table");
+        }
+    }
 }
 
 #[cfg(test)]

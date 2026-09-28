@@ -588,7 +588,7 @@ fn report_and_guard_corrupt(
         tracing::error!(
             function_id = %c.function_id,
             version_id = %c.version_id,
-            "fn_versions row has an unreadable manifest; excluded from the desired-state document"
+            "fnr_versions row has an unreadable manifest; excluded from the desired-state document"
         );
     }
     for c in live {

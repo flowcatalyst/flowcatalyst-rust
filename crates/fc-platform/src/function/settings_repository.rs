@@ -1,7 +1,7 @@
-//! `fn_config` + `fn_secrets` (Java `function/FunctionSettingsRepository.java`):
+//! `fnr_config` + `fnr_secrets` (Java `function/FunctionSettingsRepository.java`):
 //! per-function, per-key settings that outlive a deploy.
 //!
-//! **Secrets are encrypted at rest.** `fn_secrets.value_ref` holds the
+//! **Secrets are encrypted at rest.** `fnr_secrets.value_ref` holds the
 //! [`EncryptionService::encrypt_ref`] form (`encrypted:…`), never plaintext.
 //! With no app key configured, writing a secret fails rather than falling
 //! back to plaintext; the API's `503 ENCRYPTION_UNCONFIGURED` answers before
@@ -44,7 +44,7 @@ impl FunctionSettingsRepository {
     /// Every `(key, value)` of a function's config, in key order.
     pub async fn config_map(&self, function_id: &str) -> Result<BTreeMap<String, String>> {
         let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT key, value FROM fn_config WHERE function_id = $1")
+            sqlx::query_as("SELECT key, value FROM fnr_config WHERE function_id = $1")
                 .bind(function_id)
                 .fetch_all(&self.pool)
                 .await?;
@@ -62,7 +62,7 @@ impl FunctionSettingsRepository {
             return Ok(out);
         }
         let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT function_id, key, value FROM fn_config WHERE function_id = ANY($1)",
+            "SELECT function_id, key, value FROM fnr_config WHERE function_id = ANY($1)",
         )
         .bind(function_ids)
         .fetch_all(&self.pool)
@@ -78,7 +78,7 @@ impl FunctionSettingsRepository {
     /// Every secret's metadata, in key order. Never a value.
     pub async fn list_secrets(&self, function_id: &str) -> Result<Vec<SecretInfo>> {
         let rows: Vec<(String, DateTime<Utc>, String)> = sqlx::query_as(
-            "SELECT key, updated_at, updated_by FROM fn_secrets WHERE function_id = $1 \
+            "SELECT key, updated_at, updated_by FROM fnr_secrets WHERE function_id = $1 \
              ORDER BY key ASC",
         )
         .bind(function_id)
@@ -97,7 +97,7 @@ impl FunctionSettingsRepository {
     /// Whether the function has a secret named `key`.
     pub async fn has_secret(&self, function_id: &str, key: &str) -> Result<bool> {
         let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM fn_secrets WHERE function_id = $1 AND key = $2)",
+            "SELECT EXISTS (SELECT 1 FROM fnr_secrets WHERE function_id = $1 AND key = $2)",
         )
         .bind(function_id)
         .bind(key)
@@ -121,7 +121,7 @@ impl FunctionSettingsRepository {
             return Ok(BTreeMap::new());
         }
         let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT key, value_ref FROM fn_secrets WHERE function_id = $1 AND key = ANY($2)",
+            "SELECT key, value_ref FROM fnr_secrets WHERE function_id = $1 AND key = ANY($2)",
         )
         .bind(function_id)
         .bind(keys)
@@ -159,7 +159,7 @@ impl FunctionSettingsRepository {
             return Ok(empty());
         }
         let rows: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT function_id, key, value_ref FROM fn_secrets WHERE function_id = ANY($1)",
+            "SELECT function_id, key, value_ref FROM fnr_secrets WHERE function_id = ANY($1)",
         )
         .bind(&function_ids)
         .fetch_all(&self.pool)
@@ -203,7 +203,7 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
     /// it is upserted.
     async fn persist(&self, config: &FunctionConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let keys: Vec<&str> = config.values.keys().map(String::as_str).collect();
-        sqlx::query("DELETE FROM fn_config WHERE function_id = $1 AND NOT (key = ANY($2))")
+        sqlx::query("DELETE FROM fnr_config WHERE function_id = $1 AND NOT (key = ANY($2))")
             .bind(&config.function_id)
             .bind(&keys)
             .execute(&mut **tx.inner)
@@ -213,7 +213,7 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
         }
         let values: Vec<&str> = config.values.values().map(String::as_str).collect();
         sqlx::query(
-            "INSERT INTO fn_config (function_id, key, value, updated_by, updated_at) \
+            "INSERT INTO fnr_config (function_id, key, value, updated_by, updated_at) \
              SELECT $1, k, v, $4, $5 FROM UNNEST($2::text[], $3::text[]) AS t(k, v) \
              ON CONFLICT (function_id, key) DO UPDATE SET \
                 value = EXCLUDED.value, \
@@ -231,7 +231,7 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
     }
 
     async fn delete(&self, config: &FunctionConfig, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fn_config WHERE function_id = $1")
+        sqlx::query("DELETE FROM fnr_config WHERE function_id = $1")
             .bind(&config.function_id)
             .execute(&mut **tx.inner)
             .await?;
@@ -245,7 +245,7 @@ impl Persist<FunctionSecret> for FunctionSettingsRepository {
     async fn persist(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {
         let value_ref = self.encrypted_ref(secret.value.expose())?;
         sqlx::query(
-            "INSERT INTO fn_secrets (function_id, key, value_ref, updated_by, updated_at) \
+            "INSERT INTO fnr_secrets (function_id, key, value_ref, updated_by, updated_at) \
              VALUES ($1, $2, $3, $4, $5) \
              ON CONFLICT (function_id, key) DO UPDATE SET \
                 value_ref = EXCLUDED.value_ref, \
@@ -263,7 +263,7 @@ impl Persist<FunctionSecret> for FunctionSettingsRepository {
     }
 
     async fn delete(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fn_secrets WHERE function_id = $1 AND key = $2")
+        sqlx::query("DELETE FROM fnr_secrets WHERE function_id = $1 AND key = $2")
             .bind(&secret.function_id)
             .bind(&secret.key)
             .execute(&mut **tx.inner)

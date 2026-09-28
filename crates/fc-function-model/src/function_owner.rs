@@ -5,8 +5,8 @@ use std::fmt;
 use crate::java::is_blank as java_is_blank;
 
 /// Who a function, domain or client policy belongs to: the platform itself
-/// or one client. `fn_functions.client_id` and `fn_domains.client_id` are
-/// NULL for the platform; `fn_client_policies.client_id` is a primary key,
+/// or one client. `fnr_functions.client_id` and `fnr_domains.client_id` are
+/// NULL for the platform; `fnr_client_policies.client_id` is a primary key,
 /// so the platform's row uses the reserved key [`FunctionOwner::PLATFORM_KEY`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FunctionOwner {
@@ -21,7 +21,7 @@ pub enum FunctionOwner {
 pub struct BlankClientId;
 
 impl FunctionOwner {
-    /// The `fn_client_policies.client_id` value for the platform. No TSID is
+    /// The `fnr_client_policies.client_id` value for the platform. No TSID is
     /// ever spelled this way.
     pub const PLATFORM_KEY: &'static str = "PLATFORM";
 
@@ -50,7 +50,7 @@ impl FunctionOwner {
         }
     }
 
-    /// The `fn_client_policies.client_id` primary key, and the entity id an
+    /// The `fnr_client_policies.client_id` primary key, and the entity id an
     /// audit row names for a policy write.
     pub fn key(&self) -> &str {
         match self {
