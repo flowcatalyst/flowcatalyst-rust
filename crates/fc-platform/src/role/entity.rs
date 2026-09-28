@@ -228,8 +228,6 @@ pub fn permissions_outside_application<'a>(
     outside
 }
 
-/// Convert from SeaORM model to domain entity
-/// Note: permissions must be loaded separately from iam_role_permissions
 /// Match a required permission against a pattern (4-level: subdomain:context:aggregate:action).
 /// Each level in the pattern can be '*' to match any value at that level.
 pub fn matches_pattern(permission: &str, pattern: &str) -> bool {
