@@ -17,6 +17,9 @@ fc-http-listener = { path = "../fc-http-listener" }
 # Platform bearer tokens (`auth: platform`, versioned calls): the verifier
 # shared with the router's API (owner ruling 2 of 2026-09-25).
 fc-platform-jwks = { path = "../fc-platform-jwks" }
+# The tokio runtime and process series on `/metrics`, and the panic hook
+# (`fc_common::diagnostics`).
+fc-common = { path = "../fc-common" }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

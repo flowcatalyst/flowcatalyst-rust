@@ -16,3 +16,10 @@ anyhow = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md): tokio-console
+# (needs RUSTFLAGS="--cfg tokio_unstable" and FC_TOKIO_CONSOLE=true) and
+# OTLP span export (FC_OTEL_ENABLED=true).
+tokio-console = ["fc-common/tokio-console"]
+otel = ["fc-common/otel"]

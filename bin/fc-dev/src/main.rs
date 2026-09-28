@@ -436,8 +436,10 @@ async fn main() -> Result<()> {
         std::env::set_var("FC_JWT_PUBLIC_KEY_PATH", keys_dir.join("public.key"));
     }
 
-    // Initialize logging (JSON if LOG_FORMAT=json, text otherwise)
+    // Initialize logging (JSON if LOG_FORMAT=json, text otherwise), with
+    // the panic hook; then the process's one Prometheus registry.
     fc_common::logging::init_logging("fc-dev");
+    fc_router::init_prometheus_recorder();
 
     // `fc-dev` (bare) and `fc-dev start` are equivalent — `start` exists for
     // discoverability. Subcommand args take precedence if both forms are
@@ -1282,6 +1284,7 @@ async fn main() -> Result<()> {
     }
 
     info!("FlowCatalyst Dev Monolith shutdown complete");
+    fc_common::logging::shutdown();
     Ok(())
 }
 
@@ -1367,10 +1370,17 @@ fn apply_dev_app_key(state_dir: Option<&std::path::Path>) {
     );
 }
 
-async fn metrics_handler() -> &'static str {
-    // In a real implementation, you'd use metrics-exporter-prometheus
-    // For now, return basic Prometheus format
-    "# HELP fc_up FlowCatalyst is up\n# TYPE fc_up gauge\nfc_up 1\n"
+/// The process's Prometheus registry (the scheduler's and stream
+/// processor's series), the tokio runtime and process series, and `fc_up`.
+async fn metrics_handler() -> String {
+    let mut out = fc_router::init_prometheus_recorder().render();
+    fc_common::diagnostics::render_prometheus(
+        &mut out,
+        None,
+        fc_common::diagnostics::Exposition::Prometheus,
+    );
+    out.push_str("# HELP fc_up FlowCatalyst is up\n# TYPE fc_up gauge\nfc_up 1\n");
+    out
 }
 
 async fn health_handler() -> Json<serde_json::Value> {

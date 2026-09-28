@@ -91,6 +91,7 @@ use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
 };
 
+mod diagnostics;
 mod function_host;
 mod mcp;
 
@@ -256,12 +257,21 @@ async fn main() -> Result<()> {
         || outbox_enabled
         || mcp_enabled;
     if function_host_enabled && !other_roles {
+        // The panic hook, before the host's own logging (it reaches stderr
+        // until then, the host's JSON lines after).
+        fc_common::diagnostics::init();
         std::process::exit(function_host::run_host_only().await);
     }
 
-    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
+    // JSON logs by default, as Go's fc-server writes them (CloudWatch); the
+    // panic hook comes with them.
     fc_common::logging::init_production_logging("fc-server");
     info!("Starting FlowCatalyst Unified Server");
+    // One Prometheus registry for the whole process, installed before any
+    // subsystem records into it: the metrics port serves it whatever roles
+    // run (it served a constant before, and the scheduler's series went
+    // nowhere unless the router role was on).
+    let prometheus = fc_router::init_prometheus_recorder();
 
     // Standby / HA
     let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
@@ -418,11 +428,25 @@ async fn main() -> Result<()> {
 
     // ── Background Processors ────────────────────────────────────────────────
 
+    // Stops the background processors that take a token (the dispatch
+    // scheduler, the outbox) at shutdown; their tasks are joined, bounded.
+    let processors_stop = tokio_util::sync::CancellationToken::new();
+    let mut processor_tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)> = Vec::new();
+
     // Scheduler (dispatch job polling)
     if scheduler_enabled {
         let db = db.as_ref().expect("scheduler needs the database");
         info!("Starting scheduler subsystem...");
-        spawn_scheduler(&db.pool, active_rx.clone(), api_port).await?;
+        processor_tasks.push((
+            "dispatch scheduler",
+            spawn_scheduler(
+                &db.pool,
+                active_rx.clone(),
+                api_port,
+                processors_stop.clone(),
+            )
+            .await?,
+        ));
     }
 
     // Scheduled-job cron engine (its own toggle, as Go)
@@ -457,7 +481,10 @@ async fn main() -> Result<()> {
             .as_ref()
             .expect("the outbox processor needs the database");
         info!("Starting outbox processor subsystem...");
-        spawn_outbox_processor(active_rx.clone(), &db.pool).await?;
+        processor_tasks.push((
+            "outbox processor",
+            spawn_outbox_processor(active_rx.clone(), &db.pool, processors_stop.clone()).await?,
+        ));
     }
 
     // ── ALB Traffic Watcher ──────────────────────────────────────────────────
@@ -526,8 +553,19 @@ async fn main() -> Result<()> {
         is_leader: Arc::new(is_leader_for_health),
     };
 
+    let diagnostics_platform = diagnostics::platform_url(platform_enabled, api_port);
+    if diagnostics_platform.is_none() {
+        info!("metrics port diagnostics: no platform to verify tokens against; /diagnostics/* answers 401");
+    }
     let metrics_app = Router::new()
-        .route("/metrics", get(metrics_handler))
+        .route(
+            "/metrics",
+            get(move || {
+                let prometheus = prometheus.clone();
+                async move { diagnostics::metrics_text(&prometheus) }
+            }),
+        )
+        .merge(diagnostics::routes(diagnostics_platform.as_deref()))
         .route(
             "/health",
             get({
@@ -607,6 +645,17 @@ async fn main() -> Result<()> {
 
     // Signal all background processors to stop via the active channel
     let _ = active_tx.send(false);
+    // The scheduler and the outbox stop on their token (the outbox releases
+    // what its groups still hold); joined, bounded.
+    processors_stop.cancel();
+    for (name, task) in processor_tasks {
+        if tokio::time::timeout(Duration::from_secs(30), task)
+            .await
+            .is_err()
+        {
+            warn!(processor = name, "did not stop within 30s");
+        }
+    }
 
     // The router drains its pools before the listeners go (Go: Run cancels
     // the subsystems, then waits for them).
@@ -627,6 +676,8 @@ async fn main() -> Result<()> {
     }
 
     info!("FlowCatalyst Unified Server shutdown complete");
+    // Flush what the optional exporters buffer (OTLP spans).
+    fc_common::logging::shutdown();
     Ok(())
 }
 
@@ -1067,7 +1118,8 @@ async fn spawn_scheduler(
     pg_pool: &sqlx::PgPool,
     active_rx: watch::Receiver<bool>,
     api_port: u16,
-) -> Result<()> {
+    stop: tokio_util::sync::CancellationToken,
+) -> Result<tokio::task::JoinHandle<()>> {
     use fc_platform::scheduler::{DispatchAuthService, DispatchQueueSettings, DispatchScheduler};
 
     let settings = DispatchQueueSettings::from_env()
@@ -1085,12 +1137,11 @@ async fn spawn_scheduler(
 
     // Only the leader claims: the per-group order needs one active scheduler.
     let is_leader: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || *active_rx.borrow());
-    tokio::spawn(async move {
-        scheduler
-            .run(is_leader, tokio_util::sync::CancellationToken::new())
-            .await;
-    });
-    Ok(())
+    // Stopped by `stop` at shutdown (it was handed a token nobody held, so
+    // it never stopped).
+    Ok(tokio::spawn(async move {
+        scheduler.run(is_leader, stop).await;
+    }))
 }
 
 /// Spawn the scheduled-job scheduler (cron poller + webhook dispatcher),
@@ -1344,7 +1395,8 @@ impl StreamProcessorShutdown {
 async fn spawn_outbox_processor(
     mut active_rx: watch::Receiver<bool>,
     platform_pool: &sqlx::PgPool,
-) -> Result<()> {
+    stop: tokio_util::sync::CancellationToken,
+) -> Result<tokio::task::JoinHandle<()>> {
     use fc_outbox::setup;
     use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
@@ -1375,17 +1427,27 @@ async fn spawn_outbox_processor(
 
     let admin_port = setup::admin_port_from_env();
     if admin_port > 0 {
-        setup::serve_admin(admin_port, processor.clone(), std::future::pending()).await?;
+        setup::serve_admin(
+            admin_port,
+            processor.clone(),
+            stop.clone().cancelled_owned(),
+        )
+        .await?;
     }
 
-    tokio::spawn(async move {
+    Ok(tokio::spawn(async move {
         loop {
             // Wait until active
             if !*active_rx.borrow() {
                 info!("Outbox: waiting for leadership...");
                 loop {
-                    if active_rx.changed().await.is_err() {
-                        return;
+                    tokio::select! {
+                        changed = active_rx.changed() => {
+                            if changed.is_err() {
+                                return;
+                            }
+                        }
+                        _ = stop.cancelled() => return,
                     }
                     if *active_rx.borrow() {
                         break;
@@ -1405,13 +1467,18 @@ async fn spawn_outbox_processor(
                     }
                 } => {
                     info!("Outbox: lost leadership, stopping");
-                    processor.stop();
+                    // What the groups still hold goes back to PENDING for
+                    // the new leader now, not after the recovery threshold.
+                    processor.shutdown().await;
+                }
+                _ = stop.cancelled() => {
+                    info!("Outbox: shutting down");
+                    processor.shutdown().await;
+                    return;
                 }
             }
         }
-    });
-
-    Ok(())
+    }))
 }
 
 // ── Health Endpoints ─────────────────────────────────────────────────────────
@@ -1453,10 +1520,6 @@ async fn health_handler() -> Json<serde_json::Value> {
         "status": "UP",
         "version": fc_common::BUILD_VERSION
     }))
-}
-
-async fn metrics_handler() -> &'static str {
-    "# HELP fc_server_up Server is up\n# TYPE fc_server_up gauge\nfc_server_up 1\n"
 }
 
 /// Go's metrics-port `/ready`: the status plus which subsystems run.

@@ -88,13 +88,21 @@ pub use fc_queue::QueueMetrics;
 
 pub type Result<T> = std::result::Result<T, RouterError>;
 
-/// Initialize the Prometheus metrics recorder and return a handle for rendering.
+/// Install the process's Prometheus metrics recorder (once) and return a
+/// handle for rendering it.
 ///
-/// Must be called once early in main() before any metrics are recorded.
-/// The handle is passed to the API router so `/metrics` and `/q/metrics`
-/// serve real Prometheus-format output.
+/// Call early in main() before any metrics are recorded. Later calls return
+/// the same handle, so every listener that serves `/metrics` (the router
+/// API, fc-server's metrics port) renders one registry: the router's, the
+/// scheduler's and the stream processor's series alike.
 pub fn init_prometheus_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
-    metrics_exporter_prometheus::PrometheusBuilder::new()
-        .install_recorder()
-        .expect("Failed to install Prometheus metrics recorder")
+    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
+        std::sync::OnceLock::new();
+    HANDLE
+        .get_or_init(|| {
+            metrics_exporter_prometheus::PrometheusBuilder::new()
+                .install_recorder()
+                .expect("Failed to install Prometheus metrics recorder")
+        })
+        .clone()
 }

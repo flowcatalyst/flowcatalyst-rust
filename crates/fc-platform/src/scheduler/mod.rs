@@ -188,11 +188,23 @@ impl DispatchScheduler {
             publisher = %self.publisher_description,
             "dispatch scheduler starting"
         );
+        // Each loop supervised: a panic is logged (with its backtrace and
+        // span) and counted, and the loop restarted. The two used to share
+        // one task, so a panic in either stopped both for good, silently.
+        use fc_common::diagnostics::{supervise, OnPanic};
         tokio::join!(
-            self.poller
-                .run(self.config.poll_interval, is_leader.clone(), cancel.clone()),
-            self.stale
-                .run(self.config.stale_scan_interval, is_leader, cancel),
+            supervise("scheduler.poller", OnPanic::Restart, || self.poller.run(
+                self.config.poll_interval,
+                is_leader.clone(),
+                cancel.clone()
+            )),
+            supervise("scheduler.stale_recovery", OnPanic::Restart, || self
+                .stale
+                .run(
+                    self.config.stale_scan_interval,
+                    is_leader.clone(),
+                    cancel.clone()
+                )),
         );
         info!("dispatch scheduler stopped");
     }
