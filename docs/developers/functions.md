@@ -14,7 +14,8 @@ The Rust function host runs two kinds:
 | `js` | one ES module bundle (UTF-8 JavaScript) | TypeScript or JavaScript | `fc-dev fn init --lang ts` / `--lang js` |
 
 `wasm` is the older name a component can be published under (entrypoint `wasi_http_incoming_handler`), for a platform
-without `component`. `jvm` functions (jars) run on Java hosts only. The engine and hosting design is in
+without `component`. `jvm` functions (jars) run on Java's function host only, in a pool of their own (see
+[JVM functions](#jvm-functions-runtime-jvm)). The engine and hosting design is in
 [`../function-runner-plan.md`](../function-runner-plan.md); a complete Rust function is
 [`examples/function-hello-rust`](../../examples/function-hello-rust/).
 
@@ -296,6 +297,69 @@ A WASI 0.2 component exporting `wasi:http/incoming-handler`, written with the PD
 `ctx.secrets()`, `ctx.events().emit(…)`, `ctx.logger()`, `ctx.http()`, `ctx.db(…)` and `ctx.invocation()`. The template
 (`templates/function-rust`) and the example (`examples/function-hello-rust`, an adapter that maps an event, calls an
 HTTPS API and emits an event) show the whole shape, with native unit tests through `testing::TestHost`.
+
+## JVM functions (`runtime: jvm`)
+
+Java functions are jars that implement Java's `function-api` (`io.flowcatalyst.function.Function`). This platform is
+their control plane, and **Java's function host** runs them: `function-host` in `flowcatalyst-javalin`, shipped as
+the `flowcatalyst-fnhost` image (owner, 2026-09-28). A Rust host never runs a jar. The two kinds of host share the
+control API (desired state, heartbeat, artifact download, event emit), so nothing about publishing changes:
+
+- **Write and build** with Java's tooling. `examples/function-hello` in `flowcatalyst-javalin` is the reference: a
+  `webhook` endpoint that reads config and a secret and emits an event, a `platform` endpoint that checks the
+  caller's permission, and a `none` health check. Build its shrunk jar with Maven; scaffold a new one with Java's
+  `fcdev fn init --runtime jvm`.
+- **Manifest**: `"runtime": "jvm"`, `entrypoint` is the class name, and `pool` names a pool that only Java hosts
+  serve (convention: `jvm`, or `jvm-<purpose>`). `limits.maxFuel` does not apply (`LIMIT_NOT_APPLICABLE`).
+- **Publish** as any other function: `fc-dev fn deploy target/hello-shrunk.jar hello.default.hello --manifest
+  manifest.json --bundle fn.sigstore.json` (the CLI does not care about the runtime), Java's `fcdev fn deploy`, or the
+  API directly (`PUT /api/functions/{address}/artifacts/{digest}`, `POST …/versions`, `PUT …/aliases/live`). The
+  owner's signer policy must list `jvm` among the signer's runtimes. The Java host downloads the jar from the
+  platform, verifies its signature against the recorded signer, and registers it; the platform marks it `READY`.
+
+### Pools: keep runtimes apart
+
+A pool is served through one URL (`FC_FN_POOL_URL`, by default `http://fn-{pool}:8080`), so every host behind it
+must be able to run every function placed there. What happens when they can't:
+
+| Placement | Result |
+|---|---|
+| `jvm` function, pool served only by Rust hosts | Publish refused: `409 POOL_RUNTIME_UNSUPPORTED` (Rust hosts report the runtimes they load; none reports `jvm`). |
+| `jvm` function, pool with no live host yet | Published; the manifest check warns `POOL_HAS_NO_LIVE_HOSTS`. A Rust host that later serves the pool reports it `FAILED RUNTIME_UNSUPPORTED`. |
+| `jvm` function, pool shared by Rust and Java hosts | Published with the warning `POOL_RUNTIME_UNKNOWN`. The Java host loads it; each Rust host reports it `FAILED RUNTIME_UNSUPPORTED` without downloading it, logs it once, and keeps running. The version stays `READY` and live. A request the pool's URL sends to a Rust host answers `503 FUNCTION_UNAVAILABLE`. |
+| `component` or `js` function in a Java pool | The Java host can't read the runtime: `FAILED UNREADABLE:manifest runtime is unreadable`. |
+| `wasm` function (a component) in a Java pool | Java reads `wasm` as its own Extism core-module runtime. It registers the candidate, so the version can go `READY`, and fails it once live: `FAILED LOAD:WASM_INVALID`, calls answer `503`. |
+
+A host's failure shows per host in `GET /api/functions/{address}/status` (`hosts[].loaded[]`, with `error`) and on
+the function's page in the SPA (the version tag reads `FAILED`, with the code as its tooltip). Java hosts report no
+`runtimes` in their heartbeat, so the manifest check of any function in a Java pool carries the warning
+`POOL_RUNTIME_UNKNOWN`. It is expected, not a problem.
+
+### What is proven
+
+`bin/fc-server/tests/jvm_function_host_e2e.rs` runs the whole path against a Postgres container, with signatures
+`required` (a private Sigstore trust root given to the platform and both hosts):
+
+- The platform (`fc-server`) runs with the stream processor and scheduled jobs on. Java's host runs from a scratch
+  build of the javalin checkout, in pool `jvm`.
+- `function-hello` is published and becomes `READY` on the Java host, then is promoted.
+- It answers `auth: none`, and `auth: platform` with the permission check, on platform tokens.
+- A pinned version needs `platform:function:version:invoke`.
+- An ingested event is delivered through `/api/dispatch/process`, signed with the application's secret. The function
+  reads its config and secret and emits an event that lands in `msg_events`.
+- A config change reloads the function.
+- A scheduled-job firing reaches a JVM function and parses with Java's `Webhook.schedule`.
+- Every row of the table above behaves as it says.
+- Disabling the function unloads it, and the host stops cleanly on `SIGTERM`.
+
+```sh
+cargo test -p fc-server --test jvm_function_host_e2e -- --ignored --nocapture
+```
+
+It needs Docker, a JDK 25 (`java`, `javac`) and Maven 3.9, and skips with a message when one is missing. It builds
+`../flowcatalyst-javalin` (`FC_JAVALIN_DIR`), never in place: it exports `HEAD` into
+`target/jvm-e2e/javalin-<commit>` and builds it once. `FC_JVM_BUILD_DIR=<built tree>` reuses a build.
+Deployment is in [configuration](../operations/configuration.md#jvm-function-host-javas-fc-fnhost).
 
 ## Which to choose
 
