@@ -403,7 +403,8 @@ pub(super) async fn sync_roles(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_auth(&auth.0)
+        .with_application_scope(state.app_access.scope_for(&auth.0.principal_id).await?);
 
     match state
         .sync_roles_use_case
@@ -739,17 +740,15 @@ pub(super) async fn sync_principals(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::from_auth(&auth.0);
-    let (principal_repo, application_repo, caller) = (
-        state.principal_repo.clone(),
-        state.application_repo.clone(),
-        auth.0.clone(),
-    );
+    let ctx = ExecutionContext::from_auth(&auth.0)
+        .with_application_scope(state.app_access.scope_for(&auth.0.principal_id).await?);
+    let (principal_repo, application_repo) =
+        (state.principal_repo.clone(), state.application_repo.clone());
 
     match state
         .unit_of_work
         .run(|session| async move {
-            SyncPrincipalsUseCase::new(principal_repo, application_repo, caller, session)
+            SyncPrincipalsUseCase::new(principal_repo, application_repo, session)
                 .run(command, ctx)
                 .await
                 .into_committed()

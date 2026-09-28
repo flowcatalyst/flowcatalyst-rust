@@ -59,6 +59,8 @@ pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
     domains: DomainDeps,
     unit_of_work: Arc<U>,
+    /// The allow-list's role ceiling (owner ruling 14).
+    role_repo: Arc<crate::RoleRepository>,
 }
 
 impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
@@ -66,11 +68,13 @@ impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
         idp_repo: Arc<IdentityProviderRepository>,
         domains: DomainDeps,
         unit_of_work: Arc<U>,
+        role_repo: Arc<crate::RoleRepository>,
     ) -> Self {
         Self {
             idp_repo,
             domains,
             unit_of_work,
+            role_repo,
         }
     }
 }
@@ -116,12 +120,24 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
 
+    /// Identity providers are platform-owner data, written by anchors only
+    /// (Go's `Can*IdentityProviders` are `anchorWith`; the handler's gate checks
+    /// it, with the permission, before the body is read). The allow-list bounds
+    /// the roles a login through this provider may hand out, so it is bounded by
+    /// the caller's role ceiling (owner ruling 14): 403 `ROLE_ABOVE_CALLER`.
     async fn authorize(
         &self,
-        _command: &CreateIdentityProviderCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateIdentityProviderCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        crate::role::ceiling::require_role_ref_change(
+            ctx.caller(),
+            &self.role_repo,
+            &[],
+            &command.allowed_role_ids,
+        )
+        .await
     }
 
     async fn execute(

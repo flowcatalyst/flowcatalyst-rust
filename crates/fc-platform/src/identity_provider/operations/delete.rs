@@ -50,12 +50,16 @@ impl<U: UnitOfWork> UseCase for DeleteIdentityProviderUseCase<U> {
         Ok(())
     }
 
+    /// Identity providers are platform-owner data, written by anchors only
+    /// (Go's `Can*IdentityProviders` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
     async fn authorize(
         &self,
         _command: &DeleteIdentityProviderCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

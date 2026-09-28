@@ -230,15 +230,6 @@ pub(super) async fn create_identity_provider(
 
     crate::checks::can_create_identity_providers(&auth.0)?;
     let allowed_role_ids = req.allowed_role_ids.unwrap_or_default();
-    // Owner ruling 14: the allow-list bounds the roles a login through this
-    // provider may hand out, so it is bounded by the role ceiling.
-    crate::role::ceiling::require_role_ref_change(
-        &auth.0,
-        &state.role_repo,
-        &[],
-        &allowed_role_ids,
-    )
-    .await?;
 
     let cmd = CreateIdentityProviderCommand {
         idp_type: parse_idp_type(&req.r#type)?,
@@ -259,11 +250,15 @@ pub(super) async fn create_identity_provider(
         allowed_role_ids,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
-    let (idp_repo, domains) = (state.idp_repo.clone(), state.domains.clone());
+    let (idp_repo, domains, role_repo) = (
+        state.idp_repo.clone(),
+        state.domains.clone(),
+        state.role_repo.clone(),
+    );
     let event = state
         .pg_unit_of_work
         .run(|session| async move {
-            CreateIdentityProviderUseCase::new(idp_repo, domains, session)
+            CreateIdentityProviderUseCase::new(idp_repo, domains, session, role_repo)
                 .run(cmd, ctx)
                 .await
                 .into_committed()
@@ -360,19 +355,6 @@ pub(super) async fn update_identity_provider(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_identity_providers(&auth.0)?;
-    // Owner ruling 14, as on create; a missing provider is the use case's
-    // 404.
-    if let Some(after) = req.allowed_role_ids.as_deref() {
-        if let Some(existing) = state.idp_repo.find_by_id(&id).await? {
-            crate::role::ceiling::require_role_ref_change(
-                &auth.0,
-                &state.role_repo,
-                &existing.allowed_role_ids,
-                after,
-            )
-            .await?;
-        }
-    }
 
     let cmd = UpdateIdentityProviderCommand {
         idp_id: id.clone(),
@@ -392,11 +374,15 @@ pub(super) async fn update_identity_provider(
         allowed_role_ids: req.allowed_role_ids,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
-    let (idp_repo, domains) = (state.idp_repo.clone(), state.domains.clone());
+    let (idp_repo, domains, role_repo) = (
+        state.idp_repo.clone(),
+        state.domains.clone(),
+        state.role_repo.clone(),
+    );
     state
         .pg_unit_of_work
         .run(|session| async move {
-            UpdateIdentityProviderUseCase::new(idp_repo, domains, session)
+            UpdateIdentityProviderUseCase::new(idp_repo, domains, session, role_repo)
                 .run(cmd, ctx)
                 .await
                 .into_committed()

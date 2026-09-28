@@ -45,11 +45,13 @@ pub fn identity_providers_state(ctx: &PlatformContext) -> IdentityProvidersState
             repos.idp_repo.clone(),
             domains.clone(),
             uow.clone(),
+            repos.role_repo.clone(),
         )),
         update_use_case: Arc::new(UpdateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
             domains,
             uow.clone(),
+            repos.role_repo.clone(),
         )),
         delete_use_case: Arc::new(DeleteIdentityProviderUseCase::new(
             repos.idp_repo.clone(),

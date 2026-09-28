@@ -25,7 +25,7 @@ use crate::shared::encryption_service::EncryptionService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
-use crate::{Principal, PrincipalRepository, UserScope};
+use crate::{Principal, PrincipalRepository};
 
 #[derive(Clone)]
 pub struct DeveloperCredentialsState {
@@ -53,38 +53,6 @@ pub struct DeveloperUserListResponse {
     pub principals: Vec<serde_json::Value>,
     #[schema(value_type = i64)]
     pub total: usize,
-}
-
-/// The per-resource gate after the load (Go `requireSelfOrUserAdmin` →
-/// `requireUserAdmin`): acting on another user, a non-anchor caller only
-/// reaches CLIENT-scope users (403), of a client it can access (else the
-/// same 404 a missing id gets).
-async fn load_target(
-    state: &DeveloperCredentialsState,
-    ctx: &AuthContext,
-    id: &str,
-) -> Result<Principal, PlatformError> {
-    let p = state
-        .principal_repo
-        .find_by_id(id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("User", id))?;
-    if ctx.principal_id == p.id {
-        return Ok(p);
-    }
-    if !ctx.is_anchor() && p.scope != UserScope::Client {
-        return Err(PlatformError::forbidden(
-            "Client administrators can only manage client-scope users",
-        ));
-    }
-    let in_scope = match p.client_id.as_deref() {
-        Some(client_id) => ctx.can_access_client(client_id),
-        None => ctx.is_anchor() || ctx.has_permission(crate::role::entity::permissions::ADMIN_ALL),
-    };
-    if !in_scope {
-        return Err(PlatformError::not_found("User", id));
-    }
-    Ok(p)
 }
 
 /// List the developer-role users
@@ -183,7 +151,6 @@ pub async fn set_credential(
     id: &str,
 ) -> Result<SetDeveloperCredentialResponse, PlatformError> {
     require_credential_access(ctx, id)?;
-    let target = load_target(state, ctx, id).await?;
     let enc = state.encryption.as_ref().ok_or_else(|| {
         PlatformError::internal(
             "FLOWCATALYST_APP_KEY not configured; cannot hash developer client secret",
@@ -193,7 +160,7 @@ pub async fn set_credential(
     rand::rng().fill(&mut bytes[..]);
     let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let command = SetDeveloperCredentialCommand {
-        principal_id: target.id.clone(),
+        principal_id: id.to_string(),
         secret_ref: enc.hash_secret(&plaintext),
     };
     let event = state
@@ -243,12 +210,11 @@ pub async fn revoke_credential(
     id: &str,
 ) -> Result<(), PlatformError> {
     require_credential_access(ctx, id)?;
-    let target = load_target(state, ctx, id).await?;
     state
         .revoke_use_case
         .run(
             RevokeDeveloperCredentialCommand {
-                principal_id: target.id,
+                principal_id: id.to_string(),
             },
             ExecutionContext::from_auth(ctx),
         )

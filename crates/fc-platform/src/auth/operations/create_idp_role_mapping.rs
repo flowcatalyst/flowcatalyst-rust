@@ -21,13 +21,20 @@ impl crate::usecase::AuditMasked for CreateIdpRoleMappingCommand {}
 
 pub struct CreateIdpRoleMappingUseCase<U: UnitOfWork> {
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
+    /// The mapped role's ceiling (owner ruling 14).
+    role_repo: Arc<crate::RoleRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> CreateIdpRoleMappingUseCase<U> {
-    pub fn new(idp_role_mapping_repo: Arc<IdpRoleMappingRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
+        role_repo: Arc<crate::RoleRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             idp_role_mapping_repo,
+            role_repo,
             unit_of_work,
         }
     }
@@ -54,12 +61,24 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
         Ok(())
     }
 
+    /// IdP role mappings are platform-owner data, written by anchors only (the
+    /// handler's `can_update_identity_providers` gate checks it, with the
+    /// permission, before the body is read). A mapping hands its role out at
+    /// login, so the role is bounded by the caller's role ceiling (owner ruling
+    /// 14): 403 `ROLE_ABOVE_CALLER`.
     async fn authorize(
         &self,
-        _command: &CreateIdpRoleMappingCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateIdpRoleMappingCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        crate::role::ceiling::require_role_change(
+            ctx.caller(),
+            &self.role_repo,
+            &[],
+            std::slice::from_ref(&command.platform_role_name),
+        )
+        .await
     }
 
     async fn execute(

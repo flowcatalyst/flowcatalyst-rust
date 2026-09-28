@@ -103,14 +103,14 @@ impl<U: UnitOfWork> UseCase for RedactExistingAuditLogsUseCase<U> {
         Ok(())
     }
 
-    /// Anchor scope and the audit-log read permission are checked by the
-    /// handler; the sweep has no resource to scope to.
+    /// Rewriting the audit log is an anchor's (the BFF handler checks it, with
+    /// the audit-log permission, before anything runs).
     async fn authorize(
         &self,
         _command: &RedactExistingAuditLogsCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor(ctx.caller())?)
     }
 
     async fn execute(

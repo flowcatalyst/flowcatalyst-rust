@@ -80,6 +80,21 @@ impl Caller {
         self
     }
 
+    /// Anchor tier (the system caller counts as anchor).
+    pub fn is_anchor(&self) -> bool {
+        Authority::is_anchor(self)
+    }
+
+    /// Whether the caller holds client `client_id` (or every client).
+    pub fn can_access_client(&self, client_id: &str) -> bool {
+        Authority::can_access_client(self, client_id)
+    }
+
+    /// Whether the caller holds `permission` (the system caller holds all).
+    pub fn has_permission(&self, permission: &str) -> bool {
+        Authority::has_permission(self, permission)
+    }
+
     /// Whether this is the platform itself rather than a principal.
     pub fn is_system(&self) -> bool {
         matches!(self.kind, CallerKind::System)

@@ -96,12 +96,21 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
         Ok(())
     }
 
+    /// The role ceiling (owner ruling 14): a role may carry only platform
+    /// permissions the caller holds, 403 `PERMISSION_ABOVE_CALLER`. It holds for
+    /// every surface that creates a role (`/api/roles`, `/bff/roles`, fc-web and
+    /// the application-scoped SDK route). The coarse gates (anchor and the role
+    /// permission, or the SDK's permission and application scope) stay in the
+    /// handlers, before the body is read.
     async fn authorize(
         &self,
-        _command: &CreateRoleCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateRoleCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::role::ceiling::require_permissions(
+            Some(ctx.caller()),
+            command.permissions.iter().map(String::as_str),
+        )?)
     }
 
     async fn execute(

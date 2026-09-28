@@ -62,12 +62,14 @@ impl<U: UnitOfWork> UseCase for RevokeClientAccessUseCase<U> {
         Ok(())
     }
 
+    /// Client-access grants are an anchor's (`can_revoke_client_access`, checked
+    /// with the permission by the handler before the body; owner decision #25).
     async fn authorize(
         &self,
         _command: &RevokeClientAccessCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

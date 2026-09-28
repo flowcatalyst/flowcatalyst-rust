@@ -1033,6 +1033,21 @@ pub mod checks {
         can_write_principals(context)
     }
 
+    /// Granting a principal every application (`allApplications`): only a
+    /// caller that itself reaches every application may (Go
+    /// serviceaccount/api/api.go:157, principal/api/api.go:1204). `scope`
+    /// is the caller's resolved application scope; unresolved grants
+    /// nothing.
+    pub fn require_all_applications_grantor(scope: Option<&ApplicationScope>) -> Result<()> {
+        if scope == Some(&ApplicationScope::All) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden(
+                "Only an all-applications administrator may grant all-applications access",
+            ))
+        }
+    }
+
     /// Principals, setting a user's roles (add, remove, replace):
     /// `platform:iam:user:assign-roles` itself (owner ruling 14; Java
     /// `Access.requireRoleAssigner`). Holding user create, update or delete
@@ -1647,6 +1662,21 @@ pub mod checks {
     ) -> Result<Application> {
         match application {
             Some(app) if scope.allows(&app.id) => Ok(app),
+            _ => Err(PlatformError::not_found("Application", app_code)),
+        }
+    }
+
+    /// [`require_application_access`] in a use case's `authorize`: the
+    /// caller's resolved application scope (the system caller reaches every
+    /// application; an unresolved scope none) against `application`, with
+    /// the same 404 as a missing application.
+    pub fn require_caller_application_access(
+        caller: &crate::usecase::Caller,
+        app_code: &str,
+        application: Option<Application>,
+    ) -> Result<Application> {
+        match application {
+            Some(app) if caller.allows_application(&app.id) => Ok(app),
             _ => Err(PlatformError::not_found("Application", app_code)),
         }
     }

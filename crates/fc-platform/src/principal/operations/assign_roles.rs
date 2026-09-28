@@ -57,12 +57,33 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
         Ok(())
     }
 
+    /// The target must be a user the caller administers (Go `requireUserAdmin`,
+    /// post-load; out of reach is `User_NOT_FOUND`), and the change is bounded by
+    /// the caller's role ceiling (owner ruling 14): only roles whose every
+    /// permission the caller holds may be added or removed, 403
+    /// `ROLE_ABOVE_CALLER`. The coarse `can_assign_principal_roles` gate, and a
+    /// client administrator's assignable-role bound (command shaping, as in Go's
+    /// controller), stay in the handler.
     async fn authorize(
         &self,
-        _command: &AssignUserRolesCommand,
-        _ctx: &ExecutionContext,
+        command: &AssignUserRolesCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let target = super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.user_id,
+            "User",
+        )
+        .await?;
+        let before: Vec<String> = target.roles.iter().map(|r| r.role.clone()).collect();
+        crate::role::ceiling::require_role_change(
+            ctx.caller(),
+            &self.role_repo,
+            &before,
+            &command.roles,
+        )
+        .await
     }
 
     async fn execute(

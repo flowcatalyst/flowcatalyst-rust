@@ -49,12 +49,17 @@ impl<U: UnitOfWork> UseCase for DeactivateServiceAccountUseCase<U> {
         Ok(())
     }
 
+    /// Service accounts are written by anchors only: an account's tier follows
+    /// its client links, so a non-anchor could otherwise mint an ANCHOR-tier
+    /// account (the `can_*_service_accounts` rules).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
     async fn authorize(
         &self,
         _command: &DeactivateServiceAccountCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

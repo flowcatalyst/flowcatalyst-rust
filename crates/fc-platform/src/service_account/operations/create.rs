@@ -224,11 +224,21 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         Ok(())
     }
 
+    /// Anchors only: an account's tier follows its client links, so a
+    /// non-anchor could otherwise mint an ANCHOR-tier account (the
+    /// `can_write_service_accounts` rule, checked with the permission by the
+    /// handler before the body). Granting every application needs a caller that
+    /// itself reaches every application (Go's rule; the `/api` handler also
+    /// checks it first, where Go does, and attaches the scope it resolved).
     async fn authorize(
         &self,
-        _command: &CreateServiceAccountCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateServiceAccountCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        if command.all_applications {
+            crate::checks::require_all_applications_grantor(ctx.caller().application_scope())?;
+        }
         Ok(())
     }
 

@@ -76,12 +76,14 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
         Ok(())
     }
 
+    /// Client-access grants are an anchor's (`can_grant_client_access`, checked
+    /// with the permission by the handler before the body; owner decision #25).
     async fn authorize(
         &self,
-        _c: &SetClientAssociationCommand,
-        _ctx: &ExecutionContext,
+        _command: &SetClientAssociationCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

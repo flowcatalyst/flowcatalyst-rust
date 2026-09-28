@@ -92,11 +92,29 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         Ok(())
     }
 
+    /// The target must be a user the caller administers (Go
+    /// `requireUserResourceAccess`, post-load): a client administrator manages
+    /// only CLIENT-tier users (403) of a client it reaches (else
+    /// `Principal_NOT_FOUND`, as a missing id). The coarse `can_write_principals` gate stays in
+    /// the handler, before anything is loaded.
+    /// Changing a user's scope or client is an anchor's alone.
     async fn authorize(
         &self,
-        _command: &UpdateUserCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateUserCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.principal_id,
+            "Principal",
+        )
+        .await?;
+        if (command.scope.is_some() || command.client_id.is_some()) && !ctx.caller().is_anchor() {
+            return Err(UseCaseError::verbatim(crate::PlatformError::forbidden(
+                "Only anchor users can change a principal's scope or client",
+            )));
+        }
         Ok(())
     }
 

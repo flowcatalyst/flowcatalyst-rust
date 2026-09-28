@@ -222,7 +222,6 @@ pub fn auth_config_state(ctx: &PlatformContext) -> AuthConfigState {
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         client_auth_config_repo: repos.client_auth_config_repo.clone(),
         idp_role_mapping_repo: repos.idp_role_mapping_repo.clone(),
-        role_repo: repos.role_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         unit_of_work: uow.clone(),
         encryption_service: EncryptionService::from_env().map(Arc::new),
@@ -252,10 +251,12 @@ pub fn auth_config_state(ctx: &PlatformContext) -> AuthConfigState {
         )),
         create_idp_role_mapping_use_case: Arc::new(CreateIdpRoleMappingUseCase::new(
             repos.idp_role_mapping_repo.clone(),
+            repos.role_repo.clone(),
             uow.clone(),
         )),
         delete_idp_role_mapping_use_case: Arc::new(DeleteIdpRoleMappingUseCase::new(
             repos.idp_role_mapping_repo.clone(),
+            repos.role_repo.clone(),
             uow.clone(),
         )),
     }

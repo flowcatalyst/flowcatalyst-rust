@@ -122,12 +122,25 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         Ok(())
     }
 
+    /// Go `RequireUserAdmin` for the new user's client: an anchor creates any
+    /// scope; a client administrator only CLIENT-tier users, in a client it
+    /// reaches (403 `ANCHOR_REQUIRED` / `SCOPE_FORBIDDEN`), with a user-write
+    /// permission. The handlers check this first too, because it gates their
+    /// partner-merge branch and comes before their own 400s (Go's order).
     async fn authorize(
         &self,
-        _command: &CreateUserCommand,
-        _ctx: &ExecutionContext,
+        command: &CreateUserCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        if !ctx.caller().is_anchor() && command.scope != crate::UserScope::Client {
+            return Err(UseCaseError::verbatim(crate::PlatformError::forbidden(
+                "Client administrators can only create client-scope users",
+            )));
+        }
+        Ok(crate::checks::require_user_admin(
+            ctx.caller(),
+            command.client_id.as_deref(),
+        )?)
     }
 
     async fn execute(
