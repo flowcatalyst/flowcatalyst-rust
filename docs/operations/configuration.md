@@ -27,6 +27,7 @@ The full guide is [diagnosing-stuck-processes.md](diagnosing-stuck-processes.md)
 | `FC_DIAGNOSTICS_PLATFORM_URL` | `FC_ROUTER_PLATFORM_URL`, else the in-process platform | fc-server: the platform that verifies tokens for `:9090/diagnostics/*` (none: 401) |
 | `FC_LOG_SPAN_EVENTS` | unset | `close` logs a line (with its duration) whenever a span closes; debugging only |
 | `FC_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | `false`, `http://localhost:4318`, the binary's name | OTLP/HTTP span export (builds with the `otel` feature) |
+| `FC_OTEL_SAMPLE_RATIO` | `0.001` | Trace head-sampling ratio (0.0–1.0); errors and slow traces are kept by tail sampling in the collector |
 
 ---
 

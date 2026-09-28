@@ -345,6 +345,7 @@ Spans are flushed at shutdown.
 | `FC_DIAGNOSTICS_PLATFORM_URL` | `FC_ROUTER_PLATFORM_URL`, else the in-process platform | fc-server | The platform whose JWKS verifies metrics-port diagnostics tokens |
 | `FC_LOG_SPAN_EVENTS` | unset | all | `close`: a line per closed span, with its duration; `full`: open/enter/exit/close |
 | `FC_OTEL_ENABLED` | `false` | builds with `otel` | Export spans over OTLP/HTTP |
+| `FC_OTEL_SAMPLE_RATIO` | `0.001` | builds with `otel` | Head-sampling ratio for traces (one in a thousand by default); a sampled root keeps all its child spans. Keep every error and slow trace with tail sampling in the collector |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | same | Collector (`/v1/traces` is appended) |
 | `OTEL_SERVICE_NAME` | the binary's name | same | `service.name` |
 

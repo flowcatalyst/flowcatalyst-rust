@@ -202,7 +202,8 @@ fn env_true(name: &str) -> bool {
 /// until an operator asks:
 ///
 /// - `otel` + `FC_OTEL_ENABLED=true`: spans exported over OTLP/HTTP to
-///   `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`), as
+///   `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`), head-
+///   sampled at `FC_OTEL_SAMPLE_RATIO` (default 0.001), as
 ///   `OTEL_SERVICE_NAME` (default the binary's name).
 ///
 /// A layer asked for by its variable in a build without its feature is
@@ -239,6 +240,7 @@ mod otel {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_http::{Bytes, HttpError, Request, Response};
     use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
+    use opentelemetry_sdk::trace::Sampler;
     use std::sync::OnceLock;
     use tracing_subscriber::Layer;
 
@@ -298,6 +300,7 @@ mod otel {
             .build()
             .map_err(|e| e.to_string())?;
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_sampler(sampler())
             .with_batch_exporter(exporter)
             .with_resource(
                 opentelemetry_sdk::Resource::builder()
@@ -313,6 +316,22 @@ mod otel {
                 .with_filter(super::env_filter()),
         )))
     }
+
+    /// Head sampling: `FC_OTEL_SAMPLE_RATIO` (0.0-1.0, default 0.001, one
+    /// trace in a thousand), decided at the root and followed by child spans
+    /// (`ParentBased`), so a sampled message keeps all its spans. Keep every
+    /// error and slow trace with tail sampling in the collector; the head
+    /// cannot know yet how a message will end.
+    fn sampler() -> Sampler {
+        let ratio = std::env::var("FC_OTEL_SAMPLE_RATIO")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|r| (0.0..=1.0).contains(r))
+            .unwrap_or(DEFAULT_SAMPLE_RATIO);
+        Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(ratio)))
+    }
+
+    const DEFAULT_SAMPLE_RATIO: f64 = 0.001;
 
     pub(super) fn shutdown() {
         if let Some(p) = PROVIDER.get() {
