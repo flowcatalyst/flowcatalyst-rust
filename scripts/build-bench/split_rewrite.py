@@ -326,6 +326,10 @@ class Namespace:
                 return self.canon(self.aliases[key] + vpath[k + 1 :], depth + 1)
         for c in crates:
             for g in self.globs.get((c, mod), []):
+                if "::".join(g) == mod:
+                    # a crate's half of a split module re-exporting the
+                    # other half (same V-path): nothing new to follow
+                    continue
                 cand = self.canon(g + vpath[k:], depth + 1)
                 if cand != g + vpath[k:] or self.owner(cand) is not None:
                     return cand
