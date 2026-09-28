@@ -23,6 +23,7 @@ pub mod policy_api;
 pub mod policy_repository;
 pub mod repository;
 pub mod route_repository;
+pub mod routes;
 pub mod schedule_check;
 pub mod schema;
 pub mod settings_repository;
@@ -46,6 +47,8 @@ pub use fc_function_model::{
     Segment, SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError,
     WasmKind, LIVE_ALIAS,
 };
+
+pub use routes::routes;
 
 use crate::usecase::UseCaseError;
 

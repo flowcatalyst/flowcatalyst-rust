@@ -1,4 +1,4 @@
-//! Convention test: handler files (`*_api.rs`) must not perform direct
+//! Convention test: handler files (`*_api.rs`, `api.rs`, `bff.rs`) must not perform direct
 //! writes — no `.insert(` / `.update(` / `.delete(` / `.delete_req(` on
 //! repository fields, no inline `sqlx::query("INSERT|UPDATE|DELETE")`.
 //!
@@ -33,7 +33,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// File patterns to scan — handler files.
-const HANDLER_FILE_SUFFIXES: &[&str] = &["_api.rs", "/api.rs"];
+const HANDLER_FILE_SUFFIXES: &[&str] = &["_api.rs", "/api.rs", "/bff.rs"];
 
 /// Write-call patterns. Each is checked against trimmed lines to avoid
 /// false positives in comments. The patterns all include `_repo.` or
@@ -69,7 +69,7 @@ const FILE_ALLOWLIST: &[&str] = &[
     "shared/application_roles_sdk_api.rs",
     // BFF roles API — delegates to role use cases internally; any remaining
     // repo calls are reads, but the test's naive pattern-match can flag them.
-    "shared/bff_roles_api.rs",
+    "role/bff.rs",
     // Protocol-level auth token storage — refresh tokens, auth codes, OIDC
     // login state, pending-auth rows. Same category as "platform-
     // infrastructure processing" in CLAUDE.md: each token issuance is a

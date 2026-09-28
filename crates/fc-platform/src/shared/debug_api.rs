@@ -12,8 +12,6 @@ use crate::{DispatchJobRepository, EventRepository};
 use axum::{
     extract::{Path, Query, State},
     response::Json,
-    routing::get,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -222,7 +220,7 @@ impl From<&DispatchJob> for RawDispatchJobResponse {
 /// List raw events (debug/admin). Returns the most recent rows; no
 /// pagination — `msg_events` ingests at high rates and page navigation is
 /// meaningless.
-async fn list_raw_events(
+pub(super) async fn list_raw_events(
     State(state): State<DebugState>,
     auth: Authenticated,
     Query(params): Query<DebugListQuery>,
@@ -237,7 +235,7 @@ async fn list_raw_events(
 }
 
 /// Get a single raw event by ID (debug/admin only)
-async fn get_raw_event(
+pub(super) async fn get_raw_event(
     State(state): State<DebugState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -259,7 +257,7 @@ async fn get_raw_event(
 /// List raw dispatch jobs (debug/admin). Returns the most recent rows; no
 /// pagination — `msg_dispatch_jobs` ingests at high rates and page
 /// navigation is meaningless.
-async fn list_raw_dispatch_jobs(
+pub(super) async fn list_raw_dispatch_jobs(
     State(state): State<DebugState>,
     auth: Authenticated,
     Query(params): Query<DebugListQuery>,
@@ -274,7 +272,7 @@ async fn list_raw_dispatch_jobs(
 }
 
 /// Get a single raw dispatch job by ID (debug/admin only)
-async fn get_raw_dispatch_job(
+pub(super) async fn get_raw_dispatch_job(
     State(state): State<DebugState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -292,19 +290,3 @@ async fn get_raw_dispatch_job(
 // ============================================================================
 // Router
 // ============================================================================
-
-/// Create debug events router
-pub fn debug_events_router(state: DebugState) -> Router {
-    Router::new()
-        .route("/", get(list_raw_events))
-        .route("/{id}", get(get_raw_event))
-        .with_state(state)
-}
-
-/// Create debug dispatch jobs router
-pub fn debug_dispatch_jobs_router(state: DebugState) -> Router {
-    Router::new()
-        .route("/", get(list_raw_dispatch_jobs))
-        .route("/{id}", get(get_raw_dispatch_job))
-        .with_state(state)
-}

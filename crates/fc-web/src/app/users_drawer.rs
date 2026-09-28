@@ -25,7 +25,7 @@ use fc_platform::principal::admin;
 use fc_platform::principal::api::{
     ResetPasswordRequest, SetApplicationAccessRequest, UpdatePrincipalRequest,
 };
-use fc_platform::principal::go_api::{ClientAssociationRequest, client_association};
+use fc_platform::principal::api::{ClientAssociationRequest, client_association};
 use fc_platform::{AuthContext, PlatformError, checks};
 use serde::Deserialize;
 use topcoat::{

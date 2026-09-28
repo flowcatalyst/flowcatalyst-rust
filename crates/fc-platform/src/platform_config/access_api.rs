@@ -7,7 +7,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::access_entity::PlatformConfigAccess;
 use super::access_repository::PlatformConfigAccessRepository;
@@ -270,11 +269,4 @@ pub async fn delete_access(
         .await
         .into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-pub fn config_access_router(state: ConfigAccessState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_access, create_access))
-        .routes(routes!(update_access, delete_access))
-        .with_state(state)
 }

@@ -21,8 +21,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -428,25 +427,4 @@ pub async fn sync_platform_openapi(
         })),
         Err(err) => Err(err.into()),
     }
-}
-
-pub fn bff_developer_router(state: BffDeveloperState) -> Router {
-    Router::new()
-        .route("/applications", get(list_applications))
-        .route("/applications/{app_id}", get(get_application))
-        .route(
-            "/applications/{app_id}/openapi/current",
-            get(get_current_openapi),
-        )
-        .route(
-            "/applications/{app_id}/openapi/versions",
-            get(list_versions),
-        )
-        .route(
-            "/applications/{app_id}/openapi/versions/{spec_id}",
-            get(get_version),
-        )
-        .route("/applications/{app_id}/event-types", get(list_event_types))
-        .route("/sync-platform-openapi", post(sync_platform_openapi))
-        .with_state(state)
 }

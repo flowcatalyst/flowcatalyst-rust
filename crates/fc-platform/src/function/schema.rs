@@ -12,8 +12,6 @@
 
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
 
 /// The schema's bytes.
 pub const FUNCTION_MANIFEST_SCHEMA: &[u8] =
@@ -22,16 +20,11 @@ pub const FUNCTION_MANIFEST_SCHEMA: &[u8] =
 /// Where the schema is served.
 pub const PATH_FUNCTION_MANIFEST_SCHEMA: &str = "/api/schemas/function-manifest.json";
 
-async fn function_manifest_schema() -> impl IntoResponse {
+pub(super) async fn function_manifest_schema() -> impl IntoResponse {
     (
         [(CONTENT_TYPE, "application/schema+json")],
         FUNCTION_MANIFEST_SCHEMA,
     )
-}
-
-/// The unauthenticated schema route, to merge into the platform router.
-pub fn function_manifest_schema_router<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    Router::new().route(PATH_FUNCTION_MANIFEST_SCHEMA, get(function_manifest_schema))
 }
 
 /// Java `FunctionManifestSchemaTest`: the schema is an editor aid over the
@@ -199,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn serves_the_schema_bytes_without_a_token() {
-        let response = function_manifest_schema_router::<()>()
+        let response = super::super::routes::function_manifest_schema_router::<()>()
             .oneshot(
                 Request::get(PATH_FUNCTION_MANIFEST_SCHEMA)
                     .body(Body::empty())

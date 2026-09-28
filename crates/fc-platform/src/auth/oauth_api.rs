@@ -9,8 +9,6 @@ use axum::{
     extract::{Form, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Redirect, Response},
-    routing::{get, post},
-    Router,
 };
 use base64::Engine as _;
 use chrono::Utc;
@@ -2573,17 +2571,6 @@ pub async fn revoke(
 
     // RFC 7009: Always return 200, even if token was invalid
     StatusCode::OK.into_response()
-}
-
-/// Create OAuth router
-pub fn oauth_router(state: OAuthState) -> Router {
-    Router::new()
-        .route("/authorize", get(authorize))
-        .route("/token", post(token))
-        .route("/userinfo", get(userinfo).post(userinfo))
-        .route("/introspect", post(introspect))
-        .route("/revoke", post(revoke))
-        .with_state(state)
 }
 
 #[cfg(test)]

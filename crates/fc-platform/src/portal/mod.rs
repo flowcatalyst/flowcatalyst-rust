@@ -26,11 +26,13 @@ pub mod operations;
 pub mod password;
 pub mod policy;
 pub mod repository;
+pub mod routes;
 pub mod token;
 
 use std::sync::Arc;
 
 pub use entity::{is_portal_subject, trimmed_or_none, PortalApp, PortalIdentity};
+pub use routes::routes;
 
 use crate::auth::authorization_code_repository::AuthorizationCodeRepository;
 use crate::auth::password_service::PasswordService;

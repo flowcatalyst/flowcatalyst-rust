@@ -19,8 +19,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
@@ -93,7 +92,7 @@ async fn verify_any_second_factor(
 }
 
 /// `POST /auth/change-password` (Go `handleChangePassword`).
-async fn change_password(
+pub(super) async fn change_password(
     State(s): State<Arc<AccountState>>,
     auth: OptionalAuth,
     jar: CookieJar,
@@ -203,7 +202,10 @@ async fn change_password(
 }
 
 /// `POST /auth/change-password/send-email-code`.
-async fn send_email_code(State(s): State<Arc<AccountState>>, auth: OptionalAuth) -> Response {
+pub(super) async fn send_email_code(
+    State(s): State<Arc<AccountState>>,
+    auth: OptionalAuth,
+) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -256,7 +258,10 @@ struct LoginHistoryItem {
 }
 
 /// `GET /auth/login-history` (Go `handleLoginHistory`).
-async fn login_history(State(s): State<Arc<AccountState>>, auth: OptionalAuth) -> Response {
+pub(super) async fn login_history(
+    State(s): State<Arc<AccountState>>,
+    auth: OptionalAuth,
+) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -286,13 +291,4 @@ async fn login_history(State(s): State<Arc<AccountState>>, auth: OptionalAuth) -
         })
         .collect();
     Json(json!({ "attempts": attempts })).into_response()
-}
-
-/// The session-gated account routes, nested under `/auth`.
-pub fn account_router(state: Arc<AccountState>) -> Router {
-    Router::new()
-        .route("/change-password", post(change_password))
-        .route("/change-password/send-email-code", post(send_email_code))
-        .route("/login-history", get(login_history))
-        .with_state(state)
 }

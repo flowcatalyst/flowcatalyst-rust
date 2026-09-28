@@ -4,7 +4,7 @@
 //! - /.well-known/openid-configuration
 //! - /.well-known/jwks.json
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -222,14 +222,6 @@ pub async fn get_jwks(State(state): State<WellKnownState>) -> Json<JwksResponse>
         .collect();
 
     Json(JwksResponse { keys })
-}
-
-/// Create the well-known router
-pub fn well_known_router(state: WellKnownState) -> Router {
-    Router::new()
-        .route("/openid-configuration", get(get_openid_configuration))
-        .route("/jwks.json", get(get_jwks))
-        .with_state(state)
 }
 
 #[cfg(test)]

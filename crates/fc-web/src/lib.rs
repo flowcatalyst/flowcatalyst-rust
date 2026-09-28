@@ -68,25 +68,28 @@ pub struct WebDeps {
     pub(crate) users: UserAdminStates,
 }
 
-/// The principal API's states, as `build_platform_routes` built them
-/// (`PlatformRoutes::principals`, `go_routes.principals`, `two_factor`,
-/// `developer_credentials`). The users section calls the same handler
+/// The principal API's states, built from the platform's `PlatformContext`
+/// by the modules' own state builders (`principal::routes::principals_state`,
+/// `principal_go_state`, the context's `two_factor`,
+/// `developer_credential::routes::developer_credentials_state`), as the
+/// routes build them. The users section calls the same handler
 /// bodies (`fc_platform::principal::admin`, …) with them, so its writes go
 /// through the same checks and use cases as `/api/principals`.
 #[derive(Clone)]
 pub struct UserAdminStates {
     pub principals: fc_platform::principal::PrincipalsState,
-    pub principal_go: fc_platform::principal::go_api::PrincipalGoState,
+    pub principal_go: fc_platform::principal::api::PrincipalGoState,
     pub two_factor: Arc<fc_platform::mfa::TwoFactorLogin>,
     pub developer_credentials: fc_platform::developer_credential::api::DeveloperCredentialsState,
 }
 
 impl WebDeps {
     /// Build from the same pieces every binary already has. `auth_state`
-    /// and `password_setup_hint` are the ones `build_platform_routes` built
-    /// for `/auth/login` and `/auth/check-domain` (`PlatformRoutes::auth`,
-    /// `PlatformRoutes::oidc_login`), so the form signs in exactly as the API:
-    /// the same backoff policy, session cookie and second-factor gate.
+    /// and `password_setup_hint` are built from the platform's
+    /// `PlatformContext` as `/auth/login` and `/auth/check-domain` build
+    /// theirs (`auth::routes::auth_state`, `auth::routes::oidc_login_state`),
+    /// so the form signs in exactly as the API: the same backoff policy,
+    /// session cookie and second-factor gate.
     pub fn new(
         repos: &Repositories,
         auth: &AuthServices,

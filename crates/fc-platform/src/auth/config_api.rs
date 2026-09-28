@@ -6,8 +6,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, post},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1371,61 +1370,3 @@ pub async fn delete_idp_role_mapping(
 // ============================================================================
 // Routers
 // ============================================================================
-
-/// Create anchor domains router
-pub fn anchor_domains_router(state: AuthConfigState) -> Router {
-    Router::new()
-        .route("/", post(create_anchor_domain).get(list_anchor_domains))
-        .route("/check/{domain}", get(check_anchor_domain))
-        .route(
-            "/{id}",
-            get(get_anchor_domain)
-                .put(update_anchor_domain)
-                .delete(delete_anchor_domain),
-        )
-        .with_state(state)
-}
-
-/// Create client auth configs router
-pub fn client_auth_configs_router(state: AuthConfigState) -> Router {
-    Router::new()
-        .route(
-            "/",
-            post(create_client_auth_config).get(list_client_auth_configs),
-        )
-        .route("/internal", post(create_internal_auth_config))
-        .route("/oidc", post(create_oidc_auth_config))
-        .route("/by-domain/{domain}", get(get_by_domain))
-        .route(
-            "/{id}",
-            get(get_client_auth_config)
-                .put(update_client_auth_config)
-                .delete(delete_client_auth_config),
-        )
-        .route("/{id}/config-type", axum::routing::put(update_config_type))
-        .route("/{id}/oidc", axum::routing::put(update_oidc_config))
-        .route(
-            "/{id}/client-binding",
-            axum::routing::put(update_client_binding),
-        )
-        .route(
-            "/{id}/additional-clients",
-            axum::routing::put(update_additional_clients),
-        )
-        .route(
-            "/{id}/granted-clients",
-            axum::routing::put(update_granted_clients),
-        )
-        .with_state(state)
-}
-
-/// Create IDP role mappings router
-pub fn idp_role_mappings_router(state: AuthConfigState) -> Router {
-    Router::new()
-        .route(
-            "/",
-            post(create_idp_role_mapping).get(list_idp_role_mappings),
-        )
-        .route("/{id}", delete(delete_idp_role_mapping))
-        .with_state(state)
-}

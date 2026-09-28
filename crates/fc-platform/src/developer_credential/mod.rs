@@ -17,8 +17,9 @@
 pub mod api;
 pub mod events;
 pub mod operations;
+pub mod routes;
 
-pub use api::developer_credentials_router;
+pub use routes::{developer_credentials_router, routes};
 
 /// The role that may hold a developer credential (Go `developerRoleName`).
 pub const DEVELOPER_ROLE: &str = "platform:developer";

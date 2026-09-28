@@ -7,8 +7,10 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 
 // Re-export main types
-pub use api::{subscriptions_router, SubscriptionsState};
+pub use api::SubscriptionsState;
 pub use entity::{Subscription, SubscriptionStatus};
 pub use repository::SubscriptionRepository;
+pub use routes::{routes, subscriptions_router};

@@ -10,7 +10,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::audit::stored_redaction::redact_stored_document;
 use crate::shared::error::PlatformError;
@@ -549,21 +548,6 @@ pub async fn get_client_ids(
     let client_ids = state.audit_log_repo.find_distinct_client_ids().await?;
 
     Ok(Json(ClientIdsResponse { client_ids }))
-}
-
-/// Create audit logs router
-pub fn audit_logs_router(state: AuditLogsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_audit_logs))
-        .routes(routes!(get_entity_types))
-        .routes(routes!(get_operations))
-        .routes(routes!(get_application_ids))
-        .routes(routes!(get_client_ids))
-        .routes(routes!(get_recent_audit_logs))
-        .routes(routes!(get_audit_log))
-        .routes(routes!(get_entity_audit_logs))
-        .routes(routes!(get_principal_audit_logs))
-        .with_state(state)
 }
 
 #[cfg(test)]

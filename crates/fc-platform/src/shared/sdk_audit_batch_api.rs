@@ -21,8 +21,7 @@ use axum::{
     body::Bytes,
     extract::State,
     response::{IntoResponse, Response},
-    routing::post,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -256,7 +255,7 @@ fn plan_batch(
     (logs, results)
 }
 
-async fn batch_audit_logs(
+pub(crate) async fn batch_audit_logs(
     State(state): State<SdkAuditBatchState>,
     auth: Authenticated,
     body: Bytes,
@@ -288,12 +287,6 @@ async fn batch_audit_logs(
 }
 
 // ── Router ──────────────────────────────────────────────────────────────
-
-pub fn sdk_audit_batch_router(state: SdkAuditBatchState) -> Router {
-    Router::new()
-        .route("/batch", post(batch_audit_logs))
-        .with_state(state)
-}
 
 #[cfg(test)]
 mod tests {

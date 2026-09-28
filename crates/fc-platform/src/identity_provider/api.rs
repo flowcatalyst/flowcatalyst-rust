@@ -2,8 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -219,7 +218,7 @@ pub(crate) fn seal_client_secret(
     ),
     security(("bearer_auth" = []))
 )]
-async fn create_identity_provider(
+pub(super) async fn create_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Json(req): Json<CreateIdentityProviderRequest>,
@@ -291,7 +290,7 @@ async fn create_identity_provider(
     ),
     security(("bearer_auth" = []))
 )]
-async fn list_identity_providers(
+pub(super) async fn list_identity_providers(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
 ) -> Result<Json<IdentityProvidersListResponse>, PlatformError> {
@@ -319,7 +318,7 @@ async fn list_identity_providers(
     ),
     security(("bearer_auth" = []))
 )]
-async fn get_identity_provider(
+pub(super) async fn get_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -349,7 +348,7 @@ async fn get_identity_provider(
     ),
     security(("bearer_auth" = []))
 )]
-async fn update_identity_provider(
+pub(super) async fn update_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -429,7 +428,7 @@ async fn update_identity_provider(
     ),
     security(("bearer_auth" = []))
 )]
-async fn delete_identity_provider(
+pub(super) async fn delete_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -443,19 +442,4 @@ async fn delete_identity_provider(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-pub fn identity_providers_router(state: IdentityProvidersState) -> Router {
-    Router::new()
-        .route(
-            "/",
-            post(create_identity_provider).get(list_identity_providers),
-        )
-        .route(
-            "/{id}",
-            get(get_identity_provider)
-                .put(update_identity_provider)
-                .delete(delete_identity_provider),
-        )
-        .with_state(state)
 }

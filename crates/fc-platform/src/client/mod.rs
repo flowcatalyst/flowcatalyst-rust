@@ -7,9 +7,10 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
-pub mod search_api;
+pub mod routes;
 
 // Re-export main types
-pub use api::{clients_router, ClientsState};
+pub use api::ClientsState;
 pub use entity::{Client, ClientStatus};
 pub use repository::ClientRepository;
+pub use routes::{clients_router, routes};

@@ -9,7 +9,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -921,31 +920,4 @@ pub async fn event_filter_options(
         subdomains: options(subdomains),
         event_types: options(types),
     }))
-}
-
-/// Create events router for the BFF tier (`/bff/events`). Cookie-auth, used
-/// by the SPA. Includes `batch_create_events` — the SPA-facing batch that
-/// fans out events to subscriptions.
-pub fn events_router(state: EventsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_event, list_events))
-        .routes(routes!(batch_create_events))
-        .routes(routes!(list_events_raw))
-        .routes(routes!(event_filter_options))
-        .routes(routes!(get_event))
-        .with_state(state)
-}
-
-/// Create events router for the API tier (`/api/events`). Bearer-auth, used
-/// by SDK consumers. **No `batch_create_events`** — SDK callers use
-/// `sdk_events_batch_router::POST /batch` (different handler, optimized for
-/// high-volume insert without per-event fan-out). The two routers must not
-/// both register `POST /batch` against the same prefix.
-pub fn events_api_router(state: EventsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_event, list_events))
-        .routes(routes!(list_events_raw))
-        .routes(routes!(event_filter_options))
-        .routes(routes!(get_event))
-        .with_state(state)
 }

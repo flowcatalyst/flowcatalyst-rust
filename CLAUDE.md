@@ -277,7 +277,8 @@ below it. Crossing layers is a bug, even when it compiles.
 
 | Layer | Lives in | Knows about | Does NOT know about |
 |---|---|---|---|
-| **Handler** (HTTP/route) | `*/api.rs`, `shared/*_api.rs` | HTTP types, DTOs, permission checks | SQL, transactions, database types |
+| **Handler** (HTTP) | `*/api.rs` (`/api`, and handlers both tiers share), `*/bff.rs` (BFF-only), a named sub-surface file (`auth/oauth_api.rs`, …), `shared/*_api.rs` for platform plumbing | HTTP types, DTOs, permission checks | SQL, transactions, database types |
+| **Routing** | `*/routes.rs` (one `routes(ctx)` per module), `router.rs` (the module list + cross-cutting layers) | Paths, per-group layers, state construction from `PlatformContext` | Handler logic |
 | **Use Case** | `*/operations/*.rs` | Domain entities, repositories (as traits/readers), `UnitOfWork`, domain events | HTTP, SQL strings, transaction types |
 | **Domain** | `*/entity.rs`, `*/operations/events.rs` | Plain data, domain invariants, factory/behavior methods | `sqlx`, `Postgres`, `Transaction<'_, _>`, any DB driver |
 | **Repository** | `*/repository.rs` | SQL, sqlx types, row structs, transaction handles | HTTP, permissions, domain events |
@@ -333,7 +334,23 @@ Adding a new aggregate? You create, in order:
 1. `src/<domain>/entity.rs` — pure Rust structs, no sqlx.
 2. `src/<domain>/repository.rs` — `struct <Aggregate>Repository`, row types, all SQL, and `impl Persist<Aggregate> for <Aggregate>Repository`.
 3. `src/<domain>/operations/*.rs` — one file per use case. Call `unit_of_work.commit(...)` at the tail.
-4. `src/<domain>/api.rs` — HTTP handlers. Permission checks, build Command, call `use_case.run(...)`.
+4. `src/<domain>/api.rs` (and `bff.rs` for BFF-only handlers) — HTTP handlers. Permission checks, build Command, call `use_case.run(...)`.
+5. `src/<domain>/routes.rs` — `pub fn routes(ctx: &PlatformContext) -> AggregateRoutes`:
+   nest the handler-list routers at their prefixes (don't register literal
+   full paths), put per-group layers here, build states with
+   `pub fn <x>_state(ctx)`. Handler paths in `routes!` are fully qualified
+   (`crate::<agg>::api::h`). Anything more than one state must share (a
+   cache, a limiter bucket) lives on `PlatformContext`, never built twice.
+6. `router.rs` — add `.merge(crate::<agg>::routes(ctx))` to the module list,
+   at the end unless it shares a path or schema name with an earlier module
+   (order decides OpenAPI's first-wins schema names and the `Allow` order).
+
+Binaries and tests build a `PlatformContext` and call
+`fc_platform::router::build(&ctx)`. Guardrails:
+`tests/route_table_snapshot_test.rs` pins every route (methods, auth, limiter,
+OpenAPI membership) and the document bytes — regenerate with
+`UPDATE_ROUTE_SNAPSHOT=1` only for an intended change and review the diff;
+`tests/route_wiring_convention_test.rs` enforces the wiring rules above.
 
 If you find yourself adding SQL anywhere other than `repository.rs` (or one
 of the three infrastructure-processing files), you are in the wrong file.

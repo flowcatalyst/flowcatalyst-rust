@@ -2,7 +2,7 @@
 //!
 //! Returns platform feature flags and configuration.
 
-use axum::{routing::get, Json, Router};
+use axum::Json;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -43,9 +43,4 @@ impl Default for PlatformConfig {
 )]
 pub async fn get_platform_config() -> Json<PlatformConfig> {
     Json(PlatformConfig::default())
-}
-
-/// Create the platform config router
-pub fn platform_config_router() -> Router {
-    Router::new().route("/platform", get(get_platform_config))
 }

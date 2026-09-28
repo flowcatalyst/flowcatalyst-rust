@@ -1,7 +1,7 @@
 //! Shared test harness for fc-platform integration tests.
 //!
 //! `TestApp::setup()` spins up a PostgreSQL testcontainer, runs migrations,
-//! builds the full production router via `build_platform_routes`, and
+//! builds the full production router via `fc_platform::router::build`, and
 //! exposes helpers for:
 //!   - generating auth tokens (anchor / partner / service account)
 //!   - sending requests against the router
@@ -37,9 +37,7 @@ use fc_platform::repository::Repositories;
 use fc_platform::shared::authorization_service::AuthorizationService;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::shared::middleware::{AppState, AuthLayer};
-use fc_platform::shared::server_setup::{
-    build_platform_routes, AuthServices, PlatformRoutesConfig,
-};
+use fc_platform::shared::server_setup::{AuthServices, PlatformContext, PlatformRoutesConfig};
 use fc_platform::usecase::PgUnitOfWork;
 
 /// A fully-wired test application sharing a live Postgres container.
@@ -134,7 +132,7 @@ impl TestApp {
             )),
         };
 
-        let platform_routes = build_platform_routes(
+        let ctx = PlatformContext::new(
             &repos,
             &auth_services,
             &unit_of_work,
@@ -154,7 +152,7 @@ impl TestApp {
             platform_application_id,
         );
 
-        let (base_router, _openapi) = platform_routes.build();
+        let (base_router, _openapi) = fc_platform::router::build(&ctx);
         let router = base_router.layer(AuthLayer::new(AppState {
             auth_service: auth_service.clone(),
             authz_service,

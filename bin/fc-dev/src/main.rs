@@ -918,7 +918,7 @@ async fn main() -> Result<()> {
     let rate_limit_policies =
         std::sync::Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
-    let routes = fc_platform::shared::server_setup::build_platform_routes(
+    let ctx = fc_platform::shared::server_setup::PlatformContext::new(
         &repos,
         &auth_services,
         &unit_of_work,
@@ -976,19 +976,20 @@ async fn main() -> Result<()> {
     // and `/auth/check-domain` use.
     #[cfg(feature = "web")]
     let web_auth = (
-        routes.auth.clone(),
-        routes.oidc_login.password_setup_hint.clone(),
+        fc_platform::auth::routes::auth_state(&ctx),
+        fc_platform::auth::routes::oidc_login_state(&ctx).password_setup_hint,
     );
     // The users section runs the principal API's own handler bodies, so it
     // takes the states those handlers were built with.
     #[cfg(feature = "web")]
     let web_users = fc_web::UserAdminStates {
-        principals: routes.principals.clone(),
-        principal_go: routes.go_routes.principals.clone(),
-        two_factor: routes.two_factor.clone(),
-        developer_credentials: routes.developer_credentials.clone(),
+        principals: fc_platform::principal::routes::principals_state(&ctx),
+        principal_go: fc_platform::principal::routes::principal_go_state(&ctx),
+        two_factor: ctx.two_factor.clone(),
+        developer_credentials:
+            fc_platform::developer_credential::routes::developer_credentials_state(&ctx),
     };
-    let (platform_app, platform_openapi) = routes.build();
+    let (platform_app, platform_openapi) = fc_platform::router::build(&ctx);
 
     // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
     // event-types sync writes only deltas, and OpenAPI sync no-ops when
@@ -1032,7 +1033,7 @@ async fn main() -> Result<()> {
     // Dev-specific extra routes.
     //
     // `POST /api/dispatch-jobs/batch` is already registered by
-    // `PlatformRoutes` via `sdk_dispatch_jobs_batch_router`, so we do NOT
+    // `dispatch_job::routes` via `sdk_dispatch_jobs_batch_router`, so we do NOT
     // re-nest the full `dispatch_jobs_router` here — doing so double-
     // registers the /batch handler and axum panics at startup. Dispatch
     // job list/get endpoints remain available under `/bff/dispatch-jobs/*`.

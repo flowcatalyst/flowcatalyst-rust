@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::operations::{
     RequeueDispatchJobsUseCase, ResendCommand, SettleDispatchJobUseCase, StatusFlipCommand,
@@ -393,20 +392,6 @@ pub async fn bff_sign_dispatch_job(
 ) -> Result<Json<DeliveryPlan>, PlatformError> {
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
     sign(&state, &auth, id).await
-}
-
-/// Full-path router; merged at the root.
-pub fn dispatch_job_actions_router(state: DispatchJobActionsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(api_requeue_dispatch_jobs))
-        .routes(routes!(api_cancel_dispatch_job))
-        .routes(routes!(api_complete_dispatch_job))
-        .routes(routes!(api_sign_dispatch_job))
-        .routes(routes!(bff_requeue_dispatch_jobs))
-        .routes(routes!(bff_cancel_dispatch_job))
-        .routes(routes!(bff_complete_dispatch_job))
-        .routes(routes!(bff_sign_dispatch_job))
-        .with_state(state)
 }
 
 #[cfg(test)]

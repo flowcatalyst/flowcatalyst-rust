@@ -15,8 +15,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -594,17 +593,6 @@ pub fn portal_ip_rate_config() -> crate::shared::rate_limit_middleware::RateLimi
         per_minute: read("FC_OIDC_RATE_PER_MIN", 60),
         burst: read("FC_OIDC_BURST", 30),
     }
-}
-
-/// `/portal` routes (public; per-IP limited by the router).
-pub fn portal_login_router(state: PortalLoginState) -> Router {
-    Router::new()
-        .route("/authorize", get(authorize))
-        .route("/auth/check-domain", post(check_domain))
-        .route("/auth/login", post(password_login))
-        .route("/auth/password-reset", post(request_password_reset))
-        .route("/auth/oidc/login", get(portal_oidc_login))
-        .with_state(state)
 }
 
 #[cfg(test)]

@@ -14,7 +14,6 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::connection::operations::sync::{
     SyncConnectionInput, SyncConnectionsCommand, SyncConnectionsUseCase,
@@ -225,12 +224,4 @@ pub async fn sync_processes_by_body(
         synced_codes: event.synced_codes,
         password_hash_ignored: Vec::new(),
     }))
-}
-
-/// Full-path router; merged at the root.
-pub fn sdk_sync_go_router(state: SdkSyncGoState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(sync_connections))
-        .routes(routes!(sync_processes_by_body))
-        .with_state(state)
 }
