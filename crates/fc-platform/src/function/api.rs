@@ -11,6 +11,7 @@
 //! Every write handler calls `checks::require_permission` (Java
 //! `Checks.require`: `403 PERMISSION_REQUIRED`).
 
+use crate::function::operations::access::FunctionReach;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

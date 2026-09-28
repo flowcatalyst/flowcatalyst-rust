@@ -1,24 +1,25 @@
 //! Shared Module
 //!
-//! Cross-cutting concerns and shared utilities.
+//! Cross-cutting concerns and shared utilities. The kernel's modules are
+//! fc-platform-core's, re-exported here at their old paths;
+//! `authorization_service`, `database` and `middleware` add the platform's
+//! halves (the repository-backed services, the seeding, `AppState`) to
+//! core's.
 
-pub mod api_common;
+pub use fc_platform_core::shared::{
+    api_common, caller_reach, capped_body, email_service, encryption_service, enum_str, error,
+    jsonb_text, log_throttle, rate_limit_middleware, rate_limit_store, rejection, secret_backfill,
+    secret_ref, tsid, webhook_signer,
+};
+
 pub mod bootstrap_admin;
 pub mod database;
 pub mod default_processes;
-pub mod enum_str;
-pub mod jsonb_text;
-pub mod error;
-pub mod log_throttle;
 pub mod middleware;
 pub mod profile_only;
-pub mod rejection;
-pub mod tsid;
 // APIs
 pub mod application_roles_sdk_api;
 pub mod batch_api;
-pub mod caller_reach;
-pub mod capped_body;
 pub mod bff_dashboard_api;
 pub mod bff_developer_api;
 pub mod client_selection_api;
@@ -47,22 +48,15 @@ pub mod well_known_api;
 pub mod server_setup;
 
 // Per-IP rate limit middleware (in-memory, per-instance)
-pub mod rate_limit_middleware;
 
 // Distributed rate-limit store (Redis when available, Postgres fallback)
-pub mod rate_limit_store;
 
 // Services
 pub mod authorization_service;
 pub mod branding;
-pub mod email_service;
-pub mod encryption_service;
 pub mod integrity_scan;
 pub mod projections_service;
 pub mod role_sync_service;
-pub mod secret_backfill;
-pub mod secret_ref;
-pub mod webhook_signer;
 
 // Re-export commonly used items
 pub use api_common::{PaginatedResponse, PaginationParams};

@@ -59,7 +59,17 @@ pub mod shared;
 
 // Cross-cutting concerns
 pub mod seed;
-pub mod usecase;
+/// The permission catalogue's home module and the principal kinds
+/// (fc-platform-core).
+pub use fc_platform_core::principal_kind;
+/// The use-case contract and the unit of work (fc-platform-core).
+pub use fc_platform_core::usecase;
+pub use fc_platform_core::{details, impl_domain_event};
+
+// Unit tests of the lower crates' code that exercise it with the platform's
+// aggregates (they can't live in the crate that defines the code).
+#[cfg(test)]
+mod split_tests;
 
 // Dispatch scheduler (polls PENDING jobs → queue → router → webhook)
 pub mod scheduler;
@@ -76,7 +86,8 @@ pub use usecase::{
     Committed, DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, UnitOfWork,
     UseCaseError, UseCaseResult,
 };
-// Note: impl_domain_event! macro is automatically exported at crate root via #[macro_export]
+// Note: impl_domain_event! and details! are fc-platform-core's
+// `#[macro_export]` macros, re-exported above.
 
 // Re-export main entity types for convenience
 pub use application::client_config::ApplicationClientConfig;
@@ -393,12 +404,17 @@ pub mod api {
     pub use crate::subscription::routes::subscriptions_router;
 
     // New domain APIs
+    pub use crate::audit::routes::sdk_audit_batch_router;
     pub use crate::connection::api::ConnectionsState;
     pub use crate::connection::routes::connections_router;
     pub use crate::cors::api::CorsState;
     pub use crate::cors::routes::cors_router;
+    pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
     pub use crate::email_domain_mapping::api::EmailDomainMappingsState;
     pub use crate::email_domain_mapping::routes::email_domain_mappings_router;
+    pub use crate::event::routes::sdk_events_batch_router;
+    pub use crate::event_type::bff::BffEventTypesState;
+    pub use crate::event_type::routes::bff_event_types_router;
     pub use crate::identity_provider::api::IdentityProvidersState;
     pub use crate::identity_provider::routes::identity_providers_router;
     pub use crate::login_attempt::api::LoginAttemptsState;
@@ -406,27 +422,22 @@ pub mod api {
     pub use crate::platform_config::access_api::ConfigAccessState;
     pub use crate::platform_config::api::PlatformConfigState;
     pub use crate::platform_config::routes::{admin_platform_config_router, config_access_router};
-    pub use crate::event::routes::sdk_events_batch_router;
+    pub use crate::role::bff::BffRolesState;
+    pub use crate::role::routes::bff_roles_router;
+    pub use crate::scheduled_job::bff::BffScheduledJobsState;
+    pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
     pub use crate::shared::batch_api::SdkEventsState;
     pub use crate::shared::bff_dashboard_api::BffDashboardState;
-    pub use crate::shared::routes::bff_dashboard_router;
-    pub use crate::event_type::routes::bff_event_types_router;
-    pub use crate::event_type::bff::BffEventTypesState;
-    pub use crate::role::routes::bff_roles_router;
-    pub use crate::role::bff::BffRolesState;
-    pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
-    pub use crate::scheduled_job::bff::BffScheduledJobsState;
     pub use crate::shared::dispatch_process_api::DispatchProcessState;
-    pub use crate::shared::routes::dispatch_process_router;
     pub use crate::shared::me_api::MeState;
-    pub use crate::shared::routes::me_router;
     pub use crate::shared::public_api::PublicApiState;
+    pub use crate::shared::routes::bff_dashboard_router;
+    pub use crate::shared::routes::dispatch_process_router;
+    pub use crate::shared::routes::me_router;
     pub use crate::shared::routes::public_router;
-    pub use crate::audit::routes::sdk_audit_batch_router;
-    pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
-    pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
-    pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
     pub use crate::shared::routes::sdk_sync_router;
+    pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
+    pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
     pub use crate::shared::sdk_sync_api::SdkSyncState;
 
     // Shared APIs

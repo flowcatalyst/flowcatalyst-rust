@@ -157,8 +157,8 @@ pub fn null_if_empty<S: serde::Serializer>(v: &[String], s: S) -> Result<S::Ok, 
 /// # Example
 ///
 /// ```ignore
-/// use fc_platform::usecase::EventMetadata;
-/// use fc_platform::impl_domain_event;
+/// use fc_platform_core::usecase::EventMetadata;
+/// use fc_platform_core::impl_domain_event;
 ///
 /// #[derive(Serialize)]
 /// pub struct UserCreated {

@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Any of these substrings in the execute body means the use case is
 /// routing through UnitOfWork — the happy path we want.
@@ -37,31 +37,12 @@ const FILE_SKIPLIST: &[&str] = &[];
 /// `"path/suffix::fn_name"` — specific execute methods to skip.
 const FN_SKIPLIST: &[&str] = &[];
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
 fn should_skip(path: &Path) -> bool {
-    let rel = path
-        .strip_prefix(src_root())
+    let rel = crate::support::sources::strip_src(path)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
     FILE_SKIPLIST.iter().any(|s| rel.contains(s))
-}
-
-fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk_rs_files(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
 }
 
 /// `impl UseCase for X` or `impl<U: UnitOfWork> UseCase for X<U>` — the
@@ -196,7 +177,7 @@ fn every_use_case_terminates_through_unit_of_work() {
     let skip_keys: HashSet<&str> = FN_SKIPLIST.iter().copied().collect();
 
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
 
     let mut violations = Vec::new();
     let mut checked = 0usize;
@@ -209,8 +190,7 @@ fn every_use_case_terminates_through_unit_of_work() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = file
-            .strip_prefix(src_root())
+        let rel = crate::support::sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");
@@ -269,7 +249,7 @@ fn every_use_case_terminates_through_unit_of_work() {
 #[test]
 fn sync_use_cases_write_only_through_the_unit_of_work() {
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
     let writes = regex::Regex::new(
         r"(?:_repo|\brepo)\s*\.\s*(?:insert|update|delete|upsert|save|archive\w*|insert_\w+|update_\w+|delete_\w+)\s*\(",
     )

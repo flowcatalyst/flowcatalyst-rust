@@ -3424,6 +3424,7 @@ dependencies = [
  "fc-function-model",
  "fc-function-signing",
  "fc-http-listener",
+ "fc-platform-core",
  "fc-platform-jwks",
  "fc-queue",
  "fc-stream",
@@ -3472,6 +3473,44 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "webauthn-rs",
+]
+
+[[package]]
+name = "fc-platform-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "fc-common",
+ "fc-function-model",
+ "fc-http-listener",
+ "futures",
+ "governor",
+ "hex",
+ "hmac 0.12.1",
+ "http-body-util",
+ "lettre",
+ "redis",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "subtle",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "urlencoding",
+ "utoipa",
 ]
 
 [[package]]

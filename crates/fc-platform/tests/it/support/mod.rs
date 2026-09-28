@@ -13,6 +13,8 @@
 
 #![allow(dead_code)] // helpers are used selectively across test files
 
+pub mod sources;
+
 use std::sync::Arc;
 
 use axum::{

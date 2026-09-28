@@ -9,6 +9,7 @@
 //! holder. Releasing fails with `409 DOMAIN_IN_USE`, naming the functions,
 //! while any public route is under the zone.
 
+use crate::function::operations::access::FunctionReach;
 use std::collections::HashMap;
 use std::sync::Arc;
 

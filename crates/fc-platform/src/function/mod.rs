@@ -50,34 +50,6 @@ pub use fc_function_model::{
 
 pub use routes::routes;
 
-use crate::usecase::UseCaseError;
-
-/// A model validation error is a use case's validation error (a 400), with
-/// the same code and message; a manifest problem's pointer becomes
-/// `details.pointer`, as the check route returns it.
-impl From<ValidationError> for UseCaseError {
-    fn from(e: ValidationError) -> Self {
-        match e.pointer() {
-            None => UseCaseError::validation(e.code(), e.message()),
-            Some(pointer) => {
-                let mut details = std::collections::HashMap::new();
-                details.insert(
-                    "pointer".to_string(),
-                    serde_json::Value::String(pointer.to_string()),
-                );
-                UseCaseError::validation_with_details(e.code(), e.message(), details)
-            }
-        }
-    }
-}
-
-/// At the HTTP layer, the same 400 a use case's validation error becomes.
-impl From<ValidationError> for crate::shared::error::PlatformError {
-    fn from(e: ValidationError) -> Self {
-        UseCaseError::from(e).into()
-    }
-}
-
 /// The router's dispatch mode for a manifest subscription's `mode`: the
 /// model keeps its own enum so it need not depend on `fc-common`.
 pub fn dispatch_mode(mode: SubscriptionMode) -> fc_common::DispatchMode {
@@ -94,6 +66,7 @@ pub(crate) use fc_function_model::java::is_blank as java_is_blank;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::UseCaseError;
 
     #[test]
     fn validation_error_keeps_code_and_message() {

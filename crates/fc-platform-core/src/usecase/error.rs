@@ -8,7 +8,7 @@
 //! Use the `details!` macro for convenient error creation:
 //!
 //! ```ignore
-//! use fc_platform::usecase::{UseCaseError, details};
+//! use fc_platform_core::usecase::{UseCaseError, details};
 //!
 //! // Simple error
 //! UseCaseError::validation("EMAIL_REQUIRED", "Email is required");
@@ -31,7 +31,7 @@ use crate::shared::error::PlatformError;
 /// # Example
 ///
 /// ```ignore
-/// use fc_platform::usecase::details;
+/// use fc_platform_core::usecase::details;
 ///
 /// let details = details! {
 ///     "email" => "user@example.com",
@@ -583,6 +583,40 @@ impl<T, E: Into<UseCaseError>> OrNotFound<T> for Result<Option<T>, E> {
     ) -> Result<T, UseCaseError> {
         self.map_err(Into::into)?
             .ok_or_else(|| UseCaseError::not_found(code, message))
+    }
+}
+
+// ── Function model validation (fc-function-model) ─────────────────────────
+//
+// The function aggregate's value types validate through
+// `fc_function_model`; their errors convert here, where both types' crates
+// are visible (fc-platform-functions can implement neither: orphan rule).
+
+use fc_function_model::ValidationError;
+
+/// A model validation error is a use case's validation error (a 400), with
+/// the same code and message; a manifest problem's pointer becomes
+/// `details.pointer`, as the check route returns it.
+impl From<ValidationError> for UseCaseError {
+    fn from(e: ValidationError) -> Self {
+        match e.pointer() {
+            None => UseCaseError::validation(e.code(), e.message()),
+            Some(pointer) => {
+                let mut details = std::collections::HashMap::new();
+                details.insert(
+                    "pointer".to_string(),
+                    serde_json::Value::String(pointer.to_string()),
+                );
+                UseCaseError::validation_with_details(e.code(), e.message(), details)
+            }
+        }
+    }
+}
+
+/// At the HTTP layer, the same 400 a use case's validation error becomes.
+impl From<ValidationError> for PlatformError {
+    fn from(e: ValidationError) -> Self {
+        UseCaseError::from(e).into()
     }
 }
 

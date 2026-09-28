@@ -20,7 +20,6 @@
 //! below as similar use cases emerge.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 
 /// Patterns that should be confined to a specific file. Second element is
 /// the allowed file suffix (substring of the relative path from src/).
@@ -42,34 +41,15 @@ const CONFINED_PATTERNS: &[(&str, &str)] = &[
     ),
 ];
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk_rs_files(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
-}
-
 #[test]
 fn cascade_sql_is_confined_to_the_owning_repository() {
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
 
     let mut violations = Vec::new();
 
     for file in &files {
-        let rel = file
-            .strip_prefix(src_root())
+        let rel = crate::support::sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");

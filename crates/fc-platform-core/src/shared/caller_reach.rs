@@ -145,9 +145,23 @@ pub fn require_scope_access(ctx: &impl Authority, client_id: Option<&str>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service_account::signing_reach::tests::caller;
-    use crate::shared::authorization_service::AuthContext;
-    use crate::UserScope;
+    use crate::principal_kind::{PrincipalType, UserScope};
+    use crate::shared::authorization_service::{AuthContext, Credential};
+    use std::collections::HashSet;
+
+    fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
+        AuthContext {
+            principal_id: "prn_caller".into(),
+            principal_type: PrincipalType::Service,
+            scope,
+            email: None,
+            name: "caller".into(),
+            accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
+            permissions: perms.iter().map(|p| p.to_string()).collect::<HashSet<_>>(),
+            roles: vec![],
+            credential: Credential::BearerToken,
+        }
+    }
 
     fn ctx(scope: UserScope, clients: &[&str]) -> AuthContext {
         caller(scope, clients, &[])

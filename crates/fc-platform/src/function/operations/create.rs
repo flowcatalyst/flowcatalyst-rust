@@ -5,6 +5,7 @@
 //! `clientId` (a 403 is fine here, nothing exists yet to hide), and
 //! `execute` checks the application once it is loaded.
 
+use crate::function::operations::access::FunctionReach;
 use std::sync::Arc;
 
 use async_trait::async_trait;

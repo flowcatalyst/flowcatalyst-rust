@@ -13,7 +13,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
 
 /// Use cases whose `authorize` is `Ok(())`, keyed `path::UseCase` (path
 /// relative to `src/`), with why there is nothing for it to check.
@@ -136,24 +135,6 @@ const SHAPE_EXCEPTIONS: &[(&str, &str)] = &[
     ),
 ];
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
-}
-
 /// `s` without `//` comments (line and doc) and whitespace.
 fn squeezed(s: &str) -> String {
     s.lines()
@@ -258,14 +239,13 @@ fn use_case_impls(content: &str) -> Vec<UseCaseImpl> {
 /// Every use case in `src/`, keyed `path::UseCase`, with its file text.
 fn all_use_cases() -> BTreeMap<String, (String, UseCaseImpl)> {
     let mut files = Vec::new();
-    walk(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
     let mut out = BTreeMap::new();
     for file in files {
         let Ok(content) = fs::read_to_string(&file) else {
             continue;
         };
-        let rel = file
-            .strip_prefix(src_root())
+        let rel = crate::support::sources::strip_src(&file)
             .unwrap_or(&file)
             .to_string_lossy()
             .replace('\\', "/");

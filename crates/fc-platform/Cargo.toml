@@ -6,6 +6,8 @@ license.workspace = true
 description = "FlowCatalyst Platform - Core domain models, services, and APIs"
 
 [dependencies]
+# The kernel: use cases, errors, the authorization context, middleware.
+fc-platform-core = { path = "../fc-platform-core" }
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
@@ -131,6 +133,8 @@ aws-sdk-secretsmanager = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 
 [dev-dependencies]
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
 # Log capture in unit tests.
 tracing-subscriber = { workspace = true }
 # The dispatch scheduler's SQS publish, end to end against LocalStack.

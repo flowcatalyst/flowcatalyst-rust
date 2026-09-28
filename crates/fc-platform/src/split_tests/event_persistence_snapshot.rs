@@ -16,8 +16,8 @@
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 
-use super::unit_of_work::{AuditRow, EventRow};
-use super::{AuditMasked, DomainEvent, ExecutionContext};
+use crate::usecase::unit_of_work::{AuditRow, EventRow};
+use crate::usecase::{AuditMasked, DomainEvent, ExecutionContext};
 
 use crate::application::client_config::ApplicationClientConfig;
 use crate::application::operations::events::{ApplicationClientConfigUpdated, ApplicationCreated};

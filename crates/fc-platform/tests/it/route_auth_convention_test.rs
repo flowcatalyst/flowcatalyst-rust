@@ -27,7 +27,6 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
 
 /// Routes that authenticate no one, or only optionally: `"METHOD /path"`.
 const PUBLIC_ROUTES: &[(&str, &str)] = &[
@@ -247,24 +246,6 @@ struct Source {
     by_name: HashMap<String, Vec<usize>>,
 }
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk_rs_files(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
-}
-
 /// Index of the byte after the token that starts at `i` when it is a
 /// comment, string or char literal; `None` when `i` starts none of those.
 fn skip_literal(s: &[u8], i: usize) -> Option<usize> {
@@ -383,16 +364,13 @@ fn find_code(s: &str, from: usize, ch: u8) -> Option<usize> {
 
 impl Source {
     fn load() -> Self {
-        let root = src_root();
-        let mut paths = Vec::new();
-        walk_rs_files(&root, &mut paths);
+        let paths = crate::support::sources::rs_files();
         let fn_re = regex::Regex::new(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:async[ \t]+)?fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)")
             .unwrap();
         let mut files = HashMap::new();
         let mut fns = Vec::new();
         for p in paths {
-            let rel = p
-                .strip_prefix(&root)
+            let rel = crate::support::sources::strip_src(&p)
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
@@ -433,7 +411,15 @@ impl Source {
                 // bounds the attribute search.
                 prev_end = prev_end.max(whole.end());
             }
-            files.insert(rel, content);
+            // A path in two crates (a split module's halves, each crate's
+            // lib.rs) is read as one file.
+            files
+                .entry(rel)
+                .and_modify(|c: &mut String| {
+                    c.push('\n');
+                    c.push_str(&content);
+                })
+                .or_insert(content);
         }
         let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, f) in fns.iter().enumerate() {
@@ -456,7 +442,9 @@ impl Source {
         let modules: Vec<&str> = segments[..segments.len() - 1]
             .iter()
             .copied()
-            .filter(|s| !matches!(*s, "super" | "crate" | "self"))
+            // `crate::`, `super::`, and a platform crate's name (a module
+            // keeps its path in whichever crate holds it).
+            .filter(|s| !matches!(*s, "super" | "crate" | "self") && !s.starts_with("fc_platform"))
             .collect();
         let in_module = |i: &usize| {
             let file = &self.fns[*i].file;
@@ -683,7 +671,10 @@ fn collect_routes(
     // Nested and merged routers.
     // A call whose last segment ends in `router` or `routes`, or is one of
     // them (a module's `routes(ctx)` entry point).
-    let call_re = regex::Regex::new(r"((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z0-9_]*(?:router|routes))\s*(?:::<[^>]*>)?\(").unwrap();
+    let call_re = regex::Regex::new(
+        r"((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z0-9_]*(?:router|routes))\s*(?:::<[^>]*>)?\(",
+    )
+    .unwrap();
     for (kind, args) in chain_calls(body, "nest")
         .into_iter()
         .map(|a| ("nest", a))

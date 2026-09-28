@@ -22,10 +22,48 @@ use crate::usecase::UseCaseError;
 /// reach rules below are its methods.
 pub use crate::usecase::Caller;
 
-impl Caller {
+/// The reach rules on the use case's [`Caller`] (Java `Access` over its
+/// `AuthContext`). A trait because `Caller` is fc-platform-core's: import it
+/// to call them.
+pub trait FunctionReach {
     /// Java `Checks.canAccessScope`: a client id needs access to that
     /// client; none (the platform) needs anchor scope.
-    pub fn can_access_scope(&self, client_id: Option<&str>) -> bool {
+    fn can_access_scope(&self, client_id: Option<&str>) -> bool;
+
+    /// The owner's reach alone: a client owner's client, or anchor scope
+    /// for the platform.
+    fn can_reach_owner(&self, owner: &FunctionOwner) -> bool;
+
+    /// Java `Access.canReach`: the owner, and the owning application.
+    fn can_reach(&self, f: &Function) -> bool;
+
+    /// Java `Access.canReachDomain`: the owner alone (a domain has no
+    /// application).
+    fn can_reach_domain(&self, d: &FunctionDomain) -> bool;
+
+    /// Java `Checks.checkScopeAccess`, for a create: nothing exists yet to
+    /// hide, so this is a real 403 `SCOPE_FORBIDDEN`.
+    fn check_scope_access(&self, client_id: Option<&str>) -> Result<(), UseCaseError>;
+
+    /// Java `Checks.checkApplicationAccess`: 403 `FORBIDDEN`
+    /// `Not authorised for application '<code>'`.
+    fn check_application_access(
+        &self,
+        application_id: &str,
+        application_code: &str,
+    ) -> Result<(), UseCaseError>;
+
+    /// The owner half of the list route's reach, applied in SQL.
+    fn owner_reach(&self) -> OwnerReach;
+
+    /// The application half of the list route's reach: `None` for every
+    /// application, else exactly the granted ones (none when empty or
+    /// unresolved).
+    fn application_reach(&self) -> Option<Vec<String>>;
+}
+
+impl FunctionReach for Caller {
+    fn can_access_scope(&self, client_id: Option<&str>) -> bool {
         match client_id {
             Some(id) => self.can_access_client(id),
             None => self.is_anchor(),
@@ -36,20 +74,15 @@ impl Caller {
         self.can_access_scope(owner.client_id_or_none())
     }
 
-    /// Java `Access.canReach`: the owner, and the owning application.
-    pub fn can_reach(&self, f: &Function) -> bool {
+    fn can_reach(&self, f: &Function) -> bool {
         self.can_reach_owner(&f.owner) && self.allows_application(&f.application_id)
     }
 
-    /// Java `Access.canReachDomain`: the owner alone (a domain has no
-    /// application).
-    pub fn can_reach_domain(&self, d: &FunctionDomain) -> bool {
+    fn can_reach_domain(&self, d: &FunctionDomain) -> bool {
         self.can_reach_owner(&d.owner)
     }
 
-    /// Java `Checks.checkScopeAccess`, for a create: nothing exists yet to
-    /// hide, so this is a real 403 `SCOPE_FORBIDDEN`.
-    pub fn check_scope_access(&self, client_id: Option<&str>) -> Result<(), UseCaseError> {
+    fn check_scope_access(&self, client_id: Option<&str>) -> Result<(), UseCaseError> {
         if self.can_access_scope(client_id) {
             return Ok(());
         }
@@ -63,9 +96,7 @@ impl Caller {
         ))
     }
 
-    /// Java `Checks.checkApplicationAccess`: 403 `FORBIDDEN`
-    /// `Not authorised for application '<code>'`.
-    pub fn check_application_access(
+    fn check_application_access(
         &self,
         application_id: &str,
         application_code: &str,
@@ -79,8 +110,7 @@ impl Caller {
         ))
     }
 
-    /// The owner half of the list route's reach, applied in SQL.
-    pub fn owner_reach(&self) -> OwnerReach {
+    fn owner_reach(&self) -> OwnerReach {
         let clients = crate::shared::authorization_service::Authority::accessible_clients(self);
         if self.is_anchor() {
             OwnerReach::Everything
@@ -91,10 +121,7 @@ impl Caller {
         }
     }
 
-    /// The application half of the list route's reach: `None` for every
-    /// application, else exactly the granted ones (none when empty or
-    /// unresolved).
-    pub fn application_reach(&self) -> Option<Vec<String>> {
+    fn application_reach(&self) -> Option<Vec<String>> {
         match self.application_scope() {
             Some(ApplicationScope::All) => None,
             None => Some(Vec::new()),

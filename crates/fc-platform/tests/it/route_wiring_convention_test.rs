@@ -23,7 +23,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Files other than `routes.rs` and `router.rs` that may register routes.
 const REGISTRATION_ALLOWLIST: &[(&str, &str)] = &[
@@ -59,26 +59,8 @@ const ROUTER_RS_USES: &[&str] = &[
     "crate::shared::platform_context",
 ];
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
-fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk_rs_files(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
-}
-
 fn rel(p: &Path) -> String {
-    p.strip_prefix(src_root())
+    crate::support::sources::strip_src(p)
         .unwrap()
         .to_string_lossy()
         .replace('\\', "/")
@@ -150,7 +132,7 @@ fn fn_body<'a>(content: &'a str, name: &str) -> &'a str {
 
 #[test]
 fn router_rs_imports_no_handler_or_state_type() {
-    let content = fs::read_to_string(src_root().join("router.rs")).unwrap();
+    let content = fs::read_to_string(crate::support::sources::file("router.rs")).unwrap();
     let code = production_code(&content);
     let mut problems = Vec::new();
 
@@ -195,7 +177,7 @@ fn router_rs_imports_no_handler_or_state_type() {
 #[test]
 fn routes_are_registered_only_in_routes_rs() {
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
     let call_re =
         regex::Regex::new(r"\.(route|routes|nest|nest_service|fallback|fallback_service)\(")
             .unwrap();
@@ -227,7 +209,7 @@ fn routes_are_registered_only_in_routes_rs() {
 #[test]
 fn every_routes_rs_has_the_entry_point_and_router_rs_mounts_each_once() {
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
     let entry_re =
         regex::Regex::new(r"(?m)^pub fn routes\(ctx: &PlatformContext\) -> AggregateRoutes \{")
             .unwrap();
@@ -248,7 +230,7 @@ fn every_routes_rs_has_the_entry_point_and_router_rs_mounts_each_once() {
         }
     }
 
-    let router = fs::read_to_string(src_root().join("router.rs")).unwrap();
+    let router = fs::read_to_string(crate::support::sources::file("router.rs")).unwrap();
     let mount_re = regex::Regex::new(r"crate::([a-z_:]+?)::routes\(ctx\)").unwrap();
     let mut mounted = Vec::new();
     for c in mount_re.captures_iter(&production_code(&router)) {
@@ -285,7 +267,7 @@ fn every_routes_rs_has_the_entry_point_and_router_rs_mounts_each_once() {
 
 #[test]
 fn router_rs_mounts_only_modules_and_cross_cutting_routers() {
-    let router = fs::read_to_string(src_root().join("router.rs")).unwrap();
+    let router = fs::read_to_string(crate::support::sources::file("router.rs")).unwrap();
     let code = production_code(&router);
     let build = fn_body(&code, "build");
     let merge_re = regex::Regex::new(r"\.merge\(").unwrap();

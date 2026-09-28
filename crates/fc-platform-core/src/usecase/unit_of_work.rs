@@ -46,10 +46,11 @@ pub trait HasId {
 // See CLAUDE.md § "Layering Rules" for the full rule set.
 
 /// Opaque write handle passed to `Persist` methods. Wraps the underlying
-/// driver transaction; repositories access the inner handle via
-/// `&mut *tx.inner` which keeps the leak contained to this crate.
+/// driver transaction; repositories (every domain crate's
+/// `repository.rs`) access the inner handle via `&mut *tx.inner`, which
+/// keeps the driver type out of use cases and aggregates.
 pub struct DbTx<'t> {
-    pub(crate) inner: &'t mut Transaction<'static, Postgres>,
+    pub inner: &'t mut Transaction<'static, Postgres>,
 }
 
 /// A repository that can persist and delete aggregates of type `A` within
@@ -576,7 +577,8 @@ impl RecordedCommand {
 /// `client_id` (always NULL) and `created_at` (insert time) are not derived
 /// from the event and are bound by the INSERT itself.
 #[derive(Debug, Serialize)]
-pub(crate) struct EventRow<'a> {
+#[doc(hidden)]
+pub struct EventRow<'a> {
     pub id: &'a str,
     pub spec_version: &'a str,
     pub event_type: &'a str,
@@ -599,7 +601,7 @@ impl<'a> EventRow<'a> {
     ///
     /// Correlation id, causation id and message group are NULL when empty,
     /// never `''` (Go's platform sink, `nullIfEmpty`).
-    pub(crate) fn from_event<E: DomainEvent>(event: &'a E) -> Result<Self, UseCaseError> {
+    pub fn from_event<E: DomainEvent>(event: &'a E) -> Result<Self, UseCaseError> {
         let mut data = serde_json::to_value(event).map_err(|e| {
             error!("Failed to serialize domain event: {}", e);
             UseCaseError::commit(format!("Failed to serialize domain event: {}", e))
@@ -646,7 +648,8 @@ fn non_empty(s: &str) -> Option<&str> {
 /// `application_id` and `client_id` (always NULL) are bound by the INSERT
 /// itself.
 #[derive(Debug, Serialize)]
-pub(crate) struct AuditRow<'a> {
+#[doc(hidden)]
+pub struct AuditRow<'a> {
     pub entity_type: String,
     pub entity_id: String,
     pub operation: String,
@@ -661,7 +664,7 @@ impl<'a> AuditRow<'a> {
     /// keys and the command's declared [`AuditMasked`] fields become `"***"`
     /// before the row exists, so no unit-of-work implementation can write a
     /// password or secret into `aud_logs`.
-    pub(crate) fn from_event<E: DomainEvent, C: Serialize + AuditMasked>(
+    pub fn from_event<E: DomainEvent, C: Serialize + AuditMasked>(
         event: &'a E,
         command: &C,
     ) -> Self {
@@ -1308,7 +1311,11 @@ impl PgUnitOfWork {
 
 // ─── InMemory (tests) ─────────────────────────────────────────────────────────
 
-#[cfg(test)]
+/// A unit of work that commits nothing and records what it would have
+/// written, for use-case unit tests. Behind the `test-support` feature (a
+/// dev-dependency feature of the crates whose tests use it), because it
+/// produces a [`Committed`] without persisting.
+#[cfg(any(test, feature = "test-support"))]
 pub struct InMemoryUnitOfWork {
     pub committed_events: std::sync::Mutex<Vec<String>>,
     /// The `operation_json` each commit would write to `aud_logs` —
@@ -1316,14 +1323,14 @@ pub struct InMemoryUnitOfWork {
     pub committed_audits: std::sync::Mutex<Vec<Option<serde_json::Value>>>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Default for InMemoryUnitOfWork {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {
@@ -1344,7 +1351,7 @@ impl InMemoryUnitOfWork {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl UnitOfWork for InMemoryUnitOfWork {
     async fn commit<A, R, E, C>(
@@ -1618,12 +1625,33 @@ mod tests {
         }
     }
 
-    fn user_created() -> crate::principal::operations::events::UserCreated {
-        crate::principal::operations::events::UserCreated::new(
-            &super::super::ExecutionContext::system("prn_actor"),
-            "prn_1",
-            "a@b.c",
-        )
+    /// `principal`'s `UserCreated`, as the platform emits it (the event is
+    /// only the vehicle here: the command is what the audit redacts).
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UserCreated {
+        #[serde(skip)]
+        metadata: super::super::domain_event::EventMetadata,
+        principal_id: String,
+        email: String,
+    }
+
+    crate::impl_domain_event!(UserCreated);
+
+    fn user_created() -> UserCreated {
+        let ctx = super::super::ExecutionContext::system("prn_actor");
+        UserCreated {
+            metadata: super::super::domain_event::EventMetadata::from_ctx(
+                &ctx,
+                "platform:iam:user:created",
+                "1.0",
+                "platform:iam",
+                "platform.principal.prn_1".to_string(),
+                "platform:principal:prn_1".to_string(),
+            ),
+            principal_id: "prn_1".to_string(),
+            email: "a@b.c".to_string(),
+        }
     }
 
     /// The row every Postgres implementation (PgUnitOfWork and

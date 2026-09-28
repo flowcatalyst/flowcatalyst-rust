@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Any of these substrings in a handler body counts as a permission check.
 /// Keep in sync with `shared::authorization_service::checks`,
@@ -119,32 +119,12 @@ const FN_SKIPLIST: &[&str] = &[
     "service_account/api.rs::regenerate_secret_alias",
 ];
 
-fn src_root() -> PathBuf {
-    // Cargo sets CARGO_MANIFEST_DIR to the crate root when running tests.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
-}
-
 fn should_skip(path: &Path) -> bool {
-    let rel = path
-        .strip_prefix(src_root())
+    let rel = crate::support::sources::strip_src(path)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
     FILE_SKIPLIST.iter().any(|skip| rel.contains(skip))
-}
-
-fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            walk_rs_files(&p, out);
-        } else if p.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(p);
-        }
-    }
 }
 
 /// Parse write handlers out of a file. Each returned entry is
@@ -277,7 +257,7 @@ fn every_write_handler_calls_an_auth_check() {
     let skip_keys: HashSet<&str> = FN_SKIPLIST.iter().copied().collect();
 
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
 
     let mut violations: Vec<String> = Vec::new();
 
@@ -288,8 +268,7 @@ fn every_write_handler_calls_an_auth_check() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = file
-            .strip_prefix(src_root())
+        let rel = crate::support::sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");
@@ -330,7 +309,7 @@ fn every_write_handler_calls_an_auth_check() {
 #[test]
 fn every_app_code_handler_checks_application_access() {
     let mut files = Vec::new();
-    walk_rs_files(&src_root(), &mut files);
+    files.extend(crate::support::sources::rs_files());
 
     let mut checked = 0;
     let mut violations: Vec<String> = Vec::new();
@@ -338,8 +317,7 @@ fn every_app_code_handler_checks_application_access() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = file
-            .strip_prefix(src_root())
+        let rel = crate::support::sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");

@@ -21,6 +21,7 @@
 //! none of the wiring, so they stay apart from [`super::TriggerSync`],
 //! which shares [`routes_taken`] with them.
 
+use crate::function::operations::access::FunctionReach;
 use std::collections::HashMap;
 use std::sync::Arc;
 

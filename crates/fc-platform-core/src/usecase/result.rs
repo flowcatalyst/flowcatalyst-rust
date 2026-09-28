@@ -37,14 +37,14 @@ use super::error::UseCaseError;
 /// constructor:
 ///
 /// ```compile_fail
-/// use fc_platform::usecase::Committed;
+/// use fc_platform_core::usecase::Committed;
 /// let _: Committed<u32> = Committed::new(1);
 /// ```
 ///
 /// or through the tuple field:
 ///
 /// ```compile_fail
-/// use fc_platform::usecase::Committed;
+/// use fc_platform_core::usecase::Committed;
 /// let _: Committed<u32> = Committed(1);
 /// ```
 ///
@@ -97,14 +97,14 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Committed<T> {
 /// wrapped `Result`:
 ///
 /// ```compile_fail
-/// use fc_platform::usecase::UseCaseResult;
+/// use fc_platform_core::usecase::UseCaseResult;
 /// let _: UseCaseResult<u32> = UseCaseResult(Ok(1));
 /// ```
 ///
 /// whereas building a failure is allowed:
 ///
 /// ```
-/// use fc_platform::usecase::{UseCaseError, UseCaseResult};
+/// use fc_platform_core::usecase::{UseCaseError, UseCaseResult};
 /// let r: UseCaseResult<u32> = UseCaseResult::failure(UseCaseError::validation("CODE", "msg"));
 /// assert!(r.into_result().is_err());
 /// ```

@@ -109,6 +109,7 @@ exceptions = [
     { crate = "fc-outbox-processor", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-parity", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-platform-core", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-jwks", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-queue", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-router", allow = ["AGPL-3.0-or-later"] },

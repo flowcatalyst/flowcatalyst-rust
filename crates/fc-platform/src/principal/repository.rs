@@ -150,14 +150,9 @@ struct PrincipalApplicationAccessRow {
     application_code: Option<String>,
 }
 
-/// The application-access facts for one principal, without hydrating the
-/// rest of it: its `all_applications` flag and its explicit
-/// `iam_principal_application_access` grants.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct PrincipalApplicationBinding {
-    pub all_applications: bool,
-    pub granted_application_ids: Vec<String>,
-}
+/// The application-access facts for one principal (fc-platform-core, beside
+/// the `ApplicationScope` they build).
+pub use fc_platform_core::shared::authorization_service::PrincipalApplicationBinding;
 
 // ── Repository ───────────────────────────────────────────────────────────────
 

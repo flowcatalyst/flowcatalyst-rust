@@ -1,0 +1,81 @@
+[package]
+name = "fc-platform-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FlowCatalyst Platform - the kernel every domain crate builds on: use cases and the unit of work, errors, the authorization context and checks, the permission catalogue, middleware, database and shared services"
+
+[features]
+# `InMemoryUnitOfWork` and `assert_str_enum`, for the domain crates' unit
+# tests (enabled by their dev-dependency on this crate).
+test-support = []
+
+[dependencies]
+fc-common = { path = "../fc-common" }
+# `ValidationError`, which converts into `UseCaseError` / `PlatformError`
+# here (the function crate can implement neither: orphan rule).
+fc-function-model = { path = "../fc-function-model" }
+# `PeerAddr`, the connection's peer address (the client-IP fallback).
+fc-http-listener = { path = "../fc-http-listener" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+# Database (PostgreSQL)
+sqlx = { workspace = true, features = ["postgres"] }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+utoipa = { workspace = true }
+
+# Tokens and secrets
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+aes-gcm = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+
+# The workspace's reqwest: `default-features = false` + rustls-tls (see
+# the workspace manifest).
+reqwest = { workspace = true }
+urlencoding = "2.1"
+
+# Email
+lettre = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+dashmap = { workspace = true }
+
+# Token-bucket rate limiter
+governor = { workspace = true }
+
+# Distributed rate limiter (Redis when FC_REDIS_URL is set, Postgres fallback)
+redis = { workspace = true }
+
+# AWS Secrets Manager (for DB credential refresh)
+aws-config = { workspace = true }
+aws-sdk-secretsmanager = { workspace = true }
+
+[dev-dependencies]
+regex = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
+
+[lints.clippy]
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

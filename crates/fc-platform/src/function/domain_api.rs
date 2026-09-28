@@ -2,6 +2,7 @@
 //! `function/api/FunctionDomainApi.java`). There is no verify route: a claim
 //! is verified by being made.
 
+use crate::function::operations::access::FunctionReach;
 use std::collections::HashMap;
 
 use axum::body::Bytes;

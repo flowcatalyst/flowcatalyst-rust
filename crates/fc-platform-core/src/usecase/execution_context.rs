@@ -151,8 +151,8 @@ mod tests {
     fn from_auth_records_the_principal_and_carries_its_authority() {
         let auth = AuthContext {
             principal_id: "prn_1".into(),
-            principal_type: crate::PrincipalType::User,
-            scope: crate::UserScope::Client,
+            principal_type: crate::principal_kind::PrincipalType::User,
+            scope: crate::principal_kind::UserScope::Client,
             email: None,
             name: "Test".into(),
             accessible_clients: vec!["clt_a".into()],

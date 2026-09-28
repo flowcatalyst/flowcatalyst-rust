@@ -94,6 +94,12 @@ impl Application {
     }
 }
 
+impl fc_platform_core::shared::authorization_service::ScopedApplication for Application {
+    fn application_id(&self) -> &str {
+        &self.id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -23,8 +23,8 @@
 
 use std::sync::OnceLock;
 
+use crate::principal_kind::{PrincipalType, UserScope};
 use crate::shared::authorization_service::{ApplicationScope, AuthContext, Authority, Credential};
-use crate::{PrincipalType, UserScope};
 
 /// The authority a use case runs with. See the module docs.
 #[derive(Debug, Clone)]

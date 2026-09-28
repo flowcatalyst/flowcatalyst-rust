@@ -6,6 +6,7 @@ members = [
     "crates/fc-standby",
     "crates/fc-outbox",
     "crates/fc-stream",
+    "crates/fc-platform-core",
     "crates/fc-platform",
     "crates/fc-sdk",
     "crates/fc-mcp",

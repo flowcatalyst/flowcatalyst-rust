@@ -208,8 +208,11 @@ mod tests {
 
     #[test]
     fn the_name_comes_from_the_type() {
+        /// Named as `client::operations::CreateClientCommand`: only the
+        /// type's last path segment counts.
+        struct CreateClientCommand;
         assert_eq!(
-            audit_operation_name::<crate::client::operations::CreateClientCommand>(),
+            audit_operation_name::<CreateClientCommand>(),
             "CreateCommand"
         );
     }
