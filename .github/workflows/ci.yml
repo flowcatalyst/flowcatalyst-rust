@@ -85,14 +85,17 @@ jobs:
       - run: pnpm build
 
   # Supply-chain guardrails (docs/operations/supply-chain.md): RustSec
-  # advisories, licences, duplicate/banned crates and sources (cargo-deny).
-  # The tool is pinned by version and its release archive by checksum.
+  # advisories, licences, duplicate/banned crates and sources (cargo-deny),
+  # and audits of every third-party crate (cargo-vet). Tools are pinned by
+  # version; cargo-deny's release archive is also pinned by checksum, and
+  # cargo-vet is built from crates.io with its own lockfile (`--locked`).
   supply-chain:
-    name: Supply chain (cargo-deny)
+    name: Supply chain (cargo-deny, cargo-vet)
     runs-on: ubuntu-latest
     env:
       CARGO_DENY_VERSION: "0.20.2"
       CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+      CARGO_VET_VERSION: "0.10.2"
     steps:
       - uses: actions/checkout@v4
 
@@ -108,6 +111,17 @@ jobs:
           tar -xzf /tmp/cargo-deny.tar.gz -C /tmp
           install -m 0755 "/tmp/${name}/cargo-deny" "$HOME/.cargo/bin/cargo-deny"
 
+      - name: Cache cargo-vet
+        id: vet-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-vet
+          key: cargo-vet-${{ env.CARGO_VET_VERSION }}-${{ runner.os }}
+
+      - name: Install cargo-vet (pinned, locked)
+        if: steps.vet-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked "cargo-vet@${CARGO_VET_VERSION}"
+
       - name: cargo deny (workspace)
         run: cargo deny --locked check
 
@@ -121,3 +135,6 @@ jobs:
               --config deny-sdk.toml check licenses
             echo "::endgroup::"
           done
+
+      - name: cargo vet
+        run: cargo vet --locked
