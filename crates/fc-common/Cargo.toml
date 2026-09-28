@@ -15,23 +15,23 @@ tokio = { workspace = true }
 utoipa = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-# The OTLP span exporter (feature `otel`, off by default; six crates):
-# OTLP/HTTP protobuf over the workspace's reqwest, not a second HTTP stack.
-opentelemetry = { version = "0.33", optional = true, default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.33", optional = true, default-features = false, features = ["trace"] }
-opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["trace", "http-proto"] }
-opentelemetry-http = { version = "0.33", optional = true, default-features = false }
-tracing-opentelemetry = { version = "0.34", optional = true, default-features = false }
+# The OTLP span exporter (feature `otel`, off by default): OTLP/HTTP
+# protobuf over the workspace's reqwest, not a second HTTP stack.
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-http = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-# tokio-console (feature `tokio-console`, off by default; three crates).
-console-subscriber = { version = "0.5", optional = true }
+# tokio-console (feature `tokio-console`, off by default).
+console-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(unix)'.dependencies]
-# getrusage/getrlimit for the process metrics (already in the tree).
-libc = "0.2"
+# getrusage/getrlimit for the process metrics.
+libc = { workspace = true }
 
 [features]
 default = []

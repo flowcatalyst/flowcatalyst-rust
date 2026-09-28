@@ -103,6 +103,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1.16", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md), each behind
+# an off-by-default fc-common feature: OTLP span export (`otel`, over the
+# workspace's reqwest: six crates) and tokio-console (`tokio-console`: three).
+opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto"] }
+opentelemetry-http = { version = "0.33", default-features = false }
+tracing-opentelemetry = { version = "0.34", default-features = false }
+console-subscriber = { version = "0.5", default-features = false }
+# getrusage/getrlimit for the process metrics.
+libc = { version = "0.2", default-features = false }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 tower = { version = "0.5", features = ["util"] }

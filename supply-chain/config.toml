@@ -32,6 +32,10 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
 [[exemptions.addr2line]]
+version = "0.25.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.addr2line]]
 version = "0.26.1"
 criteria = "safe-to-deploy"
 
@@ -331,6 +335,10 @@ criteria = "safe-to-deploy"
 version = "1.6.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.backtrace]]
+version = "0.3.76"
+criteria = "safe-to-deploy"
+
 [[exemptions.base16ct]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -521,6 +529,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.console]]
 version = "0.15.11"
+criteria = "safe-to-deploy"
+
+[[exemptions.console-api]]
+version = "0.9.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.console-subscriber]]
+version = "0.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.const-oid]]
@@ -968,6 +984,10 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.gimli]]
+version = "0.32.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.gimli]]
 version = "0.33.0"
 criteria = "safe-to-deploy"
 
@@ -1059,6 +1079,10 @@ criteria = "safe-to-deploy"
 version = "1.10.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.humantime]]
+version = "2.4.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.hybrid-array]]
 version = "0.4.10"
 criteria = "safe-to-deploy"
@@ -1077,7 +1101,7 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hyper-timeout]]
 version = "0.5.2"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.hyper-util]]
 version = "0.1.20"
@@ -1432,6 +1456,10 @@ version = "0.1.47"
 criteria = "safe-to-deploy"
 
 [[exemptions.object]]
+version = "0.37.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.object]]
 version = "0.40.0"
 criteria = "safe-to-deploy"
 
@@ -1469,6 +1497,26 @@ criteria = "safe-to-deploy"
 
 [[exemptions.openssl-sys]]
 version = "0.9.112"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry]]
+version = "0.33.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-http]]
+version = "0.33.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-otlp]]
+version = "0.33.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry-proto]]
+version = "0.33.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.opentelemetry_sdk]]
+version = "0.33.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.outref]]
@@ -1661,15 +1709,15 @@ criteria = "safe-to-deploy"
 
 [[exemptions.prost]]
 version = "0.14.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.prost-derive]]
 version = "0.14.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.prost-types]]
 version = "0.14.3"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.qrcodegen]]
 version = "1.8.0"
@@ -2321,11 +2369,11 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tonic]]
 version = "0.14.5"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.tonic-prost]]
 version = "0.14.5"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 
 [[exemptions.topcoat]]
 version = "0.9.0"
@@ -2457,6 +2505,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tracing-core]]
 version = "0.1.36"
+criteria = "safe-to-deploy"
+
+[[exemptions.tracing-opentelemetry]]
+version = "0.34.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-serde]]
