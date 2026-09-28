@@ -8,7 +8,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use fc_common::{WarningCategory, WarningSeverity};
 use fc_queue::QueueMetrics;
@@ -191,6 +191,13 @@ impl QueueManager {
         rc.beat();
 
         let manager = self.clone();
+        // Every line the loop logs carries its queue.
+        let span = tracing::info_span!(
+            parent: None,
+            "router.consumer",
+            queue = %rc.identifier(),
+            generation = rc.generation,
+        );
         tokio::spawn(async move {
             // Signals the exit however the loop ends (panics included).
             let _exited = rc.poll_exited.clone().drop_guard();
@@ -252,8 +259,33 @@ impl QueueManager {
                     PollOutcome::Cancelled => break,
                     PollOutcome::Messages(messages) => {
                         rc.beat();
-                        if let Err(e) = manager.route_batch_from(messages, &rc).await {
-                            error!(error = %e, consumer = %id, "Error routing batch");
+                        let count = messages.len();
+                        // A panic while routing one batch must not take the
+                        // queue's intake down until the watchdog notices
+                        // (60–90 s): the panic hook has logged it with the
+                        // batch's span; messages already handed to a pool
+                        // are settled by their workers, the rest return at
+                        // the broker's visibility timeout.
+                        match fc_common::diagnostics::catch_panic(
+                            manager.route_batch_from(messages, &rc),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                error!(error = %e, consumer = %id, "Error routing batch")
+                            }
+                            Err(payload) => {
+                                fc_common::diagnostics::supervise::note_task_panic(
+                                    "router.route_batch",
+                                );
+                                error!(
+                                    consumer = %id,
+                                    batch_size = count,
+                                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                                    "Routing a batch panicked; the poll loop continues"
+                                );
+                            }
                         }
                         // G12: re-poll immediately after any batch.
                     }
@@ -279,7 +311,7 @@ impl QueueManager {
                 }
             }
             debug!(consumer = %id, generation = rc.generation, "Poll loop exited");
-        })
+        }.instrument(span))
     }
 
     /// Raise a CONFIGURATION/ERROR warning for every message the consumer
@@ -291,11 +323,25 @@ impl QueueManager {
     /// `unsupported-mediation-type`). It used to be a log line only.
     fn report_rejected(&self, rc: &RunningConsumer) {
         for rejected in rc.consumer.take_rejected() {
-            error!(
+            // The reason is the decoder's error (a position and the field
+            // it choked on, never the payload); bounded all the same.
+            let reason: String = rejected.reason.chars().take(200).collect();
+            warn!(
                 queue = %rc.identifier(),
                 broker_message_id = ?rejected.broker_message_id,
-                reason = %rejected.reason,
+                reason = %reason,
                 "Malformed message removed from the queue without delivery"
+            );
+            self.note_rejected(super::REJECTED_MALFORMED);
+            self.flight_recorder.record(
+                crate::flight_recorder::EventKind::Rejected,
+                &crate::flight_recorder::EventContext::new(
+                    rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
+                )
+                .queue(rc.identifier()),
+                crate::flight_recorder::Facts::text(format!(
+                    "malformed; removed from the queue without delivery: {reason}"
+                )),
             );
             self.warning_service.add_warning(
                 WarningCategory::Configuration,
@@ -304,7 +350,7 @@ impl QueueManager {
                     "Malformed message {} on queue {} removed without delivery: {}",
                     rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
                     rc.identifier(),
-                    rejected.reason
+                    reason
                 ),
                 "QueueManager".to_string(),
             );
@@ -825,6 +871,18 @@ mod consumer_liveness_tests {
             .warning_service
             .get_warnings_by_category(WarningCategory::Configuration);
         assert!(!warnings.is_empty());
+        // Counted (fc_messages_rejected_total{reason="malformed"}) and
+        // recorded for the message lookup.
+        let malformed = manager
+            .messages_rejected()
+            .into_iter()
+            .find(|(r, _)| *r == "malformed")
+            .unwrap()
+            .1;
+        assert!(malformed >= 1);
+        let history = manager.flight_recorder().for_message("m-1");
+        assert_eq!(history[0].kind, crate::flight_recorder::EventKind::Rejected);
+        assert_eq!(history[0].queue(), Some("rejecting"));
         assert_eq!(warnings[0].severity, WarningSeverity::Error);
         assert!(warnings[0].message.contains("SMTP"));
         manager.shutdown().await;

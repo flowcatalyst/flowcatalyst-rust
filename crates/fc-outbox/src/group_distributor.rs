@@ -20,6 +20,7 @@ use fc_common::OutboxItem;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
+use tracing::Instrument;
 
 /// What the distributor does with a group's items.
 #[async_trait]
@@ -80,10 +81,26 @@ impl GroupDistributor {
             let semaphore = self.semaphore.clone();
             let group = group.to_string();
             let block_on_error = self.block_on_error;
-            tokio::spawn(async move {
-                drain(groups, group, semaphore, block_on_error, handler).await;
-            });
+            let span = tracing::info_span!(parent: None, "outbox.group", group = %group);
+            tokio::spawn(
+                async move {
+                    drain(groups, group, semaphore, block_on_error, handler).await;
+                }
+                .instrument(span),
+            );
         }
+    }
+
+    /// Take every item still queued behind a group's current send (the
+    /// drains find their queues empty and finish). For a stop: the caller
+    /// releases them to PENDING rather than leaving them IN_PROGRESS until
+    /// the recovery threshold.
+    pub fn take_pending(&self) -> Vec<OutboxItem> {
+        let mut groups = self.groups.lock().unwrap_or_else(|e| e.into_inner());
+        groups
+            .values_mut()
+            .flat_map(|q| q.pending.drain(..).collect::<Vec<_>>())
+            .collect()
     }
 
     pub fn stats(&self) -> DistributorStats {
@@ -124,7 +141,15 @@ async fn drain(
                     }
                 }
             };
-            handler.release(items).await;
+            if let Err(payload) = fc_common::diagnostics::catch_panic(handler.release(items)).await
+            {
+                // The rows stay IN_PROGRESS and are recovered.
+                tracing::error!(
+                    group = %group,
+                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                    "Outbox group release panicked"
+                );
+            }
             continue;
         }
 
@@ -141,7 +166,23 @@ async fn drain(
             }
         };
 
-        if !handler.dispatch(item).await && block_on_error {
+        // A panic while sending is a failed send: the group stops (with
+        // block-on-error) and releases what is queued, instead of the drain
+        // dying with the group's entry left in the map, where it stranded
+        // the group for good (no later submit started a drain for it).
+        let ok = match fc_common::diagnostics::catch_panic(handler.dispatch(item)).await {
+            Ok(ok) => ok,
+            Err(payload) => {
+                fc_common::diagnostics::supervise::note_task_panic("outbox.group_send");
+                tracing::error!(
+                    group = %group,
+                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                    "Outbox group send panicked; treating it as a failed send"
+                );
+                false
+            }
+        };
+        if !ok && block_on_error {
             stopped = true;
         }
     }

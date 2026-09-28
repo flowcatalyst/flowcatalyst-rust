@@ -512,3 +512,74 @@ async fn start_polls_until_stopped() {
         .unwrap();
     assert!(!p.is_running());
 }
+
+/// A send that panics does not strand its group or its rows: the group
+/// stops and releases what is queued behind it (block-on-error), nothing
+/// stays held in memory, and once recovery returns the row it is sent.
+#[tokio::test]
+async fn a_panicking_send_does_not_strand_its_group() {
+    let panics = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let armed = panics.clone();
+    let platform = Platform::new(move |item| {
+        if item.id == "g1" && armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            panic!("dispatcher bug");
+        }
+        DispatchOutcome::success()
+    });
+    let (p, repo) = setup(platform.clone(), config()).await;
+    add(&repo, "g1", "EVENT", Some("g"), 1).await;
+    add(&repo, "g2", "EVENT", Some("g"), 2).await;
+    add(&repo, "u1", "EVENT", None, 3).await;
+
+    poll(&p).await;
+    assert_eq!(p.in_flight_count(), 0, "nothing left held");
+    assert_eq!(row(&repo, "u1").await, None, "the ungrouped item went");
+    // g2 was released behind the failed head, g1 is still IN_PROGRESS.
+    assert_eq!(row(&repo, "g2").await.unwrap().0, 0);
+    assert_eq!(row(&repo, "g1").await.unwrap().0, 9);
+
+    // Recovery returns g1; the group then runs in order.
+    sqlx::query(
+        "UPDATE outbox_messages SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = 'g1'",
+    )
+    .execute(repo.pool())
+    .await
+    .unwrap();
+    p.recover_once().await.unwrap();
+    poll(&p).await;
+    assert_eq!(row(&repo, "g1").await, None);
+    assert_eq!(row(&repo, "g2").await, None);
+    let sent = platform.sent();
+    let g1 = sent.iter().rposition(|id| id == "g1").unwrap();
+    let g2 = sent.iter().rposition(|id| id == "g2").unwrap();
+    assert!(g1 < g2, "{sent:?}");
+}
+
+/// Stopping releases the items queued behind each group's current send to
+/// PENDING at once, instead of leaving them IN_PROGRESS for the recovery
+/// threshold.
+#[tokio::test]
+async fn shutdown_releases_what_the_groups_hold() {
+    let platform = Arc::new(Platform {
+        script: Box::new(|_| DispatchOutcome::success()),
+        requests: Mutex::default(),
+        gate: Some(Arc::new(Semaphore::new(0))),
+    });
+    let (p, repo) = setup(platform.clone(), config()).await;
+    add(&repo, "g1", "EVENT", Some("g"), 1).await;
+    add(&repo, "g2", "EVENT", Some("g"), 2).await;
+    add(&repo, "g3", "EVENT", Some("g"), 3).await;
+
+    p.poll_once().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // g1 is being sent (held at the gate); g2 and g3 wait behind it.
+    assert_eq!(p.shutdown().await, 2);
+    assert_eq!(row(&repo, "g2").await.unwrap().0, 0);
+    assert_eq!(row(&repo, "g3").await.unwrap().0, 0);
+    assert_eq!(
+        row(&repo, "g1").await.unwrap().0,
+        9,
+        "the send in progress keeps its row"
+    );
+    assert_eq!(p.in_flight_count(), 1);
+}

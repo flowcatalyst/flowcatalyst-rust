@@ -73,24 +73,33 @@ impl QueueManager {
     /// Exits when the manager's shutdown token is cancelled.
     fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let token = self.shutdown.child_token();
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // Skip the immediate first tick so we don't reap during startup.
-            ticker.tick().await;
+        // Supervised: a panic is logged and the reaper restarted.
+        fc_common::diagnostics::spawn_supervised(
+            "router.in_pipeline_reaper",
+            fc_common::diagnostics::OnPanic::Restart,
+            move || {
+                let manager = self.clone();
+                let token = token.clone();
+                async move {
+                    let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    // Skip the immediate first tick so we don't reap during startup.
+                    ticker.tick().await;
 
-            loop {
-                tokio::select! {
-                    _ = ticker.tick() => {
-                        self.reap_in_pipeline(Self::IN_PIPELINE_TTL);
-                    }
-                    _ = token.cancelled() => {
-                        info!("In-pipeline reaper shutting down");
-                        break;
+                    loop {
+                        tokio::select! {
+                            _ = ticker.tick() => {
+                                manager.reap_in_pipeline(Self::IN_PIPELINE_TTL);
+                            }
+                            _ = token.cancelled() => {
+                                info!("In-pipeline reaper shutting down");
+                                break;
+                            }
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
     }
 
     /// Graceful shutdown, in Go's order (`Server.Run`'s shutdown sequence):
@@ -173,6 +182,69 @@ impl QueueManager {
         false
     }
 
+    /// Delay on a delivery abandoned at shutdown: long enough that this
+    /// process (which may still be finishing the call) has exited before the
+    /// broker hands the message to another router, short next to a
+    /// visibility timeout.
+    const ABANDONED_NACK_DELAY_SECS: u32 = 10;
+
+    /// Bound on handing back the deliveries abandoned at shutdown.
+    const ABANDONED_NACK_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// Nack every message still tracked after the drain budget ran out —
+    /// deliveries still in a worker when the process is about to exit —
+    /// through its consumer, so each returns to the broker in
+    /// [`Self::ABANDONED_NACK_DELAY_SECS`] instead of after its whole
+    /// visibility timeout. Go's `Stop` dropped such messages without a
+    /// nack; this router used to log "will be NACKed" and then only clear
+    /// the tracker. A delivery that does complete afterwards still acks
+    /// with its own receipt (at-least-once either way). Bounded by
+    /// [`Self::ABANDONED_NACK_TIMEOUT`]. Returns how many were handed back.
+    pub(crate) async fn release_abandoned_in_flight(&self) -> usize {
+        let abandoned: Vec<_> = self
+            .in_pipeline
+            .iter()
+            .map(|e| e.value().msg.clone())
+            .collect();
+        if abandoned.is_empty() {
+            return 0;
+        }
+        let nacks = abandoned.iter().filter_map(|m| {
+            let consumer = self.consumers.resolve(&m.queue_identifier, 0)?;
+            self.flight_recorder.record(
+                crate::flight_recorder::EventKind::ReleasedAtShutdown,
+                &crate::flight_recorder::EventContext::new(m.message_id.as_str())
+                    .pool(m.pool_code.as_str())
+                    .group(m.message_group_id.as_deref())
+                    .queue(m.queue_identifier.as_str()),
+                crate::flight_recorder::Facts::text(format!(
+                    "still in a worker when the drain budget ran out; nacked, visible in {}s",
+                    Self::ABANDONED_NACK_DELAY_SECS
+                )),
+            );
+            let handle = m.receipt_handle.clone();
+            Some(async move {
+                consumer
+                    .nack(&handle, Some(Self::ABANDONED_NACK_DELAY_SECS))
+                    .await
+                    .is_ok()
+            })
+        });
+        let outcome =
+            tokio::time::timeout(Self::ABANDONED_NACK_TIMEOUT, future::join_all(nacks)).await;
+        let released = match outcome {
+            Ok(results) => results.into_iter().filter(|ok| *ok).count(),
+            Err(_) => 0,
+        };
+        warn!(
+            abandoned = abandoned.len(),
+            released,
+            delay_secs = Self::ABANDONED_NACK_DELAY_SECS,
+            "Deliveries still in hand at the end of the drain budget were handed back to the broker"
+        );
+        released
+    }
+
     /// Same as [`Self::shutdown`], but with an explicit drain budget instead
     /// of the [`Self::DEFAULT_DRAIN_TIMEOUT`] default — the bounded wait for
     /// every pool's tracked (in-hand) tasks to finish before shutdown gives
@@ -238,6 +310,11 @@ impl QueueManager {
                 timeout_secs = drain_timeout.as_secs(),
                 "Shutdown drain timed out — some pools still had in-flight work"
             );
+            // The deliveries still in hand die with the process: hand them
+            // back now, while the consumers are still alive to do it,
+            // rather than leave each invisible for its whole visibility
+            // timeout.
+            self.release_abandoned_in_flight().await;
         }
 
         // What was released is visible on the broker again, and a poll loop
@@ -268,13 +345,12 @@ impl QueueManager {
             rc.consumer.stop().await;
         }
 
-        // Log any remaining in-flight messages (they'll be NACKed when tasks are dropped)
+        // Whatever is still tracked was handed back above (a delivery still
+        // in hand past the drain budget) or is settling right now; the
+        // tracker itself goes with the manager.
         let remaining = self.in_pipeline.len();
         if remaining > 0 {
-            warn!(
-                remaining = remaining,
-                "Remaining in-flight messages will be NACKed"
-            );
+            info!(remaining, "Clearing the in-flight tracker at shutdown");
             self.in_pipeline.clear();
             self.app_message_to_pipeline_key.clear();
         }

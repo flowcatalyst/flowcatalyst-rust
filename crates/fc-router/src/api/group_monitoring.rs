@@ -44,6 +44,11 @@ pub(crate) struct BlockedGroupInfo {
     suppressed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     suppressed_until: Option<DateTime<Utc>>,
+    /// The pool's live concurrency (Java's view; additive to Go's shape).
+    concurrency: u32,
+    /// The pool's rate limit, when it has one (Java's view).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rate_limit_per_minute: Option<u32>,
 }
 
 /// Every live message group across every pool this router is tracking —
@@ -79,6 +84,8 @@ pub(crate) async fn blocked_groups_handler(
             parked_at: g.parked_at,
             suppressed: g.suppressed,
             suppressed_until: g.suppressed_until,
+            concurrency: g.concurrency,
+            rate_limit_per_minute: g.rate_limit_per_minute,
         })
         .collect();
     Json(out)

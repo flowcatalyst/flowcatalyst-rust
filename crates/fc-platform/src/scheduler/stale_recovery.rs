@@ -49,6 +49,7 @@ impl StaleQueuedJobPoller {
         Self { pool, stale_after }
     }
 
+    #[tracing::instrument(name = "scheduler.stale_recovery", skip_all)]
     pub async fn recover_once(&self) -> Result<StaleRecovery, SchedulerError> {
         let cutoff = Utc::now()
             - chrono::Duration::from_std(self.stale_after)

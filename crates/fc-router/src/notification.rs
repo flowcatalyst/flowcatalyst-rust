@@ -74,8 +74,15 @@ impl TeamsWebhookNotificationService {
             enabled = enabled,
             "TeamsWebhookNotificationService initialized"
         );
+        // Bounded: a hung webhook must not hold the batch sender (and the
+        // warnings queued behind it) for ever.
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
         Self {
-            client: reqwest::Client::new(),
+            client,
             webhook_url,
             enabled,
         }
@@ -640,11 +647,17 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Most warnings one batch holds; later ones in the same period are
+/// counted, not kept (the summary says how many).
+pub const MAX_BATCHED_WARNINGS: usize = 1000;
+
 /// Batching notification service that collects warnings and sends summaries
 pub struct BatchingNotificationService {
     delegates: Vec<Arc<dyn NotificationService>>,
     min_severity: WarningSeverity,
     warning_batch: Mutex<Vec<Warning>>,
+    /// Warnings past [`MAX_BATCHED_WARNINGS`] in the current period.
+    overflow: std::sync::atomic::AtomicU64,
     batch_start_time: Mutex<DateTime<Utc>>,
 }
 
@@ -662,6 +675,7 @@ impl BatchingNotificationService {
             delegates,
             min_severity,
             warning_batch: Mutex::new(Vec::new()),
+            overflow: std::sync::atomic::AtomicU64::new(0),
             batch_start_time: Mutex::new(Utc::now()),
         }
     }
@@ -765,6 +779,12 @@ impl BatchingNotificationService {
         }
 
         summary.push_str(&format!("Total Warnings: {}\n", warnings.len()));
+        let overflow = self.overflow.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if overflow > 0 {
+            summary.push_str(&format!(
+                "(+{overflow} more warnings in this period, past the batch limit of {MAX_BATCHED_WARNINGS})\n"
+            ));
+        }
 
         // Create summary warning
         let highest_severity = self.get_highest_severity(&warnings);
@@ -791,7 +811,13 @@ impl BatchingNotificationService {
 impl NotificationService for BatchingNotificationService {
     async fn notify_warning(&self, warning: &Warning) {
         if self.meets_min_severity(&warning.severity) {
-            self.warning_batch.lock().push(warning.clone());
+            let mut batch = self.warning_batch.lock();
+            if batch.len() < MAX_BATCHED_WARNINGS {
+                batch.push(warning.clone());
+            } else {
+                self.overflow
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 
@@ -932,23 +958,34 @@ pub fn create_notification_service_with_scheduler(
         let weak_service: Weak<BatchingNotificationService> = Arc::downgrade(&service);
         let interval = std::time::Duration::from_secs(config.batch_interval_seconds);
 
-        Some(tokio::spawn(async move {
-            info!(
-                interval_secs = interval.as_secs(),
-                "Starting notification batch scheduler"
-            );
-            let mut interval_timer = tokio::time::interval(interval);
-            interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Supervised: a panic while sending a batch is logged and the
+        // scheduler restarted, rather than batching stopping silently.
+        Some(fc_common::diagnostics::spawn_supervised(
+            "router.notification_batch",
+            fc_common::diagnostics::OnPanic::Restart,
+            move || {
+                let weak_service = weak_service.clone();
+                async move {
+                    info!(
+                        interval_secs = interval.as_secs(),
+                        "Starting notification batch scheduler"
+                    );
+                    let mut interval_timer = tokio::time::interval(interval);
+                    interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    // The first tick fires at once: nothing is batched yet.
+                    interval_timer.tick().await;
 
-            loop {
-                interval_timer.tick().await;
-                let Some(service) = weak_service.upgrade() else {
-                    info!("Notification service dropped; batch scheduler exiting");
-                    break;
-                };
-                service.send_batch().await;
-            }
-        }))
+                    loop {
+                        interval_timer.tick().await;
+                        let Some(service) = weak_service.upgrade() else {
+                            info!("Notification service dropped; batch scheduler exiting");
+                            break;
+                        };
+                        service.send_batch().await;
+                    }
+                }
+            },
+        ))
     } else {
         None
     };
@@ -962,6 +999,48 @@ pub fn create_notification_service_with_scheduler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A batch holds at most MAX_BATCHED_WARNINGS; the rest of the period
+    /// is counted into the summary.
+    #[tokio::test]
+    async fn the_batch_is_capped_and_counts_the_overflow() {
+        struct Sink(parking_lot::Mutex<Vec<String>>);
+        #[async_trait]
+        impl NotificationService for Sink {
+            async fn notify_warning(&self, w: &Warning) {
+                self.0.lock().push(w.message.clone());
+            }
+            async fn notify_critical_error(&self, _: &str, _: &str) {}
+            async fn notify_system_event(&self, _: &str, _: &str) {}
+            fn is_enabled(&self) -> bool {
+                true
+            }
+        }
+        let sink = Arc::new(Sink(parking_lot::Mutex::new(Vec::new())));
+        let service = BatchingNotificationService::new(
+            vec![sink.clone() as Arc<dyn NotificationService>],
+            WarningSeverity::Info,
+        );
+        for i in 0..(MAX_BATCHED_WARNINGS + 25) {
+            let w = Warning::new(
+                fc_common::WarningCategory::Processing,
+                WarningSeverity::Warn,
+                format!("w{i}"),
+                "test".into(),
+            );
+            service.notify_warning(&w).await;
+        }
+        assert_eq!(service.pending_count(), MAX_BATCHED_WARNINGS);
+        service.send_batch().await;
+        let sent = sink.0.lock().clone();
+        assert_eq!(sent.len(), 1);
+        assert!(
+            sent[0].contains("(+25 more warnings in this period"),
+            "{}",
+            sent[0]
+        );
+        assert_eq!(service.pending_count(), 0);
+    }
 
     #[test]
     fn test_severity_ordering() {

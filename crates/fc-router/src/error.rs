@@ -52,6 +52,13 @@ pub enum RouterError {
     /// does not record the config as applied and retries it.
     #[error("Failed to build consumer(s): {0}")]
     ConsumerBuild(String),
+
+    /// A reconcile applied what it could but not all of it (a pool that
+    /// could not be created, a concurrency decrease that timed out). The
+    /// rest of the configuration was applied; the reload is reported failed
+    /// so the caller retries it.
+    #[error("Reconfigure incomplete: {0}")]
+    Reconfigure(String),
 }
 
 impl RouterError {

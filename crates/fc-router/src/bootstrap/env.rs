@@ -94,6 +94,9 @@ pub struct RouterEnv {
     pub synth_pool_idle_secs: Option<i64>,
     /// `FC_ROUTER_DEFERRAL_BUDGET`; 0 keeps the default.
     pub deferral_budget: usize,
+    /// `FC_ROUTER_FLIGHT_RECORDER_EVENTS`: events the flight recorder keeps
+    /// (default 16384, `0` turns it off; see [`crate::flight_recorder`]).
+    pub flight_recorder_events: usize,
     /// `FC_ROUTER_HTTP_PREFIX` as given (`fc-server` defaults it to
     /// `/router`, the standalone binary to root-only).
     pub http_prefix: Option<String>,
@@ -174,6 +177,13 @@ impl RouterEnv {
             .filter(|&n| n > 0)
             .map_or(0, |n| n as usize);
 
+        let flight_recorder_events = env
+            .int("FC_ROUTER_FLIGHT_RECORDER_EVENTS")
+            .filter(|&n| n >= 0)
+            .map_or(crate::flight_recorder::DEFAULT_CAPACITY, |n| {
+                (n as usize).min(1_000_000)
+            });
+
         let dev_mode = env.bool_first(&["FLOWCATALYST_DEV_MODE"], false);
         Ok(Self {
             config_urls,
@@ -190,6 +200,7 @@ impl RouterEnv {
             drain_timeout,
             synth_pool_idle_secs,
             deferral_budget,
+            flight_recorder_events,
             http_prefix: env.first(&["FC_ROUTER_HTTP_PREFIX"]),
             standby: standby_config(&env),
             notification: notification_config(&env),

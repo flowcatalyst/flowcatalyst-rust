@@ -15,3 +15,37 @@ tokio = { workspace = true }
 utoipa = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+# The OTLP span exporter (feature `otel`, off by default): OTLP/HTTP
+# protobuf over the workspace's reqwest, not a second HTTP stack.
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-http = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(unix)'.dependencies]
+# getrusage/getrlimit for the process metrics.
+libc = { workspace = true }
+
+[features]
+default = []
+# Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable";
+# the production image builds with both (Dockerfile, FC_TASKDUMP).
+taskdump = ["tokio/taskdump"]
+# OTLP span export, started by FC_OTEL_ENABLED=true.
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-http",
+    "dep:tracing-opentelemetry",
+    "dep:reqwest",
+]
+
+[lints.rust]
+# `tokio_unstable` is set by RUSTFLAGS for the task-dump build.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }

@@ -102,8 +102,9 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = processor_clone.start() => {}
             _ = shutdown_rx.recv() => {
-                processor_clone.stop();
                 info!("Outbox processor shutting down");
+                // Stop, and hand what the groups still hold back to PENDING.
+                processor_clone.shutdown().await;
             }
         }
     });
@@ -166,6 +167,7 @@ async fn main() -> Result<()> {
     .await;
 
     info!("FlowCatalyst Outbox Processor shutdown complete");
+    fc_common::logging::shutdown();
     Ok(())
 }
 
@@ -173,7 +175,7 @@ type Processor = Arc<EnhancedOutboxProcessor>;
 
 async fn metrics_handler(State(p): State<Processor>) -> String {
     let m = p.metrics().await;
-    format!(
+    let mut out = format!(
         "# HELP fc_outbox_up Outbox processor is up\n# TYPE fc_outbox_up gauge\nfc_outbox_up 1\n\
          # TYPE fc_outbox_items_polled_total counter\nfc_outbox_items_polled_total {}\n\
          # TYPE fc_outbox_items_succeeded_total counter\nfc_outbox_items_succeeded_total {}\n\
@@ -189,7 +191,14 @@ async fn metrics_handler(State(p): State<Processor>) -> String {
         m.items_recovered,
         m.current_in_flight,
         m.blocked_groups,
-    )
+    );
+    // The tokio runtime and the process (CPU, RSS, fds, threads, panics).
+    fc_common::diagnostics::render_prometheus(
+        &mut out,
+        None,
+        fc_common::diagnostics::Exposition::Prometheus,
+    );
+    out
 }
 
 async fn health_handler() -> Json<serde_json::Value> {

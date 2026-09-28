@@ -432,6 +432,79 @@ async fn transitional_none_answers_and_warns_on_the_health_output() {
         .is_none());
 }
 
+// ── Diagnostics ────────────────────────────────────────────────────────────
+
+/// `/diagnostics/*` sits behind the guard: view for the snapshots and
+/// lookups, operate for the task dump (a GET that pauses the runtime).
+#[tokio::test]
+async fn diagnostics_need_view_and_the_task_dump_needs_operate() {
+    let platform = TestPlatform::start().await;
+    let app = guarded(&platform);
+    let view = platform.mint(&Claims::api(&[ROUTER_VIEW]));
+    let operate = platform.mint(&Claims::api(&[ROUTER_OPERATE]));
+
+    for path in [
+        "/diagnostics/runtime?sampleMs=0",
+        "/diagnostics/task-dump",
+        "/diagnostics/messages/m1",
+        "/diagnostics/groups/g1",
+        "/diagnostics/events",
+    ] {
+        assert_unauthorized(&get(&app, path, None).await, path);
+    }
+
+    let a = get(&app, "/diagnostics/runtime?sampleMs=0", Some(&view)).await;
+    assert_eq!(a.status, StatusCode::OK, "{:?}", a.body);
+    assert!(a.body["runtime"]["tokio"]["workers"].as_u64().is_some());
+    assert!(a.body["router"]["flightRecorder"]["capacity"]
+        .as_u64()
+        .is_some());
+    let a = get(&app, "/diagnostics/messages/m1", Some(&view)).await;
+    assert_eq!(a.status, StatusCode::OK, "{:?}", a.body);
+    assert_eq!(a.body["status"], "NOT_IN_PIPELINE");
+
+    let a = get(&app, "/diagnostics/task-dump", Some(&view)).await;
+    assert_eq!(a.status, StatusCode::FORBIDDEN);
+    assert_eq!(a.body["message"], format!("{ROUTER_OPERATE} required"));
+
+    let a = get(&app, "/diagnostics/task-dump", Some(&operate)).await;
+    if fc_common::diagnostics::TASKDUMP_AVAILABLE {
+        assert_eq!(a.status, StatusCode::OK);
+    } else {
+        assert_eq!(a.status, StatusCode::NOT_IMPLEMENTED, "{:?}", a.body);
+        assert_eq!(a.body["error"], "TASK_DUMP_NOT_AVAILABLE");
+    }
+}
+
+/// Never anonymous: on a router left open outside dev mode (decision #43's
+/// transitional AUTH_MODE=NONE) the diagnostics refuse, while in dev mode
+/// they answer.
+#[tokio::test]
+async fn diagnostics_refuse_on_an_open_router_outside_dev_mode() {
+    let open = build_app(RouterOptions {
+        auth_warning: Some(fc_router::api::platform_auth::UNAUTHENTICATED_WARNING.to_string()),
+        ..RouterOptions::default()
+    });
+    for path in [
+        "/diagnostics/runtime?sampleMs=0",
+        "/diagnostics/task-dump",
+        "/diagnostics/messages/m1",
+        "/diagnostics/groups/g1",
+        "/diagnostics/events",
+    ] {
+        let a = get(&open, path, None).await;
+        assert_eq!(a.status, StatusCode::FORBIDDEN, "{path}: {:?}", a.body);
+        assert_eq!(a.body["error"], "DIAGNOSTICS_REQUIRE_AUTH", "{path}");
+    }
+
+    let dev = build_app(RouterOptions {
+        dev_routes: true,
+        ..RouterOptions::default()
+    });
+    let a = get(&dev, "/diagnostics/runtime?sampleMs=0", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{:?}", a.body);
+}
+
 // ── Dashboard sign-in (authorization code + PKCE) ──────────────────────────
 
 /// A fake platform whose `/oauth/token` records the form it was sent and

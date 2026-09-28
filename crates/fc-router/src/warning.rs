@@ -67,11 +67,21 @@ impl Default for WarningServiceConfig {
     }
 }
 
+/// Most notification deliveries in flight at once. Past it a warning is
+/// still stored (and served by the API); only its notification is dropped,
+/// and counted.
+const MAX_NOTIFICATIONS_IN_FLIGHT: usize = 64;
+
 /// In-memory warning service
 pub struct WarningService {
     warnings: RwLock<HashMap<String, Warning>>,
     config: WarningServiceConfig,
     notification_service: Option<Arc<dyn NotificationService>>,
+    /// Bounds the notification tasks `add_warning` spawns: a warning storm
+    /// against a slow or hung channel used to spawn one task per warning
+    /// without limit (Go's unbounded notification spawns).
+    notify_permits: Arc<tokio::sync::Semaphore>,
+    notifications_dropped: std::sync::atomic::AtomicU64,
 }
 
 impl WarningService {
@@ -80,6 +90,8 @@ impl WarningService {
             warnings: RwLock::new(HashMap::new()),
             config,
             notification_service: None,
+            notify_permits: Arc::new(tokio::sync::Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
+            notifications_dropped: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -92,6 +104,8 @@ impl WarningService {
             warnings: RwLock::new(HashMap::new()),
             config,
             notification_service: Some(notification),
+            notify_permits: Arc::new(tokio::sync::Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
+            notifications_dropped: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -124,19 +138,49 @@ impl WarningService {
 
         // Send notification if service is configured.
         //
-        // **Spawn:** fire-and-forget. **Owns:** an Arc clone of the
-        // notification service plus the `warning` value (moved in).
-        // **Exits:** as soon as `notify_warning` returns (one-shot).
-        // **Joined by:** nobody — we don't block `add_warning` on
-        // notification delivery, since notification failures (Teams /
-        // email transient errors) must not stall warning ingestion.
+        // **Spawn:** fire-and-forget, at most `MAX_NOTIFICATIONS_IN_FLIGHT`
+        // at once. **Owns:** an Arc clone of the notification service, the
+        // `warning` value (moved in) and a permit. **Exits:** as soon as
+        // `notify_warning` returns (one-shot). **Joined by:** nobody — we
+        // don't block `add_warning` on notification delivery, since
+        // notification failures (Teams / email transient errors) must not
+        // stall warning ingestion. Outside a runtime (a sync caller in a
+        // test) there is nothing to spawn on and the notification is
+        // skipped.
         if let Some(ns) = self.notification_service.clone() {
-            tokio::spawn(async move {
-                ns.notify_warning(&warning).await;
-            });
+            match (
+                self.notify_permits.clone().try_acquire_owned(),
+                tokio::runtime::Handle::try_current(),
+            ) {
+                (Ok(permit), Ok(rt)) => {
+                    rt.spawn(async move {
+                        ns.notify_warning(&warning).await;
+                        drop(permit);
+                    });
+                }
+                _ => {
+                    let dropped = self
+                        .notifications_dropped
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
+                    if dropped.is_power_of_two() {
+                        tracing::warn!(
+                            dropped,
+                            in_flight_limit = MAX_NOTIFICATIONS_IN_FLIGHT,
+                            "Notification deliveries saturated; warning stored but not notified"
+                        );
+                    }
+                }
+            }
         }
 
         id
+    }
+
+    /// Notifications dropped because too many deliveries were in flight.
+    pub fn notifications_dropped(&self) -> u64 {
+        self.notifications_dropped
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Add a warning. Returns the new warning's id.
@@ -379,11 +423,7 @@ impl WarningService {
     /// Create a no-op warning service with default config.
     /// Used as the default when no explicit warning service is configured.
     pub fn noop() -> Self {
-        Self {
-            warnings: RwLock::new(HashMap::new()),
-            config: WarningServiceConfig::default(),
-            notification_service: None,
-        }
+        Self::new(WarningServiceConfig::default())
     }
 }
 
@@ -396,6 +436,52 @@ impl Default for WarningService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A notification channel that never answers.
+    struct Hung;
+
+    #[async_trait::async_trait]
+    impl NotificationService for Hung {
+        async fn notify_warning(&self, _: &Warning) {
+            std::future::pending::<()>().await;
+        }
+        async fn notify_critical_error(&self, _: &str, _: &str) {}
+        async fn notify_system_event(&self, _: &str, _: &str) {}
+        fn is_enabled(&self) -> bool {
+            true
+        }
+    }
+
+    /// A warning storm against a hung channel spawns a bounded number of
+    /// notification tasks (Go spawned one per warning without limit); the
+    /// warnings themselves are all stored.
+    #[tokio::test]
+    async fn notification_spawns_are_bounded() {
+        let service =
+            WarningService::with_notification(WarningServiceConfig::default(), Arc::new(Hung));
+        let before = tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks();
+        for i in 0..500 {
+            service.add_warning(
+                WarningCategory::Processing,
+                WarningSeverity::Error,
+                format!("w{i}"),
+                "test".into(),
+            );
+        }
+        tokio::task::yield_now().await;
+        let spawned = tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
+            - before;
+        assert_eq!(spawned, MAX_NOTIFICATIONS_IN_FLIGHT);
+        assert_eq!(
+            service.notifications_dropped(),
+            (500 - MAX_NOTIFICATIONS_IN_FLIGHT) as u64
+        );
+        assert_eq!(service.get_all_warnings().len(), 500);
+    }
 
     #[test]
     fn test_add_and_get_warning() {
