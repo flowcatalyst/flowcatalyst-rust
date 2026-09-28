@@ -8,8 +8,7 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::PrincipalGoState;
-use super::api::PrincipalsState;
+use super::api::{PrincipalGoState, PrincipalsState};
 use super::operations::set_client_association::SetClientAssociationUseCase;
 use super::operations::{
     ActivateUserUseCase, AssignApplicationAccessUseCase, AssignUserRolesUseCase, CreateUserUseCase,

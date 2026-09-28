@@ -6,12 +6,11 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::ClientsState;
+use super::api::{ClientSearchState, ClientsState};
 use super::operations::{
     ActivateClientUseCase, AddClientNoteUseCase, CreateClientUseCase, DeleteClientUseCase,
     SuspendClientUseCase, UpdateClientUseCase,
 };
-use super::api::ClientSearchState;
 use crate::application::operations::{
     DisableApplicationForClientUseCase, EnableApplicationForClientUseCase,
     UpdateClientApplicationsUseCase,

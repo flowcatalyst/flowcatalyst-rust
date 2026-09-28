@@ -8,8 +8,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::ApplicationsState;
-use super::api::ApplicationGoState;
+use super::api::{ApplicationGoState, ApplicationsState};
 use super::operations::{
     ActivateApplicationUseCase, AttachServiceAccountToApplicationUseCase, CreateApplicationUseCase,
     DeactivateApplicationUseCase, DisableApplicationForClientUseCase,

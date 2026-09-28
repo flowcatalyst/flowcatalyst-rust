@@ -7,8 +7,7 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::EmailDomainMappingsState;
-use super::api::EdmLookupState;
+use super::api::{EdmLookupState, EmailDomainMappingsState};
 use super::operations::move_provider::MoveMappingToProviderUseCase;
 use super::operations::{
     CreateEmailDomainMappingUseCase, DeleteEmailDomainMappingUseCase,

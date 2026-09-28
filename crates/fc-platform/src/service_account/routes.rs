@@ -7,8 +7,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::ServiceAccountAdminState;
-use super::api::ServiceAccountsState;
+use super::api::{ServiceAccountAdminState, ServiceAccountsState};
 use super::operations::mint_token::RecordServiceAccountTokenMintUseCase;
 use super::operations::{
     AssignRolesUseCase, CreateServiceAccountUseCase, DeactivateServiceAccountUseCase,

@@ -8,8 +8,7 @@ use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::access_api::ConfigAccessState;
-use super::api::GoPlatformConfigState;
-use super::api::PlatformConfigState;
+use super::api::{GoPlatformConfigState, PlatformConfigState};
 use super::operations::{
     GrantPlatformConfigAccessUseCase, RevokePlatformConfigAccessUseCase,
     SetPlatformConfigPropertyUseCase,

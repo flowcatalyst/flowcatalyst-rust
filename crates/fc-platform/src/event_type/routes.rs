@@ -7,8 +7,7 @@ use std::sync::Arc;
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::EventTypeGoState;
-use super::api::EventTypesState;
+use super::api::{EventTypeGoState, EventTypesState};
 use super::operations::{
     AddSchemaUseCase, CreateEventTypeUseCase, DeleteEventTypeUseCase, SyncEventTypesUseCase,
     UpdateEventTypeUseCase,

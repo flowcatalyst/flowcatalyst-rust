@@ -8,8 +8,7 @@ use axum::routing::{delete, get};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::api::RolePermissionsState;
-use super::api::RolesState;
+use super::api::{RolePermissionsState, RolesState};
 use super::operations::{CreateRoleUseCase, DeleteRoleUseCase, UpdateRoleUseCase};
 use super::permission_repository::PermissionCatalogRepository;
 use crate::role::bff::BffRolesState;
