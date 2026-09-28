@@ -72,7 +72,7 @@ impl QueueConsumer for Counting {
 }
 
 fn message(i: u64) -> QueuedMessage {
-    let grouped = i % 2 == 0;
+    let grouped = i.is_multiple_of(2);
     QueuedMessage {
         message: Message {
             id: format!("msg-{i:08}"),
