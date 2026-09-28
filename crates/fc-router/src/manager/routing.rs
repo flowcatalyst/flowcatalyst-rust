@@ -593,6 +593,7 @@ impl QueueManager {
             let mut malformed_futs = Vec::new();
             for msg in filtered.unique {
                 if let Some(reason) = malformed_routing_reason(&msg.message) {
+                    self.note_rejected(super::REJECTED_STRICT_ROUTING);
                     self.flight_recorder.record(
                         EventKind::Rejected,
                         &EventContext::new(msg.message.id.as_str())

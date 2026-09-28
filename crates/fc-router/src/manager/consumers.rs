@@ -323,11 +323,25 @@ impl QueueManager {
     /// `unsupported-mediation-type`). It used to be a log line only.
     fn report_rejected(&self, rc: &RunningConsumer) {
         for rejected in rc.consumer.take_rejected() {
-            error!(
+            // The reason is the decoder's error (a position and the field
+            // it choked on, never the payload); bounded all the same.
+            let reason: String = rejected.reason.chars().take(200).collect();
+            warn!(
                 queue = %rc.identifier(),
                 broker_message_id = ?rejected.broker_message_id,
-                reason = %rejected.reason,
+                reason = %reason,
                 "Malformed message removed from the queue without delivery"
+            );
+            self.note_rejected(super::REJECTED_MALFORMED);
+            self.flight_recorder.record(
+                crate::flight_recorder::EventKind::Rejected,
+                &crate::flight_recorder::EventContext::new(
+                    rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
+                )
+                .queue(rc.identifier()),
+                crate::flight_recorder::Facts::text(format!(
+                    "malformed; removed from the queue without delivery: {reason}"
+                )),
             );
             self.warning_service.add_warning(
                 WarningCategory::Configuration,
@@ -336,7 +350,7 @@ impl QueueManager {
                     "Malformed message {} on queue {} removed without delivery: {}",
                     rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
                     rc.identifier(),
-                    rejected.reason
+                    reason
                 ),
                 "QueueManager".to_string(),
             );
@@ -857,6 +871,18 @@ mod consumer_liveness_tests {
             .warning_service
             .get_warnings_by_category(WarningCategory::Configuration);
         assert!(!warnings.is_empty());
+        // Counted (fc_messages_rejected_total{reason="malformed"}) and
+        // recorded for the message lookup.
+        let malformed = manager
+            .messages_rejected()
+            .into_iter()
+            .find(|(r, _)| *r == "malformed")
+            .unwrap()
+            .1;
+        assert!(malformed >= 1);
+        let history = manager.flight_recorder().for_message("m-1");
+        assert_eq!(history[0].kind, crate::flight_recorder::EventKind::Rejected);
+        assert_eq!(history[0].queue(), Some("rejecting"));
         assert_eq!(warnings[0].severity, WarningSeverity::Error);
         assert!(warnings[0].message.contains("SMTP"));
         manager.shutdown().await;

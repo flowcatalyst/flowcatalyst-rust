@@ -405,7 +405,19 @@ pub struct QueueManager {
     /// decisions, settlement), shared with every pool and callback — see
     /// [`crate::flight_recorder`].
     flight_recorder: Arc<crate::flight_recorder::FlightRecorder>,
+
+    /// Messages removed without delivery because they could not be
+    /// routed, by reason (see [`QueueManager::messages_rejected`]).
+    rejected: [std::sync::atomic::AtomicU64; 2],
 }
+
+/// `fc_messages_rejected_total{reason}`: a message the consumer could not
+/// decode, removed at the parse boundary.
+pub(crate) const REJECTED_MALFORMED: usize = 0;
+/// A decoded message strict routing refused (no pool, no dispatch mode, an
+/// ordered mode without a group).
+pub(crate) const REJECTED_STRICT_ROUTING: usize = 1;
+const REJECTED_REASONS: [&str; 2] = ["malformed", "strict_routing"];
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
 /// preferred over `new` + a sequence of `set_*` calls (two-phase mutation).
@@ -594,6 +606,7 @@ impl QueueManagerBuilder {
             consumers_started: AtomicBool::new(false),
             settled_reporter: self.settled_reporter,
             flight_recorder: self.flight_recorder,
+            rejected: Default::default(),
         }
     }
 }
@@ -653,6 +666,25 @@ impl QueueManager {
     /// eviction so they observe/act on the real breaker state.
     pub fn circuit_breaker_registry(&self) -> &Arc<CircuitBreakerRegistry> {
         &self.circuit_breaker_registry
+    }
+
+    /// Count a message removed without delivery (`reason` is one of the
+    /// `REJECTED_*` indexes): the manager's own tally and the
+    /// `fc_messages_rejected_total{reason}` series.
+    pub(crate) fn note_rejected(&self, reason: usize) {
+        self.rejected[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        metrics::counter!("fc_messages_rejected_total", "reason" => REJECTED_REASONS[reason])
+            .increment(1);
+    }
+
+    /// Messages removed without delivery since start, by reason
+    /// (`malformed`, `strict_routing`).
+    pub fn messages_rejected(&self) -> Vec<(&'static str, u64)> {
+        REJECTED_REASONS
+            .iter()
+            .zip(&self.rejected)
+            .map(|(r, n)| (*r, n.load(std::sync::atomic::Ordering::Relaxed)))
+            .collect()
     }
 
     /// The flight recorder (see [`crate::flight_recorder`]).

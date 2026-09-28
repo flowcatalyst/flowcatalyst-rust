@@ -195,6 +195,7 @@ and a supervised-task name (a fixed set).
 | `process_start_time_seconds` | gauge | Start time |
 | `fc_process_panics_total` | counter | Panics on any thread (each logged, see "Panics") |
 | `fc_task_restarts_total{task}` | counter | Panics caught in supervised loops, by loop |
+| `fc_messages_rejected_total{reason}` | counter | Router: messages removed without delivery: `malformed` (could not be decoded; also a WARN line, a CONFIGURATION/ERROR warning and a `REJECTED` event) or `strict_routing` |
 
 Only tokio's **stable** metrics are used (no `tokio_unstable` needed), read
 straight from the runtime; the process figures come from `/proc/self` and
