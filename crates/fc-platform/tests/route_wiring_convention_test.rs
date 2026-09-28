@@ -289,6 +289,7 @@ fn router_rs_mounts_only_modules_and_cross_cutting_routers() {
     let code = production_code(&router);
     let build = fn_body(&code, "build");
     let merge_re = regex::Regex::new(r"\.merge\(").unwrap();
+    let module_entry = regex::Regex::new(r"^crate::[a-z_:]+::routes\(ctx\)$").unwrap();
     let mut problems = Vec::new();
     for m in merge_re.find_iter(build) {
         let open = m.end() - 1;
@@ -296,7 +297,6 @@ fn router_rs_mounts_only_modules_and_cross_cutting_routers() {
         let arg = build[open + 1..end - 1]
             .split_whitespace()
             .collect::<String>();
-        let module_entry = regex::Regex::new(r"^crate::[a-z_:]+::routes\(ctx\)$").unwrap();
         let ok = module_entry.is_match(&arg)
             || ROUTER_RS_CALLS
                 .iter()
