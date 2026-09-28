@@ -1,0 +1,48 @@
+== size-all-lto
+ 21G	~/Developer/fc-build-speed/target/debug
+ 13G	~/Developer/fc-build-speed/target/debug/deps
+9.2G	~/Developer/fc-build-speed/target/debug/incremental
+254M	~/Developer/fc-build-speed/target/debug/build
+test/bin executables in deps (count, total):
+  6.3 GB
+      64
+fc_platform object files / rlibs:
+449M	total
+incremental, fc_platform:
+3.0G	total
+== size-baseline
+ 20G	~/Developer/fc-build-speed/target/debug
+ 13G	~/Developer/fc-build-speed/target/debug/deps
+9.2G	~/Developer/fc-build-speed/target/debug/incremental
+231M	~/Developer/fc-build-speed/target/debug/build
+test/bin executables in deps (count, total):
+  6.3 GB
+      64
+fc_platform object files / rlibs:
+448M	total
+incremental, fc_platform:
+3.0G	total
+== size-deps-lto
+ 21G	~/Developer/fc-build-speed/target/debug
+ 13G	~/Developer/fc-build-speed/target/debug/deps
+9.2G	~/Developer/fc-build-speed/target/debug/incremental
+254M	~/Developer/fc-build-speed/target/debug/build
+test/bin executables in deps (count, total):
+  6.3 GB
+      64
+fc_platform object files / rlibs:
+451M	total
+incremental, fc_platform:
+3.0G	total
+== size-deps-o1
+ 19G	~/Developer/fc-build-speed/target/debug
+ 12G	~/Developer/fc-build-speed/target/debug/deps
+7.6G	~/Developer/fc-build-speed/target/debug/incremental
+251M	~/Developer/fc-build-speed/target/debug/build
+test/bin executables in deps (count, total):
+  6.4 GB
+      64
+fc_platform object files / rlibs:
+454M	total
+incremental, fc_platform:
+3.0G	total

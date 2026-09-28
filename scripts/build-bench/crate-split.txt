@@ -1,0 +1,115 @@
+# Proposed crate split of fc-platform (docs/plans/build-speed-2026-09-28.md).
+# Checked by crate_split_check.py against module_graph.py's graph.
+#
+# Crates in dependency order. "move" lines are the items that must move to a
+# lower crate (or be inverted) to break a cycle; each one is a part B task.
+
+crate fc-platform-core
+crate fc-platform-iam : fc-platform-core
+crate fc-platform-auth : fc-platform-iam
+crate fc-platform-messaging : fc-platform-iam
+crate fc-platform-scheduled-jobs : fc-platform-iam
+crate fc-platform-functions : fc-platform-messaging fc-platform-scheduled-jobs
+crate fc-platform : fc-platform-auth fc-platform-functions
+
+# ── core: the kernel every domain builds on ─────────────────────────────
+mod fc-platform-core usecase
+mod fc-platform-core shared shared::error shared::tsid shared::enum_str shared::jsonb_text
+mod fc-platform-core shared::api_common shared::rejection shared::capped_body shared::log_throttle
+mod fc-platform-core shared::encryption_service shared::secret_ref shared::secret_backfill
+mod fc-platform-core shared::database shared::indexes shared::email_service shared::webhook_signer
+mod fc-platform-core shared::rate_limit_store shared::rate_limit_middleware shared::middleware
+mod fc-platform-core shared::authorization_service shared::caller_reach
+# The permission catalogue and the principal kinds AuthContext carries.
+move fc-platform-core role::entity::permissions permissions role::entity::matches_pattern
+move fc-platform-core principal::entity::UserScope UserScope principal::entity::PrincipalType PrincipalType
+
+# ── IAM: tenancy, identity, authentication ──────────────────────────────
+mod fc-platform-iam client application application_openapi_spec platform_config cors audit
+mod fc-platform-iam principal role service_account developer_credential
+mod fc-platform-iam identity_provider email_domain_mapping login_attempt password_reset
+mod fc-platform-iam app_docs
+
+# ── auth: the sign-in flows (OAuth/OIDC, sessions, 2FA, passkeys, portal) ──
+mod fc-platform-auth auth mfa webauthn portal
+mod fc-platform-auth shared::branding shared::client_selection_api shared::me_api
+
+# ── messaging: event types, events, subscriptions, dispatch ─────────────
+mod fc-platform-messaging event_type event subscription connection dispatch_pool
+mod fc-platform-messaging dispatch_job dispatch_job_actions scheduler process seed
+mod fc-platform-messaging shared::batch_api shared::dispatch_process_api shared::dispatch_queue
+mod fc-platform-messaging shared::sdk_dispatch_jobs_api shared::projections_service
+
+mod fc-platform-scheduled-jobs scheduled_job
+mod fc-platform-functions function
+
+# ── assembly: context, routes, OpenAPI, bootstrap ───────────────────────
+mod fc-platform router <root> <root>::repository <root>::api <root>::domain <root>::operations
+mod fc-platform <root>::service
+mod fc-platform shared::routes shared::platform_context shared::server_setup shared::openapi_contract
+mod fc-platform shared::openapi_api shared::filter_options_api shared::sdk_sync_api shared::sdk_sync_go_api
+mod fc-platform shared::sdk_audit_batch_api shared::application_roles_sdk_api shared::bff_dashboard_api
+mod fc-platform shared::bff_developer_api shared::debug_api shared::go_read_aliases_api
+mod fc-platform shared::health_api shared::monitoring_api shared::public_api shared::well_known_api
+mod fc-platform shared::router_config_api shared::platform_config_api shared::profile_only
+mod fc-platform shared::bootstrap_admin shared::default_processes shared::integrity_scan
+mod fc-platform shared::role_sync_service
+# Every aggregate's routes.rs is wiring (builds states and use cases from
+# PlatformContext): it moves to the assembly crate.
+file fc-platform */routes.rs
+
+# ── What breaks the cycles ──────────────────────────────────────────────
+# auth: the IAM configuration aggregates (OAuth clients, anchor domains, auth
+# configs, IdP role mappings), the JWT service and password hashing are IAM
+# model; auth keeps the sign-in flows (token endpoint, OIDC login, sessions,
+# refresh tokens, authorization codes, JWKS, backoff).
+file fc-platform-iam auth/oauth_entity.rs auth/oauth_client_repository.rs auth/oauth_clients_api.rs
+file fc-platform-iam auth/config_entity.rs auth/config_repository.rs auth/config_api.rs
+file fc-platform-iam auth/password_service.rs auth/auth_service.rs auth/signing_keys.rs
+file fc-platform-iam auth/operations/*.rs
+move fc-platform-iam auth::operations
+# The admin-initiated reset emailer (principal uses it); the endpoints stay.
+move fc-platform-iam auth::password_reset_api::PasswordResetEmailer auth::password_reset_api::ResetOptions
+lines fc-platform-iam auth/password_reset_api.rs:40-262
+# 2FA state an administrator reads and resets (principal), and the password policy.
+file fc-platform-iam mfa/entity.rs mfa/repository.rs mfa/notify.rs portal/policy.rs
+move fc-platform-iam mfa::MfaRepository
+# Portal apps are the OAuth client's portal plane: their model is IAM too.
+file fc-platform-iam portal/entity.rs portal/repository.rs
+move fc-platform-iam portal::trimmed_or_none portal::is_portal_subject portal::PortalApp portal::PortalIdentity
+move fc-platform-iam portal::validate_oauth_client_plane portal::resolve_oauth_client_portal_app
+lines fc-platform-iam portal/mod.rs:164-238
+# AuthorizationService (repository-backed) is IAM; AuthContext and the checks stay in core.
+file fc-platform-iam shared/authorization_service.rs
+# AuthContext's constructors from a Principal / token claims become IAM free
+# functions (an inherent impl can't live outside core). Lines 1-19 are the
+# imports the IAM half uses.
+lines fc-platform-iam shared/authorization_service.rs:64-120
+lines fc-platform-core shared/authorization_service.rs:20-207
+lines fc-platform-core shared/authorization_service.rs:496-1615
+move fc-platform-core shared::authorization_service::AuthContext shared::authorization_service::Credential
+move fc-platform-core shared::authorization_service::checks
+mod fc-platform-iam shared::role_sync_service
+# The bootstrap seeding in shared/database.rs goes to the assembly crate.
+lines fc-platform shared/database.rs:1290-1400
+move fc-platform shared::database::seed_platform_application shared::database::seed_platform_event_types shared::database::seed_builtin_roles
+# signing_reach checks a connection's signers: messaging, not IAM.
+file fc-platform-messaging service_account/signing_reach.rs
+move fc-platform-core shared::sdk_sync_api::SyncResultResponse
+move fc-platform-scheduled-jobs function::schedule_check::java_fixed_offset_seconds
+# The middleware validates tokens through a trait core defines and the IAM
+# token service implements; the migration runner runs the scheduled-job cron
+# migration through a hook the assembly registers; trigger_sync takes the
+# repositories it uses, not the assembly's Repositories bundle.
+invert auth::auth_service::AuthService shared::authorization_service::AuthorizationService
+invert scheduled_job::cron_migration::run
+invert repository::Repositories
+
+# ── Step 2 (flatten) ────────────────────────────────────────────────────
+# Change the two crate lines to
+#   crate fc-platform-messaging : fc-platform-core
+#   crate fc-platform-scheduled-jobs : fc-platform-core
+# and the checker lists the 34 references (19 items: ClientRepository,
+# ApplicationRepository, ServiceAccountRepository, PrincipalRepository,
+# OutboundCredentialsResolver, ApplicationAccessService, ApplicationScope)
+# that six narrow lookup traits in core replace.

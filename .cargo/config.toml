@@ -1,23 +1,22 @@
 # Cargo configuration for faster builds
 #
-# Linker setup:
-#   macOS:  brew install llvm && export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
-#   Linux:  sudo apt install lld clang   (or: sudo dnf install lld clang)
+# Measurements behind these settings, and the recommended per-developer setup
+# (sccache, OpenSSL): docs/plans/build-speed-2026-09-28.md. Rerun them with
+# scripts/build-bench/.
+#
+# Linkers:
+#   macOS: Xcode's linker (ld-prime, Xcode 15+) is the default and fast;
+#          nothing to configure. `split-debuginfo = "unpacked"` is cargo's
+#          macOS default already (debug info stays in the object files).
+#   Linux: this file links with the system lld (install `lld`; the release
+#          workflow does). mold is faster still for dev links: see the doc.
 
-# Use lld linker on Linux (much faster than default ld)
+# Use lld linker on Linux (much faster than GNU ld)
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-# Use lld linker on macOS (requires: brew install llvm)
-# Uncomment if you have lld installed
-# [target.x86_64-apple-darwin]
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-# [target.aarch64-apple-darwin]
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [build]
 # Number of parallel jobs (adjust based on CPU cores)
@@ -30,8 +29,14 @@ debug = 1
 opt-level = 0
 
 [profile.dev.package."*"]
-# Optimize dependencies even in dev mode (they don't change often)
+# Optimize dependencies even in dev mode (they don't change often). This
+# covers the proc macros too, which run on every build of our crates.
+# opt-level 1 was measured: 20 % less CPU on a cold build, the same wall
+# time, and CPU-bound tests 25 % slower.
 opt-level = 2
+# File:line in backtraces, no variable info: dependencies are rarely stepped
+# through. Smaller dependency debug info in every Linux test binary.
+debug = "line-tables-only"
 
 [profile.release]
 # Thin LTO + single codegen unit — biggest size win for the binaries we

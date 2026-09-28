@@ -1,0 +1,30 @@
+== linux-base: test executables (bytes, name)
+368621936 scheduled_job_cron_golden_test-aec73eb669eaf037
+548210632 client_admin_test-cef168825914397f
+548635728 auth_security_test-5c00b1869721a5a8
+549151328 go_routes_test-3ae8a61f829d84c4
+549267720 function_api_test-094eecf2a9101501
+== DWARF share of the largest executable
+debug sections 384 MB of 459 MB
+== target
+12G	/work/target/debug
+== linux-lto: test executables (bytes, name)
+307458840 scheduled_job_cron_golden_test-f286bf87b32579a6
+477000584 client_admin_test-b199a0b1fcb973f2
+477421056 auth_security_test-e1cbfb7b7229e2dc
+477938720 go_routes_test-194aa85d69d3ad06
+478062272 function_api_test-55a54e00c29c847e
+== DWARF share of the largest executable
+debug sections 316 MB of 392 MB
+== target
+11G	/work/target/debug
+== linux-split: test executables (bytes, name)
+131177184 scheduled_job_cron_golden_test-0a1aaf6a5d5209d9
+281900968 client_admin_test-4e49f7929a56aa34
+282205184 auth_security_test-09cd59208220ac75
+282637384 go_routes_test-a9c2b259cafec92c
+282707192 function_api_test-1dee2f96ddcc3b79
+== DWARF share of the largest executable
+debug sections 130 MB of 205 MB
+== target
+9.6G	/work/target/debug

@@ -1,0 +1,133 @@
+== sccache-empty
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                            0
+Cache misses                       2193
+Cache misses (Assembler)            152
+Cache misses (C/C++)               1407
+Cache misses (Rust)                 634
+Cache hits rate                    0.00 %
+Cache hits rate (Assembler)        0.00 %
+Cache hits rate (C/C++)            0.00 %
+Cache hits rate (Rust)             0.00 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                          788 MiB
+== sccache-incremental
+Compile requests                      6
+Compile requests executed             0
+Cache hits                            0
+Cache misses                          0
+Cache hits rate                       -
+Non-cacheable compilations            0
+Non-cacheable calls                   6
+Non-cacheable reasons:
+Cache size                            1 GiB
+== sccache-linkerenv-empty
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                            0
+Cache misses                       2193
+Cache misses (Assembler)            152
+Cache misses (C/C++)               1407
+Cache misses (Rust)                 634
+Cache hits rate                    0.00 %
+Cache hits rate (Assembler)        0.00 %
+Cache hits rate (C/C++)            0.00 %
+Cache hits rate (Rust)             0.00 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                          788 MiB
+== sccache-linkerenv-incremental
+Compile requests                      6
+Compile requests executed             0
+Cache hits                            0
+Cache misses                          0
+Cache hits rate                       -
+Non-cacheable compilations            0
+Non-cacheable calls                   6
+Non-cacheable reasons:
+Cache size                            2 GiB
+== sccache-linkerenv-warm
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                          426
+Cache hits (Assembler)              127
+Cache hits (C/C++)                  299
+Cache misses                       1767
+Cache misses (Assembler)             25
+Cache misses (C/C++)               1108
+Cache misses (Rust)                 634
+Cache hits rate                   19.43 %
+Cache hits rate (Assembler)       83.55 %
+Cache hits rate (C/C++)           21.25 %
+Cache hits rate (Rust)             0.00 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                            2 GiB
+== sccache-targetdir-empty
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                            0
+Cache misses                       2193
+Cache misses (Assembler)            152
+Cache misses (C/C++)               1407
+Cache misses (Rust)                 634
+Cache hits rate                    0.00 %
+Cache hits rate (Assembler)        0.00 %
+Cache hits rate (C/C++)            0.00 %
+Cache hits rate (Rust)             0.00 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                          788 MiB
+== sccache-targetdir-incremental
+Compile requests                      6
+Compile requests executed             0
+Cache hits                            0
+Cache misses                          0
+Cache hits rate                       -
+Non-cacheable compilations            0
+Non-cacheable calls                   6
+Non-cacheable reasons:
+Cache size                            2 GiB
+== sccache-targetdir-warm
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                          426
+Cache hits (Assembler)              127
+Cache hits (C/C++)                  299
+Cache misses                       1767
+Cache misses (Assembler)             25
+Cache misses (C/C++)               1108
+Cache misses (Rust)                 634
+Cache hits rate                   19.43 %
+Cache hits rate (Assembler)       83.55 %
+Cache hits rate (C/C++)           21.25 %
+Cache hits rate (Rust)             0.00 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                            2 GiB
+== sccache-warm
+Compile requests                   2369
+Compile requests executed          2197
+Cache hits                          837
+Cache hits (Assembler)              127
+Cache hits (C/C++)                  299
+Cache hits (Rust)                   411
+Cache misses                       1356
+Cache misses (Assembler)             25
+Cache misses (C/C++)               1108
+Cache misses (Rust)                 223
+Cache hits rate                   38.17 %
+Cache hits rate (Assembler)       83.55 %
+Cache hits rate (C/C++)           21.25 %
+Cache hits rate (Rust)            64.83 %
+Non-cacheable compilations            0
+Non-cacheable calls                 167
+Non-cacheable reasons:
+Cache size                            1 GiB
