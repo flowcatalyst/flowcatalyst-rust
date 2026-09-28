@@ -8,11 +8,11 @@ use std::sync::Arc;
 use super::events::ConnectionCreated;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
-use crate::service_account::repository::ServiceAccountRepository;
 use fc_platform_core::shared::caller_reach::check_scope_access;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
+use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 fn code_pattern() -> &'static Regex {
     static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();

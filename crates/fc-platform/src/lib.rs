@@ -72,7 +72,7 @@ pub use fc_platform_core::principal_kind;
 /// The use-case contract and the unit of work (fc-platform-core).
 pub use fc_platform_core::usecase;
 pub use fc_platform_core::{details, impl_domain_event};
-pub use fc_platform_iam::seed;
+pub use fc_platform_messaging::seed;
 
 // Unit tests of the lower crates' code that exercise it with the platform's
 // aggregates (they can't live in the crate that defines the code).
@@ -80,7 +80,7 @@ pub use fc_platform_iam::seed;
 mod split_tests;
 
 // Dispatch scheduler (polls PENDING jobs → queue → router → webhook)
-pub use fc_platform_iam::scheduler;
+pub use fc_platform_messaging::scheduler;
 
 // Centralized router builder
 pub mod router;

@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
-use crate::client::repository::ClientRepository;
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
 use fc_platform_core::permissions;
@@ -19,6 +18,7 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_iam::client::repository::ClientRepository;
 
 // ── Caller-supplied ids ─────────────────────────────────────────────────
 

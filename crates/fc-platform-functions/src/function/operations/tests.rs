@@ -51,9 +51,13 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
         domains: domains.clone(),
         routes: routes.clone(),
         trigger_sync: TriggerSync::new(
-            Arc::new(fc_platform_iam::subscription::repository::SubscriptionRepository::new(&pool)),
             Arc::new(
-                fc_platform_iam::dispatch_pool::repository::DispatchPoolRepository::new(&pool),
+                fc_platform_messaging::subscription::repository::SubscriptionRepository::new(&pool),
+            ),
+            Arc::new(
+                fc_platform_messaging::dispatch_pool::repository::DispatchPoolRepository::new(
+                    &pool,
+                ),
             ),
             Arc::new(fc_platform_scheduled_jobs::scheduled_job::ScheduledJobRepository::new(&pool)),
             Arc::new(
@@ -74,7 +78,7 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
         artifacts: None,
         publish_checks: PublishChecks {
             event_types: Arc::new(
-                fc_platform_iam::event_type::repository::EventTypeRepository::new(&pool),
+                fc_platform_messaging::event_type::repository::EventTypeRepository::new(&pool),
             ),
             service_accounts: Arc::new(
                 fc_platform_iam::service_account::repository::ServiceAccountRepository::new(&pool),

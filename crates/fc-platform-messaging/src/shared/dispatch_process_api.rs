@@ -60,7 +60,6 @@ use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn, Instrument};
 
-use crate::client::repository::ClientRepository;
 use crate::dispatch_job::delivery_credentials::{DeliveryCredentials, Resolved};
 use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchJob, ErrorType};
 use crate::dispatch_job::repository::{
@@ -70,6 +69,7 @@ use crate::scheduler::DispatchAuthService;
 use fc_common::DispatchMode;
 use fc_platform_core::shared::capped_body::{read_capped, DELIVERY_RESPONSE_CAP};
 use fc_platform_core::shared::webhook_signer;
+use fc_platform_iam::client::repository::ClientRepository;
 
 /// `X-FlowCatalyst-Client: {clientId}:{clientCode}` (Go
 /// `processing.clientHeader`).

@@ -58,20 +58,20 @@ use crate::function::trigger_object_repository::{
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{Manifest, PoolUrlTemplate, ScheduleSpec, SubscriptionSpec, LIVE_ALIAS};
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCaseError};
-use fc_platform_iam::dispatch_pool::operations::{
+use fc_platform_iam::application::repository::ApplicationRepository;
+use fc_platform_messaging::dispatch_pool::operations::{
     CreateDispatchPoolCommand, DeleteDispatchPoolCommand, DispatchPoolCreated, DispatchPoolDeleted,
     DispatchPoolUpdated, UpdateDispatchPoolCommand,
 };
-use fc_platform_iam::subscription::entity::{
+use fc_platform_messaging::subscription::entity::{
     EventTypeBinding, SubscriptionSource, SubscriptionStatus,
 };
-use fc_platform_iam::subscription::operations::{
+use fc_platform_messaging::subscription::operations::{
     CreateSubscriptionCommand, DeleteSubscriptionCommand, EventTypeBindingInput,
     PauseSubscriptionCommand, ResumeSubscriptionCommand, SubscriptionCreated, SubscriptionDeleted,
     SubscriptionPaused, SubscriptionResumed, SubscriptionUpdated, UpdateSubscriptionCommand,
 };
-use fc_platform_iam::{
-    application::repository::ApplicationRepository,
+use fc_platform_messaging::{
     dispatch_pool::{entity::DispatchPool, repository::DispatchPoolRepository},
     subscription::{entity::Subscription, repository::SubscriptionRepository},
 };

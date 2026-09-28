@@ -14,15 +14,13 @@ use std::sync::Arc;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::connection::sync_plan::{ConnectionSyncPlan, SOURCE_API, SOURCE_CODE};
-use crate::{
-    application::repository::ApplicationRepository,
-    subscription::repository::SubscriptionRepository,
-};
+use crate::subscription::repository::SubscriptionRepository;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
+use fc_platform_iam::application::repository::ApplicationRepository;
 
 /// Go `ConnectionsSynced`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

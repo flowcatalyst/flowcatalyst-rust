@@ -39,15 +39,15 @@ use super::delivery_credentials::{connection_to_load, leading_segment, signer_of
 use super::entity::DispatchJob;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
-use crate::principal::repository::PrincipalRepository;
 use crate::service_account::signing_reach::SigningReach;
-use crate::{
-    application::repository::ApplicationRepository,
-    service_account::repository::ServiceAccountRepository,
-    subscription::{entity::Subscription, repository::SubscriptionRepository},
-};
+use crate::subscription::{entity::Subscription, repository::SubscriptionRepository};
 use fc_platform_core::shared::authorization_service::{ApplicationScope, AuthContext};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_iam::principal::repository::PrincipalRepository;
+use fc_platform_iam::{
+    application::repository::ApplicationRepository,
+    service_account::repository::ServiceAccountRepository,
+};
 
 pub struct SigningGuard {
     subscriptions: Arc<SubscriptionRepository>,

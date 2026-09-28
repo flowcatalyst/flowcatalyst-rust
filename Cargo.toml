@@ -8,6 +8,7 @@ members = [
     "crates/fc-stream",
     "crates/fc-platform-core",
     "crates/fc-platform-iam",
+    "crates/fc-platform-messaging",
     "crates/fc-platform-scheduled-jobs",
     "crates/fc-platform-functions",
     "crates/fc-platform",

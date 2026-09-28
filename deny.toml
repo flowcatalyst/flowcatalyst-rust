@@ -113,6 +113,7 @@ exceptions = [
     { crate = "fc-platform-functions", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-iam", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-jwks", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-platform-messaging", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-scheduled-jobs", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-queue", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-router", allow = ["AGPL-3.0-or-later"] },

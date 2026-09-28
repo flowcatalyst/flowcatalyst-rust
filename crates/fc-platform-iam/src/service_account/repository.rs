@@ -11,7 +11,7 @@ use sqlx::PgPool;
 
 use crate::service_account::entity::ServiceAccount;
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
-use crate::service_account::signing_reach::{AccountReach, SigningAccount};
+use crate::service_account::signing_account::{AccountReach, SigningAccount};
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::enum_str::decode_opt;
 use fc_platform_core::shared::error::{PlatformError, Result};
@@ -397,7 +397,7 @@ impl ServiceAccountRepository {
     }
 
     /// The accounts `references` name, for the signing-reach check
-    /// ([`crate::service_account::signing_reach`]), keyed by reference. A
+    /// ([`fc_platform_messaging::service_account::signing_reach`]), keyed by reference. A
     /// reference is the account's own id or its principal's, resolved as
     /// [`Self::webhook_credentials_by_id`] resolves it for the signer; one
     /// naming nothing is absent. The reach is the linked principal's (its

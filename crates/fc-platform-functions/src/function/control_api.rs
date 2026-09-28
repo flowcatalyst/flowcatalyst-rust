@@ -64,11 +64,11 @@ use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase, UseCaseError};
 use fc_platform_iam::application::repository::ApplicationRepository;
-use fc_platform_iam::event::entity::Event;
-use fc_platform_iam::event::repository::EventRepository;
-use fc_platform_iam::event_type::entity::EventTypeStatus;
-use fc_platform_iam::event_type::repository::EventTypeRepository;
-use fc_platform_iam::shared::batch_api::{BatchResponse, BatchResultItem};
+use fc_platform_messaging::event::entity::Event;
+use fc_platform_messaging::event::repository::EventRepository;
+use fc_platform_messaging::event_type::entity::EventTypeStatus;
+use fc_platform_messaging::event_type::repository::EventTypeRepository;
+use fc_platform_messaging::shared::batch_api::{BatchResponse, BatchResultItem};
 
 /// 1-100 events per emit call.
 pub const MAX_EMIT_BATCH: usize = 100;

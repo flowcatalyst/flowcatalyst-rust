@@ -7,14 +7,15 @@ use std::sync::Arc;
 use tracing::{debug, error, warn};
 
 use crate::{
-    client::repository::ClientRepository, dispatch_job::repository::DispatchJobRepository,
-    event::repository::EventRepository, subscription::repository::SubscriptionRepository,
-};
-use crate::{
     dispatch_job::entity::{DispatchJob, DispatchJobRead},
     event::entity::{Event, EventRead},
 };
+use crate::{
+    dispatch_job::repository::DispatchJobRepository, event::repository::EventRepository,
+    subscription::repository::SubscriptionRepository,
+};
 use fc_platform_core::shared::error::Result;
+use fc_platform_iam::client::repository::ClientRepository;
 
 /// Event projection writer
 /// Creates EventRead projections with denormalized data

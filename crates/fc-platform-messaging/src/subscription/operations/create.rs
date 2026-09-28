@@ -10,12 +10,11 @@ use crate::service_account::signing_reach::require_usable_signers;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::subscription::entity::{EventTypeBinding, Subscription};
 use crate::{
-    connection::repository::ConnectionRepository,
-    service_account::repository::ServiceAccountRepository,
-    subscription::repository::SubscriptionRepository,
+    connection::repository::ConnectionRepository, subscription::repository::SubscriptionRepository,
 };
 use fc_platform_core::shared::caller_reach::check_scope_access;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 /// Subscription code pattern (Go `validate.CodePattern`): a lowercase
 /// letter, then lowercase alphanumerics and hyphens.

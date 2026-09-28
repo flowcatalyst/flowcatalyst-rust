@@ -8,6 +8,7 @@ description = "FlowCatalyst Platform - the function registry: functions, version
 [dependencies]
 fc-platform-core = { path = "../fc-platform-core" }
 fc-platform-iam = { path = "../fc-platform-iam" }
+fc-platform-messaging = { path = "../fc-platform-messaging" }
 fc-platform-scheduled-jobs = { path = "../fc-platform-scheduled-jobs" }
 # The kernel: use cases, errors, the authorization context, middleware.
 # Workspace dependencies
