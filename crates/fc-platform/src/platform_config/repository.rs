@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::PlatformConfig;
 use crate::shared::enum_str::decode;
@@ -107,34 +107,20 @@ impl PlatformConfigRepository {
         scope: Option<&str>,
         client_id: Option<&str>,
     ) -> Result<Vec<PlatformConfig>> {
-        let mut conditions = vec![
-            "application_code = $1".to_string(),
-            "section = $2".to_string(),
-        ];
-        let mut params: Vec<String> = vec![app_code.to_string(), section.to_string()];
-        let mut idx = 2u32;
-
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
+        qb.push_bind(app_code).push(" AND section = ").push_bind(section);
         if let Some(s) = scope {
-            idx += 1;
-            conditions.push(format!("scope = ${}", idx));
-            params.push(s.to_string());
+            qb.push(" AND scope = ").push_bind(s);
         }
         if let Some(cid) = client_id {
-            idx += 1;
-            conditions.push(format!("client_id = ${}", idx));
-            params.push(cid.to_string());
+            qb.push(" AND client_id = ").push_bind(cid);
         }
-
-        let sql = format!(
-            "SELECT * FROM app_platform_configs WHERE {} ORDER BY property",
-            conditions.join(" AND ")
-        );
-
-        let mut query = sqlx::query_as::<_, PlatformConfigRow>(&sql);
-        for p in &params {
-            query = query.bind(p);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
+        qb.push(" ORDER BY property");
+        let rows = qb
+            .build_query_as::<PlatformConfigRow>()
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(PlatformConfig::try_from).collect()
     }
 
@@ -144,31 +130,20 @@ impl PlatformConfigRepository {
         scope: Option<&str>,
         client_id: Option<&str>,
     ) -> Result<Vec<PlatformConfig>> {
-        let mut conditions = vec!["application_code = $1".to_string()];
-        let mut params: Vec<String> = vec![app_code.to_string()];
-        let mut idx = 1u32;
-
+        let mut qb: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT * FROM app_platform_configs WHERE application_code = ");
+        qb.push_bind(app_code);
         if let Some(s) = scope {
-            idx += 1;
-            conditions.push(format!("scope = ${}", idx));
-            params.push(s.to_string());
+            qb.push(" AND scope = ").push_bind(s);
         }
         if let Some(cid) = client_id {
-            idx += 1;
-            conditions.push(format!("client_id = ${}", idx));
-            params.push(cid.to_string());
+            qb.push(" AND client_id = ").push_bind(cid);
         }
-
-        let sql = format!(
-            "SELECT * FROM app_platform_configs WHERE {} ORDER BY section, property",
-            conditions.join(" AND ")
-        );
-
-        let mut query = sqlx::query_as::<_, PlatformConfigRow>(&sql);
-        for p in &params {
-            query = query.bind(p);
-        }
-        let rows = query.fetch_all(&self.pool).await?;
+        qb.push(" ORDER BY section, property");
+        let rows = qb
+            .build_query_as::<PlatformConfigRow>()
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(PlatformConfig::try_from).collect()
     }
 
