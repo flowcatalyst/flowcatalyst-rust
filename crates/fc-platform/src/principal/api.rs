@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::application::entity::Application;
@@ -1925,30 +1924,6 @@ pub async fn get_available_applications(
     Ok(Json(
         super::admin::available_applications(&state, &auth.0, &id).await?,
     ))
-}
-
-/// Create principals router
-pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        // `routes!(...)` groups handlers on the SAME path; `create_user` is
-        // `/users` and `list_principals` is `""`, so they must be registered
-        // separately or only one gets mounted (previously the cause of 405s).
-        .routes(routes!(list_principals, create_principal))
-        .routes(routes!(create_user))
-        .routes(routes!(sync_users))
-        .routes(routes!(check_email_domain))
-        .routes(routes!(get_principal, update_principal, delete_principal))
-        .routes(routes!(activate_principal))
-        .routes(routes!(deactivate_principal))
-        .routes(routes!(reset_password))
-        .routes(routes!(send_password_reset))
-        .routes(routes!(get_roles, assign_role, batch_assign_roles))
-        .routes(routes!(remove_role))
-        .routes(routes!(get_client_access, grant_client_access))
-        .routes(routes!(revoke_client_access))
-        .routes(routes!(get_application_access, set_application_access))
-        .routes(routes!(get_available_applications))
-        .with_state(state)
 }
 
 #[cfg(test)]

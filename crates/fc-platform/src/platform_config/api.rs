@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::entity::{ConfigScope, PlatformConfig};
 use super::repository::PlatformConfigRepository;
@@ -440,12 +439,4 @@ pub async fn delete_property(
         )
         .await?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-pub fn admin_platform_config_router(state: PlatformConfigState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_configs))
-        .routes(routes!(get_section))
-        // The property routes are Go's: `platform_config::go_api`.
-        .with_state(state)
 }

@@ -6,8 +6,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post, put},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1576,48 +1575,6 @@ pub async fn disable_for_client<U: UnitOfWork>(
         .into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Create applications router
-pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -> Router {
-    Router::new()
-        .route(
-            "/",
-            post(create_application::<U>).get(list_applications::<U>),
-        )
-        .route(
-            "/{id}",
-            get(get_application::<U>)
-                .put(update_application::<U>)
-                .delete(delete_application::<U>),
-        )
-        .route("/{id}/activate", post(activate_application::<U>))
-        .route("/{id}/deactivate", post(deactivate_application::<U>))
-        .route(
-            "/{id}/provision-service-account",
-            post(provision_service_account::<U>),
-        )
-        .route(
-            "/{id}/provision-login-client",
-            post(provision_login_client::<U>),
-        )
-        .route(
-            "/{id}/service-account",
-            get(get_application_service_account::<U>),
-        )
-        .route("/by-id/{id}/roles", get(list_application_roles::<U>))
-        .route("/{id}/clients", get(list_client_configs::<U>))
-        .route("/{id}/clients/{clientId}", put(update_client_config::<U>))
-        .route(
-            "/{id}/clients/{clientId}/enable",
-            post(enable_for_client::<U>),
-        )
-        .route(
-            "/{id}/clients/{clientId}/disable",
-            post(disable_for_client::<U>),
-        )
-        .route("/by-code/{code}", get(get_application_by_code::<U>))
-        .with_state(state)
 }
 
 #[cfg(test)]

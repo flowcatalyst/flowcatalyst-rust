@@ -13,21 +13,16 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::{
-    admin_platform_config_router,
     anchor_domains_router,
     application_roles_sdk_router,
-    applications_router,
     auth_router,
     bff_dashboard_router,
     // Plain Router routes
     client_auth_configs_router,
     client_selection_router,
-    config_access_router,
     debug_dispatch_jobs_router,
     debug_events_router,
-    dispatch_pools_router,
     dispatch_process_router,
-    email_domain_mappings_router,
     // OpenApiRouter routes
     filter_options_router,
     idp_role_mappings_router,
@@ -37,22 +32,16 @@ use crate::api::{
     oauth_router,
     oidc_login_router,
     password_reset_router,
-    principals_router,
     public_router,
     sdk_sync_router,
-    service_accounts_router,
     well_known_router,
     ApplicationRolesSdkState,
-    ApplicationsState,
     AuthConfigState,
     AuthState,
     BffDashboardState,
     ClientSelectionState,
-    ConfigAccessState,
     DebugState,
-    DispatchPoolsState,
     DispatchProcessState,
-    EmailDomainMappingsState,
     FilterOptionsState,
     MeState,
     MonitoringState,
@@ -60,11 +49,8 @@ use crate::api::{
     OAuthState,
     OidcLoginApiState,
     PasswordResetApiState,
-    PlatformConfigState,
-    PrincipalsState,
     PublicApiState,
     SdkSyncState,
-    ServiceAccountsState,
     WellKnownState,
 };
 use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
@@ -74,7 +60,6 @@ use crate::shared::rate_limit_store::{
     distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
     DistributedEmailLimitState, DistributedIpLimitState,
 };
-use crate::usecase::UnitOfWork;
 use std::sync::Arc;
 
 /// Dependencies handed to `build()` so the Developer-portal BFF state can be
@@ -193,14 +178,13 @@ pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 /// Holds all pre-constructed API state structs and assembles the full
 /// platform router. Binaries create this after building repos/services,
 /// call `build()`, then layer on middleware and static files.
-pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
+pub struct PlatformRoutes {
     // -- OpenApiRouter routes (collected in Swagger) --
     /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
     pub functions: crate::function::api::FunctionsState,
     /// `/control/functions/*`: what a function host calls (not in Swagger).
     pub function_control: crate::function::control_api::FunctionControlState,
     pub filter_options: FilterOptionsState,
-    pub principals: PrincipalsState,
     pub oauth_clients: OAuthClientsState,
     pub monitoring: MonitoringState,
     pub auth: AuthState,
@@ -209,12 +193,6 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub bff_dashboard: BffDashboardState,
     pub debug: DebugState,
     pub auth_config: AuthConfigState,
-    pub applications: ApplicationsState<U>,
-    pub dispatch_pools: DispatchPoolsState<U>,
-    pub service_accounts: ServiceAccountsState<U>,
-    pub email_domain_mappings: EmailDomainMappingsState,
-    pub platform_config: PlatformConfigState,
-    pub config_access: ConfigAccessState,
     pub me: MeState,
     pub oidc_login: OidcLoginApiState,
     pub oauth: OAuthState,
@@ -228,14 +206,6 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
     pub portal: crate::portal::PortalState,
     pub webauthn: crate::webauthn::WebauthnApiState,
-    /// Two-factor sign-in and self-service (`/auth/2fa/*`).
-    pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
-    /// `/api/principals/developer-users`, `…/{id}/developer-credential`.
-    pub developer_credentials: crate::developer_credential::api::DeveloperCredentialsState,
-    /// `/api/reset-approvals`.
-    pub reset_approvals: crate::mfa::reset_approval_api::ResetApprovalsState,
-    /// `/auth/change-password*`, `/auth/login-history`.
-    pub account: Arc<crate::mfa::AccountState>,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
     /// is constructed inside `build()` so the platform's own OpenAPI document
     /// (returned by `build()` itself) can be stored against the seeded
@@ -263,7 +233,7 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub ctx: crate::shared::platform_context::PlatformContext,
 }
 
-impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
+impl PlatformRoutes {
     /// Assemble the full platform router and OpenAPI spec.
     ///
     /// The returned `Router` includes all API routes, the health endpoint,
@@ -345,13 +315,23 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         let modules = AggregateRoutes::new()
             .merge(crate::event::routes(ctx))
             .merge(crate::event_type::routes(ctx))
+            .merge(crate::process::routes(ctx))
             .merge(crate::scheduled_job::routes(ctx))
             .merge(crate::dispatch_job::routes(ctx))
-            .merge(crate::role::routes(ctx))
-            .merge(crate::audit::routes(ctx))
-            .merge(crate::process::routes(ctx))
             .merge(crate::client::routes(ctx))
+            .merge(crate::principal::routes(ctx))
+            .merge(crate::mfa::routes(ctx))
+            .merge(crate::developer_credential::routes(ctx))
+            .merge(crate::role::routes(ctx))
             .merge(crate::subscription::routes(ctx))
+            .merge(crate::audit::routes(ctx))
+            .merge(crate::dispatch_job_actions::routes(ctx))
+            .merge(crate::app_docs::routes(ctx))
+            .merge(crate::application::routes(ctx))
+            .merge(crate::email_domain_mapping::routes(ctx))
+            .merge(crate::service_account::routes(ctx))
+            .merge(crate::platform_config::routes(ctx))
+            .merge(crate::dispatch_pool::routes(ctx))
             .merge(crate::connection::routes(ctx))
             .merge(crate::cors::routes(ctx))
             .merge(crate::identity_provider::routes(ctx))
@@ -367,21 +347,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_BFF_FILTER_OPTIONS,
                 filter_options_router(self.filter_options),
-            )
-            .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
-            .nest(
-                PATH_API_PRINCIPALS,
-                crate::mfa::two_factor_admin_router(self.two_factor.clone()),
-            )
-            .nest(
-                "/api/reset-approvals",
-                crate::mfa::reset_approval_api::reset_approvals_router(self.reset_approvals),
-            )
-            .nest(
-                PATH_API_PRINCIPALS,
-                crate::developer_credential::developer_credentials_router(
-                    self.developer_credentials,
-                ),
             )
             .nest(
                 PATH_API_OAUTH_CLIENTS,
@@ -501,31 +466,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_API_IDP_ROLE_MAPPINGS,
                 idp_role_mappings_router(self.auth_config),
             )
-            // API — domain aggregates
-            .nest(
-                PATH_API_APPLICATIONS,
-                applications_router(self.applications),
-            )
-            .nest(
-                PATH_API_DISPATCH_POOLS,
-                dispatch_pools_router(self.dispatch_pools),
-            )
-            .nest(
-                PATH_API_SERVICE_ACCOUNTS,
-                service_accounts_router(self.service_accounts),
-            )
-            .nest(
-                PATH_API_EMAIL_DOMAIN_MAPPINGS,
-                email_domain_mappings_router(self.email_domain_mappings).into(),
-            )
-            .nest(
-                PATH_API_CONFIG,
-                admin_platform_config_router(self.platform_config).into(),
-            )
-            .nest(
-                PATH_API_CONFIG_ACCESS,
-                config_access_router(self.config_access).into(),
-            )
             // Auth
             .nest(PATH_API_ME, me_router(self.me))
             .nest(
@@ -544,18 +484,6 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                     .layer(oauth_layer.clone()),
             )
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
-            // Two-factor: the step-token routes are public and rate-limited
-            // like `/auth/login`; the self-service ones need a session.
-            .nest(
-                PATH_AUTH,
-                crate::mfa::two_factor_login_router(self.two_factor.clone())
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_AUTH,
-                crate::mfa::two_factor_self_service_router(self.two_factor),
-            )
-            .nest(PATH_AUTH, crate::mfa::account_router(self.account))
             .nest(
                 PATH_AUTH_CLIENT,
                 client_selection_router(self.client_selection).layer(auth_layer.clone()),

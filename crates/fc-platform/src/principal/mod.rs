@@ -8,8 +8,10 @@ pub mod entity;
 pub mod go_api;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 
 // Re-export main types
-pub use api::{principals_router, PrincipalsState};
+pub use api::PrincipalsState;
+pub use routes::{principals_router, routes};
 pub use entity::{Principal, PrincipalType, UserIdentity, UserScope};
 pub use repository::PrincipalRepository;

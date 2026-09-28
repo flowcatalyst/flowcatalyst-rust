@@ -12,7 +12,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::operations::attach_service_account::{
     AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
@@ -168,12 +167,4 @@ impl From<crate::application::ApplicationClientConfig> for GoClientConfigRespons
             updated_at: c.updated_at.to_rfc3339(),
         }
     }
-}
-
-/// Full-path router; merged at the root.
-pub fn application_go_router(state: ApplicationGoState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(attach_application_service_account))
-        .routes(routes!(get_application_client_config))
-        .with_state(state)
 }

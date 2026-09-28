@@ -25,7 +25,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::access_api::{AccessListResponse, AccessResponse};
 use super::access_repository::PlatformConfigAccessRepository;
@@ -484,21 +483,4 @@ pub async fn revoke_platform_config_access(
         .await
         .into_result()?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Full-path router; merged at the root.
-pub fn go_platform_config_router(state: GoPlatformConfigState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(
-            get_config_property,
-            set_config_property,
-            delete_config_property
-        ))
-        .routes(routes!(list_platform_config))
-        .routes(routes!(
-            list_platform_config_access,
-            grant_platform_config_access
-        ))
-        .routes(routes!(revoke_platform_config_access))
-        .with_state(state)
 }

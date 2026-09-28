@@ -8,7 +8,9 @@ pub mod lookup_api;
 pub mod operations;
 pub mod provider_move_repository;
 pub mod repository;
+pub mod routes;
 
-pub use api::{email_domain_mappings_router, EmailDomainMappingsState};
+pub use api::EmailDomainMappingsState;
+pub use routes::{email_domain_mappings_router, routes};
 pub use entity::{EmailDomainMapping, ScopeType};
 pub use repository::EmailDomainMappingRepository;

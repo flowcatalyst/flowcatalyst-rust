@@ -9,14 +9,13 @@
 //! `platform:application-service:docs:sync` and the application in scope.
 
 use axum::{
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{Path, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::operations::sync::{SyncAppDocsCommand, SyncAppDocsUseCase, SyncDocInput};
 use super::platform_docs::{platform_doc, platform_docs};
@@ -234,18 +233,4 @@ pub async fn sync_app_docs(
         synced_codes: event.synced_codes,
         password_hash_ignored: Vec::new(),
     }))
-}
-
-/// Full-path router; merged at the root. The sync accepts Go's 4 MiB of
-/// pages plus JSON overhead.
-pub fn docs_router(state: DocsState) -> OpenApiRouter {
-    let sync = OpenApiRouter::new()
-        .routes(routes!(sync_app_docs))
-        .layer(DefaultBodyLimit::max(8 * 1024 * 1024));
-    OpenApiRouter::new()
-        .routes(routes!(list_docs))
-        .routes(routes!(get_platform_doc))
-        .routes(routes!(get_application_doc))
-        .merge(sync)
-        .with_state(state)
 }

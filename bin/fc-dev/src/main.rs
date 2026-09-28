@@ -981,10 +981,11 @@ async fn main() -> Result<()> {
     // takes the states those handlers were built with.
     #[cfg(feature = "web")]
     let web_users = fc_web::UserAdminStates {
-        principals: routes.principals.clone(),
-        principal_go: routes.go_routes.principals.clone(),
-        two_factor: routes.two_factor.clone(),
-        developer_credentials: routes.developer_credentials.clone(),
+        principals: fc_platform::principal::routes::principals_state(&routes.ctx),
+        principal_go: fc_platform::principal::routes::principal_go_state(&routes.ctx),
+        two_factor: routes.ctx.two_factor.clone(),
+        developer_credentials:
+            fc_platform::developer_credential::routes::developer_credentials_state(&routes.ctx),
     };
     let (platform_app, platform_openapi) = routes.build();
 

@@ -20,7 +20,6 @@ use axum::{
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::auth_service::AuthService;
 use crate::service_account::operations::mint_token::{
@@ -170,12 +169,4 @@ pub async fn mint_service_account_token(
         expires_in: state.auth_service.access_token_expiry_secs(),
         scope: (!granted.is_empty()).then(|| granted.join(" ")),
     }))
-}
-
-/// Full-path router; merged at the root.
-pub fn service_account_admin_router(state: ServiceAccountAdminState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(deactivate_service_account))
-        .routes(routes!(mint_service_account_token))
-        .with_state(state)
 }

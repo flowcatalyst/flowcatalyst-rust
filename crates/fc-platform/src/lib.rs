@@ -354,7 +354,8 @@ pub mod api {
     pub use crate::shared::middleware::{AppState, AuthLayer, Authenticated, OptionalAuth};
 
     // API state and router exports from each aggregate
-    pub use crate::application::api::{applications_router, ApplicationsState};
+    pub use crate::application::api::ApplicationsState;
+    pub use crate::application::routes::applications_router;
     pub use crate::audit::api::AuditLogsState;
     pub use crate::audit::routes::audit_logs_router;
     pub use crate::auth::auth_api::{auth_router, AuthState};
@@ -372,19 +373,22 @@ pub mod api {
     pub use crate::client::routes::clients_router;
     pub use crate::dispatch_job::api::DispatchJobsState;
     pub use crate::dispatch_job::routes::{dispatch_jobs_api_router, dispatch_jobs_router};
-    pub use crate::dispatch_pool::api::{dispatch_pools_router, DispatchPoolsState};
+    pub use crate::dispatch_pool::api::DispatchPoolsState;
+    pub use crate::dispatch_pool::routes::dispatch_pools_router;
     pub use crate::event::api::EventsState;
     pub use crate::event::routes::{events_api_router, events_router};
     pub use crate::event_type::api::EventTypesState;
     pub use crate::event_type::routes::event_types_router;
-    pub use crate::principal::api::{principals_router, PrincipalsState};
+    pub use crate::principal::api::PrincipalsState;
+    pub use crate::principal::routes::principals_router;
     pub use crate::process::api::ProcessesState;
     pub use crate::process::routes::processes_router;
     pub use crate::role::api::RolesState;
     pub use crate::role::routes::roles_router;
     pub use crate::scheduled_job::api::ScheduledJobsState;
     pub use crate::scheduled_job::routes::scheduled_jobs_router;
-    pub use crate::service_account::api::{service_accounts_router, ServiceAccountsState};
+    pub use crate::service_account::api::ServiceAccountsState;
+    pub use crate::service_account::routes::service_accounts_router;
     pub use crate::subscription::api::SubscriptionsState;
     pub use crate::subscription::routes::subscriptions_router;
 
@@ -393,15 +397,15 @@ pub mod api {
     pub use crate::connection::routes::connections_router;
     pub use crate::cors::api::CorsState;
     pub use crate::cors::routes::cors_router;
-    pub use crate::email_domain_mapping::api::{
-        email_domain_mappings_router, EmailDomainMappingsState,
-    };
+    pub use crate::email_domain_mapping::api::EmailDomainMappingsState;
+    pub use crate::email_domain_mapping::routes::email_domain_mappings_router;
     pub use crate::identity_provider::api::IdentityProvidersState;
     pub use crate::identity_provider::routes::identity_providers_router;
     pub use crate::login_attempt::api::LoginAttemptsState;
     pub use crate::login_attempt::routes::login_attempts_router;
-    pub use crate::platform_config::access_api::{config_access_router, ConfigAccessState};
-    pub use crate::platform_config::api::{admin_platform_config_router, PlatformConfigState};
+    pub use crate::platform_config::access_api::ConfigAccessState;
+    pub use crate::platform_config::api::PlatformConfigState;
+    pub use crate::platform_config::routes::{admin_platform_config_router, config_access_router};
     pub use crate::event::routes::sdk_events_batch_router;
     pub use crate::shared::batch_api::SdkEventsState;
     pub use crate::shared::bff_dashboard_api::{bff_dashboard_router, BffDashboardState};

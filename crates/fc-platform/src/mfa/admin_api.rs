@@ -10,7 +10,6 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::login_api::{email_of, TwoFactorLogin};
 use crate::principal::api::StatusChangeResponse;
@@ -95,11 +94,4 @@ pub async fn reset_user_two_factor(
     Ok(StatusChangeResponse {
         message: "Two-factor authentication reset".to_string(),
     })
-}
-
-/// Nested at `/api/principals`.
-pub fn two_factor_admin_router(state: Arc<TwoFactorLogin>) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(reset_two_factor))
-        .with_state(state)
 }

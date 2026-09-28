@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::ApplicationClientConfigRepository;
 use crate::auth::password_reset_api::PasswordResetEmailer;
@@ -474,13 +473,4 @@ pub async fn client_association(
         .await?
         .ok_or_else(|| PlatformError::not_found_code("Principal", id))?;
     Ok(p.into())
-}
-
-/// Full-path router; merged at the root.
-pub fn principal_go_router(state: PrincipalGoState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(bulk_import_principals))
-        .routes(routes!(get_principal_version))
-        .routes(routes!(set_principal_client_association))
-        .with_state(state)
 }

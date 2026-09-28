@@ -14,7 +14,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::EmailDomainMappingResponse;
 use super::entity::{EmailDomainMapping, ScopeType};
@@ -189,13 +188,4 @@ pub async fn move_email_domain_mapping_provider(
         to_identity_provider_id: event.to_identity_provider_id,
         users_reset: event.users_reset,
     }))
-}
-
-/// Full-path router; merged at the root.
-pub fn edm_lookup_router(state: EdmLookupState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(lookup_email_domain_mapping_by_query))
-        .routes(routes!(get_email_domain_mapping_by_domain))
-        .routes(routes!(move_email_domain_mapping_provider))
-        .with_state(state)
 }

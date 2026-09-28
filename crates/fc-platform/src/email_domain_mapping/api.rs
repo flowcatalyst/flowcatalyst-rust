@@ -7,7 +7,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::entity::EmailDomainMapping;
 use super::repository::EmailDomainMappingRepository;
@@ -419,19 +418,4 @@ pub async fn delete_email_domain_mapping(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-pub fn email_domain_mappings_router(state: EmailDomainMappingsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(
-            create_email_domain_mapping,
-            list_email_domain_mappings
-        ))
-        .routes(routes!(lookup_email_domain_mapping))
-        .routes(routes!(
-            get_email_domain_mapping,
-            update_email_domain_mapping,
-            delete_email_domain_mapping
-        ))
-        .with_state(state)
 }

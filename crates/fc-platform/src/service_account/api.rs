@@ -7,8 +7,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, put},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1031,36 +1030,3 @@ pub async fn assign_roles<U: UnitOfWork>(
 // ============================================================================
 // Router
 // ============================================================================
-
-/// Create the service accounts router
-pub fn service_accounts_router<U: UnitOfWork + Clone>(state: ServiceAccountsState<U>) -> Router {
-    Router::new()
-        .route(
-            "/",
-            get(list_service_accounts::<U>).post(create_service_account::<U>),
-        )
-        .route(
-            "/{id}",
-            get(get_service_account::<U>)
-                .put(update_service_account::<U>)
-                .delete(delete_service_account::<U>),
-        )
-        .route("/code/{code}", get(get_service_account_by_code::<U>))
-        .route("/{id}/auth-token", put(update_auth_token::<U>))
-        .route(
-            "/{id}/regenerate-auth-token",
-            post(regenerate_auth_token::<U>),
-        )
-        .route(
-            "/{id}/regenerate-signing-secret",
-            post(regenerate_signing_secret::<U>),
-        )
-        // Go's shorter spellings of the two (serviceaccount/api/api.go:71-82).
-        .route("/{id}/regenerate-token", post(regenerate_auth_token::<U>))
-        .route(
-            "/{id}/regenerate-secret",
-            post(regenerate_signing_secret::<U>),
-        )
-        .route("/{id}/roles", get(get_roles::<U>).put(assign_roles::<U>))
-        .with_state(state)
-}

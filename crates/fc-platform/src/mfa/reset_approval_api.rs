@@ -12,7 +12,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::reset_approval::{Decision, ResetApprovalRepository, ResetApprovalRequest};
 use crate::auth::password_reset_api::{PasswordResetEmailer, ResetOptions};
@@ -202,13 +201,4 @@ pub async fn deny_reset_approval(
     Ok(Json(StatusChangeResponse {
         message: "Reset request denied".to_string(),
     }))
-}
-
-/// Nested at `/api/reset-approvals`.
-pub fn reset_approvals_router(state: ResetApprovalsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_reset_approvals))
-        .routes(routes!(approve_reset_approval))
-        .routes(routes!(deny_reset_approval))
-        .with_state(state)
 }
