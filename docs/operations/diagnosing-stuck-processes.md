@@ -311,8 +311,8 @@ cannot be set per Cargo profile on stable, so it is a build choice:
   no additional runtime overhead", while calling `Handle::dump` is
   expensive. Measured under "Overhead". A dump pauses every worker while it
   re-polls each task in tracing mode: take one when stuck, not on a
-  schedule. It adds three crates to the image (`backtrace`, `addr2line`,
-  `gimli`).
+  schedule. It adds four crates to the image (`backtrace`, `addr2line`,
+  `gimli`, `object`; cargo-vet exemptions recorded in `supply-chain/`).
 
 ## tokio-console (live task inspection)
 
@@ -343,7 +343,9 @@ tokio-console http://127.0.0.1:6669
 In the console, sort tasks by busy time to find one that holds a worker, and
 look for idle tasks with no wakers to find one nothing will wake.
 `fc-dev --features tokio-console` works the same way locally. The feature
-adds three crates (`console-subscriber`, `console-api`, `humantime`).
+adds three crates to the lockfile (`console-subscriber`, `console-api`,
+`humantime`) and links `tonic`/`prost`, which were already in it as test
+dependencies.
 
 ## OpenTelemetry traces
 

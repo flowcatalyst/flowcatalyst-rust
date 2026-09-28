@@ -74,7 +74,7 @@ backends = [
 
 [dev-dependencies]
 # getrusage for the throughput bench's CPU-per-message figure.
-libc = "0.2"
+libc = { workspace = true }
 # A fake platform (discovery + JWKS) minting real RS256 tokens.
 fc-platform-jwks = { path = "../fc-platform-jwks", features = ["test-support"] }
 tokio-test = { workspace = true }
