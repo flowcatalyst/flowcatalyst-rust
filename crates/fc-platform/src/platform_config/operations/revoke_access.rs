@@ -55,12 +55,15 @@ impl<U: UnitOfWork> UseCase for RevokePlatformConfigAccessUseCase<U> {
         Ok(())
     }
 
+    /// Config access grants are an anchor's (`can_update_platform_config`:
+    /// anchor plus the config-manage permission), which the handler checks
+    /// before the body; asserted here for any other caller.
     async fn authorize(
         &self,
         _command: &RevokePlatformConfigAccessCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::can_update_platform_config(ctx.caller())?)
     }
 
     async fn execute(

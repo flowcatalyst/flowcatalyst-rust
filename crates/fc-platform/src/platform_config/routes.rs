@@ -41,6 +41,7 @@ pub fn platform_config_state(ctx: &PlatformContext) -> PlatformConfigState {
             repos.platform_config_repo.clone(),
             ctx.unit_of_work.clone(),
             ctx.encryption.clone(),
+            repos.platform_config_access_repo.clone(),
         )),
     }
 }
@@ -72,6 +73,7 @@ pub fn go_platform_config_state(ctx: &PlatformContext) -> GoPlatformConfigState 
             repos.platform_config_repo.clone(),
             uow.clone(),
             ctx.encryption.clone(),
+            repos.platform_config_access_repo.clone(),
         )),
         grant_access_use_case: Arc::new(GrantPlatformConfigAccessUseCase::new(
             repos.platform_config_access_repo.clone(),

@@ -435,3 +435,50 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
     assert_eq!(err.code(), "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP");
     assert_eq!(app.audit_count_for(&pool.id).await, 0);
 }
+
+// ── Platform admin ───────────────────────────────────────────────────────
+
+/// Writing an application's config needs anchor scope or a write grant on
+/// one of the caller's roles (Go's set-property use case), whoever runs it.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn config_writes_need_a_write_grant_in_the_use_case() {
+    use fc_platform::platform_config::operations::{
+        SetPlatformConfigPropertyCommand, SetPlatformConfigPropertyUseCase,
+    };
+    use fc_platform::ConfigScope;
+    let app = setup().await;
+    let use_case = SetPlatformConfigPropertyUseCase::new(
+        app.repos.platform_config_repo.clone(),
+        app.unit_of_work.clone(),
+        None,
+        app.repos.platform_config_access_repo.clone(),
+    );
+    let cmd = || SetPlatformConfigPropertyCommand {
+        application_code: "authz".to_string(),
+        section: "general".to_string(),
+        property: "colour".to_string(),
+        value: "blue".to_string(),
+        scope: ConfigScope::Global,
+        client_id: None,
+        value_type: None,
+        description: None,
+    };
+    let err = refusal(
+        use_case
+            .run(cmd(), caller(UserScope::Client, &["clt_a"], &[]))
+            .await,
+    );
+    assert_eq!(
+        rendered(err).await,
+        render(PlatformError::forbidden(
+            "No write access to platform config for authz"
+        ))
+        .await
+    );
+    use_case
+        .run(cmd(), caller(UserScope::Anchor, &["*"], &[]))
+        .await
+        .into_result()
+        .expect("an anchor writes config");
+}

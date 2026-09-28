@@ -57,6 +57,8 @@ pub struct SetPlatformConfigPropertyUseCase<U: UnitOfWork> {
     /// Encrypts SECRET values before they are stored. `None` when no key is
     /// configured; setting a SECRET then fails rather than store plaintext.
     encryption: Option<Arc<EncryptionService>>,
+    /// Role-based access grants, for a non-anchor caller's write access.
+    access_repo: Arc<crate::PlatformConfigAccessRepository>,
 }
 
 impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
@@ -64,11 +66,13 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         config_repo: Arc<PlatformConfigRepository>,
         unit_of_work: Arc<U>,
         encryption: Option<Arc<EncryptionService>>,
+        access_repo: Arc<crate::PlatformConfigAccessRepository>,
     ) -> Self {
         Self {
             config_repo,
             unit_of_work,
             encryption,
+            access_repo,
         }
     }
 }
@@ -103,12 +107,25 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         Ok(())
     }
 
+    /// Write access to the application's config (Go
+    /// `operations/set_property.go:60-73`): an anchor, or a write grant on one
+    /// of the caller's roles, else 403. The handlers check it first too, where
+    /// Go's controller does (before the path's application scope and the
+    /// body's 400s).
     async fn authorize(
         &self,
-        _command: &SetPlatformConfigPropertyCommand,
-        _ctx: &ExecutionContext,
+        command: &SetPlatformConfigPropertyCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let roles: &[String] = ctx.caller().auth().map_or(&[], |a| a.roles.as_slice());
+        Ok(crate::platform_config::access::require_config_access(
+            &self.access_repo,
+            ctx.caller().is_anchor(),
+            roles,
+            &command.application_code,
+            true,
+        )
+        .await?)
     }
 
     async fn execute(
