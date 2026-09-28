@@ -70,7 +70,7 @@ impl FunctionsState {
     /// The caller with its application scope resolved (cached per principal).
     pub(crate) async fn caller(&self, auth: &AuthContext) -> Result<Caller, PlatformError> {
         let applications = self.app_access.scope_for(&auth.principal_id).await?;
-        Ok(Caller::new(auth.clone(), applications))
+        Ok(Caller::from_auth(auth).with_application_scope(applications))
     }
 }
 
@@ -499,8 +499,8 @@ pub async fn create_function(
     let caller = state.caller(&auth.0).await?;
     let event = state
         .ops
-        .create(caller)
-        .run(command, ExecutionContext::from_auth(&auth.0))
+        .create()
+        .run(command, ExecutionContext::from_caller(caller.clone()))
         .await
         .into_result()?;
     let f = state
@@ -590,7 +590,7 @@ pub async fn update_function(
         status: req.status,
     };
     let caller = state.caller(&auth.0).await?;
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_caller(caller.clone());
     // One transaction for the status flip and the wiring it pauses or
     // resumes, as Java's TxOperation.
     let ops = state.ops.clone();
@@ -598,7 +598,7 @@ pub async fn update_function(
         .ops
         .unit_of_work
         .run(move |scoped| async move {
-            ops.update_in(caller, scoped)
+            ops.update_in(scoped)
                 .run(command, ctx)
                 .await
                 .into_committed()
@@ -629,7 +629,7 @@ pub async fn delete_function(
     checks::require_permission(&auth.0, FUNCTION_MANAGE)?;
     let address = address_from_path(&address)?;
     let caller = state.caller(&auth.0).await?;
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_caller(caller.clone());
     // One transaction for the wiring's deletes and the function's, as
     // Java's TxOperation.
     let ops = state.ops.clone();
@@ -637,7 +637,7 @@ pub async fn delete_function(
         .ops
         .unit_of_work
         .run(move |scoped| async move {
-            ops.delete_in(caller, scoped)
+            ops.delete_in(scoped)
                 .run(DeleteCommand { address }, ctx)
                 .await
                 .into_committed()
@@ -906,8 +906,8 @@ pub async fn put_config(
     };
     state
         .ops
-        .set_config(caller.clone())
-        .run(command, ExecutionContext::from_auth(&auth.0))
+        .set_config()
+        .run(command, ExecutionContext::from_caller(caller.clone()))
         .await
         .into_result()?;
     let f = reachable_function(&state, &address, &caller).await?;
@@ -997,8 +997,8 @@ pub async fn put_secret(
     let caller = state.caller(&auth.0).await?;
     state
         .ops
-        .set_secret(caller)
-        .run(command, ExecutionContext::from_auth(&auth.0))
+        .set_secret()
+        .run(command, ExecutionContext::from_caller(caller.clone()))
         .await
         .into_result()?;
     Ok(StatusCode::NO_CONTENT)
@@ -1030,10 +1030,10 @@ pub async fn delete_secret(
     let caller = state.caller(&auth.0).await?;
     state
         .ops
-        .delete_secret(caller)
+        .delete_secret()
         .run(
             DeleteSecretCommand { address, key },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_caller(caller.clone()),
         )
         .await
         .into_result()?;

@@ -113,54 +113,39 @@ impl<U: UnitOfWork> Clone for FunctionOperations<U> {
 }
 
 impl<U: UnitOfWork> FunctionOperations<U> {
-    pub fn create(&self, caller: Caller) -> CreateFunctionUseCase<U> {
+    pub fn create(&self) -> CreateFunctionUseCase<U> {
         CreateFunctionUseCase {
             functions: self.functions.clone(),
             applications: self.applications.clone(),
             clients: self.clients.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
     /// Update on a given unit of work: a transaction-scoped one
     /// (`PgUnitOfWork::run`), since a status change pauses or resumes the
     /// function's wiring in the same transaction.
-    pub fn update_in<V: UnitOfWork>(
-        &self,
-        caller: Caller,
-        unit_of_work: Arc<V>,
-    ) -> UpdateFunctionUseCase<V> {
+    pub fn update_in<V: UnitOfWork>(&self, unit_of_work: Arc<V>) -> UpdateFunctionUseCase<V> {
         UpdateFunctionUseCase {
             functions: self.functions.clone(),
             trigger_sync: self.trigger_sync.clone(),
             unit_of_work,
-            caller,
         }
     }
 
     /// Delete on a given unit of work: a transaction-scoped one, since the
     /// function's wiring is deleted in the same transaction.
-    pub fn delete_in<V: UnitOfWork>(
-        &self,
-        caller: Caller,
-        unit_of_work: Arc<V>,
-    ) -> DeleteFunctionUseCase<V> {
+    pub fn delete_in<V: UnitOfWork>(&self, unit_of_work: Arc<V>) -> DeleteFunctionUseCase<V> {
         DeleteFunctionUseCase {
             functions: self.functions.clone(),
             trigger_sync: self.trigger_sync.clone(),
             unit_of_work,
-            caller,
         }
     }
 
     /// Promote on a given unit of work: a transaction-scoped one, since the
     /// wiring is reconciled in the promote's own transaction.
-    pub fn promote_in<V: UnitOfWork>(
-        &self,
-        caller: Caller,
-        unit_of_work: Arc<V>,
-    ) -> PromoteVersionUseCase<V> {
+    pub fn promote_in<V: UnitOfWork>(&self, unit_of_work: Arc<V>) -> PromoteVersionUseCase<V> {
         PromoteVersionUseCase {
             functions: self.functions.clone(),
             versions: self.versions.clone(),
@@ -168,7 +153,6 @@ impl<U: UnitOfWork> FunctionOperations<U> {
             routes: self.routes.clone(),
             trigger_sync: self.trigger_sync.clone(),
             unit_of_work,
-            caller,
         }
     }
 
@@ -179,27 +163,22 @@ impl<U: UnitOfWork> FunctionOperations<U> {
         MarkVersionReadyUseCase::new(self.functions.clone(), self.versions.clone(), unit_of_work)
     }
 
-    pub fn remove_alias(&self, caller: Caller) -> RemoveAliasUseCase<U> {
+    pub fn remove_alias(&self) -> RemoveAliasUseCase<U> {
         RemoveAliasUseCase {
             functions: self.functions.clone(),
             versions: self.versions.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
-    pub fn publish(&self, caller: Caller) -> PublishVersionUseCase<U> {
-        self.publish_in(caller, self.unit_of_work.clone())
+    pub fn publish(&self) -> PublishVersionUseCase<U> {
+        self.publish_in(self.unit_of_work.clone())
     }
 
     /// Publish on a given unit of work: a transaction-scoped one
     /// (`PgUnitOfWork::run`), since publish reserves its version number
     /// under a row lock in the transaction it commits in.
-    pub fn publish_in<V: UnitOfWork>(
-        &self,
-        caller: Caller,
-        unit_of_work: Arc<V>,
-    ) -> PublishVersionUseCase<V> {
+    pub fn publish_in<V: UnitOfWork>(&self, unit_of_work: Arc<V>) -> PublishVersionUseCase<V> {
         PublishVersionUseCase {
             functions: self.functions.clone(),
             versions: self.versions.clone(),
@@ -209,43 +188,38 @@ impl<U: UnitOfWork> FunctionOperations<U> {
             artifacts: self.artifacts.clone(),
             checks: self.publish_checks.clone(),
             unit_of_work,
-            caller,
         }
     }
 
-    pub fn retire(&self, caller: Caller) -> RetireVersionUseCase<U> {
+    pub fn retire(&self) -> RetireVersionUseCase<U> {
         RetireVersionUseCase {
             functions: self.functions.clone(),
             versions: self.versions.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
-    pub fn set_config(&self, caller: Caller) -> SetFunctionConfigUseCase<U> {
+    pub fn set_config(&self) -> SetFunctionConfigUseCase<U> {
         SetFunctionConfigUseCase {
             functions: self.functions.clone(),
             settings: self.settings.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
-    pub fn set_secret(&self, caller: Caller) -> SetFunctionSecretUseCase<U> {
+    pub fn set_secret(&self) -> SetFunctionSecretUseCase<U> {
         SetFunctionSecretUseCase {
             functions: self.functions.clone(),
             settings: self.settings.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
-    pub fn delete_secret(&self, caller: Caller) -> DeleteFunctionSecretUseCase<U> {
+    pub fn delete_secret(&self) -> DeleteFunctionSecretUseCase<U> {
         DeleteFunctionSecretUseCase {
             functions: self.functions.clone(),
             settings: self.settings.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
@@ -259,21 +233,19 @@ impl<U: UnitOfWork> FunctionOperations<U> {
         }
     }
 
-    pub fn claim_domain(&self, caller: Caller) -> ClaimFunctionDomainUseCase<U> {
+    pub fn claim_domain(&self) -> ClaimFunctionDomainUseCase<U> {
         ClaimFunctionDomainUseCase {
             domains: self.domains.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 
-    pub fn release_domain(&self, caller: Caller) -> ReleaseFunctionDomainUseCase<U> {
+    pub fn release_domain(&self) -> ReleaseFunctionDomainUseCase<U> {
         ReleaseFunctionDomainUseCase {
             domains: self.domains.clone(),
             routes: self.routes.clone(),
             functions: self.functions.clone(),
             unit_of_work: self.unit_of_work.clone(),
-            caller,
         }
     }
 }

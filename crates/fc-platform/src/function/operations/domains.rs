@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Serialize, Serializer};
 
-use super::access::{domain_by_hostname, Caller};
+use super::access::domain_by_hostname;
 use super::events::{DomainClaimed, DomainReleased};
 use crate::function::domain_repository::FunctionDomainRepository;
 use crate::function::entity::FunctionDomain;
@@ -50,7 +50,6 @@ impl AuditMasked for ClaimCommand {}
 pub struct ClaimFunctionDomainUseCase<U: UnitOfWork> {
     pub(crate) domains: Arc<FunctionDomainRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -68,9 +67,9 @@ impl<U: UnitOfWork> UseCase for ClaimFunctionDomainUseCase<U> {
     async fn authorize(
         &self,
         command: &ClaimCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        self.caller
+        ctx.caller()
             .check_scope_access(command.owner.client_id_or_none())
     }
 
@@ -114,7 +113,6 @@ pub struct ReleaseFunctionDomainUseCase<U: UnitOfWork> {
     pub(crate) routes: Arc<FunctionRouteRepository>,
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -141,7 +139,7 @@ impl<U: UnitOfWork> UseCase for ReleaseFunctionDomainUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<DomainReleased>, UseCaseError> {
         let hostname = Hostname::parse(&command.hostname)?;
-        let domain = domain_by_hostname(&self.domains, &hostname, &self.caller).await?;
+        let domain = domain_by_hostname(&self.domains, &hostname, ctx.caller()).await?;
         let using = self.routes.list_under(&domain.hostname).await?;
         if !using.is_empty() {
             let mut function_ids: Vec<String> = Vec::new();

@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 
-use super::access::{function_by_address, Caller};
+use super::access::function_by_address;
 use super::events::FunctionUpdated;
 use super::trigger_sync::TriggerSync;
 use crate::function::repository::FunctionRepository;
@@ -47,7 +47,6 @@ pub struct UpdateFunctionUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) trigger_sync: TriggerSync,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -76,7 +75,7 @@ impl<U: UnitOfWork> UseCase for UpdateFunctionUseCase<U> {
         // The updated function and whether its status changed; a request
         // that changes nothing is [`UseCaseError::unchanged`].
         let mut function =
-            function_by_address(&self.functions, &command.address, &self.caller).await?;
+            function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let now = Utc::now();
         let before = function.description.clone();
         if let Some(description) = &command.description {

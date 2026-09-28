@@ -74,6 +74,14 @@ impl ExecutionContext {
         Self::fresh(principal_id.into(), Caller::system())
     }
 
+    /// A context for a [`Caller`] already built (a principal with the
+    /// application scope its handler resolved): the principal recorded is the
+    /// caller's, `"system"` for the system caller.
+    pub fn from_caller(caller: Caller) -> Self {
+        let principal_id = caller.principal_id().unwrap_or("system").to_string();
+        Self::fresh(principal_id, caller)
+    }
+
     /// Attach the caller's resolved application scope (see
     /// [`Caller::with_application_scope`]).
     pub fn with_application_scope(mut self, scope: ApplicationScope) -> Self {

@@ -30,7 +30,7 @@ use chrono::Utc;
 use fc_function_signing::{Signatures, Verification};
 use serde::Serialize;
 
-use super::access::{function_by_address, Caller};
+use super::access::function_by_address;
 use super::events::VersionPublished;
 use super::publish_checks::PublishChecks;
 use crate::function::artifact::{self, ArtifactBlobStore, PlatformArtifactRef};
@@ -94,7 +94,6 @@ pub struct PublishVersionUseCase<U: UnitOfWork> {
     pub(crate) artifacts: Option<Arc<dyn ArtifactBlobStore>>,
     pub(crate) checks: PublishChecks,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 /// Everything decided before a version number is taken.
@@ -156,7 +155,7 @@ impl<U: UnitOfWork> PublishVersionUseCase<U> {
         command: &PublishCommand,
         ctx: &ExecutionContext,
     ) -> Result<(FunctionVersion, VersionPublished), UseCaseError> {
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         if function.status == FunctionStatus::Disabled {
             return Err(UseCaseError::business_rule(
                 "FUNCTION_DISABLED",
@@ -257,7 +256,7 @@ impl<U: UnitOfWork> PublishVersionUseCase<U> {
         }
         let problems = self
             .checks
-            .check(&p.function, &p.manifest, &self.caller)
+            .check(&p.function, &p.manifest, ctx.caller())
             .await?;
         if let Some(first) = problems.into_iter().next() {
             return Err(first);
