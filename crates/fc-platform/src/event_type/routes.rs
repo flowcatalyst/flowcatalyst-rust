@@ -13,7 +13,7 @@ use super::operations::{
     AddSchemaUseCase, CreateEventTypeUseCase, DeleteEventTypeUseCase, SyncEventTypesUseCase,
     UpdateEventTypeUseCase,
 };
-use crate::shared::bff_event_types_api::BffEventTypesState;
+use crate::event_type::bff::BffEventTypesState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
 pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
@@ -90,31 +90,21 @@ pub fn event_type_go_router(state: EventTypeGoState) -> OpenApiRouter {
 pub fn bff_event_types_router(state: BffEventTypesState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::shared::bff_event_types_api::create_event_type,
-            crate::shared::bff_event_types_api::list_event_types
+            crate::event_type::bff::create_event_type,
+            crate::event_type::bff::list_event_types
         ))
-        .routes(routes!(crate::shared::bff_event_types_api::sync_platform))
+        .routes(routes!(crate::event_type::bff::sync_platform))
+        .routes(routes!(crate::event_type::bff::get_filter_applications))
+        .routes(routes!(crate::event_type::bff::get_filter_subdomains))
+        .routes(routes!(crate::event_type::bff::get_filter_aggregates))
         .routes(routes!(
-            crate::shared::bff_event_types_api::get_filter_applications
+            crate::event_type::bff::get_event_type,
+            crate::event_type::bff::update_event_type,
+            crate::event_type::bff::delete_event_type
         ))
-        .routes(routes!(
-            crate::shared::bff_event_types_api::get_filter_subdomains
-        ))
-        .routes(routes!(
-            crate::shared::bff_event_types_api::get_filter_aggregates
-        ))
-        .routes(routes!(
-            crate::shared::bff_event_types_api::get_event_type,
-            crate::shared::bff_event_types_api::update_event_type,
-            crate::shared::bff_event_types_api::delete_event_type
-        ))
-        .routes(routes!(
-            crate::shared::bff_event_types_api::archive_event_type
-        ))
-        .routes(routes!(crate::shared::bff_event_types_api::add_schema))
-        .routes(routes!(crate::shared::bff_event_types_api::finalise_schema))
-        .routes(routes!(
-            crate::shared::bff_event_types_api::deprecate_schema
-        ))
+        .routes(routes!(crate::event_type::bff::archive_event_type))
+        .routes(routes!(crate::event_type::bff::add_schema))
+        .routes(routes!(crate::event_type::bff::finalise_schema))
+        .routes(routes!(crate::event_type::bff::deprecate_schema))
         .with_state(state)
 }

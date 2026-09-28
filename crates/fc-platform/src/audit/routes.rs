@@ -11,7 +11,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::api::AuditLogsState;
 use super::operations::RedactExistingAuditLogsUseCase;
-use crate::shared::bff_audit_logs_api::BffAuditLogsState;
+use crate::audit::bff::BffAuditLogsState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
 
@@ -65,9 +65,7 @@ pub fn audit_logs_router(state: AuditLogsState) -> OpenApiRouter {
 /// Create the BFF audit-logs router (mounted at `/bff/audit-logs`).
 pub fn bff_audit_logs_router(state: BffAuditLogsState) -> OpenApiRouter {
     OpenApiRouter::new()
-        .routes(routes!(
-            crate::shared::bff_audit_logs_api::redact_existing_audit_logs
-        ))
+        .routes(routes!(crate::audit::bff::redact_existing_audit_logs))
         .with_state(state)
 }
 

@@ -12,8 +12,8 @@ use super::api::RolesState;
 use super::operations::{CreateRoleUseCase, DeleteRoleUseCase, UpdateRoleUseCase};
 use super::permission_api::RolePermissionsState;
 use super::permission_repository::PermissionCatalogRepository;
+use crate::role::bff::BffRolesState;
 use crate::shared::application_roles_sdk_api::ApplicationRolesSdkState;
-use crate::shared::bff_roles_api::BffRolesState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
 pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
@@ -115,19 +115,17 @@ pub fn role_permissions_router(state: RolePermissionsState) -> OpenApiRouter {
 pub fn bff_roles_router(state: BffRolesState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(
-            crate::shared::bff_roles_api::create_role,
-            crate::shared::bff_roles_api::list_roles
+            crate::role::bff::create_role,
+            crate::role::bff::list_roles
         ))
+        .routes(routes!(crate::role::bff::get_filter_applications))
+        .routes(routes!(crate::role::bff::list_permissions))
+        .routes(routes!(crate::role::bff::get_permission))
+        .routes(routes!(crate::role::bff::sync_platform_roles))
         .routes(routes!(
-            crate::shared::bff_roles_api::get_filter_applications
-        ))
-        .routes(routes!(crate::shared::bff_roles_api::list_permissions))
-        .routes(routes!(crate::shared::bff_roles_api::get_permission))
-        .routes(routes!(crate::shared::bff_roles_api::sync_platform_roles))
-        .routes(routes!(
-            crate::shared::bff_roles_api::get_role,
-            crate::shared::bff_roles_api::update_role,
-            crate::shared::bff_roles_api::delete_role
+            crate::role::bff::get_role,
+            crate::role::bff::update_role,
+            crate::role::bff::delete_role
         ))
         .with_state(state)
 }

@@ -411,11 +411,11 @@ pub mod api {
     pub use crate::shared::bff_dashboard_api::BffDashboardState;
     pub use crate::shared::routes::bff_dashboard_router;
     pub use crate::event_type::routes::bff_event_types_router;
-    pub use crate::shared::bff_event_types_api::BffEventTypesState;
+    pub use crate::event_type::bff::BffEventTypesState;
     pub use crate::role::routes::bff_roles_router;
-    pub use crate::shared::bff_roles_api::BffRolesState;
+    pub use crate::role::bff::BffRolesState;
     pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
-    pub use crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState;
+    pub use crate::scheduled_job::bff::BffScheduledJobsState;
     pub use crate::shared::dispatch_process_api::DispatchProcessState;
     pub use crate::shared::routes::dispatch_process_router;
     pub use crate::shared::me_api::MeState;

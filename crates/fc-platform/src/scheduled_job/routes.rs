@@ -13,7 +13,7 @@ use super::operations::{
     FireScheduledJobUseCase, PauseScheduledJobUseCase, ResumeScheduledJobUseCase,
     UpdateScheduledJobUseCase,
 };
-use crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState;
+use crate::scheduled_job::bff::BffScheduledJobsState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
 pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
@@ -82,23 +82,23 @@ pub fn scheduled_jobs_router(state: ScheduledJobsState) -> OpenApiRouter {
 
 pub fn bff_scheduled_jobs_router(state: BffScheduledJobsState) -> Router {
     Router::new()
-        .route("/", get(crate::shared::bff_scheduled_jobs_api::list_jobs))
+        .route("/", get(crate::scheduled_job::bff::list_jobs))
         .route(
             "/filter-options",
-            get(crate::shared::bff_scheduled_jobs_api::filter_options),
+            get(crate::scheduled_job::bff::filter_options),
         )
-        .route("/{id}", get(crate::shared::bff_scheduled_jobs_api::get_job))
+        .route("/{id}", get(crate::scheduled_job::bff::get_job))
         .route(
             "/{id}/instances",
-            get(crate::shared::bff_scheduled_jobs_api::list_instances),
+            get(crate::scheduled_job::bff::list_instances),
         )
         .route(
             "/instances/{instanceId}",
-            get(crate::shared::bff_scheduled_jobs_api::get_instance),
+            get(crate::scheduled_job::bff::get_instance),
         )
         .route(
             "/instances/{instanceId}/logs",
-            get(crate::shared::bff_scheduled_jobs_api::list_instance_logs),
+            get(crate::scheduled_job::bff::list_instance_logs),
         )
         .with_state(state)
 }

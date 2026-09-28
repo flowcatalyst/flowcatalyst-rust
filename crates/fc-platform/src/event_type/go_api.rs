@@ -16,10 +16,10 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::event_type::api::EventTypeResponse;
+use crate::event_type::bff::{BffEventTypesState, BffUpdateEventTypeRequest};
 use crate::event_type::operations::{AddSchemaCommand, AddSchemaUseCase};
 use crate::event_type::repository::EventTypeRepository;
 use crate::shared::authorization_service::checks;
-use crate::shared::bff_event_types_api::{BffEventTypesState, BffUpdateEventTypeRequest};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -137,11 +137,5 @@ pub async fn bff_put_event_type(
     Json(req): Json<BffUpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
     checks::can_update_event_types(&auth.0)?;
-    crate::shared::bff_event_types_api::update_event_type(
-        State(state.bff),
-        auth,
-        Path(id),
-        Json(req),
-    )
-    .await
+    crate::event_type::bff::update_event_type(State(state.bff), auth, Path(id), Json(req)).await
 }

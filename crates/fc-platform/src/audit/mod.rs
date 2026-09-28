@@ -3,6 +3,7 @@
 //! Audit logging for platform operations.
 
 pub mod api;
+pub mod bff;
 pub mod entity;
 pub mod operations;
 pub mod repository;
