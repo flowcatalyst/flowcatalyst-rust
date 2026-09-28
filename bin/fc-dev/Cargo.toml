@@ -33,7 +33,8 @@ tower = { workspace = true }
 tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-sqlx = { workspace = true }
+# Postgres for the platform; MySQL for `fc-dev outbox create-table`.
+sqlx = { workspace = true, features = ["postgres", "mysql"] }
 anyhow = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }

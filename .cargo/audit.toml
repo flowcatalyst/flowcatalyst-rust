@@ -1,0 +1,13 @@
+# `cargo audit` ignores. The reasons live in deny.toml's [advisories] ignore
+# list, which CI enforces (`cargo deny check`); keep the two lists the same.
+# See docs/operations/supply-chain.md.
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa: Marvin; no fix; RSA signs/verifies, never decrypts
+    "RUSTSEC-2026-0194", # quick-xml: fc-dev only, self_update's unused S3 backend
+    "RUSTSEC-2026-0195", # quick-xml: fc-dev only, self_update's unused S3 backend
+    "RUSTSEC-2025-0119", # number_prefix: unmaintained, fc-dev's upgrade progress bar
+    "RUSTSEC-2024-0436", # paste: unmaintained build-time proc-macro (utoipa-axum 0.2)
+    "RUSTSEC-2024-0384", # instant: unmaintained, in no shipped binary
+    "RUSTSEC-2025-0134", # rustls-pemfile: unmaintained, lapin only (no binary enables it)
+]

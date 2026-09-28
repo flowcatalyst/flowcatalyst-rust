@@ -170,7 +170,7 @@ its own table.
 |---|---|---|
 | PostgreSQL | `postgres` | one `UPDATE … RETURNING` over `FOR UPDATE SKIP LOCKED` |
 | SQLite | `sqlite` | one `UPDATE … WHERE id IN (SELECT …) RETURNING` |
-| MySQL | `mysql` | `SELECT … FOR UPDATE SKIP LOCKED` + `UPDATE` in one transaction (not selectable by `FC_OUTBOX_DB_TYPE`, as in Go) |
+| MySQL | `mysql` | `SELECT … FOR UPDATE SKIP LOCKED` + `UPDATE` in one transaction (`FC_OUTBOX_BACKEND=mysql`, a `mysql://` URL; Go's processor has no MySQL backend) |
 | MongoDB | `mongo` | `findOneAndUpdate` per document (Go's document shape) |
 
 ---
@@ -183,7 +183,7 @@ come first; the earlier names still work.
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`mongo`: the standalone binary only) |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql`, `mongo` (`mongo`: the standalone binary only) |
 | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | — | Application database URL. Required by the standalone binary; `fc-server` reads a `postgres` outbox from the platform database when unset, as Go |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` / `…_DISPATCH_JOBS_TABLE` / `…_AUDIT_LOGS_TABLE` | `outbox_messages` | Per-type table |

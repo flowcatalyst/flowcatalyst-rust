@@ -11,13 +11,15 @@ use std::str::FromStr;
 pub enum OutboxBackend {
     Sqlite,
     Postgres,
+    Mysql,
     Mongo,
 }
 
 impl OutboxBackend {
-    pub const ALL: [OutboxBackend; 3] = [
+    pub const ALL: [OutboxBackend; 4] = [
         OutboxBackend::Sqlite,
         OutboxBackend::Postgres,
+        OutboxBackend::Mysql,
         OutboxBackend::Mongo,
     ];
 
@@ -25,6 +27,7 @@ impl OutboxBackend {
         match self {
             OutboxBackend::Sqlite => "sqlite",
             OutboxBackend::Postgres => "postgres",
+            OutboxBackend::Mysql => "mysql",
             OutboxBackend::Mongo => "mongo",
         }
     }
@@ -38,7 +41,7 @@ impl fmt::Display for OutboxBackend {
 
 /// `FC_OUTBOX_DB_TYPE` named a backend that doesn't exist.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("Unknown outbox database type: {0:?}. Use sqlite, postgres, or mongo")]
+#[error("Unknown outbox database type: {0:?}. Use sqlite, postgres, mysql, or mongo")]
 pub struct UnknownOutboxBackend(pub String);
 
 impl FromStr for OutboxBackend {
@@ -60,12 +63,13 @@ mod tests {
     fn parses_the_accepted_spellings() {
         assert_eq!("sqlite".parse(), Ok(OutboxBackend::Sqlite));
         assert_eq!("postgres".parse(), Ok(OutboxBackend::Postgres));
+        assert_eq!("mysql".parse(), Ok(OutboxBackend::Mysql));
         assert_eq!("mongo".parse(), Ok(OutboxBackend::Mongo));
     }
 
     #[test]
     fn rejects_anything_else() {
-        for bad in ["Postgres", "postgresql", "mysql", ""] {
+        for bad in ["Postgres", "postgresql", "MySQL", "mariadb", ""] {
             assert!(bad.parse::<OutboxBackend>().is_err(), "{bad}");
         }
     }
