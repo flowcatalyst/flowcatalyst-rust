@@ -169,8 +169,8 @@ pub struct AuthState {
     pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
     pub identity_provider_repo: Arc<IdentityProviderRepository>,
     pub login_attempt_repo: Arc<LoginAttemptRepository>,
-    /// Layered failed-login backoff policy. Loaded from env in
-    /// `build_platform_routes` so all binaries share the same defaults.
+    /// Layered failed-login backoff policy. Loaded from env once, in
+    /// `PlatformContext::new`, so all binaries share the same defaults.
     pub backoff_policy: Arc<BackoffPolicy>,
     pub session_cookie: SessionCookieConfig,
     /// Two-factor sign-in (Go's login `MFA` + `MFATokens`). When set, a user

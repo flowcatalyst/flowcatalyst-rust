@@ -53,9 +53,7 @@ use fc_platform::shared::middleware::{AppState, AuthLayer};
 use fc_platform::shared::rate_limit_store::{
     Bucket, RateLimitDecision, RateLimitError, RateLimitPolicies, RateLimitPolicy, RateLimitStore,
 };
-use fc_platform::shared::server_setup::{
-    build_platform_routes, AuthServices, PlatformRoutesConfig,
-};
+use fc_platform::shared::server_setup::{AuthServices, PlatformContext, PlatformRoutesConfig};
 use fc_platform::usecase::PgUnitOfWork;
 
 const SNAPSHOT: &str = concat!(
@@ -127,7 +125,7 @@ fn build_app(static_dir: Option<String>, store: Arc<RecordingStore>) -> (Router,
             repos.idp_role_mapping_repo.clone(),
         )),
     };
-    let routes = build_platform_routes(
+    let ctx = PlatformContext::new(
         &repos,
         &auth,
         &unit_of_work,
@@ -144,7 +142,7 @@ fn build_app(static_dir: Option<String>, store: Arc<RecordingStore>) -> (Router,
         },
         "app_platform".to_string(),
     );
-    let (app, openapi) = routes.build();
+    let (app, openapi) = fc_platform::router::build(&ctx);
     let app = app.layer(AuthLayer::new(AppState {
         auth_service,
         authz_service: authz,

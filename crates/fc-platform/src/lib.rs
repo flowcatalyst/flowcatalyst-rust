@@ -445,9 +445,6 @@ pub mod api {
     };
     pub use crate::shared::well_known_api::WellKnownState;
 
-    // Centralized router builder
-    pub use crate::router::PlatformRoutes;
-
     // Re-export middleware module for direct access
     pub mod middleware {
         pub use crate::shared::middleware::*;

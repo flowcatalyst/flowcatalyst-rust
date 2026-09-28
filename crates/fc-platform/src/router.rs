@@ -34,186 +34,173 @@ pub const PATH_OPENAPI_SPEC: &str = "/q/openapi";
 /// shapes are useful even though they aren't programmable.
 pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 
-// =============================================================================
-// PlatformRoutes
-// =============================================================================
+/// Assemble the full platform router and its published OpenAPI document
+/// from `ctx`.
+///
+/// The returned `Router` includes all API routes, the health endpoint,
+/// Swagger UI, and SPA serving (if `static_dir` is set). It does **not**
+/// include auth middleware, CORS, or tracing layers: the binaries add those.
+pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
+    // The route modules, in order. The order is part of the OpenAPI
+    // document: utoipa keeps the first component schema of a name
+    // (`StatusChangeResponse` is two types), and axum lists a path's
+    // methods in the `Allow` header in the order they were merged.
+    let AggregateRoutes { documented, plain } = AggregateRoutes::new()
+        .merge(crate::event::routes(ctx))
+        .merge(crate::event_type::routes(ctx))
+        .merge(crate::process::routes(ctx))
+        .merge(crate::scheduled_job::routes(ctx))
+        .merge(crate::dispatch_job::routes(ctx))
+        .merge(crate::client::routes(ctx))
+        .merge(crate::principal::routes(ctx))
+        .merge(crate::mfa::routes(ctx))
+        .merge(crate::developer_credential::routes(ctx))
+        .merge(crate::role::routes(ctx))
+        .merge(crate::subscription::routes(ctx))
+        .merge(crate::auth::routes(ctx))
+        .merge(crate::audit::routes(ctx))
+        .merge(crate::shared::routes(ctx))
+        .merge(crate::function::routes(ctx))
+        .merge(crate::dispatch_job_actions::routes(ctx))
+        .merge(crate::app_docs::routes(ctx))
+        .merge(crate::application::routes(ctx))
+        .merge(crate::email_domain_mapping::routes(ctx))
+        .merge(crate::service_account::routes(ctx))
+        .merge(crate::platform_config::routes(ctx))
+        .merge(crate::webauthn::routes(ctx))
+        .merge(crate::dispatch_pool::routes(ctx))
+        .merge(crate::connection::routes(ctx))
+        .merge(crate::cors::routes(ctx))
+        .merge(crate::identity_provider::routes(ctx))
+        .merge(crate::login_attempt::routes(ctx))
+        .merge(crate::portal::routes(ctx));
 
-/// The platform's routes, built from one [`PlatformContext`].
-pub struct PlatformRoutes {
-    /// What the route modules are built from.
-    pub ctx: PlatformContext,
-}
+    // 1. The documented routes (auto-collected in the OpenAPI spec).
+    let (router, mut openapi) = documented.split_for_parts();
 
-impl PlatformRoutes {
-    /// Assemble the full platform router and OpenAPI spec.
-    ///
-    /// The returned `Router` includes all API routes, the health endpoint,
-    /// Swagger UI, and SPA serving (if `static_dir` is set).
-    /// It does **not** include auth middleware, CORS, or tracing layers.
-    pub fn build(self) -> (Router, serde_json::Value) {
-        let ctx = &self.ctx;
+    // Capture the full spec (including `/bff/*` paths) before we
+    // strip BFF entries from the public surface. Served at
+    // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
+    // once at boot since the spec is fixed for the process lifetime.
+    let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
+        .map(axum::body::Bytes::from)
+        .unwrap_or_default();
 
-        // The route modules, in order. The order is part of the OpenAPI
-        // document: utoipa keeps the first component schema of a name
-        // (`StatusChangeResponse` is two types), and axum lists a path's
-        // methods in the `Allow` header in the order they were merged.
-        let AggregateRoutes { documented, plain } = AggregateRoutes::new()
-            .merge(crate::event::routes(ctx))
-            .merge(crate::event_type::routes(ctx))
-            .merge(crate::process::routes(ctx))
-            .merge(crate::scheduled_job::routes(ctx))
-            .merge(crate::dispatch_job::routes(ctx))
-            .merge(crate::client::routes(ctx))
-            .merge(crate::principal::routes(ctx))
-            .merge(crate::mfa::routes(ctx))
-            .merge(crate::developer_credential::routes(ctx))
-            .merge(crate::role::routes(ctx))
-            .merge(crate::subscription::routes(ctx))
-            .merge(crate::auth::routes(ctx))
-            .merge(crate::audit::routes(ctx))
-            .merge(crate::shared::routes(ctx))
-            .merge(crate::function::routes(ctx))
-            .merge(crate::dispatch_job_actions::routes(ctx))
-            .merge(crate::app_docs::routes(ctx))
-            .merge(crate::application::routes(ctx))
-            .merge(crate::email_domain_mapping::routes(ctx))
-            .merge(crate::service_account::routes(ctx))
-            .merge(crate::platform_config::routes(ctx))
-            .merge(crate::webauthn::routes(ctx))
-            .merge(crate::dispatch_pool::routes(ctx))
-            .merge(crate::connection::routes(ctx))
-            .merge(crate::cors::routes(ctx))
-            .merge(crate::identity_provider::routes(ctx))
-            .merge(crate::login_attempt::routes(ctx))
-            .merge(crate::portal::routes(ctx));
+    // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
+    // frontend and intentionally not part of the programmable surface; it
+    // shouldn't appear in Swagger or `/q/openapi`. Some BFF routers share
+    // handlers with their `/api/*` siblings and have to be mounted via
+    // `OpenApiRouter` for routing, so we filter post-build rather than
+    // requiring every contributor to remember the convention.
+    openapi
+        .paths
+        .paths
+        .retain(|path, _| !path.starts_with("/bff/"));
 
-        // 1. The documented routes (auto-collected in the OpenAPI spec).
-        let (router, mut openapi) = documented.split_for_parts();
+    // The operations Go documents that are routed through the plain
+    // routes (`shared::openapi_contract`).
+    openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
 
-        // Capture the full spec (including `/bff/*` paths) before we
-        // strip BFF entries from the public surface. Served at
-        // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
-        // once at boot since the spec is fixed for the process lifetime.
-        let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
-            .map(axum::body::Bytes::from)
-            .unwrap_or_default();
+    // 3. Set OpenAPI metadata
+    openapi.info.title = "FlowCatalyst Platform API".to_string();
+    openapi.info.version = fc_common::BUILD_VERSION.to_string();
+    // No `info.description`: Go's document has none.
+    openapi.info.description = None;
+    // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
+    // metadata (its author as contact, "MIT OR Apache-2.0" as license),
+    // so these must be set explicitly or the published spec advertises
+    // the wrong license.
+    openapi.info.contact = Some(
+        utoipa::openapi::ContactBuilder::new()
+            .name(Some("FlowCatalyst"))
+            .email(Some("support@flowcatalyst.io"))
+            .build(),
+    );
+    openapi.info.license = Some(
+        utoipa::openapi::LicenseBuilder::new()
+            .name(env!("CARGO_PKG_LICENSE"))
+            .identifier(Some(env!("CARGO_PKG_LICENSE")))
+            .build(),
+    );
 
-        // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
-        // frontend and intentionally not part of the programmable surface; it
-        // shouldn't appear in Swagger or `/q/openapi`. Some BFF routers share
-        // handlers with their `/api/*` siblings and have to be mounted via
-        // `OpenApiRouter` for routing, so we filter post-build rather than
-        // requiring every contributor to remember the convention.
-        openapi
-            .paths
-            .paths
-            .retain(|path, _| !path.starts_with("/bff/"));
+    // 2. The published document, reshaped to Go's document conventions
+    //    (one `default` ErrorModel response, optional members not
+    //    nullable, no orphan schemas); see
+    //    `shared::openapi_contract::shape_as_go_contract`. Served as JSON
+    //    (utoipa's model cannot read back every schema it writes, e.g.
+    //    `{}`), fixed for the process lifetime.
+    let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
+    crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
 
-        // The operations Go documents that are routed through the plain
-        // routes (`shared::openapi_contract`).
-        openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
+    // Snapshot the platform's own OpenAPI document for the Developer
+    // portal. Compile-time-derived from utoipa, so a single capture at
+    // boot is correct for the lifetime of this binary; "Sync All" pushes
+    // this value into the seeded `code='platform'` application row.
+    let platform_openapi = Arc::new(openapi.clone());
 
-        // 3. Set OpenAPI metadata
-        openapi.info.title = "FlowCatalyst Platform API".to_string();
-        openapi.info.version = fc_common::BUILD_VERSION.to_string();
-        // No `info.description`: Go's document has none.
-        openapi.info.description = None;
-        // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
-        // metadata (its author as contact, "MIT OR Apache-2.0" as license),
-        // so these must be set explicitly or the published spec advertises
-        // the wrong license.
-        openapi.info.contact = Some(
-            utoipa::openapi::ContactBuilder::new()
-                .name(Some("FlowCatalyst"))
-                .email(Some("support@flowcatalyst.io"))
-                .build(),
-        );
-        openapi.info.license = Some(
-            utoipa::openapi::LicenseBuilder::new()
-                .name(env!("CARGO_PKG_LICENSE"))
-                .identifier(Some(env!("CARGO_PKG_LICENSE")))
-                .build(),
-        );
+    // 4. The plain routes (not in the OpenAPI document), after the
+    //    developer portal, which needs the document.
+    let app = Router::new()
+        .merge(router)
+        .merge(crate::shared::routes::developer_portal_routes(
+            ctx,
+            platform_openapi,
+        ))
+        .merge(plain);
 
-        // 2. The published document, reshaped to Go's document conventions
-        //    (one `default` ErrorModel response, optional members not
-        //    nullable, no orphan schemas); see
-        //    `shared::openapi_contract::shape_as_go_contract`. Served as JSON
-        //    (utoipa's model cannot read back every schema it writes, e.g.
-        //    `{}`), fixed for the process lifetime.
-        let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
-        crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
+    // Go's spec routes (internal/server/wire_spec.go): the programmable
+    // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
+    let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
 
-        // Snapshot the platform's own OpenAPI document for the Developer
-        // portal. Compile-time-derived from utoipa, so a single capture at
-        // boot is correct for the lifetime of this binary; "Sync All" pushes
-        // this value into the seeded `code='platform'` application row.
-        let platform_openapi = Arc::new(openapi.clone());
-
-        // 4. The plain routes (not in the OpenAPI document), after the
-        //    developer portal, which needs the document.
-        let app = Router::new()
-            .merge(router)
-            .merge(crate::shared::routes::developer_portal_routes(
-                ctx,
-                platform_openapi,
-            ))
-            .merge(plain);
-
-        // Go's spec routes (internal/server/wire_spec.go): the programmable
-        // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
-        let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
-
-        let app = app
-            // Health
-            .route(PATH_HEALTH, get(health_handler))
-            // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
-            .merge(
-                SwaggerUi::new(PATH_SWAGGER_UI)
-                    .external_url_unchecked(PATH_OPENAPI_SPEC, openapi.clone()),
-            )
-            // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
-            // into Swagger UI to keep the default UI aligned with the SDK
-            // contract. Body is pre-serialised at boot.
-            .route(
-                PATH_OPENAPI_SPEC_FULL,
-                get({
-                    let body = openapi_full_bytes;
-                    move || {
-                        let body = body.clone();
-                        async move {
-                            (
-                                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                                body,
-                            )
-                        }
+    let app = app
+        // Health
+        .route(PATH_HEALTH, get(health_handler))
+        // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
+        .merge(
+            SwaggerUi::new(PATH_SWAGGER_UI)
+                .external_url_unchecked(PATH_OPENAPI_SPEC, openapi.clone()),
+        )
+        // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
+        // into Swagger UI to keep the default UI aligned with the SDK
+        // contract. Body is pre-serialised at boot.
+        .route(
+            PATH_OPENAPI_SPEC_FULL,
+            get({
+                let body = openapi_full_bytes;
+                move || {
+                    let body = body.clone();
+                    async move {
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            body,
+                        )
                     }
-                }),
-            );
+                }
+            }),
+        );
 
-        // Extractor rejections (unreadable body, query or path) answer in
-        // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
-        let app = app.layer(axum::middleware::from_fn(
-            crate::shared::rejection::go_rejections,
-        ));
+    // Extractor rejections (unreadable body, query or path) answer in
+    // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
+    let app = app.layer(axum::middleware::from_fn(
+        crate::shared::rejection::go_rejections,
+    ));
 
-        // SPA serving (if static_dir is configured). No static_dir: no root
-        // handler. The binary can add its own (fc-dev uses embedded assets,
-        // fc-server may redirect to Swagger).
-        let app = match ctx.config.static_dir {
-            Some(ref static_dir) => serve_spa(app, static_dir),
-            None => app,
-        };
+    // SPA serving (if static_dir is configured). No static_dir: no root
+    // handler. The binary can add its own (fc-dev uses embedded assets,
+    // fc-server may redirect to Swagger).
+    let app = match ctx.config.static_dir {
+        Some(ref static_dir) => serve_spa(app, static_dir),
+        None => app,
+    };
 
-        // A USER with no platform role reaches only its own profile (Go
-        // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
-        // which installs the auth services it authenticates with.
-        let app = app.layer(axum::middleware::from_fn(
-            crate::shared::profile_only::profile_only_without_role,
-        ));
+    // A USER with no platform role reaches only its own profile (Go
+    // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
+    // which installs the auth services it authenticates with.
+    let app = app.layer(axum::middleware::from_fn(
+        crate::shared::profile_only::profile_only_without_role,
+    ));
 
-        (app, openapi)
-    }
+    (app, openapi)
 }
 
 /// Serve the SPA in `static_dir` under `app`: hashed `/assets/*` immutable,
