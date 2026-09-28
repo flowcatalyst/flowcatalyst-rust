@@ -140,6 +140,21 @@ Every repository follows one pattern:
 - Domain entities stay in `*/entity.rs`, row mapping stays in `*/repository.rs`
 - Connection: use `shared::database::create_pool()`
 
+## Dependencies (supply chain)
+Read `docs/operations/supply-chain.md` before adding or updating a crate.
+- crates.io only, declared once in `[workspace.dependencies]`, `default-features = false`
+  with the features you use. Database drivers are per crate (the workspace sqlx has none).
+- Prefer crates from the well-known orgs (RustCrypto, tokio-rs, hyperium, rustls,
+  dtolnay, rust-lang, Bytecode Alliance, AWS, …); avoid new `build.rs` / proc-macros.
+- `cargo deny check` and `cargo vet` must pass (CI `supply-chain` job). A new duplicate
+  version needs a `skip` naming who holds the old one; an advisory ignore needs its
+  exposure stated in `deny.toml` (mirrored in `.cargo/audit.toml`); a new cargo-vet
+  exemption needs a reason in the commit message.
+- fc-sdk and the function guest crates must not depend on AGPL/GPL/LGPL code
+  (`deny-sdk.toml`).
+- Commit `Cargo.lock` and `supply-chain/` with the manifest change; release and Docker
+  builds are `--locked` and `cargo auditable`.
+
 ## Caching
 - **Token validation**: `AuthService` caches validated JWT claims (DashMap, 30s TTL)
 - **Permission resolution**: `AuthorizationService` caches role→permissions (DashMap, 60s TTL)
