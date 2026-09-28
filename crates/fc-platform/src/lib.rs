@@ -216,6 +216,7 @@ pub mod repository {
     /// let repos = Repositories::new(&pool);
     /// // then use repos.event_repo, repos.client_repo, etc.
     /// ```
+    #[derive(Clone)]
     pub struct Repositories {
         pub event_repo: Arc<EventRepository>,
         pub dispatch_job_repo: Arc<DispatchJobRepository>,

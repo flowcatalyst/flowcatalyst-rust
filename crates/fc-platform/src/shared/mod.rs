@@ -37,6 +37,7 @@ pub mod me_api;
 pub mod monitoring_api;
 pub mod openapi_api;
 pub mod openapi_contract;
+pub mod platform_context;
 pub mod platform_config_api;
 pub mod public_api;
 pub mod router_config_api;

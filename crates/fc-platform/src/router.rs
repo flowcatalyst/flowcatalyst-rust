@@ -108,9 +108,7 @@ use crate::api::{
     WellKnownState,
 };
 use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
-use crate::shared::rate_limit_middleware::{
-    rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
-};
+use crate::shared::rate_limit_middleware::{rate_limit_per_ip, IpRateLimiterState};
 use crate::shared::rate_limit_store::{
     distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
     DistributedEmailLimitState, DistributedIpLimitState,
@@ -320,6 +318,9 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// limits on the OAuth/auth edge — see `RateLimitPolicies`.
     pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
     pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
+
+    /// What the route modules are built from.
+    pub ctx: crate::shared::platform_context::PlatformContext,
 }
 
 impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
@@ -333,11 +334,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         // client doesn't starve the auth login flow (and vice versa). The
         // limits compose with — they don't replace — the per-account
         // backoff in `auth::login_backoff`.
-        let auth_ip_limit = IpRateLimiterState::new(&RateLimitConfig::auth_default_from_env());
-        let oauth_ip_limit =
-            IpRateLimiterState::new(&RateLimitConfig::oauth_token_default_from_env());
-        let auth_layer = axum::middleware::from_fn_with_state(auth_ip_limit, rate_limit_per_ip);
-        let oauth_layer = axum::middleware::from_fn_with_state(oauth_ip_limit, rate_limit_per_ip);
+        let auth_layer =
+            axum::middleware::from_fn_with_state(self.ctx.auth_ip_limit.clone(), rate_limit_per_ip);
+        let oauth_layer = axum::middleware::from_fn_with_state(
+            self.ctx.oauth_ip_limit.clone(),
+            rate_limit_per_ip,
+        );
 
         // Distributed (cluster-wide) per-IP limiters layered on top of the
         // in-memory governor above. The two compose: governor rejects bursts

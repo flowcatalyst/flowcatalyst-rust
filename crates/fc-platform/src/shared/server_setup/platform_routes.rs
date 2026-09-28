@@ -17,7 +17,6 @@
 //! them from env in whatever style it prefers.
 
 use std::sync::Arc;
-use tracing::warn;
 
 use crate::api::{
     ApplicationRolesSdkState, ApplicationsState, AuditLogsState, AuthConfigState, AuthState,
@@ -41,44 +40,13 @@ use crate::operations::{
 };
 use crate::repository::Repositories;
 use crate::router::PlatformRoutes;
-use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::encryption_service::EncryptionService;
 use crate::usecase::PgUnitOfWork;
 
 use super::AuthServices;
 
-/// Per-binary configuration for the points where binaries diverge.
-pub struct PlatformRoutesConfig {
-    /// Distributed rate-limit store. Built by the binary (async) so the
-    /// Redis-or-Postgres choice happens once at startup and is logged.
-    /// Use `NoopRateLimitStore` in tests.
-    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
-    /// Per-bucket policies, loaded from env via `RateLimitPolicies::from_env`.
-    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
-    /// `Secure` flag for the OIDC session cookie. `true` in production.
-    pub session_cookie_secure: bool,
-    /// `SameSite` policy for the session cookie (`Lax`, `Strict`, or `None`).
-    /// Defaults to `Lax`.
-    pub session_cookie_same_site: String,
-    /// Session token expiry in seconds. Defaults to 86400 (24h).
-    pub session_token_expiry_secs: i64,
-    /// Optional static asset directory for SPA serving.
-    pub static_dir: Option<String>,
-    /// External base URL for the OIDC login flow (used for absolute redirect
-    /// URLs). Binary pre-resolves from env (usually `FC_EXTERNAL_BASE_URL`).
-    pub oidc_login_external_base_url: Option<String>,
-    /// External base URL for the `.well-known` endpoints (issuer, JWKS).
-    pub well_known_external_base_url: String,
-    /// External base URL for password-reset email links.
-    pub password_reset_external_base_url: String,
-}
-
-impl PlatformRoutesConfig {
-    /// Default `SameSite` policy when not configured.
-    pub const DEFAULT_SAME_SITE: &'static str = "Lax";
-    /// Default session token expiry (24 hours) when not configured.
-    pub const DEFAULT_SESSION_EXPIRY_SECS: i64 = 86400;
-}
+use crate::shared::platform_context::PlatformContext;
+pub use crate::shared::platform_context::PlatformRoutesConfig;
 
 /// Build a fully-populated `PlatformRoutes` for the three server binaries.
 ///
@@ -91,16 +59,8 @@ pub fn build_platform_routes(
     config: PlatformRoutesConfig,
     platform_application_id: String,
 ) -> PlatformRoutes<PgUnitOfWork> {
-    // ── Simple states ─────────────────────────────────────────────────────
-    // The one ingest signing guard: dispatch-job (S5) and event (S6) ingest
-    // on every route.
-    let signing_guard = Arc::new(crate::dispatch_job::signing_guard::SigningGuard::new(
-        repos.subscription_repo.clone(),
-        repos.connection_repo.clone(),
-        repos.service_account_repo.clone(),
-        repos.application_repo.clone(),
-        repos.principal_repo.clone(),
-    ));
+    let ctx = PlatformContext::new(repos, auth, unit_of_work, config, platform_application_id);
+    let signing_guard = ctx.signing_guard.clone();
     let events_state = EventsState {
         event_repo: repos.event_repo.clone(),
         signing: signing_guard.clone(),
@@ -287,17 +247,8 @@ pub fn build_platform_routes(
         enable_application_use_case: enable_application_for_client_use_case,
         disable_application_use_case: disable_application_for_client_use_case,
     };
-    // Password reset emailer — shared between user-initiated /auth/password-reset/request
-    // and admin-initiated /api/principals/{id}/send-password-reset.
-    let email_service: Arc<dyn crate::shared::email_service::EmailService> =
-        Arc::from(crate::shared::email_service::create_email_service());
-    let password_reset_emailer = Arc::new(crate::auth::password_reset_api::PasswordResetEmailer {
-        password_reset_repo: repos.password_reset_repo.clone(),
-        email_service: email_service.clone(),
-        unit_of_work: unit_of_work.clone(),
-        external_base_url: config.password_reset_external_base_url.clone(),
-        brand: Some(repos.platform_config_repo.clone()),
-    });
+    let email_service = ctx.email_service.clone();
+    let password_reset_emailer = ctx.password_reset_emailer.clone();
 
     let create_user_use_case = Arc::new(crate::principal::operations::CreateUserUseCase::new(
         repos.principal_repo.clone(),
@@ -355,13 +306,7 @@ pub fn build_platform_routes(
         ),
     );
 
-    // One instance so every `/{appCode}` route shares the scope cache, and
-    // the application-access endpoint can drop a principal's entry when it
-    // changes.
-    let app_access = Arc::new(ApplicationAccessService::new(
-        repos.principal_repo.clone(),
-        repos.application_repo.clone(),
-    ));
+    let app_access = ctx.app_access.clone();
     let principals_state = PrincipalsState {
         mfa_repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
         principal_repo: repos.principal_repo.clone(),
@@ -578,24 +523,9 @@ pub fn build_platform_routes(
         delete_idp_role_mapping_use_case,
     };
 
-    // ── OIDC login, OAuth, Auth states ────────────────────────────────────
-    // Parsed once here; every handler that sets or clears the session cookie
-    // shares it.
-    let session_cookie = SessionCookieConfig {
-        name: "fc_session".to_string(),
-        secure: config.session_cookie_secure,
-        same_site: SessionCookieConfig::parse_same_site(&config.session_cookie_same_site),
-        ttl: time::Duration::seconds(config.session_token_expiry_secs),
-    };
-    let encryption_service = EncryptionService::from_env().map(Arc::new);
-    if encryption_service.is_none() {
-        warn!("FLOWCATALYST_APP_KEY not set — stored secrets can be neither written nor read");
-    }
-    // Opens stored secrets wherever they are used: `encrypted:` values and
-    // secret-manager references (`aws-sm://…`, `env://…`), one cache.
-    let secret_resolver = Arc::new(crate::shared::secret_ref::SecretResolver::platform(
-        encryption_service.clone(),
-    ));
+    let session_cookie = ctx.session_cookie.clone();
+    let encryption_service = ctx.encryption.clone();
+    let secret_resolver = ctx.secret_resolver.clone();
     let oidc_login_state = OidcLoginApiState {
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         identity_provider_repo: repos.idp_repo.clone(),
@@ -603,10 +533,10 @@ pub fn build_platform_routes(
         oidc_login_state_repo: repos.oidc_login_state_repo.clone(),
         oidc_sync_service: auth.oidc_sync.clone(),
         auth_service: auth.auth.clone(),
-        jwks_cache: Arc::new(crate::auth::jwks_cache::JwksCache::default()),
+        jwks_cache: ctx.jwks_cache.clone(),
         unit_of_work: unit_of_work.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
-        external_base_url: config.oidc_login_external_base_url,
+        external_base_url: ctx.config.oidc_login_external_base_url.clone(),
         session_cookie: session_cookie.clone(),
         secret_resolver: secret_resolver.clone(),
         password_setup_hint: Some(crate::auth::oidc_login_api::PasswordSetupHint {
@@ -616,41 +546,8 @@ pub fn build_platform_routes(
         }),
     };
 
-    let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
-
-    // Two-factor authentication (Go's mfa + twofa + mfatoken + notify).
-    let platform_name = crate::mfa::notify::PlatformName {
-        configs: Some(repos.platform_config_repo.clone()),
-    };
-    let two_factor = Arc::new(crate::mfa::TwoFactorLogin {
-        mfa: Arc::new(crate::mfa::MfaService {
-            repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
-            encryption: encryption_service.clone(),
-            email: email_service.clone(),
-            issuer: platform_name.clone(),
-        }),
-        tokens: Arc::new(crate::mfa::MfaTokenIssuer::new(
-            &auth.auth,
-            auth.auth.issuer(),
-        )),
-        policy: crate::mfa::TwoFactorPolicy {
-            mappings: repos.edm_repo.clone(),
-            identity_providers: repos.idp_repo.clone(),
-        },
-        notifier: crate::mfa::notify::Notifier {
-            email: email_service.clone(),
-            name: platform_name,
-        },
-        auth_service: auth.auth.clone(),
-        principal_repo: repos.principal_repo.clone(),
-        role_repo: repos.role_repo.clone(),
-        login_attempt_repo: repos.login_attempt_repo.clone(),
-        audit_log_repo: repos.audit_log_repo.clone(),
-        backoff_policy: backoff_policy.clone(),
-        session_cookie: SessionCookieConfig::password_login(config.session_cookie_secure),
-        rate_limit_store: config.rate_limit_store.clone(),
-        rate_limit_policies: config.rate_limit_policies.clone(),
-    });
+    let backoff_policy = ctx.backoff_policy.clone();
+    let two_factor = ctx.two_factor.clone();
     let embedded_auth_state = AuthState {
         auth_service: auth.auth.clone(),
         principal_repo: repos.principal_repo.clone(),
@@ -661,25 +558,10 @@ pub fn build_platform_routes(
         identity_provider_repo: repos.idp_repo.clone(),
         login_attempt_repo: repos.login_attempt_repo.clone(),
         backoff_policy: backoff_policy.clone(),
-        session_cookie: SessionCookieConfig::password_login(config.session_cookie_secure),
+        session_cookie: SessionCookieConfig::password_login(ctx.config.session_cookie_secure),
         two_factor: Some(two_factor.clone()),
     };
-    // Portal identity plane (Go wire_routes.go: portalusersapi.State,
-    // portalauth.State, bridge.PortalBridge and the token endpoint's portal
-    // repos).
-    let portal_state = crate::portal::PortalState::new(crate::portal::PortalDeps {
-        pool: repos.pool.clone(),
-        clients: repos.client_repo.clone(),
-        oauth_clients: repos.oauth_client_repo.clone(),
-        identity_providers: repos.idp_repo.clone(),
-        auth_codes: repos.auth_code_repo.clone(),
-        password_service: auth.password.clone(),
-        unit_of_work: unit_of_work.clone(),
-        email_service: email_service.clone(),
-        encryption_service: encryption_service.clone(),
-        rate_limit_store: config.rate_limit_store.clone(),
-        external_base_url: config.password_reset_external_base_url.clone(),
-    });
+    let portal_state = ctx.portal.clone();
     let oauth_state = OAuthState {
         service_account_repo: repos.service_account_repo.clone(),
         oauth_client_repo: repos.oauth_client_repo.clone(),
@@ -695,8 +577,8 @@ pub fn build_platform_routes(
             &crate::shared::rate_limit_middleware::RateLimitConfig::oauth_token_per_client_from_env(
             ),
         ),
-        rate_limit_store: config.rate_limit_store.clone(),
-        rate_limit_policies: config.rate_limit_policies.clone(),
+        rate_limit_store: ctx.config.rate_limit_store.clone(),
+        rate_limit_policies: ctx.config.rate_limit_policies.clone(),
         encryption_service: encryption_service.clone(),
         portal: Some(portal_state.clone()),
     };
@@ -951,7 +833,7 @@ pub fn build_platform_routes(
     };
     let well_known_state = WellKnownState {
         auth_service: auth.auth.clone(),
-        external_base_url: config.well_known_external_base_url,
+        external_base_url: ctx.config.well_known_external_base_url.clone(),
     };
     let client_selection_state = ClientSelectionState {
         principal_repo: repos.principal_repo.clone(),
@@ -991,8 +873,8 @@ pub fn build_platform_routes(
         reset_password_use_case: reset_password_use_case.clone(),
         two_factor: Some(two_factor.clone()),
         refresh_token_repo: repos.refresh_token_repo.clone(),
-        rate_limit_store: config.rate_limit_store.clone(),
-        rate_limit_policies: config.rate_limit_policies.clone(),
+        rate_limit_store: ctx.config.rate_limit_store.clone(),
+        rate_limit_policies: ctx.config.rate_limit_policies.clone(),
     };
 
     let applications_state = ApplicationsState {
@@ -1128,15 +1010,7 @@ pub fn build_platform_routes(
             ),
         ),
     };
-    // One outbound-credentials resolver for every delivery the platform
-    // signs (Java OutboundCredentials, one-minute cache per application).
-    let outbound_credentials = Arc::new(
-        crate::service_account::outbound_credentials::OutboundCredentialsResolver::new(
-            repos.service_account_repo.clone(),
-            encryption_service.clone(),
-        )
-        .with_secret_resolver(secret_resolver.clone()),
-    );
+    let outbound_credentials = ctx.outbound_credentials.clone();
     // ── Function registry ─────────────────────────────────────────────────
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
     // start on a non-positive one (Env.java:600-605).
@@ -1377,7 +1251,7 @@ pub fn build_platform_routes(
             event_type_repo: repos.event_type_repo.clone(),
             principal_repo: repos.principal_repo.clone(),
             sync_openapi_use_case,
-            platform_application_id,
+            platform_application_id: ctx.platform_application_id.clone(),
         },
         go_routes: crate::shared::go_routes::GoRoutesState::build(
             repos,
@@ -1386,8 +1260,9 @@ pub fn build_platform_routes(
             password_reset_emailer,
             app_access.clone(),
         ),
-        static_dir: config.static_dir,
-        rate_limit_store: config.rate_limit_store,
-        rate_limit_policies: config.rate_limit_policies,
+        static_dir: ctx.config.static_dir.clone(),
+        rate_limit_store: ctx.config.rate_limit_store.clone(),
+        rate_limit_policies: ctx.config.rate_limit_policies.clone(),
+        ctx,
     }
 }
