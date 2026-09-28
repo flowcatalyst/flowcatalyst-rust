@@ -14,7 +14,7 @@ pub mod token;
 
 #[cfg(feature = "mongo")]
 pub mod mongo;
-#[cfg(feature = "mysql")]
+#[cfg(any(feature = "mysql", test))]
 pub mod mysql;
 #[cfg(any(feature = "postgres", test))]
 pub mod postgres;

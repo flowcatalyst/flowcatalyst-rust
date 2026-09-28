@@ -4,7 +4,7 @@
 //! to the FlowCatalyst HTTP API with message group ordering, as Go's outbox
 //! processor does (see `fc_outbox::enhanced_processor`).
 //!
-//! Supports multiple database backends: SQLite, PostgreSQL, MongoDB. It is
+//! Supports multiple database backends: SQLite, PostgreSQL, MySQL, MongoDB. It is
 //! the third of FlowCatalyst's three binaries (`fc-server`, `fc-dev`,
 //! `fc-outbox-processor`): the application-side sidecar. `fc-server`'s
 //! outbox role (`FC_OUTBOX_ENABLED`) runs the same processor through the
@@ -16,7 +16,7 @@
 //!
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | Database type: `sqlite`, `postgres`, `mongo` |
+//! | `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | Database type: `sqlite`, `postgres`, `mysql`, `mongo` |
 //! | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | - | Database connection URL (required) |
 //! | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name |
 //! | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Table name for EVENT items |

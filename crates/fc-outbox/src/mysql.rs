@@ -282,3 +282,218 @@ impl OutboxRepository for MySqlOutboxRepository {
         &self.table_config
     }
 }
+
+/// Against a real MySQL 8 (testcontainers; `cargo test -p fc-outbox --
+/// --ignored` with Docker running).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::setup;
+    use crate::OutboxBackend;
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers::ContainerAsync;
+    use testcontainers_modules::mysql::Mysql;
+
+    /// The TypeScript, Java and Go SDK migration for MySQL
+    /// (`clients/*/migrations/mysql/001_create_outbox_messages.sql`).
+    const SDK: &str = "CREATE TABLE outbox_messages (
+        id VARCHAR(26) PRIMARY KEY, type VARCHAR(20) NOT NULL, message_group VARCHAR(255),
+        payload LONGTEXT NOT NULL, status SMALLINT NOT NULL DEFAULT 0,
+        retry_count SMALLINT NOT NULL DEFAULT 0,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        error_message TEXT, client_id VARCHAR(26), payload_size BIGINT, headers JSON,
+        INDEX idx_outbox_messages_pending (status, message_group, created_at),
+        INDEX idx_outbox_messages_stuck (status, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+    /// Laravel's migration on MySQL (`timestamp` columns, second precision).
+    const LARAVEL: &str = "CREATE TABLE outbox_messages (
+        id VARCHAR(26) PRIMARY KEY, type VARCHAR(20) NOT NULL, message_group VARCHAR(255),
+        payload LONGTEXT NOT NULL, status SMALLINT NOT NULL DEFAULT 0,
+        retry_count SMALLINT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        error_message TEXT, client_id VARCHAR(26), payload_size INT, headers JSON,
+        INDEX idx_outbox_messages_pending (status, message_group, created_at),
+        INDEX idx_outbox_messages_stuck (status, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+
+    async fn database() -> (ContainerAsync<Mysql>, String, MySqlPool) {
+        let container = Mysql::default().start().await.unwrap();
+        let port = container.get_host_port_ipv4(3306).await.unwrap();
+        let url = format!("mysql://root@127.0.0.1:{port}/test");
+        let pool = MySqlPool::connect(&url).await.unwrap();
+        (container, url, pool)
+    }
+
+    async fn reset(pool: &MySqlPool, ddl: &str) -> MySqlOutboxRepository {
+        sqlx::raw_sql("DROP TABLE IF EXISTS outbox_messages")
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql(ddl).execute(pool).await.unwrap();
+        MySqlOutboxRepository::new(pool.clone())
+    }
+
+    async fn insert(pool: &MySqlPool, id: &str, item_type: &str, group: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, type, message_group, payload, status) \
+             VALUES (?, ?, ?, ?, 0)",
+        )
+        .bind(id)
+        .bind(item_type)
+        .bind(group)
+        .bind(format!(r#"{{"id":"{id}"}}"#))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn status(pool: &MySqlPool, id: &str) -> Option<(i64, i64, Option<String>)> {
+        sqlx::query_as::<_, (i64, i64, Option<String>)>(
+            "SELECT CAST(status AS SIGNED), CAST(retry_count AS SIGNED), error_message \
+             FROM outbox_messages WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn exercise(pool: &MySqlPool, ddl: &str) {
+        let repo = reset(pool, ddl).await;
+        for (id, t, g) in [
+            ("e1", "EVENT", Some("g1")),
+            ("e2", "EVENT", Some("g1")),
+            ("d1", "DISPATCH_JOB", None),
+            ("a1", "AUDIT_LOG", None),
+            ("x1", "OTHER", None),
+        ] {
+            insert(pool, id, t, g).await;
+        }
+
+        let claimed = repo.claim_pending(100).await.unwrap();
+        let mut ids: Vec<&str> = claimed.items.iter().map(|i| i.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["a1", "d1", "e1", "e2"], "{ddl}");
+        assert_eq!(claimed.items[0].payload["id"], claimed.items[0].id.as_str());
+        assert_eq!(
+            status(pool, "x1").await.unwrap().0,
+            0,
+            "unknown type untouched"
+        );
+        assert!(
+            repo.claim_pending(100).await.unwrap().is_empty(),
+            "no double claim"
+        );
+
+        repo.mark_success(OutboxItemType::Event, &["e1".into()])
+            .await
+            .unwrap();
+        assert_eq!(status(pool, "e1").await, None);
+        repo.mark_failed(
+            OutboxItemType::DispatchJob,
+            &["d1".into()],
+            OutboxStatus::GatewayError,
+            "503",
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status(pool, "d1").await, Some((0, 1, Some("503".into()))));
+        repo.mark_failed(
+            OutboxItemType::AuditLog,
+            &["a1".into()],
+            OutboxStatus::Forbidden,
+            "403",
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status(pool, "a1").await, Some((5, 1, Some("403".into()))));
+        repo.release(OutboxItemType::Event, &["e2".into()])
+            .await
+            .unwrap();
+        assert_eq!(status(pool, "e2").await, Some((0, 0, None)));
+        repo.requeue(OutboxItemType::AuditLog, &["a1".into()])
+            .await
+            .unwrap();
+        assert_eq!(status(pool, "a1").await, Some((0, 0, None)));
+
+        // Recovery: only rows IN_PROGRESS past the threshold.
+        let again = repo.claim_pending(100).await.unwrap();
+        assert_eq!(again.items.len(), 3);
+        sqlx::query(
+            "UPDATE outbox_messages SET updated_at = updated_at - INTERVAL 10 MINUTE \
+             WHERE id = 'd1'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.recover_stuck(Duration::from_secs(300)).await.unwrap(),
+            1
+        );
+        assert_eq!(status(pool, "d1").await.unwrap().0, 0);
+        assert_eq!(status(pool, "e2").await.unwrap().0, 9);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs Docker"]
+    async fn every_sdk_table_shape_is_read() {
+        let (_container, _url, pool) = database().await;
+        for ddl in [SDK, LARAVEL] {
+            exercise(&pool, ddl).await;
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs Docker"]
+    async fn concurrent_claims_never_share_a_row() {
+        let (_container, _url, pool) = database().await;
+        let repo = std::sync::Arc::new(reset(&pool, SDK).await);
+        for i in 0..200 {
+            insert(&pool, &format!("r{i:03}"), "EVENT", None).await;
+        }
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let repo = repo.clone();
+            handles.push(tokio::spawn(async move {
+                let mut mine = Vec::new();
+                loop {
+                    let batch = repo.claim_pending(7).await.unwrap();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    mine.extend(batch.items.into_iter().map(|i| i.id));
+                }
+                mine
+            }));
+        }
+        let mut all = Vec::new();
+        for h in handles {
+            all.extend(h.await.unwrap());
+        }
+        let total = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!(total, 200);
+        assert_eq!(all.len(), 200);
+    }
+
+    /// `FC_OUTBOX_BACKEND=mysql` as the binaries read it: the name selects
+    /// the MySQL repository, which creates the SDK table and claims from it.
+    #[tokio::test]
+    #[ignore = "needs Docker"]
+    async fn the_mysql_backend_is_selected_by_name_and_creates_its_table() {
+        let (_container, url, pool) = database().await;
+        let backend: OutboxBackend = "mysql".parse().unwrap();
+        let repo = setup::connect(backend, &url, OutboxTableConfig::default())
+            .await
+            .unwrap();
+        // init_schema again is a no-op.
+        repo.init_schema().await.unwrap();
+        insert(&pool, "e1", "EVENT", None).await;
+        assert_eq!(repo.claim_pending(10).await.unwrap().items.len(), 1);
+    }
+}

@@ -5,7 +5,7 @@
 //!
 //! | Variable | Default | Meaning |
 //! |---|---|---|
-//! | `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres` or `mongo` |
+//! | `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql` or `mongo` |
 //! | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | - | The application database |
 //! | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name |
 //! | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Table for EVENT items |
@@ -79,6 +79,17 @@ pub async fn connect(
                 .connect(url)
                 .await?;
             Arc::new(crate::postgres::PostgresOutboxRepository::with_config(
+                pool,
+                table_config,
+            ))
+        }
+        #[cfg(any(feature = "mysql", test))]
+        OutboxBackend::Mysql => {
+            let pool = sqlx::mysql::MySqlPoolOptions::new()
+                .max_connections(10)
+                .connect(url)
+                .await?;
+            Arc::new(crate::mysql::MySqlOutboxRepository::with_config(
                 pool,
                 table_config,
             ))

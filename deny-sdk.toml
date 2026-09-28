@@ -1,0 +1,53 @@
+# Licence policy for the crates an application links into its own code: the
+# Rust SDK (fc-sdk, Apache-2.0) and the function guest crates
+# (fc-function-abi, fc-function-model; MPL-2.0). An application that uses
+# them must not be pulled under a strong copyleft licence, so the AGPL the
+# platform carries, and GPL/LGPL, are not allowed here.
+#
+# Run per crate, normal dependencies only (CI's `supply-chain` job does):
+#   cargo deny --manifest-path crates/fc-sdk/Cargo.toml --all-features \
+#     --exclude-dev --config deny-sdk.toml check licenses
+# for fc-sdk, fc-function-abi, fc-function-model and fc-function-pdk.
+# Everything else (advisories, bans, sources) is deny.toml's job.
+
+[graph]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-wasip2",
+]
+
+[licenses]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unlicense",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+exceptions = [
+    # KNOWN ISSUE, open for the owner (2026-09-28): fc-sdk (Apache-2.0)
+    # depends on fc-common (the workspace's AGPL-3.0-or-later) for
+    # OutboxStatus, OutboxItemType, tsid and audit_redaction. An application
+    # linking fc-sdk links AGPL code. The fix is to move those types into an
+    # Apache/MPL crate (or relicense them), not to widen this list.
+    { crate = "fc-common", allow = ["AGPL-3.0-or-later"] },
+]
+
+[licenses.private]
+ignore = false

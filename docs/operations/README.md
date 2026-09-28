@@ -18,6 +18,7 @@ For internal architecture see [../architecture/](../architecture/). For building
 | Wiring up monitoring | [observability.md](observability.md) |
 | Responding to an incident | [runbooks.md](runbooks.md) |
 | Diagnosing a stuck router, pipeline or function host | [diagnosing-stuck-processes.md](diagnosing-stuck-processes.md) |
+| Adding a dependency, reading a release's SBOM | [supply-chain.md](supply-chain.md) |
 
 ## At-a-glance checklist for a fresh production deploy
 

@@ -69,6 +69,7 @@ backends = [
     "dep:aws-sdk-sqs",
     "dep:aws-config",
     "dep:sqlx",
+    "sqlx/postgres",
 ]
 
 [dev-dependencies]
