@@ -128,12 +128,17 @@ The **only** acceptable use of `fetch_one` is on aggregate queries that always r
 ### Shallow Queries for Filter/List Endpoints
 If a handler only needs a few fields (e.g., id + name for a dropdown), don't load junction tables or child entities. Add a `find_*_shallow()` method that skips hydration.
 
-## SQLx Migration (In Progress)
-We are migrating from SeaORM to raw SQLx. New repositories should use `sqlx::PgPool` with handwritten SQL. Pattern:
+## SQLx
+The platform uses raw SQLx only (the SeaORM migration finished in April 2026;
+SQLx was re-confirmed 2026-09-28: it serves Postgres, MySQL and SQLite for the
+outbox, and its per-query overhead is immaterial next to RDS round trips).
+Every repository follows one pattern:
 - Row structs: `#[derive(sqlx::FromRow)]` in the repository file
 - Queries: `sqlx::query_as::<_, FooRow>("SELECT ...")` — visible SQL, no ORM magic
+- Dynamic filters (list endpoints): `sqlx::QueryBuilder` with `push_bind`, never
+  `format!`-built WHERE clauses
 - Domain entities stay in `*/entity.rs`, row mapping stays in `*/repository.rs`
-- Connection: use `shared::database::create_pool()` for SQLx repos
+- Connection: use `shared::database::create_pool()`
 
 ## Caching
 - **Token validation**: `AuthService` caches validated JWT claims (DashMap, 30s TTL)
