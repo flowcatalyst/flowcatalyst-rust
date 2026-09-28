@@ -11,11 +11,11 @@ use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::{
     connection::repository::ConnectionRepository, subscription::repository::SubscriptionRepository,
 };
+use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::non_blank;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
-use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 /// Command for updating an existing subscription.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +91,7 @@ impl fc_platform_core::usecase::AuditMasked for UpdateSubscriptionCommand {}
 /// Use case for updating an existing subscription.
 pub struct UpdateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
-    service_account_repo: Arc<ServiceAccountRepository>,
+    service_account_repo: Arc<dyn ServiceAccountDirectory>,
     connection_repo: Arc<ConnectionRepository>,
     unit_of_work: Arc<U>,
 }
@@ -99,7 +99,7 @@ pub struct UpdateSubscriptionUseCase<U: UnitOfWork> {
 impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
     pub fn new(
         subscription_repo: Arc<SubscriptionRepository>,
-        service_account_repo: Arc<ServiceAccountRepository>,
+        service_account_repo: Arc<dyn ServiceAccountDirectory>,
         connection_repo: Arc<ConnectionRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {
@@ -272,7 +272,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         if account_changed || connection_changed || endpoint_before != subscription.endpoint {
             require_usable_signers(
                 ctx.caller(),
-                &self.service_account_repo,
+                &*self.service_account_repo,
                 &self.connection_repo,
                 account_after.as_deref(),
                 account_changed,

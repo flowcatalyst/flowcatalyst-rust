@@ -352,7 +352,7 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 pub struct DispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     /// Resolves each list row's `clientIdentifier`.
-    pub client_repo: Arc<fc_platform_iam::client::repository::ClientRepository>,
+    pub client_repo: Arc<dyn fc_platform_core::directory::ClientDirectory>,
     /// Refuses a job signed by an identity the caller may not use (S5).
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }

@@ -335,6 +335,19 @@ impl ApplicationAccessService {
     }
 }
 
+#[async_trait::async_trait]
+impl fc_platform_core::directory::ApplicationAccess for ApplicationAccessService {
+    async fn require_application_access(
+        &self,
+        context: &AuthContext,
+        app_code: &str,
+    ) -> Result<fc_platform_core::directory::ApplicationRef> {
+        ApplicationAccessService::require_application_access(self, context, app_code)
+            .await
+            .map(crate::application::repository::application_ref)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

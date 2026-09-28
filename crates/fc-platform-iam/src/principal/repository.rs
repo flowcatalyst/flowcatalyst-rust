@@ -9,6 +9,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
 use crate::service_account::entity::RoleAssignment;
+use fc_platform_core::directory::PrincipalDirectory;
 use fc_platform_core::shared::enum_str::{decode, decode_opt};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -1455,5 +1456,15 @@ impl PrincipalRepository {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+}
+
+#[async_trait::async_trait]
+impl PrincipalDirectory for PrincipalRepository {
+    async fn find_application_binding(
+        &self,
+        principal_id: &str,
+    ) -> Result<Option<PrincipalApplicationBinding>> {
+        PrincipalRepository::find_application_binding(self, principal_id).await
     }
 }

@@ -7,12 +7,15 @@
 //!   [`checks`](shared::authorization_service::checks), the request
 //!   extractors and auth layer, the database pool and migration runner,
 //!   encryption, email, rate limiting;
+//! - [`directory`]: the IAM lookups messaging and the scheduled jobs make,
+//!   as traits the IAM crate implements;
 //! - [`permissions`]: the permission catalogue;
 //! - [`principal_kind`]: the principal type and client tier a context carries.
 //!
 //! `fc-platform` re-exports all of it at its historical paths
 //! (`fc_platform::usecase`, `fc_platform::shared::error`, …).
 
+pub mod directory;
 pub mod permissions;
 pub mod principal_kind;
 pub mod shared;

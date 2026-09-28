@@ -7,7 +7,6 @@ pub mod entity;
 pub mod operations;
 pub mod outbound_credentials;
 pub mod repository;
-pub mod signing_account;
 
 // Re-export main types
 pub use api::ServiceAccountsState;

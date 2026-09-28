@@ -27,9 +27,9 @@ use super::entity::DispatchJob;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::subscription::{entity::Subscription, repository::SubscriptionRepository};
+use fc_platform_core::directory::ApplicationDirectory;
+use fc_platform_core::directory::{ById, OutboundCredentialSource};
 use fc_platform_core::shared::error::Result;
-use fc_platform_iam::application::repository::ApplicationRepository;
-use fc_platform_iam::service_account::outbound_credentials::{ById, OutboundCredentialsResolver};
 
 /// What a delivery carries (Java `DeliveryCredentials.Resolved`). `reason`
 /// says why a bare delivery is bare; `signed_by` names the account. Never
@@ -80,16 +80,16 @@ impl fmt::Debug for Resolved {
 pub struct DeliveryCredentials {
     subscriptions: Arc<SubscriptionRepository>,
     connections: Arc<ConnectionRepository>,
-    applications: Arc<ApplicationRepository>,
-    outbound: Arc<OutboundCredentialsResolver>,
+    applications: Arc<dyn ApplicationDirectory>,
+    outbound: Arc<dyn OutboundCredentialSource>,
 }
 
 impl DeliveryCredentials {
     pub fn new(
         subscriptions: Arc<SubscriptionRepository>,
         connections: Arc<ConnectionRepository>,
-        applications: Arc<ApplicationRepository>,
-        outbound: Arc<OutboundCredentialsResolver>,
+        applications: Arc<dyn ApplicationDirectory>,
+        outbound: Arc<dyn OutboundCredentialSource>,
     ) -> Self {
         Self {
             subscriptions,

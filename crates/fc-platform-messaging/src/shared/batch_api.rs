@@ -13,12 +13,12 @@ use utoipa::ToSchema;
 
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
+use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
-use fc_platform_iam::client::repository::ClientRepository;
 
 // ── Caller-supplied ids ─────────────────────────────────────────────────
 
@@ -190,7 +190,7 @@ pub struct BatchResponse {
 pub struct SdkEventsState {
     pub event_repo: Arc<EventRepository>,
     /// Resolves `clientCode` to a client id
-    pub client_repo: Arc<ClientRepository>,
+    pub client_repo: Arc<dyn ClientDirectory>,
     /// Refuses an application's event types from a caller that may not
     /// sign as that application (S6, ruling 17a).
     pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,

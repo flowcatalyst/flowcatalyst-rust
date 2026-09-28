@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{Client, ClientNote, ClientStatus};
+use fc_platform_core::directory::{ClientDirectory, ClientRef};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -337,5 +338,46 @@ impl ClientRepository {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(Client::try_from).collect()
+    }
+}
+
+fn client_ref(c: Client) -> ClientRef {
+    ClientRef {
+        active: c.status == crate::client::entity::ClientStatus::Active,
+        id: c.id,
+        name: c.name,
+        identifier: c.identifier,
+    }
+}
+
+#[async_trait::async_trait]
+impl ClientDirectory for ClientRepository {
+    async fn find_by_id(&self, id: &str) -> Result<Option<ClientRef>> {
+        Ok(ClientRepository::find_by_id(self, id)
+            .await?
+            .map(client_ref))
+    }
+
+    async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<ClientRef>> {
+        Ok(ClientRepository::find_by_ids(self, ids)
+            .await?
+            .into_iter()
+            .map(client_ref)
+            .collect())
+    }
+
+    async fn find_ids_by_identifiers(
+        &self,
+        identifiers: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        ClientRepository::find_ids_by_identifiers(self, identifiers).await
+    }
+
+    async fn find_all(&self) -> Result<Vec<ClientRef>> {
+        Ok(ClientRepository::find_all(self)
+            .await?
+            .into_iter()
+            .map(client_ref)
+            .collect())
     }
 }

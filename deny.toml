@@ -146,7 +146,7 @@ deny = [
     { crate = "tokio-native-tls", reason = "native-tls through tokio; use tokio-rustls" },
     # OpenSSL only where webauthn-rs needs it for attestation, vendored
     # (fc-platform-auth, which holds webauthn, turns on `vendored`).
-    { crate = "openssl", wrappers = ["fc-platform", "fc-platform-auth", "fc-platform-iam", "webauthn-rs-core", "webauthn-attestation-ca"], reason = "rustls everywhere else" },
+    { crate = "openssl", wrappers = ["fc-platform-auth", "webauthn-rs-core", "webauthn-attestation-ca"], reason = "rustls everywhere else" },
     # Unmaintained or unsound, with maintained replacements.
     { crate = "atty", reason = "unsound (RUSTSEC-2021-0145) and unmaintained; use std::io::IsTerminal" },
     { crate = "failure", reason = "unmaintained; use thiserror/anyhow" },

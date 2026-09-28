@@ -109,7 +109,7 @@ pub struct ConnectionsQuery {
 pub struct ConnectionsState {
     pub connection_repo: Arc<ConnectionRepository>,
     /// Resolves an `applicationCode` within the caller's application scope.
-    pub app_access: Arc<fc_platform_iam::shared::authorization_service::ApplicationAccessService>,
+    pub app_access: Arc<dyn fc_platform_core::directory::ApplicationAccess>,
     pub create_use_case: Arc<
         crate::connection::operations::CreateConnectionUseCase<
             fc_platform_core::usecase::PgUnitOfWork,

@@ -11,7 +11,9 @@ use sqlx::PgPool;
 
 use crate::service_account::entity::ServiceAccount;
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
-use crate::service_account::signing_account::{AccountReach, SigningAccount};
+use fc_platform_core::directory::{
+    AccountReach, ServiceAccountDirectory, ServiceAccountRef, SigningAccount,
+};
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::enum_str::decode_opt;
 use fc_platform_core::shared::error::{PlatformError, Result};
@@ -982,6 +984,29 @@ impl fc_platform_core::usecase::Persist<ServiceAccount> for ServiceAccountReposi
             .execute(&mut **tx.inner)
             .await?;
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl ServiceAccountDirectory for ServiceAccountRepository {
+    async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccountRef>> {
+        Ok(ServiceAccountRepository::find_by_id(self, id)
+            .await?
+            .map(|sa| ServiceAccountRef {
+                id: sa.id,
+                code: sa.code,
+            }))
+    }
+
+    async fn caller_application_id(&self, principal_id: &str) -> Result<Option<String>> {
+        ServiceAccountRepository::caller_application_id(self, principal_id).await
+    }
+
+    async fn find_signing_accounts(
+        &self,
+        references: &[String],
+    ) -> Result<std::collections::HashMap<String, SigningAccount>> {
+        ServiceAccountRepository::find_signing_accounts(self, references).await
     }
 }
 

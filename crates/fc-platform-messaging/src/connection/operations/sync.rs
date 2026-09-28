@@ -15,12 +15,12 @@ use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::connection::sync_plan::{ConnectionSyncPlan, SOURCE_API, SOURCE_CODE};
 use crate::subscription::repository::SubscriptionRepository;
+use fc_platform_core::directory::ApplicationDirectory;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
-use fc_platform_iam::application::repository::ApplicationRepository;
 
 /// Go `ConnectionsSynced`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +77,7 @@ fn is_code(s: &str) -> bool {
 
 pub struct SyncConnectionsUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
-    application_repo: Arc<ApplicationRepository>,
+    application_repo: Arc<dyn ApplicationDirectory>,
     subscription_repo: Arc<SubscriptionRepository>,
     unit_of_work: Arc<U>,
 }
@@ -85,7 +85,7 @@ pub struct SyncConnectionsUseCase<U: UnitOfWork> {
 impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
     pub fn new(
         connection_repo: Arc<ConnectionRepository>,
-        application_repo: Arc<ApplicationRepository>,
+        application_repo: Arc<dyn ApplicationDirectory>,
         subscription_repo: Arc<SubscriptionRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {

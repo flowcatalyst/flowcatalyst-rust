@@ -8,11 +8,11 @@ use std::sync::Arc;
 use super::events::ConnectionCreated;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
+use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
-use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 fn code_pattern() -> &'static Regex {
     static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -42,14 +42,14 @@ impl fc_platform_core::usecase::AuditMasked for CreateConnectionCommand {}
 
 pub struct CreateConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
-    service_account_repo: Arc<ServiceAccountRepository>,
+    service_account_repo: Arc<dyn ServiceAccountDirectory>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> CreateConnectionUseCase<U> {
     pub fn new(
         connection_repo: Arc<ConnectionRepository>,
-        service_account_repo: Arc<ServiceAccountRepository>,
+        service_account_repo: Arc<dyn ServiceAccountDirectory>,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
@@ -130,7 +130,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         // counts for nothing.
         crate::service_account::signing_reach::require_usable_signers(
             ctx.caller(),
-            &self.service_account_repo,
+            &*self.service_account_repo,
             &self.connection_repo,
             Some(&command.service_account_id),
             true,

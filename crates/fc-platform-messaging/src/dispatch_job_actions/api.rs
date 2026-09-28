@@ -25,18 +25,18 @@ use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::api::DispatchJobResponse;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
 use crate::dispatch_job::repository::DispatchJobRepository;
+use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::shared::webhook_signer;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
-use fc_platform_iam::client::repository::ClientRepository;
 
 #[derive(Clone)]
 pub struct DispatchJobActionsState {
     pub repo: Arc<DispatchJobActionsRepository>,
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
-    pub client_repo: Arc<ClientRepository>,
+    pub client_repo: Arc<dyn ClientDirectory>,
     pub credentials: Arc<DeliveryCredentials>,
     pub requeue_use_case: Arc<RequeueDispatchJobsUseCase<PgUnitOfWork>>,
     pub settle_use_case: Arc<SettleDispatchJobUseCase<PgUnitOfWork>>,

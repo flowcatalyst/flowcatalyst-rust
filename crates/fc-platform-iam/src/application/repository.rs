@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{Application, ApplicationType};
+use fc_platform_core::directory::{ApplicationDirectory, ApplicationRef};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -430,5 +431,46 @@ impl fc_platform_core::usecase::Persist<Application> for ApplicationRepository {
             .execute(&mut **tx.inner)
             .await?;
         Ok(())
+    }
+}
+
+/// The application as the other domains look it up (`ApplicationDirectory`).
+pub fn application_ref(a: Application) -> ApplicationRef {
+    ApplicationRef {
+        id: a.id,
+        code: a.code,
+        name: a.name,
+        active: a.active,
+        service_account_id: a.service_account_id,
+    }
+}
+
+#[async_trait::async_trait]
+impl ApplicationDirectory for ApplicationRepository {
+    async fn find_by_id(&self, id: &str) -> Result<Option<ApplicationRef>> {
+        Ok(ApplicationRepository::find_by_id(self, id)
+            .await?
+            .map(application_ref))
+    }
+
+    async fn find_by_code(&self, code: &str) -> Result<Option<ApplicationRef>> {
+        Ok(ApplicationRepository::find_by_code(self, code)
+            .await?
+            .map(application_ref))
+    }
+
+    async fn find_ids_by_codes(
+        &self,
+        codes: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        ApplicationRepository::find_ids_by_codes(self, codes).await
+    }
+
+    async fn find_all(&self) -> Result<Vec<ApplicationRef>> {
+        Ok(ApplicationRepository::find_all(self)
+            .await?
+            .into_iter()
+            .map(application_ref)
+            .collect())
     }
 }

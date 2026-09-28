@@ -14,18 +14,18 @@ use crate::{
     dispatch_job::repository::DispatchJobRepository, event::repository::EventRepository,
     subscription::repository::SubscriptionRepository,
 };
+use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::error::Result;
-use fc_platform_iam::client::repository::ClientRepository;
 
 /// Event projection writer
 /// Creates EventRead projections with denormalized data
 pub struct EventProjectionWriter {
     event_repo: Arc<EventRepository>,
-    client_repo: Arc<ClientRepository>,
+    client_repo: Arc<dyn ClientDirectory>,
 }
 
 impl EventProjectionWriter {
-    pub fn new(event_repo: Arc<EventRepository>, client_repo: Arc<ClientRepository>) -> Self {
+    pub fn new(event_repo: Arc<EventRepository>, client_repo: Arc<dyn ClientDirectory>) -> Self {
         Self {
             event_repo,
             client_repo,
@@ -106,7 +106,7 @@ impl EventProjectionWriter {
 pub struct DispatchJobProjectionWriter {
     job_repo: Arc<DispatchJobRepository>,
     #[allow(dead_code)]
-    client_repo: Arc<ClientRepository>,
+    client_repo: Arc<dyn ClientDirectory>,
     #[allow(dead_code)]
     subscription_repo: Arc<SubscriptionRepository>,
 }
@@ -114,7 +114,7 @@ pub struct DispatchJobProjectionWriter {
 impl DispatchJobProjectionWriter {
     pub fn new(
         job_repo: Arc<DispatchJobRepository>,
-        client_repo: Arc<ClientRepository>,
+        client_repo: Arc<dyn ClientDirectory>,
         subscription_repo: Arc<SubscriptionRepository>,
     ) -> Self {
         Self {

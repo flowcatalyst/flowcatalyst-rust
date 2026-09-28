@@ -41,29 +41,27 @@ use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::service_account::signing_reach::SigningReach;
 use crate::subscription::{entity::Subscription, repository::SubscriptionRepository};
+use fc_platform_core::directory::{
+    ApplicationDirectory, PrincipalDirectory, ServiceAccountDirectory,
+};
 use fc_platform_core::shared::authorization_service::{ApplicationScope, AuthContext};
 use fc_platform_core::shared::error::{PlatformError, Result};
-use fc_platform_iam::principal::repository::PrincipalRepository;
-use fc_platform_iam::{
-    application::repository::ApplicationRepository,
-    service_account::repository::ServiceAccountRepository,
-};
 
 pub struct SigningGuard {
     subscriptions: Arc<SubscriptionRepository>,
     connections: Arc<ConnectionRepository>,
-    accounts: Arc<ServiceAccountRepository>,
-    applications: Arc<ApplicationRepository>,
-    principals: Arc<PrincipalRepository>,
+    accounts: Arc<dyn ServiceAccountDirectory>,
+    applications: Arc<dyn ApplicationDirectory>,
+    principals: Arc<dyn PrincipalDirectory>,
 }
 
 impl SigningGuard {
     pub fn new(
         subscriptions: Arc<SubscriptionRepository>,
         connections: Arc<ConnectionRepository>,
-        accounts: Arc<ServiceAccountRepository>,
-        applications: Arc<ApplicationRepository>,
-        principals: Arc<PrincipalRepository>,
+        accounts: Arc<dyn ServiceAccountDirectory>,
+        applications: Arc<dyn ApplicationDirectory>,
+        principals: Arc<dyn PrincipalDirectory>,
     ) -> Self {
         Self {
             subscriptions,
@@ -90,7 +88,7 @@ impl SigningGuard {
         if application_ids.is_empty() {
             return Ok(());
         }
-        let reach = SigningReach::for_caller(caller, &self.accounts).await?;
+        let reach = SigningReach::for_caller(caller, &*self.accounts).await?;
         if reach.is_super_admin() {
             return Ok(());
         }
@@ -186,7 +184,7 @@ impl SigningGuard {
             return Ok(());
         }
 
-        let reach = SigningReach::for_caller(caller, &self.accounts).await?;
+        let reach = SigningReach::for_caller(caller, &*self.accounts).await?;
         if reach.is_super_admin() {
             return Ok(());
         }

@@ -15,7 +15,6 @@
 //! account and never the value: the delivery then goes out without that
 //! credential, as Java's degraded cases do.
 
-use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,43 +29,11 @@ use fc_platform_core::shared::secret_ref::SecretResolver;
 /// How long one answer is reused (Java `OutboundCredentials.Cache.TTL`).
 const TTL: Duration = Duration::from_secs(60);
 
-/// Opened credentials. Either may be absent; `signed_by` is the account's
-/// code. Never printed.
-#[derive(Clone, PartialEq, Eq)]
-pub struct OutboundCredentials {
-    pub token: Option<String>,
-    pub signing_secret: Option<String>,
-    pub signed_by: String,
-}
-
-impl OutboundCredentials {
-    /// Neither credential is set.
-    pub fn is_empty(&self) -> bool {
-        self.token.is_none() && self.signing_secret.is_none()
-    }
-}
-
-impl fmt::Debug for OutboundCredentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mask = |v: &Option<String>| if v.is_some() { "<redacted>" } else { "null" };
-        f.debug_struct("OutboundCredentials")
-            .field("token", &mask(&self.token))
-            .field("signing_secret", &mask(&self.signing_secret))
-            .field("signed_by", &self.signed_by)
-            .finish()
-    }
-}
-
-/// A named account's outcome (Java `OutboundCredentials.ById`): every reason
-/// a named account cannot sign is kept apart, never collapsed into "not
-/// found". An inactive account is a decline, not a fallback signal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ById {
-    Found(OutboundCredentials),
-    Missing,
-    Inactive(String),
-    NoCredentials(String),
-}
+use fc_platform_core::directory::OutboundCredentialSource;
+/// The credentials and a named account's outcome (fc-platform-core, where
+/// messaging and the scheduled jobs read them through
+/// [`OutboundCredentialSource`]).
+pub use fc_platform_core::directory::{ById, OutboundCredentials};
 
 /// Resolves and caches outbound credentials.
 pub struct OutboundCredentialsResolver {
@@ -194,6 +161,17 @@ impl OutboundCredentialsResolver {
                 None
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl OutboundCredentialSource for OutboundCredentialsResolver {
+    async fn for_application(&self, application_id: &str) -> Result<Option<OutboundCredentials>> {
+        OutboundCredentialsResolver::for_application(self, application_id).await
+    }
+
+    async fn by_service_account_id(&self, id: &str) -> Result<ById> {
+        OutboundCredentialsResolver::by_service_account_id(self, id).await
     }
 }
 

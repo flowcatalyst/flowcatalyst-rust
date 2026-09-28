@@ -12,9 +12,9 @@ use crate::subscription::entity::{EventTypeBinding, Subscription};
 use crate::{
     connection::repository::ConnectionRepository, subscription::repository::SubscriptionRepository,
 };
+use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
-use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 /// Subscription code pattern (Go `validate.CodePattern`): a lowercase
 /// letter, then lowercase alphanumerics and hyphens.
@@ -158,7 +158,7 @@ impl fc_platform_core::usecase::AuditMasked for CreateSubscriptionCommand {}
 /// Use case for creating a new subscription.
 pub struct CreateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
-    service_account_repo: Arc<ServiceAccountRepository>,
+    service_account_repo: Arc<dyn ServiceAccountDirectory>,
     connection_repo: Arc<ConnectionRepository>,
     unit_of_work: Arc<U>,
 }
@@ -166,7 +166,7 @@ pub struct CreateSubscriptionUseCase<U: UnitOfWork> {
 impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
     pub fn new(
         subscription_repo: Arc<SubscriptionRepository>,
-        service_account_repo: Arc<ServiceAccountRepository>,
+        service_account_repo: Arc<dyn ServiceAccountDirectory>,
         connection_repo: Arc<ConnectionRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {
@@ -237,7 +237,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         check_scope_access(ctx.caller(), command.client_id.as_deref())?;
         require_usable_signers(
             ctx.caller(),
-            &self.service_account_repo,
+            &*self.service_account_repo,
             &self.connection_repo,
             command.service_account_id.as_deref(),
             true,

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
-use fc_platform_iam::service_account::outbound_credentials::OutboundCredentialsResolver;
+use fc_platform_core::directory::OutboundCredentialSource;
 
 /// Composes Poller + Dispatcher behind a single start/stop handle.
 pub struct ScheduledJobSchedulerService {
@@ -32,7 +32,7 @@ pub struct ScheduledJobSchedulerService {
     repo: Arc<ScheduledJobRepository>,
     instance_repo: Arc<ScheduledJobInstanceRepository>,
     http_client: reqwest::Client,
-    credentials: Option<Arc<OutboundCredentialsResolver>>,
+    credentials: Option<Arc<dyn OutboundCredentialSource>>,
     shutdown: broadcast::Sender<()>,
 }
 
@@ -59,7 +59,7 @@ impl ScheduledJobSchedulerService {
 
     /// Sign each firing with its job's application's credentials (Java
     /// `JobDispatcher`); without this every firing goes out unsigned.
-    pub fn with_credentials(mut self, credentials: Arc<OutboundCredentialsResolver>) -> Self {
+    pub fn with_credentials(mut self, credentials: Arc<dyn OutboundCredentialSource>) -> Self {
         self.credentials = Some(credentials);
         self
     }

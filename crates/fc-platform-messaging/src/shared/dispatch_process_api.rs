@@ -67,9 +67,9 @@ use crate::dispatch_job::repository::{
 };
 use crate::scheduler::DispatchAuthService;
 use fc_common::DispatchMode;
+use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::capped_body::{read_capped, DELIVERY_RESPONSE_CAP};
 use fc_platform_core::shared::webhook_signer;
-use fc_platform_iam::client::repository::ClientRepository;
 
 /// `X-FlowCatalyst-Client: {clientId}:{clientCode}` (Go
 /// `processing.clientHeader`).
@@ -172,13 +172,13 @@ pub struct RequestSummary {
 /// Caches a client's identifier (Go `client.NewCachedIdentifierResolver`):
 /// a hit is kept for good (identifiers are immutable), a miss for a minute.
 pub struct ClientCodeResolver {
-    clients: Arc<ClientRepository>,
+    clients: Arc<dyn ClientDirectory>,
     cache: DashMap<String, (Option<String>, Instant)>,
     miss_ttl: Duration,
 }
 
 impl ClientCodeResolver {
-    pub fn new(clients: Arc<ClientRepository>) -> Self {
+    pub fn new(clients: Arc<dyn ClientDirectory>) -> Self {
         Self {
             clients,
             cache: DashMap::new(),

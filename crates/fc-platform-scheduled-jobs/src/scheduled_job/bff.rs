@@ -33,8 +33,8 @@ use fc_platform_core::shared::middleware::Authenticated;
 pub struct BffScheduledJobsState {
     pub repo: Arc<ScheduledJobRepository>,
     pub instance_repo: Arc<ScheduledJobInstanceRepository>,
-    pub client_repo: Arc<fc_platform_iam::client::repository::ClientRepository>,
-    pub application_repo: Arc<fc_platform_iam::application::repository::ApplicationRepository>,
+    pub client_repo: Arc<dyn fc_platform_core::directory::ClientDirectory>,
+    pub application_repo: Arc<dyn fc_platform_core::directory::ApplicationDirectory>,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────────────
@@ -517,7 +517,7 @@ pub async fn filter_options(
     }
     let mut visible: Vec<FilterOption> = clients
         .into_iter()
-        .filter(|c| c.status == fc_platform_iam::client::entity::ClientStatus::Active)
+        .filter(|c| c.active)
         .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
         .map(|c| FilterOption {
             value: c.id,

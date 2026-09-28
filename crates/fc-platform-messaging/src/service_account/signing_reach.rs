@@ -32,16 +32,16 @@
 use std::fmt;
 
 use crate::connection::repository::ConnectionRepository;
+use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::UseCaseError;
-use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 
 /// The account facts the check reads (fc-platform-iam: its repository
 /// loads them).
-pub use fc_platform_iam::service_account::signing_account::{AccountReach, SigningAccount};
+pub use fc_platform_core::directory::{AccountReach, SigningAccount};
 
 /// Why a caller may not use a signing identity. [`fmt::Display`] is the text
 /// the 403 carries (Java's `Refusal.message()`).
@@ -104,7 +104,7 @@ impl SigningReach {
     /// none for a super-admin, who needs no answer).
     pub async fn for_caller(
         caller: &AuthContext,
-        accounts: &ServiceAccountRepository,
+        accounts: &dyn ServiceAccountDirectory,
     ) -> Result<SigningReach> {
         let application_id = if is_super_admin(caller) {
             None
@@ -198,7 +198,7 @@ pub fn is_super_admin(caller: &AuthContext) -> bool {
 /// write) signs with anything.
 pub async fn require_usable_signers(
     caller: &fc_platform_core::usecase::Caller,
-    accounts: &ServiceAccountRepository,
+    accounts: &dyn ServiceAccountDirectory,
     connections: &ConnectionRepository,
     service_account_id: Option<&str>,
     account_must_exist: bool,

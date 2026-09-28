@@ -29,10 +29,8 @@ use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{
     InstanceListFilters, ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
+use fc_platform_core::directory::{OutboundCredentialSource, OutboundCredentials};
 use fc_platform_core::shared::webhook_signer;
-use fc_platform_iam::service_account::outbound_credentials::{
-    OutboundCredentials, OutboundCredentialsResolver,
-};
 
 /// Webhook envelope sent to the SDK. Stable shape — the `payload` field
 /// passes through whatever the job stores. Java's `JobDispatcher`
@@ -85,7 +83,7 @@ pub struct ScheduledJobDispatcher {
     instance_repo: Arc<ScheduledJobInstanceRepository>,
     http_client: reqwest::Client,
     /// `None` delivers every job unsigned.
-    credentials: Option<Arc<OutboundCredentialsResolver>>,
+    credentials: Option<Arc<dyn OutboundCredentialSource>>,
     shutdown: broadcast::Receiver<()>,
 }
 
@@ -108,7 +106,7 @@ impl ScheduledJobDispatcher {
     }
 
     /// Sign deliveries with each job's application's credentials.
-    pub fn with_credentials(mut self, credentials: Arc<OutboundCredentialsResolver>) -> Self {
+    pub fn with_credentials(mut self, credentials: Arc<dyn OutboundCredentialSource>) -> Self {
         self.credentials = Some(credentials);
         self
     }
