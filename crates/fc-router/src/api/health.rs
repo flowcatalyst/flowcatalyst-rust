@@ -166,13 +166,19 @@ pub(crate) async fn readiness_probe(State(state): State<AppState>) -> Response {
     )
 )]
 pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
-    let output = match &state.metrics_handle {
+    let mut output = match &state.metrics_handle {
         Some(handle) => handle.render(),
         None => {
             // Fallback when no Prometheus recorder is installed
             "# No Prometheus recorder configured\n".to_string()
         }
     };
+    // The tokio runtime and the process (CPU, RSS, fds, threads, panics).
+    fc_common::diagnostics::render_prometheus(
+        &mut output,
+        None,
+        fc_common::diagnostics::Exposition::Prometheus,
+    );
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],

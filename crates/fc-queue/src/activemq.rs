@@ -61,6 +61,8 @@ pub struct ActiveMqConsumer {
     delivery_tag_counter: AtomicU64,
     /// Maps our internal receipt handles to AMQP delivery tags
     delivery_tags: Arc<dashmap::DashMap<String, u64>>,
+    /// Messages rejected at the parse boundary, for the router's warning.
+    rejected: crate::RejectedLog,
 }
 
 impl ActiveMqConsumer {
@@ -73,6 +75,7 @@ impl ActiveMqConsumer {
             consumer: Arc::new(RwLock::new(None)),
             running: AtomicBool::new(false),
             delivery_tag_counter: AtomicU64::new(0),
+            rejected: crate::RejectedLog::default(),
             delivery_tags: Arc::new(dashmap::DashMap::new()),
         };
 
@@ -243,6 +246,14 @@ impl QueueConsumer for ActiveMqConsumer {
                                 error = %e,
                                 "Failed to parse AMQP message"
                             );
+                            self.rejected.record(
+                                delivery
+                                    .properties
+                                    .message_id()
+                                    .as_ref()
+                                    .map(|s| s.to_string()),
+                                e.to_string(),
+                            );
                             // Reject the malformed message (don't requeue)
                             if let Some(channel) = self.channel.read().await.as_ref() {
                                 let _ = channel
@@ -373,6 +384,10 @@ impl QueueConsumer for ActiveMqConsumer {
     /// delivery to the queue, so work that completed after a stop was
     /// delivered again). The channel and connection close when this
     /// consumer is dropped (lapin's closers).
+    fn take_rejected(&self) -> Vec<crate::RejectedMessage> {
+        self.rejected.take()
+    }
+
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
 

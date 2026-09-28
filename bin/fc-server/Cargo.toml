@@ -29,6 +29,7 @@ fc-fnhost-js = { path = "../../crates/fc-fnhost-js", optional = true }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
@@ -81,3 +82,9 @@ js = ["dep:fc-fnhost-js"]
 alb = ["fc-router/alb"]
 email = ["fc-router/email"]
 oidc-flow = ["fc-router/oidc-flow"]
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md). `taskdump`
+# also needs RUSTFLAGS="--cfg tokio_unstable" and builds on Linux only: the
+# production image turns both on (Dockerfile, FC_TASKDUMP). `otel` needs
+# FC_OTEL_ENABLED=true.
+taskdump = ["fc-common/taskdump"]
+otel = ["fc-common/otel"]

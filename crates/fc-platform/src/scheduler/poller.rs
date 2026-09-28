@@ -165,7 +165,14 @@ impl PendingJobPoller {
         }
     }
 
-    /// Claim, mark QUEUED, commit, publish, revert the unpublished.
+    /// Claim, mark QUEUED, commit, publish, revert the unpublished. Runs in
+    /// a `scheduler.poll` span carrying how many jobs it claimed and
+    /// published.
+    #[tracing::instrument(
+        name = "scheduler.poll",
+        skip_all,
+        fields(claimed = tracing::field::Empty, published = tracing::field::Empty)
+    )]
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
 
@@ -202,6 +209,7 @@ impl PendingJobPoller {
             });
         }
         let claimed = tokens.len();
+        tracing::Span::current().record("claimed", claimed);
         metrics::gauge!("scheduler.pending_jobs").set(claimed as f64);
 
         // Publish while the claim is still locked and uncommitted: see the
@@ -216,6 +224,7 @@ impl PendingJobPoller {
             .map(|id| (id, created[id]))
             .unzip();
         let published = ids.len();
+        tracing::Span::current().record("published", published);
         if published == 0 {
             tx.rollback().await.ok();
             debug!(claimed, published, "poll tick");

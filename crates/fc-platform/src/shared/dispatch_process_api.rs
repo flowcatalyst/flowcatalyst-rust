@@ -58,7 +58,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use crate::dispatch_job::delivery_credentials::{DeliveryCredentials, Resolved};
 use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchJob, ErrorType};
@@ -342,10 +342,27 @@ pub(super) async fn process_dispatch(
 /// restarting mid-call) does not cancel it half way: once claimed, the
 /// webhook's outcome is always recorded. Only a process that dies leaves a
 /// claim behind, and [`lost_claim`] recovers that.
+///
+/// Runs in a `dispatch.process` span (the job, its subscription, group,
+/// client and attempt), carried onto the delivery task, so every line the
+/// delivery and its recording log names the job — the same id the router
+/// logs as `message_id`.
+#[tracing::instrument(
+    name = "dispatch.process",
+    skip_all,
+    fields(
+        job_id = %job.id,
+        subscription_id = job.subscription_id.as_deref().unwrap_or(""),
+        group = job.message_group.as_deref().unwrap_or(""),
+        client_id = job.client_id.as_deref().unwrap_or(""),
+        attempt = job.attempt_count + 1,
+    )
+)]
 async fn run_claimed(state: &DispatchProcessState, job: DispatchJob) -> Response {
     let job_id = job.id.clone();
     let state = state.clone();
-    match tokio::spawn(async move { deliver_and_record(&state, &job).await }).await {
+    let delivery = async move { deliver_and_record(&state, &job).await };
+    match tokio::spawn(delivery.instrument(tracing::Span::current())).await {
         Ok(true) => reply(StatusCode::OK, true, None),
         // The job is still PROCESSING with its outcome unwritten. Go acks
         // here and the job stays PROCESSING; keep the message instead, so

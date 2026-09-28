@@ -10,8 +10,10 @@ use tracing::{error, info, warn};
 
 use fc_common::{PoolConfig, RouterConfig, WarningCategory, WarningSeverity};
 
+use crate::error::RouterError;
 use crate::pool::ProcessPool;
 use crate::Result;
+use futures::future;
 
 use super::{PoolState, QueueManager};
 
@@ -107,6 +109,14 @@ impl QueueManager {
         let mut pools_updated = 0;
         let mut pools_created = 0;
         let mut pools_removed = 0;
+        // What could not be applied. Every pool and queue is still
+        // reconciled (Go's Reconfigure aborted at the first failure); the
+        // reload then reports these so the caller retries the config.
+        let mut failures: Vec<String> = Vec::new();
+        // Concurrency changes, applied together after the scan: a decrease
+        // waits (up to 60 s) for workers to finish, and one pool's wait
+        // must not hold up the next pool's.
+        let mut concurrency_updates: Vec<(String, Arc<ProcessPool>, PoolConfig)> = Vec::new();
 
         // Step 1: Handle existing pools - update or remove
         let existing_codes: Vec<String> = self
@@ -154,7 +164,11 @@ impl QueueManager {
                                 new_concurrency = new_config.concurrency,
                                 "Updating pool concurrency"
                             );
-                            pool.update_concurrency(new_config.concurrency).await;
+                            concurrency_updates.push((
+                                pool_code.clone(),
+                                pool.clone(),
+                                new_config.clone(),
+                            ));
                         }
 
                         if rate_limit_changed {
@@ -213,6 +227,34 @@ impl QueueManager {
             }
         }
 
+        // Step 1b: the concurrency changes, concurrently. One that could
+        // not be applied (a decrease that timed out waiting for busy
+        // workers, a zero) keeps the pool's live concurrency in the stored
+        // config, so the next reload sees the change again and retries it,
+        // instead of recording a value the pool is not running at.
+        let applied = future::join_all(
+            concurrency_updates
+                .iter()
+                .map(|(_, pool, cfg)| pool.update_concurrency(cfg.concurrency)),
+        )
+        .await;
+        for ((code, pool, cfg), ok) in concurrency_updates.into_iter().zip(applied) {
+            if !ok {
+                failures.push(format!(
+                    "pool {code}: concurrency {} not applied (still {})",
+                    cfg.concurrency,
+                    pool.concurrency()
+                ));
+                pool_configs.insert(
+                    code,
+                    PoolConfig {
+                        concurrency: pool.concurrency(),
+                        ..cfg
+                    },
+                );
+            }
+        }
+
         // Step 2: Create new pools
         for pool_config in &config.processing_pools {
             let already_active = self
@@ -268,8 +310,14 @@ impl QueueManager {
                 // reload's Step 1 scan and here.
                 self.forget_synth_pool(&pool_config.code);
                 // Create new pool
-                self.get_or_create_pool(&pool_config.code, Some(pool_config.clone()))
-                    .await?;
+                if let Err(e) = self
+                    .get_or_create_pool(&pool_config.code, Some(pool_config.clone()))
+                    .await
+                {
+                    error!(pool_code = %pool_config.code, error = %e, "Could not create pool; continuing with the rest of the configuration");
+                    failures.push(format!("pool {}: {e}", pool_config.code));
+                    continue;
+                }
                 pool_configs.insert(pool_config.code.clone(), pool_config.clone());
                 pools_created += 1;
             }
@@ -287,6 +335,13 @@ impl QueueManager {
         // re-evaluates against the new topology (Go: Reconfigure signals
         // the capacity gate). Parked consumers used to stay parked.
         self.capacity_notify().notify_waiters();
+        if !failures.is_empty() {
+            if let Err(e) = &synced {
+                failures.push(e.to_string());
+            }
+            warn!(failures = ?failures, "Reconfigure incomplete; the configuration will be retried");
+            return Err(RouterError::Reconfigure(failures.join("; ")));
+        }
         let (queues_created, queues_removed) = synced?;
 
         let total_active_consumers = self.consumers.len();
@@ -508,7 +563,8 @@ impl QueueManager {
         // monitoring without the pool itself touching a registry at all.
         let pool = ProcessPool::new(pool_config.clone(), self.build_mediator())
             .with_capacity_notify(self.capacity_notify().clone())
-            .with_settled_reporter(self.settled_reporter.clone());
+            .with_settled_reporter(self.settled_reporter.clone())
+            .with_flight_recorder(self.flight_recorder.clone());
 
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;

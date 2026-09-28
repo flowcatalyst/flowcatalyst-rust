@@ -41,7 +41,14 @@ pub struct Observability {
 
 impl Observability {
     /// Binds `0.0.0.0:port` (0 = ephemeral) and returns once listening.
+    /// Called from the host's runtime, whose tokio figures `/metrics` then
+    /// reports (this listener runs on a runtime of its own, so it can still
+    /// describe a main runtime that is stuck).
     pub fn start(port: u16, probes: Probes) -> std::io::Result<Self> {
+        let state = ObsState {
+            probes,
+            main_runtime: tokio::runtime::Handle::try_current().ok(),
+        };
         let listener = std::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
@@ -61,7 +68,7 @@ impl Observability {
                             return;
                         }
                     };
-                    let app = Router::new().fallback(handle).with_state(probes);
+                    let app = Router::new().fallback(handle).with_state(state);
                     let served = axum::serve(listener, app)
                         .with_graceful_shutdown(async {
                             let _ = rx.await;
@@ -104,18 +111,42 @@ fn json(status: StatusCode, body: String) -> Response {
     (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-async fn handle(State(probes): State<Probes>, method: Method, uri: axum::http::Uri) -> Response {
+/// The listener's state: the probes, and the host's main runtime.
+#[derive(Clone)]
+struct ObsState {
+    probes: Probes,
+    main_runtime: Option<tokio::runtime::Handle>,
+}
+
+/// The host's series, then the main runtime's `tokio_runtime_*` and the
+/// process's `process_*` series, before OpenMetrics' closing `# EOF`.
+fn with_runtime_series(mut text: String, main_runtime: Option<&tokio::runtime::Handle>) -> String {
+    let eof = text.rfind("# EOF").unwrap_or(text.len());
+    let tail = text.split_off(eof);
+    if main_runtime.is_some() {
+        fc_common::diagnostics::render_prometheus(
+            &mut text,
+            main_runtime,
+            fc_common::diagnostics::Exposition::OpenMetrics,
+        );
+    }
+    text.push_str(&tail);
+    text
+}
+
+async fn handle(State(state): State<ObsState>, method: Method, uri: axum::http::Uri) -> Response {
+    let probes = &state.probes;
     if method != Method::GET {
         return json(StatusCode::NOT_FOUND, NOT_FOUND_BODY.to_owned());
     }
     match uri.path() {
-        "/health" => health(&probes),
-        "/ready" => ready(&probes),
+        "/health" => health(probes),
+        "/ready" => ready(probes),
         "/metrics" => match probes.metrics.encode() {
             Ok(text) => (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, metrics::CONTENT_TYPE)],
-                text,
+                with_runtime_series(text, state.main_runtime.as_ref()),
             )
                 .into_response(),
             Err(_) => {
@@ -197,6 +228,18 @@ fn parse_limit(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The runtime series go before OpenMetrics' `# EOF`, in its counter
+    /// naming.
+    #[tokio::test]
+    async fn runtime_series_precede_the_eof() {
+        let handle = tokio::runtime::Handle::current();
+        let out = with_runtime_series("fc_fn_loaded 1\n# EOF\n".to_string(), Some(&handle));
+        assert!(out.ends_with("# EOF\n"), "{out}");
+        assert!(out.contains("tokio_runtime_workers "));
+        assert!(out.contains("# TYPE tokio_runtime_worker_park counter"));
+        assert_eq!(out.matches("# EOF").count(), 1);
+    }
 
     #[test]
     fn limit_parsing_follows_java() {

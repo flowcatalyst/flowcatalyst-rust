@@ -163,7 +163,10 @@ impl RouterRuntime {
             .health_service(health_service.clone())
             .consumer_factory(opts.consumer_factory)
             .strict_routing(env.strict_routing)
-            .deferral_budget(env.deferral_budget);
+            .deferral_budget(env.deferral_budget)
+            .flight_recorder(Arc::new(crate::flight_recorder::FlightRecorder::new(
+                env.flight_recorder_events,
+            )));
         // A-01: a platform to report settled BLOCK_ON_ERROR siblings to.
         if let Some(url) = env.platform_url.as_deref().filter(|u| !u.trim().is_empty()) {
             let reporter = HttpSettledReporter::new(url, None);
@@ -175,15 +178,26 @@ impl RouterRuntime {
         // Leadership only pauses polling (owner ruling); HTTP is served
         // whatever it says (H14).
         match opts.leadership {
-            Some(mut rx) => {
+            Some(rx) => {
                 queue_manager.set_leader(*rx.borrow());
                 let follower = queue_manager.clone();
-                tokio::spawn(async move {
-                    while rx.changed().await.is_ok() {
-                        let leader = *rx.borrow();
-                        follower.set_leader(leader);
-                    }
-                });
+                // Supervised: a frozen leader flag would stop (or never
+                // start) intake for good.
+                fc_common::diagnostics::spawn_supervised(
+                    "router.leadership_follower",
+                    fc_common::diagnostics::OnPanic::Restart,
+                    move || {
+                        let mut rx = rx.clone();
+                        let follower = follower.clone();
+                        async move {
+                            follower.set_leader(*rx.borrow_and_update());
+                            while rx.changed().await.is_ok() {
+                                let leader = *rx.borrow();
+                                follower.set_leader(leader);
+                            }
+                        }
+                    },
+                );
             }
             None => {
                 queue_manager.set_leader(opts.standby.as_ref().is_none_or(|s| s.is_leader()));
@@ -359,8 +373,30 @@ impl RouterRuntime {
         self.lifecycle.shutdown().await;
         if let Some(handle) = self.manager_handle.take() {
             match tokio::time::timeout(Duration::from_secs(30), handle).await {
-                Ok(_) => info!("Manager task completed gracefully"),
+                Ok(Ok(())) => info!("Manager task completed gracefully"),
+                Ok(Err(e)) if e.is_panic() => {
+                    fc_common::diagnostics::supervise::note_task_panic("router.manager");
+                    tracing::error!(
+                        "Manager task had panicked (logged with its backtrace when it happened)"
+                    )
+                }
+                Ok(Err(_)) => warn!("Manager task was cancelled"),
                 Err(_) => warn!("Manager task did not complete within 30s timeout"),
+            }
+        }
+        // Send what the notification batch still holds, bounded: the
+        // warnings of the last minutes before a shutdown are usually the
+        // interesting ones.
+        if let Some(n) = self._notifications.as_ref() {
+            if n.service.pending_count() > 0
+                && tokio::time::timeout(Duration::from_secs(10), n.service.send_batch())
+                    .await
+                    .is_err()
+            {
+                warn!("Final notification batch did not send within 10s");
+            }
+            if let Some(h) = n.scheduler_handle.as_ref() {
+                h.abort();
             }
         }
     }

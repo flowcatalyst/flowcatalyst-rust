@@ -192,41 +192,54 @@ pub fn spawn_leadership_monitor(
     manager: Arc<crate::manager::QueueManager>,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    spawn_ticker(
+    // Supervised: a panic is logged and the loop restarted (a dead monitor
+    // would freeze the leader flag for the rest of the process's life).
+    fc_common::diagnostics::spawn_supervised(
+        "router.leadership_monitor",
+        fc_common::diagnostics::OnPanic::Restart,
         move || {
-            processor.check_and_log_transition();
-            manager.set_leader(processor.is_leader());
-            debug!(
-                instance_id = %processor.instance_id(),
-                is_leader = processor.is_leader(),
-                status = ?processor.status(),
-                "Leadership status check"
-            );
+            let processor = processor.clone();
+            let manager = manager.clone();
+            ticker_loop(
+                move || {
+                    processor.check_and_log_transition();
+                    manager.set_leader(processor.is_leader());
+                    debug!(
+                        instance_id = %processor.instance_id(),
+                        is_leader = processor.is_leader(),
+                        status = ?processor.status(),
+                        "Leadership status check"
+                    );
+                },
+                shutdown.clone(),
+            )
         },
-        shutdown,
     )
 }
 
 /// The leadership monitor's loop: run `on_tick` every 5s until `shutdown`
 /// is cancelled.
-fn spawn_ticker(
-    mut on_tick: impl FnMut() + Send + 'static,
-    shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(5));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+async fn ticker_loop(mut on_tick: impl FnMut() + Send + 'static, shutdown: CancellationToken) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(5));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => on_tick(),
-                _ = shutdown.cancelled() => {
-                    info!("Leadership monitor shutting down");
-                    break;
-                }
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => on_tick(),
+            _ = shutdown.cancelled() => {
+                info!("Leadership monitor shutting down");
+                break;
             }
         }
-    })
+    }
+}
+
+#[cfg(test)]
+fn spawn_ticker(
+    on_tick: impl FnMut() + Send + 'static,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(ticker_loop(on_tick, shutdown))
 }
 
 #[cfg(test)]

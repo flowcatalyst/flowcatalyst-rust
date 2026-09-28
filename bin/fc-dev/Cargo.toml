@@ -102,3 +102,6 @@ js = ["dep:fc-fnhost-js"]
 embedded-db = ["dep:postgresql_embedded"]
 # Mount the Topcoat UI trial (`crates/fc-web`) at /ui, in front of the SPA.
 web = ["dep:fc-web"]
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md): OTLP span
+# export (FC_OTEL_ENABLED=true).
+otel = ["fc-common/otel"]

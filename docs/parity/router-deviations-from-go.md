@@ -40,12 +40,13 @@ is the standing deviation decision #29 describes.
 
 | Case | Corpus | Rust | Go |
 |---|---|---|---|
-| `unsupported-mediation-type` | reaches the mediator; `ErrorConfig`, an ERROR warning, UNDELIVERABLE, no breaker record | Owner rulings X-06 and X-10 make `MediationType` a closed enum with no catch-all, so a message with `"mediationType": "SQS"` fails to parse. The consumer ACK-deletes it as malformed (for example `fc-queue/src/sqs.rs`, "Failed to parse SQS message"). It is logged, **but no warning is raised**. The message's fate is the same (UNDELIVERABLE, no call, no breaker). | warns at `mediator.go:407` |
+| `unsupported-mediation-type` | reaches the mediator; `ErrorConfig`, an ERROR warning, UNDELIVERABLE, no breaker record | Owner rulings X-06 and X-10 make `MediationType` a closed enum with no catch-all, so a message with `"mediationType": "SQS"` fails to parse. The consumer removes it at the parse boundary (SQS deletes it, NATS terminates it, Postgres quarantines it, ActiveMQ rejects it without requeue) and records it; the router then logs it at WARN (queue, broker message id, the decoder's reason, never the payload), counts it in `fc_messages_rejected_total{reason="malformed"}`, records a `REJECTED` event in the flight recorder, and raises a CONFIGURATION/ERROR warning (`manager/consumers.rs`, `report_rejected`). The message's fate is the same (UNDELIVERABLE, no call, no breaker). | warns at `mediator.go:407` |
 
 The runner checks the parse-boundary refusal and reports the case `RULED`.
-**Open, for the queue/consumer owner:** the corpus rule is that a permanent
-ACK-drop must warn. The malformed-message ACK path in the consumers should
-raise a CONFIGURATION/ERROR warning, as Go's mediator does for this case.
+The corpus rule that a permanent ACK-drop must warn holds: the warning is
+raised at the parse boundary rather than in the mediator. Strict routing's
+refusals (`FC_ROUTER_STRICT_ROUTING`) warn too and count as
+`fc_messages_rejected_total{reason="strict_routing"}`.
 
 ## 3. How the runner reads `disposition` (no deviation)
 

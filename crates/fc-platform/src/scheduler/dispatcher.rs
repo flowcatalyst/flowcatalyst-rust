@@ -72,6 +72,11 @@ impl MessageGroupDispatcher {
 
     /// Publish a claim, in claim order, and report what did not publish.
     /// The caller marks only the rest QUEUED.
+    #[tracing::instrument(
+        name = "scheduler.publish",
+        skip_all,
+        fields(jobs = tokens.len(), unpublished = tracing::field::Empty)
+    )]
     pub async fn publish_claim(&self, tokens: &[DispatchJobToken]) -> PublishOutcome {
         if tokens.is_empty() {
             return PublishOutcome::default();
@@ -88,6 +93,7 @@ impl MessageGroupDispatcher {
             })
             .collect();
         let outcome = self.publisher.publish(items).await;
+        tracing::Span::current().record("unpublished", outcome.unpublished.len());
         if let Some(e) = &outcome.error {
             warn!(unpublished = outcome.unpublished.len(), of = total, error = %e,
                 "dispatch publish failed");

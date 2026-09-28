@@ -31,8 +31,14 @@
 //!   spawned (or a token cloned) *after* `cancel()` still observes the
 //!   cancellation instantly — `cancelled()` resolves right away instead of
 //!   requiring the caller to have subscribed before the signal fired.
-//! - **Joined by:** nobody — these are detached, fire-and-forget tasks.
-//!   The cancellation token is the only lifecycle signal.
+//! - **Joined by:** `LifecycleManager::shutdown`, bounded.
+//! - **Supervised:** each loop runs under
+//!   [`fc_common::diagnostics::spawn_supervised`]: a panic is logged (with
+//!   its backtrace, by the panic hook), counted in
+//!   `fc_task_restarts_total{task}`, and the loop is restarted after a
+//!   backoff. These loops hold no state of their own beyond their ticker,
+//!   so a restart loses nothing; before, one panic stopped the loop (a
+//!   watchdog, a reaper) for the rest of the process's life, silently.
 //!
 //! Each `tokio::select!` below selects between two arms: the ticker arm
 //! (do the work) and the shutdown arm (log and break). Per-arm intent is
@@ -52,6 +58,7 @@ use crate::health::HealthService;
 use crate::manager::QueueManager;
 use crate::standby::{spawn_leadership_monitor, StandbyAwareProcessor};
 use crate::warning::WarningService;
+use fc_common::diagnostics::{spawn_supervised, OnPanic};
 use fc_common::{WarningCategory, WarningSeverity};
 
 /// Configuration for the lifecycle manager
@@ -167,26 +174,31 @@ impl LifecycleManager {
             let token = shutdown.child_token();
             let interval = config.memory_health_interval;
 
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tasks.push(spawn_supervised("router.memory_health", OnPanic::Restart, move || {
+                let manager = manager.clone();
+                let warning_service = warning_service.clone();
+                let token = token.clone();
+                async move {
+                    let mut ticker = tokio::time::interval(interval);
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            if !manager.check_memory_health() {
-                                warn!("Memory health check failed - potential leak detected");
-                                warning_service.add_warning(
-                                    WarningCategory::Resource,
-                                    WarningSeverity::Error,
-                                    "Potential memory leak detected - in_pipeline map is large".to_string(),
-                                    "LifecycleManager".to_string(),
-                                );
+                    loop {
+                        tokio::select! {
+                            _ = ticker.tick() => {
+                                if !manager.check_memory_health() {
+                                    warn!("Memory health check failed - potential leak detected");
+                                    warning_service.add_warning(
+                                        WarningCategory::Resource,
+                                        WarningSeverity::Error,
+                                        "Potential memory leak detected - in_pipeline map is large".to_string(),
+                                        "LifecycleManager".to_string(),
+                                    );
+                                }
                             }
-                        }
-                        _ = token.cancelled() => {
-                            info!("Memory health monitor shutting down");
-                            break;
+                            _ = token.cancelled() => {
+                                info!("Memory health monitor shutting down");
+                                break;
+                            }
                         }
                     }
                 }
@@ -207,30 +219,39 @@ impl LifecycleManager {
             let restart_delay = config.consumer_restart_delay;
             let threshold = config.consumer_stall_threshold;
 
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                // The first tick fires immediately; nothing can be stalled yet.
-                ticker.tick().await;
+            tasks.push(spawn_supervised(
+                "router.consumer_watchdog",
+                OnPanic::Restart,
+                move || {
+                    let manager = manager.clone();
+                    let health_service = health_service.clone();
+                    let token = token.clone();
+                    async move {
+                        let mut ticker = tokio::time::interval(interval);
+                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        // The first tick fires immediately; nothing can be stalled yet.
+                        ticker.tick().await;
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            health_service.cleanup();
-                            let n = manager
-                                .restart_stalled_consumers(threshold, restart_delay, &token)
-                                .await;
-                            if n > 0 {
-                                warn!(count = n, "Restarted stalled consumers");
+                        loop {
+                            tokio::select! {
+                                _ = ticker.tick() => {
+                                    health_service.cleanup();
+                                    let n = manager
+                                        .restart_stalled_consumers(threshold, restart_delay, &token)
+                                        .await;
+                                    if n > 0 {
+                                        warn!(count = n, "Restarted stalled consumers");
+                                    }
+                                }
+                                _ = token.cancelled() => {
+                                    info!("Consumer health monitor shutting down");
+                                    break;
+                                }
                             }
                         }
-                        _ = token.cancelled() => {
-                            info!("Consumer health monitor shutting down");
-                            break;
-                        }
                     }
-                }
-            }));
+                },
+            ));
         }
 
         // Stall detector (Go: `StallDetector.Watch`, started in
@@ -242,22 +263,30 @@ impl LifecycleManager {
             let manager = manager.clone();
             let token = shutdown.child_token();
             let interval = config.stall_check_interval;
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                ticker.tick().await;
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            manager.check_and_handle_stalled_messages().await;
-                        }
-                        _ = token.cancelled() => {
-                            info!("Stall detector shutting down");
-                            break;
+            tasks.push(spawn_supervised(
+                "router.stall_detector",
+                OnPanic::Restart,
+                move || {
+                    let manager = manager.clone();
+                    let token = token.clone();
+                    async move {
+                        let mut ticker = tokio::time::interval(interval);
+                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        ticker.tick().await;
+                        loop {
+                            tokio::select! {
+                                _ = ticker.tick() => {
+                                    manager.check_and_handle_stalled_messages().await;
+                                }
+                                _ = token.cancelled() => {
+                                    info!("Stall detector shutting down");
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-            }));
+                },
+            ));
         }
 
         // Queue health monitor (Go: `QueueHealthMonitor.Watch`, started in
@@ -281,23 +310,31 @@ impl LifecycleManager {
             let token = shutdown.child_token();
             let interval = config.warning_cleanup_interval;
 
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tasks.push(spawn_supervised(
+                "router.warning_cleanup",
+                OnPanic::Restart,
+                move || {
+                    let warning_service = warning_service.clone();
+                    let token = token.clone();
+                    async move {
+                        let mut ticker = tokio::time::interval(interval);
+                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            debug!("Running warning service cleanup");
-                            warning_service.cleanup();
-                        }
-                        _ = token.cancelled() => {
-                            info!("Warning cleanup task shutting down");
-                            break;
+                        loop {
+                            tokio::select! {
+                                _ = ticker.tick() => {
+                                    debug!("Running warning service cleanup");
+                                    warning_service.cleanup();
+                                }
+                                _ = token.cancelled() => {
+                                    info!("Warning cleanup task shutting down");
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-            }));
+                },
+            ));
         }
 
         // Health report logger
@@ -307,33 +344,42 @@ impl LifecycleManager {
             let token = shutdown.child_token();
             let interval = config.health_report_interval;
 
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tasks.push(spawn_supervised(
+                "router.health_report",
+                OnPanic::Restart,
+                move || {
+                    let manager = manager.clone();
+                    let health_service = health_service.clone();
+                    let token = token.clone();
+                    async move {
+                        let mut ticker = tokio::time::interval(interval);
+                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            let pool_stats = manager.get_pool_stats();
-                            let report = health_service.get_health_report(&pool_stats);
+                        loop {
+                            tokio::select! {
+                                _ = ticker.tick() => {
+                                    let pool_stats = manager.get_pool_stats();
+                                    let report = health_service.get_health_report(&pool_stats);
 
-                            if !report.issues.is_empty() {
-                                warn!(
-                                    status = ?report.status,
-                                    issues = ?report.issues,
-                                    "Health report"
-                                );
-                            } else {
-                                debug!(status = ?report.status, "Health report: OK");
+                                    if !report.issues.is_empty() {
+                                        warn!(
+                                            status = ?report.status,
+                                            issues = ?report.issues,
+                                            "Health report"
+                                        );
+                                    } else {
+                                        debug!(status = ?report.status, "Health report: OK");
+                                    }
+                                }
+                                _ = token.cancelled() => {
+                                    info!("Health report logger shutting down");
+                                    break;
+                                }
                             }
                         }
-                        _ = token.cancelled() => {
-                            info!("Health report logger shutting down");
-                            break;
-                        }
                     }
-                }
-            }));
+                },
+            ));
         }
 
         // Stale entry reaper (in_pipeline, pending_delete, circuit breakers, health service)
@@ -346,65 +392,78 @@ impl LifecycleManager {
             let pending_delete_max_age = config.pending_delete_max_age;
             let synth_pool_idle_ttl = config.synth_pool_idle_ttl;
 
-            tasks.push(tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tasks.push(spawn_supervised("router.stale_reaper", OnPanic::Restart, move || {
+                let manager = manager.clone();
+                let health_service = health_service.clone();
+                let token = token.clone();
+                async move {
+                    let mut ticker = tokio::time::interval(interval);
+                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            debug!("Running stale entry reaper");
+                    loop {
+                        tokio::select! {
+                            _ = ticker.tick() => {
+                                debug!("Running stale entry reaper");
 
-                            // Reap stale in_pipeline and pending_delete entries
-                            let (reaped_pipeline, reaped_pending) = manager.reap_stale_entries(
-                                in_pipeline_max_age,
-                                pending_delete_max_age,
-                            );
-
-                            // Clean up draining pools that have finished
-                            manager.cleanup_draining_pools().await;
-
-                            // X-11 / R-26/R-49: retire detached consumers
-                            // nothing in the pipeline references any more.
-                            let retired = manager.retire_detached_consumers();
-                            if retired > 0 {
-                                info!(retired, "Retired detached consumers");
-                            }
-
-                            // R-59: evict synthesised per-client fallback pools
-                            // idle past their TTL (drains via the same path as
-                            // a config-removed pool; see
-                            // QueueManager::evict_idle_synth_pools).
-                            let evicted_synth_pools =
-                                manager.evict_idle_synth_pools(synth_pool_idle_ttl).await;
-                            if evicted_synth_pools > 0 {
-                                info!(
-                                    evicted = evicted_synth_pools,
-                                    "Evicted idle synthesised fallback pools"
+                                // Reap stale in_pipeline and pending_delete entries
+                                let (reaped_pipeline, reaped_pending) = manager.reap_stale_entries(
+                                    in_pipeline_max_age,
+                                    pending_delete_max_age,
                                 );
-                            }
 
-                            // Drop pool counters for pools that no longer
-                            // exist. Consumer liveness is read live from the
-                            // manager, so it needs no pruning (Go:
-                            // RemoveStaleEntries) — this used to prune it by
-                            // config name while it was keyed by identifier,
-                            // blinding the watchdog to NATS consumers.
-                            let pool_codes = manager.pool_codes();
-                            let consumer_ids = manager.consumer_ids().await;
-                            health_service.remove_stale_entries(&pool_codes, &consumer_ids);
+                                // Clean up draining pools that have finished
+                                manager.cleanup_draining_pools().await;
 
-                            if reaped_pipeline > 0 || reaped_pending > 0 {
-                                info!(
-                                    reaped_pipeline = reaped_pipeline,
-                                    reaped_pending = reaped_pending,
-                                    "Reaper cycle complete"
-                                );
+                                // Backstop: restart any group left with buffered
+                                // messages and no drainer (none by construction;
+                                // see ProcessPool::resume_parked_groups).
+                                let resumed = manager.resume_parked_groups();
+                                if resumed > 0 {
+                                    warn!(resumed, "Restarted parked message groups");
+                                }
+
+                                // X-11 / R-26/R-49: retire detached consumers
+                                // nothing in the pipeline references any more.
+                                let retired = manager.retire_detached_consumers();
+                                if retired > 0 {
+                                    info!(retired, "Retired detached consumers");
+                                }
+
+                                // R-59: evict synthesised per-client fallback pools
+                                // idle past their TTL (drains via the same path as
+                                // a config-removed pool; see
+                                // QueueManager::evict_idle_synth_pools).
+                                let evicted_synth_pools =
+                                    manager.evict_idle_synth_pools(synth_pool_idle_ttl).await;
+                                if evicted_synth_pools > 0 {
+                                    info!(
+                                        evicted = evicted_synth_pools,
+                                        "Evicted idle synthesised fallback pools"
+                                    );
+                                }
+
+                                // Drop pool counters for pools that no longer
+                                // exist. Consumer liveness is read live from the
+                                // manager, so it needs no pruning (Go:
+                                // RemoveStaleEntries) — this used to prune it by
+                                // config name while it was keyed by identifier,
+                                // blinding the watchdog to NATS consumers.
+                                let pool_codes = manager.pool_codes();
+                                let consumer_ids = manager.consumer_ids().await;
+                                health_service.remove_stale_entries(&pool_codes, &consumer_ids);
+
+                                if reaped_pipeline > 0 || reaped_pending > 0 {
+                                    info!(
+                                        reaped_pipeline = reaped_pipeline,
+                                        reaped_pending = reaped_pending,
+                                        "Reaper cycle complete"
+                                    );
+                                }
                             }
-                        }
-                        _ = token.cancelled() => {
-                            info!("Stale entry reaper shutting down");
-                            break;
+                            _ = token.cancelled() => {
+                                info!("Stale entry reaper shutting down");
+                                break;
+                            }
                         }
                     }
                 }
@@ -455,18 +514,25 @@ impl LifecycleManager {
                 let token = lifecycle.shutdown.child_token();
                 let sync_service = sync_service.clone();
                 let standby_gate = standby.clone();
-                let handle = tokio::spawn(async move {
-                    if let Some(standby) = standby_gate {
-                        if !standby.is_leader() {
-                            info!("Configuration sync waits for this instance to become leader");
-                            tokio::select! {
-                                _ = standby.wait_for_leadership() => {}
-                                _ = token.cancelled() => return,
+                let handle = spawn_supervised("router.config_sync", OnPanic::Restart, move || {
+                    let token = token.clone();
+                    let sync_service = sync_service.clone();
+                    let standby_gate = standby_gate.clone();
+                    async move {
+                        if let Some(standby) = standby_gate {
+                            if !standby.is_leader() {
+                                info!(
+                                    "Configuration sync waits for this instance to become leader"
+                                );
+                                tokio::select! {
+                                    _ = standby.wait_for_leadership() => {}
+                                    _ = token.cancelled() => return,
+                                }
                             }
                         }
+                        info!("Starting configuration sync background task");
+                        sync_service.run(token).await;
                     }
-                    info!("Starting configuration sync background task");
-                    sync_service.run(token).await;
                 });
                 lifecycle.tasks.push(handle);
             }
@@ -584,21 +650,25 @@ impl LifecycleManager {
         // Run at the same cadence as warning cleanup (5 min)
         let interval = Duration::from_secs(300);
 
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let handle = spawn_supervised("router.breaker_eviction", OnPanic::Restart, move || {
+            let token = token.clone();
+            let registry = registry.clone();
+            async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            loop {
-                tokio::select! {
-                    _ = ticker.tick() => {
-                        let evicted = registry.evict_idle(max_idle);
-                        if evicted > 0 {
-                            info!(evicted = evicted, "Evicted idle circuit breakers");
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            let evicted = registry.evict_idle(max_idle);
+                            if evicted > 0 {
+                                info!(evicted = evicted, "Evicted idle circuit breakers");
+                            }
                         }
-                    }
-                    _ = token.cancelled() => {
-                        info!("Circuit breaker eviction task shutting down");
-                        break;
+                        _ = token.cancelled() => {
+                            info!("Circuit breaker eviction task shutting down");
+                            break;
+                        }
                     }
                 }
             }
@@ -618,19 +688,24 @@ impl LifecycleManager {
         // Clean up every 60 seconds
         let interval = Duration::from_secs(60);
 
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let handle = spawn_supervised("router.oidc_cleanup", OnPanic::Restart, move || {
+            let token = token.clone();
+            let session_store = session_store.clone();
+            let pending_states = pending_states.clone();
+            async move {
+                let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            loop {
-                tokio::select! {
-                    _ = ticker.tick() => {
-                        session_store.cleanup();
-                        pending_states.cleanup();
-                    }
-                    _ = token.cancelled() => {
-                        info!("OIDC store cleanup task shutting down");
-                        break;
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            session_store.cleanup();
+                            pending_states.cleanup();
+                        }
+                        _ = token.cancelled() => {
+                            info!("OIDC store cleanup task shutting down");
+                            break;
+                        }
                     }
                 }
             }

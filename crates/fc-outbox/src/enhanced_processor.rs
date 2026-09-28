@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn, Instrument};
 
 use crate::group_distributor::{DistributorStats, GroupDistributor, GroupHandler};
 use crate::group_state::{BlockedItem, GroupInfo, GroupStateManager};
@@ -388,6 +388,22 @@ impl EnhancedOutboxProcessor {
         self.running.store(false, Ordering::SeqCst);
     }
 
+    /// Stop, and hand every item still queued behind a group's current send
+    /// back to PENDING at once (Go's `Stop` left such rows IN_PROGRESS until
+    /// the recovery threshold, five minutes by default, on whichever
+    /// instance leads next). The sends in progress finish on their own.
+    /// Returns how many items were released.
+    pub async fn shutdown(&self) -> usize {
+        self.stop();
+        let pending = self.core.distributor.take_pending();
+        let count = pending.len();
+        if count > 0 {
+            info!(count, "Releasing queued outbox items at stop");
+            self.core.release_items(pending).await;
+        }
+        count
+    }
+
     /// Check if processor is running
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
@@ -407,22 +423,35 @@ impl EnhancedOutboxProcessor {
             tokio::time::interval_at(tokio::time::Instant::now() + recovery_every, recovery_every);
         recovery.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+        // A panic in one poll or recovery pass is logged (by the panic
+        // hook, with its span) and counted; the loop goes on.
+        use fc_common::diagnostics::catch_panic;
         while self.running.load(Ordering::SeqCst) {
             tokio::select! {
                 _ = poll.tick() => {
                     if !self.is_primary() {
                         continue;
                     }
-                    if let Err(e) = Arc::clone(&self.core).poll().await {
-                        warn!(error = %e, "Outbox claim failed");
+                    match catch_panic(Arc::clone(&self.core).poll()).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => warn!(error = %e, "Outbox claim failed"),
+                        Err(_) => {
+                            fc_common::diagnostics::supervise::note_task_panic("outbox.poll");
+                            error!("Outbox poll panicked; the next poll runs as usual");
+                        }
                     }
                 }
                 _ = recovery.tick() => {
                     if !self.is_primary() {
                         continue;
                     }
-                    if let Err(e) = self.core.recover().await {
-                        warn!(error = %e, "Outbox recover stuck failed");
+                    match catch_panic(self.core.recover()).await {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => warn!(error = %e, "Outbox recover stuck failed"),
+                        Err(_) => {
+                            fc_common::diagnostics::supervise::note_task_panic("outbox.recovery");
+                            error!("Outbox recovery panicked; the next pass runs as usual");
+                        }
                     }
                 }
             }
@@ -453,7 +482,28 @@ impl EnhancedOutboxProcessor {
     }
 }
 
+/// Releases rows from `Core::in_flight` when dropped — on return, on a
+/// panic, on a cancelled task. `done` used to run after the send's await,
+/// so a send that panicked left its ids held for good: the recovered row
+/// was then re-claimed, filtered out as "held", and never sent or released
+/// again, and the held count crept towards `max_in_flight`, after which
+/// polling stopped entirely.
+struct Held<'a> {
+    core: &'a Core,
+    ids: Vec<String>,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.core.done(std::mem::take(&mut self.ids));
+    }
+}
+
 impl Core {
+    fn held(&self, ids: Vec<String>) -> Held<'_> {
+        Held { core: self, ids }
+    }
+
     fn in_flight_count(&self) -> u64 {
         self.in_flight
             .lock()
@@ -499,6 +549,7 @@ impl Core {
 
     /// Go's `tick`: claim, then hand grouped items to their groups and send
     /// ungrouped items as one batch per type.
+    #[tracing::instrument(name = "outbox.poll", skip_all, fields(claimed = tracing::field::Empty))]
     async fn poll(self: Arc<Self>) -> anyhow::Result<()> {
         if self.in_flight_count() >= self.config.max_in_flight {
             debug!("Outbox poll skipped: max in flight");
@@ -512,6 +563,7 @@ impl Core {
         if claimed.is_empty() {
             return Ok(());
         }
+        tracing::Span::current().record("claimed", claimed.len());
         self.counters
             .polled
             .fetch_add(claimed.len() as u64, Ordering::Relaxed);
@@ -572,7 +624,25 @@ impl Core {
                 let rest = batch.split_off(batch.len().min(chunk));
                 let core = Arc::clone(&self);
                 let this = std::mem::replace(&mut batch, rest);
-                tokio::spawn(async move { core.dispatch_batch(this).await });
+                let span = tracing::info_span!(
+                    parent: None,
+                    "outbox.forward",
+                    item_type = ?this[0].item_type,
+                    count = this.len(),
+                    first_id = %this[0].id,
+                );
+                tokio::spawn(
+                    async move {
+                        if fc_common::diagnostics::catch_panic(core.dispatch_batch(this))
+                            .await
+                            .is_err()
+                        {
+                            fc_common::diagnostics::supervise::note_task_panic("outbox.forward");
+                            error!("Outbox batch send panicked; its rows are recovered");
+                        }
+                    }
+                    .instrument(span),
+                );
             }
         }
         Ok(())
@@ -610,6 +680,7 @@ impl Core {
     /// Go's `dispatchBatch`: ungrouped items of one type in one request;
     /// successes deleted together, failures recorded together per outcome.
     async fn dispatch_batch(&self, batch: Vec<OutboxItem>) {
+        let _held = self.held(batch.iter().map(|i| i.id.clone()).collect());
         let item_type = batch[0].item_type;
         let outcomes = self.dispatcher.send_batch(&batch).await;
 
@@ -654,10 +725,10 @@ impl Core {
                 Err(e) => error!(count = succeeded.len(), error = %e, "Outbox mark success failed"),
             }
         }
-        self.done(batch.into_iter().map(|i| i.id));
     }
 
     async fn release_items(&self, items: Vec<OutboxItem>) {
+        let _held = self.held(items.iter().map(|i| i.id.clone()).collect());
         let mut by_type: HashMap<OutboxItemType, Vec<String>> = HashMap::new();
         for item in &items {
             by_type
@@ -673,7 +744,6 @@ impl Core {
                 .released
                 .fetch_add(ids.len() as u64, Ordering::Relaxed);
         }
-        self.done(items.into_iter().map(|i| i.id));
     }
 
     /// Go's `dispatch`: one grouped item. `false` stops its group.
@@ -736,9 +806,14 @@ impl Core {
 #[async_trait]
 impl GroupHandler for Core {
     async fn dispatch(&self, item: OutboxItem) -> bool {
-        let ok = self.dispatch_one(&item).await;
-        self.done([item.id]);
-        ok
+        let _held = self.held(vec![item.id.clone()]);
+        let span = tracing::info_span!(
+            "outbox.forward",
+            outbox_id = %item.id,
+            group = item.message_group.as_deref().unwrap_or(""),
+            item_type = ?item.item_type,
+        );
+        self.dispatch_one(&item).instrument(span).await
     }
 
     async fn release(&self, items: Vec<OutboxItem>) {

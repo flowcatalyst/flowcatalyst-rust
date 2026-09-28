@@ -24,3 +24,8 @@ serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["mysql"] }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["mysql"] }
+
+[features]
+# Diagnostics (docs/operations/diagnosing-stuck-processes.md): OTLP span
+# export (FC_OTEL_ENABLED=true).
+otel = ["fc-common/otel"]

@@ -533,8 +533,17 @@ pub(crate) struct InFlightCheckResponse {
     /// True when the router currently holds the message in its in-pipeline
     /// map. False when it does not — safe for the caller to resend.
     in_pipeline: bool,
+    /// The pool holding it, when `inPipeline=true` (Go's and Java's flat
+    /// `poolCode`, which the SDKs read).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pool_code: Option<String>,
+    /// The queue it came from, when `inPipeline=true` (Go's and Java's
+    /// flat `queueId`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue_id: Option<String>,
     /// Populated only when `inPipeline=true`. Lets the caller decide whether
-    /// to skip / wait / force-resend based on age and pool.
+    /// to skip / wait / force-resend based on age and pool. Kept beside the
+    /// flat fields for callers that read the nested form.
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<InFlightMessageInfo>,
 }
@@ -566,6 +575,8 @@ pub(crate) async fn in_flight_message_check_handler(
     Json(InFlightCheckResponse {
         message_id: query.message_id,
         in_pipeline: detail.is_some(),
+        pool_code: detail.as_ref().map(|d| d.pool_code.clone()),
+        queue_id: detail.as_ref().map(|d| d.queue_id.clone()),
         detail,
     })
 }
@@ -697,10 +708,9 @@ pub(crate) struct MediatingInfo {
     group: String,
     queue: String,
     target: String,
-    /// **Always 0 in this port** — see `fc_router::MediatingEntry::attempts`'s
-    /// doc for why (no in-pipeline retry-with-front-reinsertion concept
-    /// exists here; `HttpMediator`'s bounded retry burst is invisible at
-    /// this layer).
+    /// In-place retries already made before this attempt (Go
+    /// `MediatingInfo.Attempts`); the mediator's own bounded retry burst
+    /// inside one attempt is not counted.
     attempts: u32,
     elapsed_time_ms: u64,
 }
@@ -767,18 +777,10 @@ pub(crate) struct InFlightDetailQuery {
 /// `InFlightMessageDetail`; see its own doc comment for the `status`
 /// vocabulary (`MEDIATING`/`RETRY_BACKOFF`/`TRACKED_IDLE`). A miss returns
 /// `inPipeline: false` rather than 404 — "not in the pipeline" is the
-/// answer, not an error.
-///
-/// **Known gap versus Go, not fabricated here:** Go's `lastSeenAt`/
-/// `lastSeenElapsedMs` (refreshed on every broker redelivery — the
-/// "phantom entry" signal) and a genuine `RETRY_BACKOFF` status have no
-/// Rust equivalent: this port's `InFlightMessage` tracks no
-/// last-redelivery timestamp, and `attempts` is always 0 (see
-/// `MediatingInfo::attempts`'s doc) so `status` here is only ever
-/// `MEDIATING` or `TRACKED_IDLE`. Both fields are simply omitted (`null`)
-/// rather than fabricated equal to `addedToInPipelineAt` — the
-/// dashboard's `d.lastSeenAt ? … : '—'` check already treats that the
-/// same as Go omitting the key entirely.
+/// answer, not an error. `lastSeenAt`/`lastSeenElapsedMs` are refreshed on
+/// every broker redelivery (the "phantom entry" signal), and `status` is
+/// `MEDIATING` while a worker holds it, `RETRY_BACKOFF` while it waits out
+/// an in-place retry, else `TRACKED_IDLE` — Java's precedence.
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InFlightMessageDetail {
@@ -792,6 +794,10 @@ pub(crate) struct InFlightMessageDetail {
     attempts: u32,
     elapsed_time_ms: u64,
     added_to_in_pipeline_at: Option<chrono::DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_seen_at: Option<chrono::DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_seen_elapsed_ms: Option<u64>,
     mediation_target: Option<String>,
     mediating_elapsed_ms: Option<u64>,
 }
@@ -824,6 +830,8 @@ pub(crate) async fn in_flight_message_detail_handler(
             attempts: 0,
             elapsed_time_ms: 0,
             added_to_in_pipeline_at: None,
+            last_seen_at: None,
+            last_seen_elapsed_ms: None,
             mediation_target: None,
             mediating_elapsed_ms: None,
         });
@@ -833,7 +841,7 @@ pub(crate) async fn in_flight_message_detail_handler(
         message_id: message_id.clone(),
         in_pipeline: true,
         status: Some(
-            if info.attempts > 0 {
+            if info.retrying {
                 "RETRY_BACKOFF"
             } else {
                 "TRACKED_IDLE"
@@ -847,6 +855,8 @@ pub(crate) async fn in_flight_message_detail_handler(
         attempts: info.attempts,
         elapsed_time_ms: info.elapsed_time_ms,
         added_to_in_pipeline_at: Some(info.added_to_in_pipeline_at),
+        last_seen_at: Some(info.last_seen_at),
+        last_seen_elapsed_ms: Some(info.last_seen_elapsed_ms),
         mediation_target: None,
         mediating_elapsed_ms: None,
     };
