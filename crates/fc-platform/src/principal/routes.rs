@@ -1,7 +1,7 @@
 //! Principal routes: `/api/principals`, and Go's bulk import, version and
 //! client-association routes at their full paths (`principal_go_router`).
-//! The two-factor reset and the developer credentials nest under the same prefix from
-//! their own modules (`mfa`, `developer_credential`).
+//! The two-factor reset and the developer credentials nest under the same
+//! prefix from their own modules (`mfa`, `developer_credential`).
 
 use std::sync::Arc;
 

@@ -187,7 +187,7 @@ copying it:
 - `audit::api::enrich_principal_names` and
   `audit::api::enrich_single_principal_name` are now `pub`.
 - `event_type::access::ensure_can_create` and
-  `bff_event_types_api::platform_sync_command`.
+  `event_type::bff::platform_sync_command`.
 - `subscription::access`, `connection::access`, `client::access`: the
   client/anchor rules the API handlers had inlined (the handlers call them).
 - `dispatch_pool::access` (used by fc-web; the handlers keep their inline
@@ -202,11 +202,12 @@ copying it:
   detail, create user, update, roles, client access, application access,
   activate / deactivate, password reset and reset email, check email
   domain, delete); the handlers keep their coarse permission check and
-  call these. Likewise `principal::go_api::client_association`,
+  call these. Likewise `principal::api::client_association`,
   `mfa::admin_api::reset_user_two_factor` and
   `developer_credential::api::{set_credential, revoke_credential}`.
-  fc-dev hands fc-web the states those handlers were built with
-  (`fc_web::UserAdminStates`).
+  fc-dev builds fc-web's states from the same `PlatformContext` with the
+  modules' state builders (`principal::routes::principals_state`, …;
+  `fc_web::UserAdminStates`).
 
 ## Running it
 

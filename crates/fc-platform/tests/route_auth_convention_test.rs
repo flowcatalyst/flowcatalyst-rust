@@ -3,7 +3,8 @@
 //! explicit allowlist below with the reason.
 //!
 //! The route table is read from the source the way the router is built:
-//! `router.rs` nests each resource router at its prefix; a resource router
+//! `router.rs` mounts each module's `routes(ctx)`, which nests its resource
+//! routers at their prefixes (or merges full-path ones); a resource router
 //! declares `.route("/path", get(h).post(h2))` (plain axum) or
 //! `.routes(routes!(h, h2))` (utoipa, whose method and path are in each
 //! handler's `#[utoipa::path(...)]`), and may nest or merge further routers.
