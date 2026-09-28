@@ -1,7 +1,6 @@
 //! `iam_permissions` repository: the permission catalogue (Go
 //! `role/permission_repo.go`, `sqlc/queries/role.sql` Permission*).
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -78,7 +77,6 @@ impl HasId for CatalogPermission {
     }
 }
 
-#[async_trait]
 impl Persist<CatalogPermission> for PermissionCatalogRepository {
     /// Go's `PermissionUpsert`: idempotent by code.
     async fn persist(&self, p: &CatalogPermission, tx: &mut DbTx<'_>) -> Result<()> {

@@ -1,6 +1,5 @@
 //! DispatchPool Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -265,7 +264,6 @@ impl HasId for DispatchPool {
     }
 }
 
-#[async_trait]
 impl Persist<DispatchPool> for DispatchPoolRepository {
     async fn persist(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

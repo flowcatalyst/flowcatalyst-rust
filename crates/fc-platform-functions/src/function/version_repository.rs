@@ -15,7 +15,6 @@
 
 use std::collections::HashMap;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -318,7 +317,6 @@ impl FunctionVersionRepository {
     }
 }
 
-#[async_trait]
 impl LockedRead<VersionById> for FunctionVersionRepository {
     type Output = Option<FunctionVersion>;
 
@@ -339,7 +337,6 @@ impl LockedRead<VersionById> for FunctionVersionRepository {
     }
 }
 
-#[async_trait]
 impl LockedRead<NextVersionOf> for FunctionVersionRepository {
     type Output = i32;
 
@@ -369,7 +366,6 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
     }
 }
 
-#[async_trait]
 impl Persist<FunctionVersion> for FunctionVersionRepository {
     /// An upsert whose conflict side sets only the state columns: a
     /// version's content is write-once. `ready_at` and `retired_at` are

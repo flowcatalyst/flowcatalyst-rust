@@ -3,7 +3,6 @@
 //! PostgreSQL persistence for AuthRole entities using SQLx.
 //! Permissions are stored in the iam_role_permissions junction table.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use std::collections::HashSet;
@@ -534,7 +533,6 @@ impl HasId for AuthRole {
     }
 }
 
-#[async_trait]
 impl Persist<AuthRole> for RoleRepository {
     async fn persist(&self, r: &AuthRole, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

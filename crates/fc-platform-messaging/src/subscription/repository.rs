@@ -1,6 +1,5 @@
 //! Subscription Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -648,7 +647,6 @@ impl HasId for Subscription {
     }
 }
 
-#[async_trait]
 impl Persist<Subscription> for SubscriptionRepository {
     async fn persist(&self, s: &Subscription, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

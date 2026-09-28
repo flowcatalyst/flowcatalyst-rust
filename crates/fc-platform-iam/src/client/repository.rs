@@ -1,6 +1,5 @@
 //! Client Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -274,7 +273,6 @@ impl HasId for Client {
     }
 }
 
-#[async_trait]
 impl Persist<Client> for ClientRepository {
     async fn persist(&self, c: &Client, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

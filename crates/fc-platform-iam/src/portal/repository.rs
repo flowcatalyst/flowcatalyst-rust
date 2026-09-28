@@ -12,7 +12,6 @@
 
 use std::collections::HashMap;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -293,7 +292,6 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
-#[async_trait]
 impl Persist<PortalIdentity> for PortalIdentityRepository {
     /// Conflict on (client, email) updates the mutable fields, so re-ensuring
     /// keeps the original id/source/created_at. Grants then apply against the
@@ -509,7 +507,6 @@ impl PortalAppRepository {
     }
 }
 
-#[async_trait]
 impl Persist<PortalApp> for PortalAppRepository {
     async fn persist(&self, a: &PortalApp, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

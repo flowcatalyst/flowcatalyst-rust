@@ -3,7 +3,6 @@
 //! row `PLATFORM`. `signers` is read tolerantly: a rule with a blank issuer
 //! or subject is dropped, and so is an unknown runtime within a rule.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -130,7 +129,6 @@ fn read_signer_rule(node: &Value) -> Option<SignerRule> {
     Some(SignerRule::new(issuer, subject, runtimes))
 }
 
-#[async_trait]
 impl Persist<ClientPolicy> for ClientPolicyRepository {
     /// Upsert by owner key: a full replacement of every column but
     /// `created_at`.

@@ -1,6 +1,5 @@
 //! Connection Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -254,7 +253,6 @@ impl HasId for Connection {
     }
 }
 
-#[async_trait]
 impl Persist<Connection> for ConnectionRepository {
     async fn persist(&self, c: &Connection, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
@@ -373,7 +371,6 @@ impl ConnectionRepository {
     }
 }
 
-#[async_trait]
 impl Persist<ConnectionSyncPlan> for ConnectionRepository {
     /// One upsert for every saved connection (with its application and
     /// source) and one delete for the removed ones.

@@ -1,6 +1,5 @@
 //! Authentication Configuration Repositories — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -453,7 +452,6 @@ impl HasId for ClientAccessGrant {
     }
 }
 
-#[async_trait]
 impl Persist<ClientAccessGrant> for ClientAccessGrantRepository {
     async fn persist(&self, g: &ClientAccessGrant, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
@@ -492,7 +490,6 @@ impl HasId for AnchorDomain {
     }
 }
 
-#[async_trait]
 impl Persist<AnchorDomain> for AnchorDomainRepository {
     async fn persist(&self, d: &AnchorDomain, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
@@ -529,7 +526,6 @@ impl HasId for ClientAuthConfig {
     }
 }
 
-#[async_trait]
 impl Persist<ClientAuthConfig> for ClientAuthConfigRepository {
     async fn persist(&self, c: &ClientAuthConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
@@ -676,7 +672,6 @@ impl usecase::HasId for IdpRoleMapping {
     }
 }
 
-#[async_trait]
 impl Persist<IdpRoleMapping> for IdpRoleMappingRepository {
     async fn persist(&self, m: &IdpRoleMapping, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

@@ -1,6 +1,5 @@
 //! CORS Origin Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -85,7 +84,6 @@ impl HasId for CorsAllowedOrigin {
     }
 }
 
-#[async_trait]
 impl Persist<CorsAllowedOrigin> for CorsOriginRepository {
     async fn persist(&self, o: &CorsAllowedOrigin, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -314,7 +313,6 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
     })
 }
 
-#[async_trait]
 impl Persist<Function> for FunctionRepository {
     /// Upserts `fnr_functions`, setting only `description`, `status` and
     /// `updated_at` on conflict (nothing moves a function), then replaces

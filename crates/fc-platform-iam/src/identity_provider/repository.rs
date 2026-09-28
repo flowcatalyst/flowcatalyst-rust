@@ -289,7 +289,6 @@ async fn delete_provider(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-#[async_trait::async_trait]
 impl Persist<IdentityProvider> for IdentityProviderRepository {
     async fn persist(&self, idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()> {
         write_provider(idp, tx).await

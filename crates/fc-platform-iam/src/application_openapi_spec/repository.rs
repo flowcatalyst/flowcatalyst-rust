@@ -4,7 +4,6 @@
 //! `impl Persist<OpenApiSpec> for OpenApiSpecRepository` is used by the sync
 //! use case through the UnitOfWork.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -174,7 +173,6 @@ impl HasId for OpenApiSpec {
     }
 }
 
-#[async_trait]
 impl Persist<OpenApiSpec> for OpenApiSpecRepository {
     async fn persist(&self, spec: &OpenApiSpec, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

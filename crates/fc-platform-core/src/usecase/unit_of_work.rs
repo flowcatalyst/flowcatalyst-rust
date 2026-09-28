@@ -16,7 +16,6 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -65,13 +64,20 @@ pub struct DbTx<'t> {
 /// Implement this on the repository type (`impl Persist<Principal> for
 /// PrincipalRepository`), **not** on the aggregate. The aggregate is the
 /// thing being written; the repository is what writes it.
-#[async_trait]
 pub trait Persist<A: HasId + Send + Sync>: Send + Sync {
     /// Upsert the aggregate's rows within the given transaction.
-    async fn persist(&self, aggregate: &A, tx: &mut DbTx<'_>) -> Result<(), PlatformError>;
+    fn persist(
+        &self,
+        aggregate: &A,
+        tx: &mut DbTx<'_>,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send;
 
     /// Delete the aggregate's rows within the given transaction.
-    async fn delete(&self, aggregate: &A, tx: &mut DbTx<'_>) -> Result<(), PlatformError>;
+    fn delete(
+        &self,
+        aggregate: &A,
+        tx: &mut DbTx<'_>,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send;
 }
 
 /// A read a repository makes under a row lock (`SELECT … FOR UPDATE`),
@@ -79,15 +85,13 @@ pub trait Persist<A: HasId + Send + Sync>: Send + Sync {
 /// transaction commits (Java's `TxOperation` reads through
 /// `TxScopedUnitOfWork.dbTx()`, e.g. `FunctionVersionRepository.nextVersion`).
 /// `Q` names the read; a repository may offer several.
-#[async_trait]
 pub trait LockedRead<Q: Send + Sync>: Send + Sync {
     type Output: Send;
-
-    async fn read_locked(
+    fn read_locked(
         &self,
         query: &Q,
         tx: &mut DbTx<'_>,
-    ) -> Result<Self::Output, PlatformError>;
+    ) -> impl Future<Output = Result<Self::Output, PlatformError>> + Send;
 }
 
 /// A write on a transaction-scoped unit of work whose `run` has already
@@ -207,17 +211,16 @@ fn write_failure<A: HasId>(what: &str, aggregate: &A, e: PlatformError) -> UseCa
 ///
 /// Ensures entity state changes, domain events, and audit logs are committed
 /// atomically in a single PostgreSQL transaction.
-#[async_trait]
 pub trait UnitOfWork: Send + Sync {
     /// Commit an aggregate upsert via its repository, plus the domain event
     /// and audit log — all in a single transaction.
-    async fn commit<A, R, E, C>(
+    fn commit<A, R, E, C>(
         &self,
         aggregate: &A,
         repository: &R,
         event: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
@@ -226,13 +229,13 @@ pub trait UnitOfWork: Send + Sync {
 
     /// Commit an aggregate delete via its repository, plus the domain event
     /// and audit log — all in a single transaction.
-    async fn commit_delete<A, R, E, C>(
+    fn commit_delete<A, R, E, C>(
         &self,
         aggregate: &A,
         repository: &R,
         event: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
@@ -242,7 +245,11 @@ pub trait UnitOfWork: Send + Sync {
     /// Emit a domain event and audit log without an entity change.
     ///
     /// Used for events that don't modify an entity directly (e.g., `UserLoggedIn`).
-    async fn emit_event<E, C>(&self, event: E, command: &C) -> Result<Committed<E>, UseCaseError>
+    fn emit_event<E, C>(
+        &self,
+        event: E,
+        command: &C,
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         E: DomainEvent + Send + 'static,
         C: Serialize + AuditMasked + Send + Sync;
@@ -252,12 +259,12 @@ pub trait UnitOfWork: Send + Sync {
     /// `usecaseop.Sync`, which writes a created/updated/deleted event per
     /// synced row and then the rollup. For a sync whose rows its repository
     /// already wrote.
-    async fn emit_events<E, C>(
+    fn emit_events<E, C>(
         &self,
         rows: Vec<RecordedEvent>,
         rollup: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         E: DomainEvent + Send + 'static,
         C: Serialize + AuditMasked + Send + Sync;
@@ -265,14 +272,14 @@ pub trait UnitOfWork: Send + Sync {
     /// [`commit_all`](Self::commit_all) that also writes a sync's per-row
     /// events (each with its audit row) ahead of the rollup `event`, all in
     /// the one transaction.
-    async fn commit_all_with_events<A, R, E, C>(
+    fn commit_all_with_events<A, R, E, C>(
         &self,
         aggregates: &[A],
         repository: &R,
         rows: Vec<RecordedEvent>,
         event: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
@@ -285,7 +292,7 @@ pub trait UnitOfWork: Send + Sync {
     /// `rows` (each with its audit row) and the `rollup` with its own, all in
     /// one transaction: a row that fails to write rolls the whole sync back,
     /// so a sync either lands completely or not at all.
-    async fn commit_sync<A, R, E, C>(
+    fn commit_sync<A, R, E, C>(
         &self,
         repository: &R,
         saves: &[A],
@@ -293,7 +300,7 @@ pub trait UnitOfWork: Send + Sync {
         rows: Vec<RecordedEvent>,
         rollup: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
@@ -305,7 +312,11 @@ pub trait UnitOfWork: Send + Sync {
     /// outlives the call, so only it holds the lock until its commit; any
     /// other refuses with `500 TRANSACTION_REQUIRED` rather than take a lock
     /// that would be released at once.
-    async fn read_locked<Q, R>(&self, repository: &R, query: &Q) -> Result<R::Output, UseCaseError>
+    fn read_locked<Q, R>(
+        &self,
+        repository: &R,
+        query: &Q,
+    ) -> impl Future<Output = Result<R::Output, UseCaseError>> + Send
     where
         Q: Send + Sync,
         R: LockedRead<Q>;
@@ -316,13 +327,13 @@ pub trait UnitOfWork: Send + Sync {
     /// Use when one logical operation touches many rows of the same aggregate
     /// (e.g., toggling client→application enablement). Emits exactly one event
     /// summarising the change rather than one event per row.
-    async fn commit_all<A, R, E, C>(
+    fn commit_all<A, R, E, C>(
         &self,
         aggregates: &[A],
         repository: &R,
         event: E,
         command: &C,
-    ) -> Result<Committed<E>, UseCaseError>
+    ) -> impl Future<Output = Result<Committed<E>, UseCaseError>> + Send
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
@@ -682,7 +693,6 @@ impl<'a> AuditRow<'a> {
     }
 }
 
-#[async_trait]
 impl UnitOfWork for PgUnitOfWork {
     async fn commit<A, R, E, C>(
         &self,
@@ -982,7 +992,6 @@ impl TxScopedUnitOfWork {
     }
 }
 
-#[async_trait]
 impl UnitOfWork for TxScopedUnitOfWork {
     async fn commit<A, R, E, C>(
         &self,
@@ -1351,7 +1360,6 @@ impl InMemoryUnitOfWork {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait]
 impl UnitOfWork for InMemoryUnitOfWork {
     async fn commit<A, R, E, C>(
         &self,
@@ -1494,7 +1502,6 @@ mod tests {
 
     struct Counter;
 
-    #[async_trait]
     impl LockedRead<&'static str> for Counter {
         type Output = i32;
 

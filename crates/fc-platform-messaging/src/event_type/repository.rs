@@ -1,6 +1,5 @@
 //! EventType Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -591,7 +590,6 @@ impl HasId for EventType {
     }
 }
 
-#[async_trait]
 impl Persist<EventType> for EventTypeRepository {
     async fn persist(&self, et: &EventType, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

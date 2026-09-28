@@ -1,6 +1,5 @@
 //! `app_docs` repository (Go `appdocs/appdocs.go`).
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -89,7 +88,6 @@ impl AppDocsRepository {
     }
 }
 
-#[async_trait]
 impl Persist<AppDocsReplacement> for AppDocsRepository {
     /// Go `ReplaceForApplication`: every page upserted by (application,
     /// slug) with its position, then the unlisted ones deleted.

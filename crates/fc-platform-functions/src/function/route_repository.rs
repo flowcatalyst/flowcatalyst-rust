@@ -5,7 +5,6 @@
 //! transaction and the same commit as the alias change that makes that
 //! manifest live.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -195,7 +194,6 @@ pub struct PromotedFunctionRepository<'r> {
     pub routes: &'r FunctionRouteRepository,
 }
 
-#[async_trait]
 impl Persist<PromotedFunction> for PromotedFunctionRepository<'_> {
     async fn persist(&self, p: &PromotedFunction, tx: &mut DbTx<'_>) -> Result<()> {
         self.functions.persist(&p.function, tx).await?;

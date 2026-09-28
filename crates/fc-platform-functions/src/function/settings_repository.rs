@@ -12,7 +12,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -197,7 +196,6 @@ impl FunctionSettingsRepository {
     }
 }
 
-#[async_trait]
 impl Persist<FunctionConfig> for FunctionSettingsRepository {
     /// A full replacement: every key not in `values` is deleted, every key in
     /// it is upserted.
@@ -239,7 +237,6 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
     }
 }
 
-#[async_trait]
 impl Persist<FunctionSecret> for FunctionSettingsRepository {
     /// Encrypts the value and upserts one row.
     async fn persist(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {

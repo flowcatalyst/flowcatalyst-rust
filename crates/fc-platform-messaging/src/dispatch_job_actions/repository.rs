@@ -2,7 +2,6 @@
 //! `Repository.Persist` for a reset or a status flip). The read projection
 //! follows through `updated_at`, as for every other dispatch-job write.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -68,7 +67,6 @@ impl DispatchJobActionsRepository {
     }
 }
 
-#[async_trait]
 impl Persist<JobsRequeue> for DispatchJobActionsRepository {
     async fn persist(&self, r: &JobsRequeue, tx: &mut DbTx<'_>) -> Result<()> {
         if r.jobs.is_empty() {
@@ -95,7 +93,6 @@ impl Persist<JobsRequeue> for DispatchJobActionsRepository {
     }
 }
 
-#[async_trait]
 impl Persist<JobStatusFlip> for DispatchJobActionsRepository {
     async fn persist(&self, f: &JobStatusFlip, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

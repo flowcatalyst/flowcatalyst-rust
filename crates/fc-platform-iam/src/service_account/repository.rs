@@ -5,7 +5,6 @@
 //! hydrating webhook credentials from iam_service_accounts.
 //! This matches the TypeScript implementation.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -773,7 +772,6 @@ impl HasId for ServiceAccount {
     }
 }
 
-#[async_trait]
 impl Persist<ServiceAccount> for ServiceAccountRepository {
     async fn persist(&self, sa: &ServiceAccount, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

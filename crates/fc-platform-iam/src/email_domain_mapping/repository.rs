@@ -409,7 +409,6 @@ impl HasId for EmailDomainMapping {
     }
 }
 
-#[async_trait::async_trait]
 impl Persist<EmailDomainMapping> for EmailDomainMappingRepository {
     async fn persist(&self, edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
         write_mapping(edm, tx).await

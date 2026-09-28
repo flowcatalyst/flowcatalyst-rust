@@ -11,7 +11,6 @@
 
 use std::collections::HashSet;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -152,7 +151,6 @@ pub struct LinkedRepository<'r, R> {
     pub links: &'r TriggerObjectRepository,
 }
 
-#[async_trait]
 impl<A, R> Persist<Linked<A>> for LinkedRepository<'_, R>
 where
     A: HasId + Send + Sync,

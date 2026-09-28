@@ -1,6 +1,5 @@
 //! Process Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -212,7 +211,6 @@ impl HasId for Process {
     }
 }
 
-#[async_trait]
 impl Persist<Process> for ProcessRepository {
     async fn persist(&self, p: &Process, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();

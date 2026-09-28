@@ -3,7 +3,6 @@
 //! Roles are loaded from iam_principal_roles junction table.
 //! Assigned clients are loaded from iam_client_access_grants.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -932,7 +931,6 @@ impl HasId for PrincipalSyncBatch {
     }
 }
 
-#[async_trait]
 impl Persist<PrincipalSyncBatch> for PrincipalRepository {
     async fn persist(&self, batch: &PrincipalSyncBatch, tx: &mut DbTx<'_>) -> Result<()> {
         let ps = &batch.principals;
@@ -1057,7 +1055,6 @@ impl HasId for Principal {
     }
 }
 
-#[async_trait]
 impl Persist<Principal> for PrincipalRepository {
     async fn persist(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
@@ -1242,7 +1239,6 @@ impl HasId for DeveloperCredential {
 /// `iam_principals` row, so the principal repository writes it: set or
 /// rotate stamps `dev_client_secret_updated_at`, revoke clears both columns
 /// (Go `SetDevClientSecretRef` / `ClearDevClientSecretRef`).
-#[async_trait::async_trait]
 impl Persist<DeveloperCredential> for PrincipalRepository {
     async fn persist(&self, c: &DeveloperCredential, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

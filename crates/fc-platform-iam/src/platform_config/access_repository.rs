@@ -1,6 +1,5 @@
 //! PlatformConfigAccess Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -136,7 +135,6 @@ impl HasId for PlatformConfigAccess {
     }
 }
 
-#[async_trait]
 impl Persist<PlatformConfigAccess> for PlatformConfigAccessRepository {
     async fn persist(&self, a: &PlatformConfigAccess, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

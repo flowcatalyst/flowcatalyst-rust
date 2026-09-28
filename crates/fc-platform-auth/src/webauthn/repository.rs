@@ -1,6 +1,5 @@
 //! WebAuthn Credential Repository — PostgreSQL via SQLx.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use webauthn_rs::prelude::Passkey;
@@ -98,7 +97,6 @@ impl HasId for WebauthnCredential {
     }
 }
 
-#[async_trait]
 impl Persist<WebauthnCredential> for WebauthnCredentialRepository {
     async fn persist(&self, c: &WebauthnCredential, tx: &mut DbTx<'_>) -> Result<()> {
         let passkey_data = serde_json::to_value(&c.passkey)

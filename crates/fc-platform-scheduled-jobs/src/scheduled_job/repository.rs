@@ -9,7 +9,6 @@
 //!
 //! Instance + log writes live in `instance_repository.rs` (also infrastructure).
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
@@ -378,7 +377,6 @@ impl HasId for ScheduledJob {
     }
 }
 
-#[async_trait]
 impl Persist<ScheduledJob> for ScheduledJobRepository {
     async fn persist(&self, sj: &ScheduledJob, tx: &mut DbTx<'_>) -> Result<()> {
         // last_fired_at is intentionally excluded from the UPDATE clause —

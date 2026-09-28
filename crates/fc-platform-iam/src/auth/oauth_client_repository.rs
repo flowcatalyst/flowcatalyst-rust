@@ -4,7 +4,6 @@
 //! during OAuth authorize/token flows), matching the TS oidc-provider
 //! adapter caching pattern.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -769,7 +768,6 @@ impl HasId for OAuthClient {
     }
 }
 
-#[async_trait]
 impl Persist<OAuthClient> for OAuthClientRepository {
     async fn persist(&self, c: &OAuthClient, tx: &mut DbTx<'_>) -> Result<()> {
         let scopes = if c.default_scopes.is_empty() {

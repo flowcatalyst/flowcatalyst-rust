@@ -1,6 +1,5 @@
 //! `fnr_domains` (Java `function/FunctionDomainRepository.java`).
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -128,7 +127,6 @@ fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
     })
 }
 
-#[async_trait]
 impl Persist<FunctionDomain> for FunctionDomainRepository {
     /// Insert-only: a claim never changes once made.
     async fn persist(&self, d: &FunctionDomain, tx: &mut DbTx<'_>) -> Result<()> {

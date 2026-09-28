@@ -3,7 +3,6 @@
 //! move to an internal provider, the domain's federated users, in one
 //! transaction. The principal writes go through `PrincipalRepository`.
 
-use async_trait::async_trait;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -45,7 +44,6 @@ impl ProviderMoveRepository {
     }
 }
 
-#[async_trait]
 impl Persist<ProviderMove> for ProviderMoveRepository {
     async fn persist(&self, m: &ProviderMove, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(

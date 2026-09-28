@@ -1,6 +1,5 @@
 //! Application Repository — PostgreSQL via SQLx
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -363,7 +362,6 @@ impl HasId for Application {
     }
 }
 
-#[async_trait]
 impl Persist<Application> for ApplicationRepository {
     async fn persist(&self, a: &Application, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
