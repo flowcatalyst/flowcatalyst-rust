@@ -32,6 +32,11 @@ RUN pnpm build
 # crates declare it); 1.92 no longer builds main.
 FROM lukemathwalker/cargo-chef:latest-rust-1.98-bookworm AS chef
 WORKDIR /app
+# cargo-auditable embeds the dependency list in the binary, readable later
+# with `cargo audit bin` or `rust-audit-info` (docs/operations/
+# supply-chain.md). Pinned; `--locked` builds it from its own lockfile.
+ARG CARGO_AUDITABLE_VERSION=0.7.6
+RUN cargo install --locked "cargo-auditable@${CARGO_AUDITABLE_VERSION}"
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
@@ -49,7 +54,8 @@ COPY --from=planner /app/recipe.json recipe.json
 # recipe does not carry it; cargo still reads its manifest to resolve the
 # lockfile (it is never built here).
 COPY crates/fc-web ./crates/fc-web
-RUN cargo chef cook --release --recipe-path recipe.json
+# `--locked`: the versions (and checksums) in Cargo.lock, or fail.
+RUN cargo chef cook --release --locked --recipe-path recipe.json
 
 # Copy source and build
 COPY Cargo.toml Cargo.lock ./
@@ -66,7 +72,7 @@ COPY docs/published ./docs/published
 # means the workspace package version.
 ARG FC_BUILD_VERSION=
 ENV FC_BUILD_VERSION=${FC_BUILD_VERSION}
-RUN cargo build --release --bin fc-server
+RUN cargo auditable build --release --locked --bin fc-server
 
 # ── Stage 4: Runtime — distroless (no shell, no package manager) ────
 # All TLS is via rustls (no OpenSSL needed). CA certs are bundled.
