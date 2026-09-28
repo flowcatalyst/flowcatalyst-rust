@@ -18,8 +18,6 @@
 
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
 
 /// The document's bytes.
 pub const FUNCTIONS_OPENAPI: &[u8] =
@@ -28,13 +26,8 @@ pub const FUNCTIONS_OPENAPI: &[u8] =
 /// Where the document is served.
 pub const PATH_FUNCTIONS_OPENAPI: &str = "/api/openapi-functions.json";
 
-async fn functions_openapi() -> impl IntoResponse {
+pub(super) async fn functions_openapi() -> impl IntoResponse {
     ([(CONTENT_TYPE, "application/json")], FUNCTIONS_OPENAPI)
-}
-
-/// The unauthenticated route, to merge into the platform router.
-pub fn functions_openapi_router<S: Clone + Send + Sync + 'static>() -> Router<S> {
-    Router::new().route(PATH_FUNCTIONS_OPENAPI, get(functions_openapi))
 }
 
 #[cfg(test)]
@@ -46,7 +39,7 @@ mod tests {
 
     #[tokio::test]
     async fn serves_the_document_bytes_without_a_token() {
-        let response = functions_openapi_router::<()>()
+        let response = super::super::routes::functions_openapi_router::<()>()
             .oneshot(
                 Request::get(PATH_FUNCTIONS_OPENAPI)
                     .body(Body::empty())
@@ -125,7 +118,7 @@ mod tests {
             })
             .collect();
 
-        let (_, rust) = crate::function::api::function_routes().split_for_parts();
+        let (_, rust) = crate::function::routes::function_routes().split_for_parts();
         let rust: BTreeSet<(String, String)> = serde_json::to_value(&rust).unwrap()["paths"]
             .as_object()
             .unwrap()

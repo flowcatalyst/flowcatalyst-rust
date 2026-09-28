@@ -17,7 +17,6 @@ use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
 use crate::identity_provider::entity::IdentityProviderType;
@@ -691,17 +690,6 @@ pub async fn refresh_token(
         expires_in: state.auth_service.access_token_expiry_secs(),
         refresh_token: raw_token,
     }))
-}
-
-/// Create the auth router
-pub fn auth_router(state: AuthState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(login))
-        .routes(routes!(logout))
-        .routes(routes!(check_domain))
-        .routes(routes!(get_current_user))
-        .routes(routes!(refresh_token))
-        .with_state(state)
 }
 
 #[cfg(test)]

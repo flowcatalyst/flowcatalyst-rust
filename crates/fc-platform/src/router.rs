@@ -13,31 +13,21 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::api::{
-    anchor_domains_router,
     application_roles_sdk_router,
-    auth_router,
     bff_dashboard_router,
     // Plain Router routes
-    client_auth_configs_router,
     client_selection_router,
     debug_dispatch_jobs_router,
     debug_events_router,
     dispatch_process_router,
     // OpenApiRouter routes
     filter_options_router,
-    idp_role_mappings_router,
     me_router,
     monitoring_router,
-    oauth_clients_router,
-    oauth_router,
-    oidc_login_router,
-    password_reset_router,
     public_router,
     sdk_sync_router,
     well_known_router,
     ApplicationRolesSdkState,
-    AuthConfigState,
-    AuthState,
     BffDashboardState,
     ClientSelectionState,
     DebugState,
@@ -45,21 +35,13 @@ use crate::api::{
     FilterOptionsState,
     MeState,
     MonitoringState,
-    OAuthClientsState,
-    OAuthState,
-    OidcLoginApiState,
-    PasswordResetApiState,
     PublicApiState,
     SdkSyncState,
     WellKnownState,
 };
 use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
 use crate::shared::platform_context::AggregateRoutes;
-use crate::shared::rate_limit_middleware::{rate_limit_per_ip, IpRateLimiterState};
-use crate::shared::rate_limit_store::{
-    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
-    DistributedEmailLimitState, DistributedIpLimitState,
-};
+use crate::shared::rate_limit_middleware::rate_limit_per_ip;
 use std::sync::Arc;
 
 /// Dependencies handed to `build()` so the Developer-portal BFF state can be
@@ -180,32 +162,18 @@ pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 /// call `build()`, then layer on middleware and static files.
 pub struct PlatformRoutes {
     // -- OpenApiRouter routes (collected in Swagger) --
-    /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
-    pub functions: crate::function::api::FunctionsState,
-    /// `/control/functions/*`: what a function host calls (not in Swagger).
-    pub function_control: crate::function::control_api::FunctionControlState,
     pub filter_options: FilterOptionsState,
-    pub oauth_clients: OAuthClientsState,
     pub monitoring: MonitoringState,
-    pub auth: AuthState,
 
     // -- Plain Router routes (NOT in Swagger) --
     pub bff_dashboard: BffDashboardState,
     pub debug: DebugState,
-    pub auth_config: AuthConfigState,
     pub me: MeState,
-    pub oidc_login: OidcLoginApiState,
-    pub oauth: OAuthState,
     pub well_known: WellKnownState,
     pub client_selection: ClientSelectionState,
     pub application_roles_sdk: ApplicationRolesSdkState,
     pub sdk_sync: SdkSyncState,
     pub public: PublicApiState,
-    pub password_reset: PasswordResetApiState,
-    /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
-    /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
-    pub portal: crate::portal::PortalState,
-    pub webauthn: crate::webauthn::WebauthnApiState,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
     /// is constructed inside `build()` so the platform's own OpenAPI document
     /// (returned by `build()` itself) can be stored against the seeded
@@ -246,68 +214,6 @@ impl PlatformRoutes {
         // backoff in `auth::login_backoff`.
         let auth_layer =
             axum::middleware::from_fn_with_state(self.ctx.auth_ip_limit.clone(), rate_limit_per_ip);
-        let oauth_layer = axum::middleware::from_fn_with_state(
-            self.ctx.oauth_ip_limit.clone(),
-            rate_limit_per_ip,
-        );
-
-        // Distributed (cluster-wide) per-IP limiters layered on top of the
-        // in-memory governor above. The two compose: governor rejects bursts
-        // at this instance (sub-ms, no I/O), the distributed store catches a
-        // single source spreading load across replicas. One layer per
-        // (bucket, policy) so each route group's limits can be tuned
-        // independently via env.
-        let distributed_oauth_token_layer = axum::middleware::from_fn_with_state(
-            DistributedIpLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::OAUTH_TOKEN_IP,
-                policy: self.rate_limit_policies.oauth_token_ip,
-            },
-            distributed_rate_limit_per_ip,
-        );
-        let distributed_password_reset_layer = axum::middleware::from_fn_with_state(
-            DistributedIpLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::PASSWORD_RESET_IP,
-                policy: self.rate_limit_policies.password_reset_ip,
-            },
-            distributed_rate_limit_per_ip,
-        );
-        // S2.7: the reset request is budgeted per address too, and over
-        // budget it answers exactly as it always does, so the limit can't
-        // be used to tell a known address from an unknown one.
-        let distributed_password_reset_email_layer = axum::middleware::from_fn_with_state(
-            DistributedEmailLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::PASSWORD_RESET_EMAIL,
-                policy: self.rate_limit_policies.password_reset_email,
-                path_suffix: "/request",
-                over_budget: password_reset_requested_response,
-            },
-            distributed_rate_limit_per_email,
-        );
-
-        // Portal identity plane (Go wire_routes.go:261-291): the portal
-        // routes sit behind the OIDC bridge's per-IP governor
-        // (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST), and its hooks answer the
-        // portal-subject requests of the shared reset-token and OIDC
-        // callback routes.
-        let portal_login = crate::portal::login_api::PortalLoginState {
-            portal: self.portal.clone(),
-            oidc: self.oidc_login.clone(),
-        };
-        let portal_ip_layer = axum::middleware::from_fn_with_state(
-            IpRateLimiterState::new(&crate::portal::login_api::portal_ip_rate_config()),
-            rate_limit_per_ip,
-        );
-        let portal_reset_hook = axum::middleware::from_fn_with_state(
-            self.portal.passwords.clone(),
-            crate::portal::password::intercept,
-        );
-        let portal_oidc_hook = axum::middleware::from_fn_with_state(
-            portal_login.clone(),
-            crate::portal::oidc::intercept,
-        );
 
         // The route modules, in order. Each returns its documented and
         // plain routes at their full paths.
@@ -324,18 +230,22 @@ impl PlatformRoutes {
             .merge(crate::developer_credential::routes(ctx))
             .merge(crate::role::routes(ctx))
             .merge(crate::subscription::routes(ctx))
+            .merge(crate::auth::routes(ctx))
             .merge(crate::audit::routes(ctx))
+            .merge(crate::function::routes(ctx))
             .merge(crate::dispatch_job_actions::routes(ctx))
             .merge(crate::app_docs::routes(ctx))
             .merge(crate::application::routes(ctx))
             .merge(crate::email_domain_mapping::routes(ctx))
             .merge(crate::service_account::routes(ctx))
             .merge(crate::platform_config::routes(ctx))
+            .merge(crate::webauthn::routes(ctx))
             .merge(crate::dispatch_pool::routes(ctx))
             .merge(crate::connection::routes(ctx))
             .merge(crate::cors::routes(ctx))
             .merge(crate::identity_provider::routes(ctx))
-            .merge(crate::login_attempt::routes(ctx));
+            .merge(crate::login_attempt::routes(ctx))
+            .merge(crate::portal::routes(ctx));
         let AggregateRoutes {
             documented: module_documented,
             plain: module_plain,
@@ -348,23 +258,12 @@ impl PlatformRoutes {
                 PATH_BFF_FILTER_OPTIONS,
                 filter_options_router(self.filter_options),
             )
-            .nest(
-                PATH_API_OAUTH_CLIENTS,
-                oauth_clients_router(self.oauth_clients),
-            )
             .nest(PATH_MONITORING, monitoring_router(self.monitoring))
             // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
             // so the SDK code generators produce typed bindings for them.
             .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
-            // The function API: full paths under five prefixes, so merged.
-            .merge(crate::function::api::functions_router(self.functions))
             // Go-parity routes, at their full paths (`shared::go_routes`).
             .merge(crate::shared::go_routes::go_routes_router(self.go_routes))
-            .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
-            .nest(
-                PATH_AUTH,
-                crate::webauthn::webauthn_router(self.webauthn).layer(auth_layer.clone()),
-            )
             .split_for_parts();
 
         // Capture the full spec (including `/bff/*` paths) before we
@@ -453,68 +352,12 @@ impl PlatformRoutes {
                 PATH_BFF_DEBUG_DISPATCH_JOBS,
                 debug_dispatch_jobs_router(self.debug),
             )
-            // API — auth config
-            .nest(
-                PATH_API_ANCHOR_DOMAINS,
-                anchor_domains_router(self.auth_config.clone()),
-            )
-            .nest(
-                PATH_API_AUTH_CONFIGS,
-                client_auth_configs_router(self.auth_config.clone()),
-            )
-            .nest(
-                PATH_API_IDP_ROLE_MAPPINGS,
-                idp_role_mappings_router(self.auth_config),
-            )
             // Auth
             .nest(PATH_API_ME, me_router(self.me))
-            .nest(
-                PATH_AUTH,
-                oidc_login_router(self.oidc_login)
-                    .layer(portal_oidc_hook)
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_OAUTH,
-                oauth_router(self.oauth)
-                    .layer(axum::middleware::map_response(
-                        crate::auth::oauth_api::oauth_errors_no_store,
-                    ))
-                    .layer(distributed_oauth_token_layer)
-                    .layer(oauth_layer.clone()),
-            )
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
             .nest(
                 PATH_AUTH_CLIENT,
                 client_selection_router(self.client_selection).layer(auth_layer.clone()),
-            )
-            // `/auth/password-setup/request` spends the reset budgets in its
-            // own buckets inside the handler (silent over budget).
-            .nest(
-                "/auth/password-setup",
-                crate::api::password_setup_router(self.password_reset.clone())
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_AUTH_PASSWORD_RESET,
-                password_reset_router(self.password_reset)
-                    .layer(portal_reset_hook)
-                    .layer(distributed_password_reset_email_layer)
-                    .layer(distributed_password_reset_layer)
-                    .layer(auth_layer.clone()),
-            )
-            // Portal identity plane.
-            .nest(
-                PATH_API_PORTAL_USERS,
-                crate::portal::api::portal_users_router(self.portal.clone()),
-            )
-            .nest(
-                PATH_API_PORTAL_APPS,
-                crate::portal::api::portal_apps_router(self.portal),
-            )
-            .nest(
-                PATH_PORTAL,
-                crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
             )
             // Shared API
             .nest(
@@ -529,12 +372,7 @@ impl PlatformRoutes {
                 crate::shared::public_api::platform_info_router(self.public.clone()),
             )
             // Public
-            .nest(PATH_API_PUBLIC, public_router(self.public))
-            // The function host control plane (desired state, heartbeat,
-            // emit, artifact download), gated on the host role.
-            .merge(crate::function::control_api::function_control_router(
-                self.function_control,
-            ));
+            .nest(PATH_API_PUBLIC, public_router(self.public));
 
         // Dispatch processing (optional — only when message router callback is needed)
         let app = if let Some(dispatch_process) = self.dispatch_process {
@@ -550,13 +388,6 @@ impl PlatformRoutes {
         let app = app
             // Health
             .route(PATH_HEALTH, get(health_handler))
-            // The function manifest's JSON Schema: unauthenticated, as in
-            // Java (Platform.java:724-727), because an editor fetches it
-            // with no token.
-            .merge(crate::function::schema::function_manifest_schema_router())
-            // Java's function API contract, verbatim and unauthenticated
-            // (FunctionOpenApiRoutes.java).
-            .merge(crate::function::openapi::functions_openapi_router())
             // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
             .merge(
                 SwaggerUi::new(PATH_SWAGGER_UI)
@@ -669,16 +500,6 @@ pub fn serve_spa(app: Router, static_dir: &str) -> Router {
         tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
         app
     }
-}
-
-/// `POST /auth/password-reset/request`'s one answer — for a known address,
-/// an unknown one, and one over its budget alike (the handler's silent
-/// success; `password_reset_email_budget_is_silent` pins the two equal).
-fn password_reset_requested_response() -> axum::response::Response {
-    Json(serde_json::json!({
-        "message": "If an account exists, a reset email has been sent."
-    }))
-    .into_response()
 }
 
 /// The platform API listener's timeouts (owner ruling 10): keep-alive idle

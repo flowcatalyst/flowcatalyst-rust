@@ -14,8 +14,6 @@ use axum::{
     extract::{Query, State},
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Json, Response},
-    routing::{get, post},
-    Router,
 };
 use axum_extra::extract::cookie::CookieJar;
 use axum_extra::extract::Host;
@@ -1806,21 +1804,6 @@ fn extract_aud_from_id_token_hint(token: &str) -> Option<String> {
         }
         _ => None,
     }
-}
-
-/// Create the OIDC login router
-pub fn oidc_login_router(state: OidcLoginApiState) -> Router {
-    Router::new()
-        .route("/check-domain", post(check_domain))
-        .route("/oidc/login", get(oidc_login))
-        .route("/oidc/callback", get(oidc_callback))
-        .route("/oidc/interaction/{uid}", get(get_interaction))
-        .route(
-            "/oidc/interaction/{uid}/login",
-            post(post_interaction_login),
-        )
-        .route("/oidc/session/end", get(session_end))
-        .with_state(state)
 }
 
 // ==================== Portal identity plane hooks ====================

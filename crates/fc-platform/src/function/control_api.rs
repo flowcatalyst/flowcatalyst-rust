@@ -37,8 +37,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -660,25 +659,6 @@ pub async fn download_artifact(
         Body::from_stream(tokio_util::io::ReaderStream::new(stream)),
     )
         .into_response())
-}
-
-/// The four routes. Not in the OpenAPI document: Java keeps the control
-/// plane out of its lockfile too, naming it in `parity/surface.json`.
-pub fn function_control_router(state: FunctionControlState) -> Router {
-    Router::new()
-        .route("/control/functions/desired-state", get(desired_state))
-        .route("/control/functions/heartbeat", post(heartbeat))
-        .route("/control/functions/events", post(emit_events))
-        .route(
-            "/control/functions/artifacts/{version_id}",
-            get(download_artifact),
-        )
-        .with_state(state)
-        // The function contract's errors (owner decision #5), not the
-        // platform routes' Go envelope.
-        .layer(axum::middleware::map_response(
-            crate::shared::error::keep_function_contract,
-        ))
 }
 
 #[cfg(test)]

@@ -974,8 +974,8 @@ async fn main() -> Result<()> {
     // and `/auth/check-domain` use.
     #[cfg(feature = "web")]
     let web_auth = (
-        routes.auth.clone(),
-        routes.oidc_login.password_setup_hint.clone(),
+        fc_platform::auth::routes::auth_state(&routes.ctx),
+        fc_platform::auth::routes::oidc_login_state(&routes.ctx).password_setup_hint,
     );
     // The users section runs the principal API's own handler bodies, so it
     // takes the states those handlers were built with.

@@ -9,8 +9,7 @@ use axum::{
     body::Bytes,
     extract::{Query, State},
     response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use axum_extra::extract::cookie::CookieJar;
 use chrono::{Duration, Utc};
@@ -421,7 +420,7 @@ fn domain_of(email: &str) -> &str {
         (status = 200, description = "Reset requested (silent success)", body = MessageResponse)
     )
 )]
-async fn request_reset(
+pub(super) async fn request_reset(
     State(state): State<PasswordResetApiState>,
     Json(body): Json<RequestResetBody>,
 ) -> Json<MessageResponse> {
@@ -489,7 +488,7 @@ async fn try_issue_reset(
         (status = 200, description = "Token validation result", body = ValidateTokenResponse)
     )
 )]
-async fn validate_token(
+pub(super) async fn validate_token(
     State(state): State<PasswordResetApiState>,
     Query(query): Query<ValidateTokenQuery>,
 ) -> Json<ValidateTokenResponse> {
@@ -529,7 +528,7 @@ async fn validate_token(
         (status = 400, description = "Invalid or expired token")
     )
 )]
-async fn confirm_reset(
+pub(super) async fn confirm_reset(
     State(state): State<PasswordResetApiState>,
     jar: CookieJar,
     Json(body): Json<ConfirmResetBody>,
@@ -725,14 +724,6 @@ async fn post_reset(state: &PasswordResetApiState, token: &PasswordResetToken) -
     }
 }
 
-pub fn password_reset_router(state: PasswordResetApiState) -> Router {
-    Router::new()
-        .route("/request", post(request_reset))
-        .route("/validate", get(validate_token))
-        .route("/confirm", post(confirm_reset))
-        .with_state(state)
-}
-
 // -- /auth/password-setup/request --
 
 const SETUP_REQUESTED: &str =
@@ -751,7 +742,7 @@ struct PasswordSetupBody {
 /// `passwordSetupRequired`. Silent success, like the reset request. Spends
 /// the reset budgets per IP and per address in its own buckets (Java
 /// dbe3ad9c): over budget nothing is sent and the answer is the same.
-async fn request_password_setup(
+pub(super) async fn request_password_setup(
     State(state): State<PasswordResetApiState>,
     ClientIp(ip): ClientIp,
     body: Bytes,
@@ -807,13 +798,6 @@ async fn try_issue_password_setup(
     }
     let redirect = redirect_uri.and_then(safe_relative_return_url);
     state.emailer.send_invite(&principal, redirect).await
-}
-
-/// `/auth/password-setup/*`.
-pub fn password_setup_router(state: PasswordResetApiState) -> Router {
-    Router::new()
-        .route("/request", post(request_password_setup))
-        .with_state(state)
 }
 
 #[cfg(test)]

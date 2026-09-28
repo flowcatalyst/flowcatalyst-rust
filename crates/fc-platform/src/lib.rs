@@ -358,17 +358,17 @@ pub mod api {
     pub use crate::application::routes::applications_router;
     pub use crate::audit::api::AuditLogsState;
     pub use crate::audit::routes::audit_logs_router;
-    pub use crate::auth::auth_api::{auth_router, AuthState};
-    pub use crate::auth::oauth_api::{oauth_router, OAuthState};
-    pub use crate::auth::oauth_clients_api::{oauth_clients_router, OAuthClientsState};
-    pub use crate::auth::oidc_login_api::{oidc_login_router, OidcLoginApiState};
-    pub use crate::auth::password_reset_api::{
-        password_reset_router, password_setup_router, PasswordResetApiState,
+    pub use crate::auth::auth_api::AuthState;
+    pub use crate::auth::oauth_api::OAuthState;
+    pub use crate::auth::oauth_clients_api::OAuthClientsState;
+    pub use crate::auth::oidc_login_api::OidcLoginApiState;
+    pub use crate::auth::password_reset_api::PasswordResetApiState;
+    pub use crate::auth::routes::{
+        anchor_domains_router, auth_router, client_auth_configs_router, idp_role_mappings_router,
+        oauth_clients_router, oauth_router, oidc_login_router, password_reset_router,
+        password_setup_router,
     };
-    pub use crate::auth::{
-        anchor_domains_router, client_auth_configs_router, idp_role_mappings_router,
-        AuthConfigState,
-    };
+    pub use crate::auth::AuthConfigState;
     pub use crate::client::api::ClientsState;
     pub use crate::client::routes::clients_router;
     pub use crate::dispatch_job::api::DispatchJobsState;
