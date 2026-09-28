@@ -3619,6 +3619,7 @@ dependencies = [
  "indexmap 2.14.2",
  "jsonwebtoken",
  "lettre",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "nonzero_ext",

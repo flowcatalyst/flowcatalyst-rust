@@ -171,10 +171,12 @@ async fn the_flight_recorder_tells_a_message_story() {
         .into_iter()
         .find(|e| e.kind == EventKind::DispatchFinished)
         .unwrap();
-    let detail = finished.detail.unwrap();
-    assert!(detail.contains("Success status=200"), "{detail}");
-    assert_eq!(finished.pool.as_deref(), Some("P1"));
-    assert_eq!(finished.queue.as_deref(), Some("q1"));
+    assert_eq!(finished.facts.outcome, Some("Success"));
+    assert_eq!(finished.facts.status, Some(200));
+    assert_eq!(finished.facts.action, Some("Ack"));
+    assert_eq!(finished.facts.attempt, Some(1));
+    assert_eq!(finished.pool(), Some("P1"));
+    assert_eq!(finished.queue(), Some("q1"));
 }
 
 #[tokio::test]
@@ -195,10 +197,10 @@ async fn a_released_group_is_recorded_as_a_group_decision() {
         .iter()
         .find(|e| e.kind == EventKind::GroupDecision)
         .expect("a group decision for the head");
-    let detail = decision.detail.as_deref().unwrap();
+    let detail = decision.facts.detail.as_deref().unwrap();
     assert!(detail.starts_with("RETURN_GROUP"), "{detail}");
     assert!(detail.contains("1 buffered sibling"), "{detail}");
-    assert_eq!(decision.group.as_deref(), Some("g1"));
+    assert_eq!(decision.group(), Some("g1"));
     assert_eq!(
         kinds(&manager, "next-2"),
         vec![EventKind::Routed, EventKind::Nacked],

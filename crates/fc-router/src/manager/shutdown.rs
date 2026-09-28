@@ -212,13 +212,12 @@ impl QueueManager {
         let nacks = abandoned.iter().filter_map(|m| {
             let consumer = self.consumers.resolve(&m.queue_identifier, 0)?;
             self.flight_recorder.record(
-                &m.message_id,
                 crate::flight_recorder::EventKind::ReleasedAtShutdown,
-                &crate::flight_recorder::EventContext::new()
+                &crate::flight_recorder::EventContext::new(m.message_id.as_str())
                     .pool(m.pool_code.as_str())
                     .group(m.message_group_id.as_deref())
                     .queue(m.queue_identifier.as_str()),
-                Some(format!(
+                crate::flight_recorder::Facts::text(format!(
                     "still in a worker when the drain budget ran out; nacked, visible in {}s",
                     Self::ABANDONED_NACK_DELAY_SECS
                 )),

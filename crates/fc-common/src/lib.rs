@@ -326,6 +326,13 @@ pub trait MessageCallback: Send + Sync {
     fn honours_delayed_return(&self) -> bool {
         true
     }
+
+    /// The router's diagnostics context for this message, opaque here: the
+    /// flight recorder's per-message context, which the pool reuses for the
+    /// events it records instead of building its own. Defaults to none.
+    fn diagnostics(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        None
+    }
 }
 
 /// A message bundled with its callback for batch processing

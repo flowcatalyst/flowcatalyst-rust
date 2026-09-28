@@ -223,13 +223,12 @@ impl QueueManager {
         self.in_pipeline.remove(&pipeline_key);
         self.app_message_to_pipeline_key.remove(message_id);
         self.flight_recorder.record(
-            &entry.message_id,
             crate::flight_recorder::EventKind::Untracked,
-            &crate::flight_recorder::EventContext::new()
+            &crate::flight_recorder::EventContext::new(entry.message_id.as_str())
                 .pool(entry.pool_code.as_str())
                 .group(entry.message_group_id.as_deref())
                 .queue(entry.queue_identifier.as_str()),
-            Some(format!(
+            crate::flight_recorder::Facts::text(format!(
                 "force-acked by an operator (broker ack {})",
                 if broker_acked { "succeeded" } else { "failed" }
             )),

@@ -131,13 +131,12 @@ impl QueueManager {
                     "Reaped in-flight entry — broker redelivery will retry"
                 );
                 self.flight_recorder.record(
-                    &entry.message_id,
                     crate::flight_recorder::EventKind::Untracked,
-                    &crate::flight_recorder::EventContext::new()
+                    &crate::flight_recorder::EventContext::new(entry.message_id.as_str())
                         .pool(entry.pool_code.as_str())
                         .group(entry.message_group_id.as_deref())
                         .queue(entry.queue_identifier.as_str()),
-                    Some(format!(
+                    crate::flight_recorder::Facts::text(format!(
                         "reaped from the in-flight tracker (idle {}s, age {}s{})",
                         entry.last_seen.elapsed().as_secs(),
                         entry.started_at.elapsed().as_secs(),

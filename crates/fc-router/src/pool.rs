@@ -32,7 +32,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn, Instrument};
 
-use crate::flight_recorder::{EventContext, EventKind, FlightRecorder};
+use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
 use crate::group_flush::GroupFlushRegistry;
 use crate::mediator::Mediator;
 use crate::metrics::PoolMetricsCollector;
@@ -771,18 +771,26 @@ fn dispatch_span(pool_code: &str, task: &PoolTask) -> tracing::Span {
     )
 }
 
-/// The flight-recorder context of a pool task.
+/// The flight-recorder context of a pool task: the one its callback built
+/// at routing when there is one (the router's), else built here.
 fn event_context(pool_code: &Arc<str>, task: &PoolTask) -> EventContext {
-    EventContext {
-        pool: Some(pool_code.clone()),
-        group: task
-            .message
+    if let Some(ctx) = task
+        .callback
+        .diagnostics()
+        .and_then(|d| d.downcast_ref::<EventContext>())
+    {
+        return ctx.clone();
+    }
+    EventContext::from_parts(
+        Arc::from(task.message.id.as_str()),
+        Some(pool_code.clone()),
+        task.message
             .message_group_id
             .as_deref()
             .filter(|g| !g.is_empty())
             .map(Arc::from),
-        queue: Some(Arc::from(task.queue_identifier.as_str())),
-    }
+        Some(Arc::from(task.queue_identifier.as_str())),
+    )
 }
 
 /// Nack delay for a message whose mediator panicked: long enough that a
@@ -802,14 +810,12 @@ async fn mediate_guarded(
     ctx: &EventContext,
 ) -> MediationOutcome {
     recorder.record(
-        &task.message.id,
         EventKind::DispatchStarted,
         ctx,
-        Some(format!(
-            "attempt {} to {}",
-            task.attempts + 1,
-            task.message.mediation_target
-        )),
+        Facts {
+            attempt: Some(task.attempts + 1),
+            ..Facts::default()
+        },
     );
     match fc_common::diagnostics::catch_panic(mediator.mediate(&task.message)).await {
         Ok(outcome) => outcome,
@@ -821,12 +827,7 @@ async fn mediate_guarded(
                 "Mediator panicked; releasing the message to the broker"
             );
             fc_common::diagnostics::supervise::note_task_panic("router.mediate");
-            recorder.record(
-                &task.message.id,
-                EventKind::Panicked,
-                ctx,
-                Some(message.clone()),
-            );
+            recorder.record(EventKind::Panicked, ctx, Facts::text(message.clone()));
             MediationOutcome::error_process(
                 Some(PANIC_RELEASE_DELAY_SECS),
                 format!("mediator panicked: {message}"),
@@ -836,7 +837,8 @@ async fn mediate_guarded(
 }
 
 /// Record a finished attempt: outcome, status, duration, and what the pool
-/// does next.
+/// does next. Structured: nothing is formatted unless the target returned
+/// an error text.
 fn record_dispatch(
     recorder: &FlightRecorder,
     ctx: &EventContext,
@@ -848,29 +850,39 @@ fn record_dispatch(
     if !recorder.is_enabled() {
         return;
     }
-    let mut detail = format!(
-        "{:?} status={} {}ms -> {:?}",
-        outcome.result,
-        outcome
-            .status_code
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "-".to_string()),
-        duration_ms,
-        disposition.action
-    );
-    if let Some(delay) = disposition.nack_delay_secs() {
-        detail.push_str(&format!(" delay={delay}s"));
-    }
-    if let Some(e) = outcome.error_message.as_deref() {
-        detail.push_str(": ");
-        detail.push_str(&e.chars().take(200).collect::<String>());
-    }
     recorder.record(
-        &task.message.id,
         EventKind::DispatchFinished,
         ctx,
-        Some(detail),
+        Facts {
+            attempt: Some(task.attempts + 1),
+            outcome: Some(outcome_name(outcome.result)),
+            status: outcome.status_code,
+            duration_ms: Some(duration_ms),
+            action: Some(match disposition.action {
+                BrokerAction::Ack => "Ack",
+                BrokerAction::Retry => "Retry",
+                BrokerAction::Release => "Release",
+            }),
+            delay_secs: disposition.nack_delay_secs(),
+            detail: outcome
+                .error_message
+                .as_deref()
+                .map(|e| e.chars().take(200).collect::<String>().into()),
+            ..Facts::default()
+        },
     );
+}
+
+fn outcome_name(result: MediationResult) -> &'static str {
+    match result {
+        MediationResult::Success => "Success",
+        MediationResult::ErrorConfig => "ErrorConfig",
+        MediationResult::ErrorProcess => "ErrorProcess",
+        MediationResult::ErrorConnection => "ErrorConnection",
+        MediationResult::RateLimited => "RateLimited",
+        MediationResult::Deferred => "Deferred",
+        MediationResult::CircuitOpen => "CircuitOpen",
+    }
 }
 
 /// Pool-wide rate limiter state shared across all message groups in a pool.
@@ -1423,7 +1435,7 @@ impl ProcessPool {
                     // spends neither a concurrency slot nor a rate-limit token —
                     // that saving is the whole point of suppression.
                     if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                        recorder.record(&task.message.id, EventKind::Suppressed, &ctx, None);
+                        recorder.record(EventKind::Suppressed, &ctx, Facts::default());
                         guard.release_slot();
                         return;
                     }
@@ -1432,7 +1444,7 @@ impl ProcessPool {
                     // message now owns the pipeline, so this one is acked, not
                     // delivered twice.
                     if !task.callback.ensure_tracked() {
-                        recorder.record(&task.message.id, EventKind::DuplicateAcked, &ctx, None);
+                        recorder.record(EventKind::DuplicateAcked, &ctx, Facts::default());
                         guard.release_slot();
                         task.callback.ack().await;
                         return;
@@ -1614,13 +1626,13 @@ impl ProcessPool {
                     // BEFORE the semaphore/rate limiter so a suppressed group
                     // spends neither a concurrency slot nor a rate-limit token.
                     if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                        recorder.record(&task.message.id, EventKind::Suppressed, &ctx, None);
+                        recorder.record(EventKind::Suppressed, &ctx, Facts::default());
                         return Flow::Next;
                     }
 
                     // Go `InFlightTracker.EnsureTracked` (see the immediate path).
                     if !task.callback.ensure_tracked() {
-                        recorder.record(&task.message.id, EventKind::DuplicateAcked, &ctx, None);
+                        recorder.record(EventKind::DuplicateAcked, &ctx, Facts::default());
                         task.callback.ack().await;
                         return Flow::Next;
                     }
@@ -1687,16 +1699,11 @@ impl ProcessPool {
                                 // — see the Disposition section's module doc.
                                 let siblings = take_buffered(&group_handlers, &group_id);
                                 let reported = settled_reporter.is_some() && !siblings.is_empty();
-                                recorder.record(
-                                    &task.message.id,
-                                    EventKind::GroupDecision,
-                                    &ctx,
-                                    Some(format!(
+                                recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
                                         "BLOCK_GROUP: head failed under BLOCK_ON_ERROR; {} buffered sibling(s) {}",
                                         siblings.len(),
                                         if reported { "acked and reported to the platform" } else { "handed back to the broker" }
-                                    )),
-                                );
+                                    )));
                                 match settled_reporter.as_ref() {
                                     Some(reporter) if !siblings.is_empty() => {
                                         ack_and_report_siblings(
@@ -1728,16 +1735,11 @@ impl ProcessPool {
                             // returns in order.
                             task.callback.nack(disposition.nack_delay_secs()).await;
                             let siblings = take_buffered(&group_handlers, &group_id);
-                            recorder.record(
-                                &task.message.id,
-                                EventKind::GroupDecision,
-                                &ctx,
-                                Some(format!(
+                            recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
                                     "RETURN_GROUP: head released with delay {:?}s; {} buffered sibling(s) released behind it",
                                     disposition.nack_delay_secs(),
                                     siblings.len()
-                                )),
-                            );
+                                )));
                             info!(
                                 group_id = %group_id,
                                 pool_code = %pool_code,
@@ -1758,16 +1760,11 @@ impl ProcessPool {
                             // attempted, then wait out the backoff holding no
                             // concurrency slot. Later arrivals queue behind it.
                             task.attempts += 1;
-                            recorder.record(
-                                &task.message.id,
-                                EventKind::GroupDecision,
-                                &ctx,
-                                Some(format!(
+                            recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
                                     "RETRY_HEAD: attempt {} in {}ms; the group waits behind it",
                                     task.attempts + 1,
                                     disposition.retry_after.as_millis()
-                                )),
-                            );
+                                )));
                             // Go `InFlightTracker.MarkRetrying`: the reaper and
                             // stall detector leave a live retry alone.
                             task.callback.mark_retrying();
@@ -2144,10 +2141,11 @@ impl ProcessPool {
             released += drained.len();
             for task in &drained {
                 self.recorder.record(
-                    &task.message.id,
                     EventKind::ReleasedAtShutdown,
                     &event_context(&pool_code, task),
-                    Some("buffered behind the group's head; released to the broker".to_string()),
+                    Facts::text(
+                        "buffered behind the group's head; released to the broker".to_string(),
+                    ),
                 );
             }
             nack_all(drained, &queue_slot_releaser, None).await;
