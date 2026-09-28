@@ -68,7 +68,12 @@ axum-extra = { version = "0.10", features = ["cookie"] }
 ## links OpenSSL anymore. Confirm with that command before adding any new
 ## reqwest feature flag.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "system-proxy"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
+# No database driver here: each crate enables the drivers it uses
+# (`features = ["postgres"]`, or per feature in fc-outbox, fc-queue and
+# fc-sdk), so a crate that only speaks Postgres does not compile SQLite's C
+# sources or the MySQL driver. Defaults off: nothing uses the `Any` driver,
+# `migrate` or the `query!` macros (only `#[derive(FromRow)]`).
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "derive", "chrono", "uuid"] }
 mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
 aws-sdk-sqs = "1.91"

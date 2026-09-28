@@ -21,6 +21,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 # tests/mysql_backend_test.rs: the binary against a MySQL container.
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["mysql"] }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["mysql"] }
