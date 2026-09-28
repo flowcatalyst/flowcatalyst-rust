@@ -200,7 +200,7 @@ Stream processor architecture: [../architecture/stream-processor.md](../architec
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`mongo`: `fc-outbox-processor` only) |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql`, `mongo` (`mongo`: `fc-outbox-processor` only) |
 | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | — | Application database URL. Required by `fc-outbox-processor`; `fc-server` reads a `postgres` outbox from the platform database when unset (Go) |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Per-type table override |

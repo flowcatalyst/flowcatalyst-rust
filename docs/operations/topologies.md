@@ -13,7 +13,7 @@ FlowCatalyst ships exactly three binaries, as Go does (`cmd/fc-server`, `cmd/fcd
 | Binary | Purpose | Where it runs |
 |---|---|---|
 | `fc-server` | The one deployed binary: every production role, each behind an `FC_*_ENABLED` flag (the platform API alone is its default role). One image (`Dockerfile`) serves every tier. | Every tier of every topology below |
-| `fc-outbox-processor` | Application outbox dispatcher: reads an application's `outbox_messages` and forwards to the platform (sqlite, postgres, mongo) | Beside each application (Topology 5) |
+| `fc-outbox-processor` | Application outbox dispatcher: reads an application's `outbox_messages` and forwards to the platform (sqlite, postgres, mysql, mongo) | Beside each application (Topology 5) |
 | `fc-dev` | Development monolith with embedded Postgres; subcommands `start` (default), `stop`, `init`, `fresh`, `mcp`, `outbox`, `upgrade`, `fn` | Local dev only |
 
 There is no separate router, stream-processor, MCP or function-host binary any more: each is an `fc-server` role. A split topology is **`fc-server` per tier, with different flags**.

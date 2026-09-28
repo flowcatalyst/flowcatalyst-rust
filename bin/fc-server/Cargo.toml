@@ -15,7 +15,9 @@ fc-platform = { path = "../../crates/fc-platform" }
 fc-router = { path = "../../crates/fc-router", features = ["backends"] }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
-fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "admin"] }
+# The outbox role reads the same databases as fc-outbox-processor except
+# MongoDB (that one is the standalone binary's only).
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mysql", "admin"] }
 fc-mcp = { path = "../../crates/fc-mcp" }
 # The function-host role. `ecr`: ECR registry auth for oci:// artifacts
 # (owner decision #14), as the former fc-fnhost binary had it.
