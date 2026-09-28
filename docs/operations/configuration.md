@@ -268,6 +268,63 @@ The function host (`crates/fc-fnhost-core`, a drop-in for Java's `fc-fnhost`). I
 
 **Host only** (this flag on, every other role off — `FC_PLATFORM_ENABLED=false` too): `fc-server` is exactly the former `fc-fnhost` daemon — no database, none of `fc-server`'s own listeners, exit 2 naming every bad variable. **Beside other roles** the host runs in the process on its own ports (a port another listener of the process holds refuses the boot), starts once the API listener is bound, and drains first at shutdown.
 
+
+## Functions control plane (`fc-server` with the platform on)
+
+The platform side of functions: `/api/functions*`, `/control/functions/*` and the wiring done at promote. Every
+function host, Rust or Java, talks to it.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_FN_ARTIFACT_STORE` | unset (uploads refused) | Where uploaded artifacts live: `s3://bucket[/prefix]` or `file:///abs/dir`. Hosts download through the platform (`platform://` refs, `GET /control/functions/artifacts/{versionId}`), so they need no access to it |
+| `FC_FN_POOL_URL` | `http://fn-{pool}:8080` | The URL a pool's hosts are reached at (subscription and scheduled-job targets are `<url>/functions/<address><path>`). `{pool}` is optional; one per pool is the norm, so the service for pool `jvm` is `fn-jvm` |
+| `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` / Sigstore public-good | Publish-time signature check (`off` only with `FLOWCATALYST_DEV_MODE=true`). A private Sigstore needs the same `trusted_root.json` on the platform and every host |
+| `FC_FN_DEFAULT_MAX_DURATION_MS` / `FC_FN_DEFAULT_MAX_CONCURRENCY` / `FC_FN_DEFAULT_WASM_MEMORY_MB` / `FC_FN_DEFAULT_DB_POOL_SIZE` | `30000` / `32` / `64` / `4` | Limits a manifest leaves out |
+| `FC_FN_MAX_WARM_PER_HOST` | `200` | Live warm (`"warm": true`) functions one pool may hold; one more is `WARM_CAPACITY_EXCEEDED` at publish |
+
+## JVM function host (Java's `fc-fnhost`)
+
+`runtime: jvm` functions (jars) run on Java's function host, never on a Rust one (owner, 2026-09-28). The host is
+`function-host` in `flowcatalyst-javalin`, packaged as the image `flowcatalyst-fnhost`. Build it from the javalin root
+with `docker build -f function-host/Dockerfile -t flowcatalyst-fnhost .`, or take the one javalin's `fnhost-image`
+workflow rebuilds weekly and pushes to ECR (`FNHOST_ECR_REPOSITORY`). The image is a jlink JRE on Alpine and runs
+as user `10001`. Its entrypoint passes `--enable-preview` and fences the heap, direct memory and metaspace from the
+container's memory limit (metaspace defaults to half: `FC_JVM_METASPACE_PERCENT=50`, between 10 and 70). A bare
+`java -jar flowcatalyst-function-host-*-exec.jar` needs `--enable-preview --enable-native-access=ALL-UNNAMED`.
+
+**Topology.** Run one service per JVM pool, separate from the Rust hosts:
+
+- Name the pool `jvm` (or `jvm-<purpose>`) and the service `fn-<pool>`, the name `FC_FN_POOL_URL`'s default
+  resolves.
+- Every JVM function's manifest says `"pool": "jvm"`.
+- Rust hosts keep their own pools. A pool is one URL, so a request for a jar that lands on a Rust host answers `503`
+  (the table in [functions](../developers/functions.md#pools-keep-runtimes-apart)).
+- The platform refuses a `jvm` publish to a pool whose live hosts are all Rust hosts. It cannot tell a Java-only pool
+  apart, because Java hosts report no runtimes, so the manifest check there always warns `POOL_RUNTIME_UNKNOWN`.
+
+**Credentials.** Create a service account with the role `platform:function-host` and no application access, and
+give its OAuth client to the host. Publishing is a separate identity: a pipeline's service account with
+`platform:function-publisher` and access to the functions' applications. The owner's signer policy
+(`PUT /api/function-policies/{owner}`) must list `jvm` for the pipeline's signer.
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_FN_PLATFORM_URL` | — (required) | The platform, as the host reaches it (a Service Connect alias is fine). The host also reads the platform's discovery document and JWKS here to verify `auth: platform` callers; the token issuer comes from that document |
+| `FC_FN_CLIENT_ID` / `FC_FN_CLIENT_SECRET` | — (required) | The `platform:function-host` service account's client |
+| `FC_FN_POOL` | `default` | The pool it serves: set it (`jvm`) |
+| `FC_FN_HOST_ID` | `<hostname>-<random>` | The id its heartbeats carry |
+| `FC_FN_SIGNATURES` / `FC_FN_TRUST_ROOT` | `required` | As on the platform; `off` needs `FLOWCATALYST_DEV_MODE=true` |
+| `FC_FN_CACHE_DIR` | `/var/lib/fc-fnhost/cache` (image) | Verified artifact cache (a volume) |
+| `FC_FN_PORT` | `8080` | The function listener, the pool URL's target |
+| `FC_FN_PUBLIC_PORT` | `8081` | Public routes (claimed hostnames); `off` disables. The image exposes only 8080 and 9090 |
+| `FC_METRICS_PORT` | `9090` | `/health` (the image's `HEALTHCHECK`), `/ready`, `/metrics` |
+| `FC_FN_MAX_LOADED` / `FC_FN_MAX_CONCURRENCY` / `FC_FN_MAX_DB_POOLS` | `200` / `512` / `16` | Capacity limits |
+| `FC_FN_TRUSTED_PROXIES` | RFC 1918 + loopback + ULA | Who may set `X-Forwarded-For` on the public listener |
+| `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown. The JVM exits `143` after its shutdown hook. Java's drain only flags the reconciler, so the host's row usually keeps `ACTIVE` until it goes stale |
+| `FC_LOG_FORMAT` / `FC_LOG_LEVEL` (or `RUST_LOG`) | JSON off a terminal / `info` | Logging |
+
+The check that this works end to end is `bin/fc-server/tests/jvm_function_host_e2e.rs`; see
+[functions](../developers/functions.md#what-is-proven).
 ---
 
 ## Frontend / static assets

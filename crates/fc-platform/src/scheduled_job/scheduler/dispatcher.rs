@@ -35,7 +35,10 @@ use crate::service_account::outbound_credentials::{
 use crate::shared::webhook_signer;
 
 /// Webhook envelope sent to the SDK. Stable shape — the `payload` field
-/// passes through whatever the job stores.
+/// passes through whatever the job stores. Java's `JobDispatcher`
+/// `WebhookEnvelope` field for field: function guests parse it with
+/// `Webhook.schedule` (Java `function-api`, `fc-function-abi`), which
+/// requires `concurrent` as well as `tracksCompletion`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WebhookEnvelope<'a> {
@@ -54,6 +57,26 @@ struct WebhookEnvelope<'a> {
     /// Hint for the SDK's own runtime timeout.
     #[serde(skip_serializing_if = "Option::is_none")]
     timeout_seconds: Option<i32>,
+    /// Whether firings of this job may overlap.
+    concurrent: bool,
+}
+
+impl<'a> WebhookEnvelope<'a> {
+    fn new(job: &'a ScheduledJob, inst: &'a ScheduledJobInstance) -> Self {
+        Self {
+            job_id: &job.id,
+            job_code: &job.code,
+            instance_id: &inst.id,
+            scheduled_for: inst.scheduled_for,
+            fired_at: inst.fired_at,
+            trigger_kind: inst.trigger_kind.as_str(),
+            correlation_id: inst.correlation_id.as_deref(),
+            payload: job.payload.as_ref(),
+            tracks_completion: job.tracks_completion,
+            timeout_seconds: job.timeout_seconds,
+            concurrent: job.concurrent,
+        }
+    }
 }
 
 pub struct ScheduledJobDispatcher {
@@ -198,18 +221,7 @@ impl ScheduledJobDispatcher {
             return DispatchOutcome::Failed;
         }
 
-        let envelope = WebhookEnvelope {
-            job_id: &job.id,
-            job_code: &job.code,
-            instance_id: &inst.id,
-            scheduled_for: inst.scheduled_for,
-            fired_at: inst.fired_at,
-            trigger_kind: inst.trigger_kind.as_str(),
-            correlation_id: inst.correlation_id.as_deref(),
-            payload: job.payload.as_ref(),
-            tracks_completion: job.tracks_completion,
-            timeout_seconds: job.timeout_seconds,
-        };
+        let envelope = WebhookEnvelope::new(job, inst);
 
         let body = match serde_json::to_vec(&envelope) {
             Ok(b) => b,
@@ -356,4 +368,57 @@ enum DispatchOutcome {
     Delivered,
     Failed,
     Requeued,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scheduled_job::entity::TriggerKind;
+
+    fn instance(job: &ScheduledJob, kind: TriggerKind) -> ScheduledJobInstance {
+        let now = chrono::Utc::now();
+        ScheduledJobInstance {
+            id: "sji_1".into(),
+            scheduled_job_id: job.id.clone(),
+            client_id: None,
+            job_code: job.code.clone(),
+            trigger_kind: kind,
+            scheduled_for: (kind == TriggerKind::Cron).then_some(now),
+            fired_at: now,
+            delivered_at: None,
+            completed_at: None,
+            status: InstanceStatus::Queued,
+            delivery_attempts: 0,
+            delivery_error: None,
+            completion_status: None,
+            completion_result: None,
+            correlation_id: None,
+            created_at: now,
+        }
+    }
+
+    /// Java's envelope (`JobDispatcher.WebhookEnvelope`) always carries
+    /// `concurrent`, and a function's `Webhook.schedule` requires it: a
+    /// firing without it is a `WebhookFormatException` in a JVM function
+    /// and a `WebhookFormatError` in a Rust guest.
+    #[test]
+    fn a_firing_parses_as_a_function_schedule() {
+        for (concurrent, kind) in [(true, TriggerKind::Cron), (false, TriggerKind::Manual)] {
+            let job = ScheduledJob::new("fn-abc-1", "tick", vec!["0 * * * * *".into()])
+                .with_concurrent(concurrent)
+                .with_tracks_completion(true)
+                .with_payload(serde_json::json!({"n": 1}));
+            let inst = instance(&job, kind);
+            let body = serde_json::to_vec(&WebhookEnvelope::new(&job, &inst)).unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["concurrent"], concurrent, "{json}");
+
+            let schedule = fc_function_abi::Webhook::schedule(&body)
+                .unwrap_or_else(|e| panic!("{e:?}: {json}"));
+            assert_eq!(schedule.job_code, "fn-abc-1");
+            assert_eq!(schedule.concurrent, concurrent);
+            assert!(schedule.tracks_completion);
+            assert_eq!(schedule.trigger_kind, kind.as_str());
+        }
+    }
 }
