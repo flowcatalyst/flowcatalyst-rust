@@ -10,7 +10,6 @@ use super::api::DispatchJobActionsState;
 use super::operations::{RequeueDispatchJobsUseCase, SettleDispatchJobUseCase};
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
-use crate::service_account::outbound_credentials::OutboundCredentialsResolver;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
 pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
@@ -24,12 +23,9 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
 pub fn dispatch_job_actions_state(ctx: &PlatformContext) -> DispatchJobActionsState {
     let repos = &ctx.repos;
     let repo = Arc::new(DispatchJobActionsRepository::new(&repos.pool));
-    // Its own outbound-credentials resolver, without the platform secret
-    // resolver (as the Go-parity wiring built it).
-    let outbound = Arc::new(OutboundCredentialsResolver::new(
-        repos.service_account_repo.clone(),
-        ctx.encryption.clone(),
-    ));
+    // The platform's shared resolver: it carries the secret resolver, so
+    // `aws-sm://` webhook credentials resolve here exactly as on delivery.
+    let outbound = ctx.outbound_credentials.clone();
     DispatchJobActionsState {
         repo: repo.clone(),
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
