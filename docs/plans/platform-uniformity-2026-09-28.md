@@ -146,6 +146,13 @@ authorize today.
 - **Guardrail:** a convention test fails any use case whose `authorize` is
   `Ok(())` unless it is on an allowlist with a reason (e.g. "self-service: the
   caller acts on themselves", "platform-internal: system caller only").
+- **Use-case shape (owner, 2026-09-28: no macro).** Use cases stay hand-written
+  to `docs/architecture/use-case-template.md`. Phase 2 adds a shape convention
+  test (command, struct + `new`, `impl UseCase` with validate/authorize/execute
+  in order), updates the template once `Caller` exists, and surveys for
+  *families* of use cases identical apart from their types (e.g.
+  archive-by-id), replacing a family with one generic use case only where the
+  bodies really are the same.
 - Reads get the same treatment later through shared read loaders
   (`<aggregate>::read::load_for(caller, id)`), which fc-web will use
   (`docs/topcoat-trial.md`, "Authorization rules for server calls"). Out of
