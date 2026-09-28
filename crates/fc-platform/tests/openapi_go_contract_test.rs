@@ -22,9 +22,7 @@ use fc_platform::auth::oidc_sync_service::OidcSyncService;
 use fc_platform::auth::password_service::PasswordService;
 use fc_platform::repository::Repositories;
 use fc_platform::shared::authorization_service::AuthorizationService;
-use fc_platform::shared::server_setup::{
-    build_platform_routes, AuthServices, PlatformRoutesConfig,
-};
+use fc_platform::shared::server_setup::{AuthServices, PlatformContext, PlatformRoutesConfig};
 use fc_platform::usecase::PgUnitOfWork;
 use serde_json::Value;
 
@@ -58,7 +56,7 @@ fn rust_document() -> Value {
             repos.idp_role_mapping_repo.clone(),
         )),
     };
-    let routes = build_platform_routes(
+    let ctx = PlatformContext::new(
         &repos,
         &auth,
         &unit_of_work,
@@ -77,7 +75,7 @@ fn rust_document() -> Value {
         },
         "app_platform".to_string(),
     );
-    let (_router, openapi) = routes.build();
+    let (_router, openapi) = fc_platform::router::build(&ctx);
     serde_json::to_value(&openapi).expect("serialise document")
 }
 

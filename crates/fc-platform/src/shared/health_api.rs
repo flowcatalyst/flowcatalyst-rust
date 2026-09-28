@@ -10,8 +10,7 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -197,16 +196,6 @@ pub async fn get_startup(State(state): State<HealthState>) -> Response {
     };
 
     (status_code, Json(SimpleHealthResponse { status })).into_response()
-}
-
-/// Create the health router
-pub fn health_router(state: HealthState) -> Router {
-    Router::new()
-        .route("/", get(get_health))
-        .route("/live", get(get_liveness))
-        .route("/ready", get(get_readiness))
-        .route("/startup", get(get_startup))
-        .with_state(state)
 }
 
 #[cfg(test)]

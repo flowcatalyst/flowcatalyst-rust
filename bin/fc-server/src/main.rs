@@ -74,10 +74,10 @@ use std::time::Duration;
 
 use axum::{response::Json, routing::get, Router};
 use tower_http::cors::{AllowOrigin, CorsLayer};
-// SetResponseHeaderLayer moved to PlatformRoutes
+// SetResponseHeaderLayer moved to fc_platform::router
 use tower_http::trace::TraceLayer;
-// CACHE_CONTROL moved to PlatformRoutes
-// SPA serving is handled by PlatformRoutes::build()
+// CACHE_CONTROL moved to fc_platform::router
+// SPA serving is handled by fc_platform::router::build()
 use anyhow::Result;
 use axum::http::{header as http_header, HeaderValue, Method};
 use tokio::{net::TcpListener, sync::watch};
@@ -931,8 +931,8 @@ fn build_platform_app(
         authz_service: auth_services.authz.clone(),
     };
 
-    // Build platform API router via shared builder (handles ~38 state structs)
-    let routes = fc_platform::shared::server_setup::build_platform_routes(
+    // The platform API router: every route module, built from one context.
+    let ctx = fc_platform::shared::server_setup::PlatformContext::new(
         repos,
         auth_services,
         unit_of_work,
@@ -960,7 +960,7 @@ fn build_platform_app(
         },
         platform_application_id,
     );
-    let (app, _openapi) = routes.build();
+    let (app, _openapi) = fc_platform::router::build(&ctx);
 
     // Add middleware layers
     let app = app
@@ -1016,7 +1016,7 @@ fn build_platform_app(
                 .max_age(Duration::from_secs(86400))
         });
 
-    // SPA serving is now handled by PlatformRoutes::build() via the static_dir field.
+    // SPA serving is handled by fc_platform::router::build() via the static_dir field.
     app
 }
 

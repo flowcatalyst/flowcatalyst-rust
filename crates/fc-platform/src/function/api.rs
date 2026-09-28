@@ -21,7 +21,6 @@ use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::domain_repository::FunctionDomainRepository;
 use super::entity::{Function, FunctionStatus, FunctionVersion, SecretValue};
@@ -1042,58 +1041,6 @@ pub async fn delete_secret(
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
-
-/// Every function route: `/api/functions*`, `/api/function-pools`,
-/// `/api/function-policies*`, `/api/function-domains*` and
-/// `/api/function-routes`, with full paths (merge, don't nest).
-pub fn function_routes() -> OpenApiRouter<FunctionsState> {
-    OpenApiRouter::new()
-        .routes(routes!(list_functions, create_function))
-        .routes(routes!(get_function, update_function, delete_function))
-        .routes(routes!(function_status))
-        .routes(routes!(function_pools))
-        .routes(routes!(
-            super::version_api::publish_version,
-            super::version_api::list_versions
-        ))
-        .routes(routes!(super::version_api::get_version))
-        .routes(routes!(super::version_api::retire_version))
-        .routes(routes!(super::version_api::check_manifest))
-        .routes(routes!(
-            super::version_api::promote,
-            super::version_api::remove_alias
-        ))
-        .routes(routes!(super::version_api::list_aliases))
-        .routes(routes!(super::version_api::upload_artifact))
-        .routes(routes!(get_config, put_config))
-        .routes(routes!(get_secrets))
-        .routes(routes!(put_secret, delete_secret))
-        .routes(routes!(super::policy_api::list_policies))
-        .routes(routes!(
-            super::policy_api::get_policy,
-            super::policy_api::put_policy
-        ))
-        .routes(routes!(
-            super::domain_api::claim_domain,
-            super::domain_api::list_domains
-        ))
-        .routes(routes!(
-            super::domain_api::get_domain,
-            super::domain_api::release_domain
-        ))
-        .routes(routes!(super::domain_api::list_routes))
-}
-
-/// [`function_routes`] with its state. Their errors keep the function
-/// contract (owner decision #5: `code` beside `error`, UPPER_SNAKE codes),
-/// not the platform routes' Go envelope.
-pub fn functions_router(state: FunctionsState) -> OpenApiRouter {
-    function_routes()
-        .with_state(state)
-        .layer(axum::middleware::map_response(
-            crate::shared::error::keep_function_contract,
-        ))
-}
 
 #[cfg(test)]
 mod tests {

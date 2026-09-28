@@ -13,7 +13,7 @@
 //! has, what this page uses, and what is still hand-built.
 //!
 //! Reads and writes call the principal API's own handler bodies
-//! (`fc_platform::principal::admin`, `go_api::client_association`,
+//! (`fc_platform::principal::admin`, `principal::api::client_association`,
 //! `mfa::admin_api::reset_user_two_factor`, `developer_credential::api`),
 //! with the states fc-dev built them with, so the checks, reach rules, use
 //! cases, events and audit rows are the API's.

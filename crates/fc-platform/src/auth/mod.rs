@@ -13,6 +13,7 @@ pub mod auth_api;
 pub mod auth_service;
 pub mod login_backoff;
 pub mod password_service;
+pub mod routes;
 pub mod session_cookie;
 pub mod signing_keys;
 
@@ -46,14 +47,13 @@ pub mod refresh_token;
 pub mod refresh_token_repository;
 
 // Re-export main types
-pub use auth_api::auth_router;
 pub use auth_service::AuthService;
-pub use config_api::{
-    anchor_domains_router, client_auth_configs_router, idp_role_mappings_router, AuthConfigState,
-};
+pub use config_api::AuthConfigState;
 pub use config_entity::ClientAuthConfig;
 pub use config_repository::ClientAuthConfigRepository;
-pub use oauth_api::{oauth_router, OAuthState};
-pub use oauth_clients_api::oauth_clients_router;
-pub use oidc_login_api::oidc_login_router;
+pub use oauth_api::OAuthState;
 pub use password_service::PasswordService;
+pub use routes::{
+    anchor_domains_router, auth_router, client_auth_configs_router, idp_role_mappings_router,
+    oauth_clients_router, oauth_router, oidc_login_router, routes,
+};

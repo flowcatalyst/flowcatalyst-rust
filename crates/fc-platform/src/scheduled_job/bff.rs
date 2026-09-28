@@ -14,8 +14,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -332,7 +331,7 @@ async fn visible_instance(
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 /// `GET /bff/scheduled-jobs?clientIds=&applicationIds=&statuses=&search=&page=&size=`
-async fn list_jobs(
+pub(crate) async fn list_jobs(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
     Query(q): Query<RawQuery>,
@@ -396,7 +395,7 @@ async fn list_jobs(
     Ok(Json(BffPage::new(data, page, total)))
 }
 
-async fn get_job(
+pub(crate) async fn get_job(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -411,7 +410,7 @@ async fn get_job(
 }
 
 /// `GET /bff/scheduled-jobs/{id}/instances?status=&triggerKind=&from=&to=&page=&size=`
-async fn list_instances(
+pub(crate) async fn list_instances(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
     Path(id): Path<String>,
@@ -466,7 +465,7 @@ async fn list_instances(
     )))
 }
 
-async fn get_instance(
+pub(crate) async fn get_instance(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
     Path(instance_id): Path<String>,
@@ -477,7 +476,7 @@ async fn get_instance(
 }
 
 /// A bare array: the SPA consumes the list directly.
-async fn list_instance_logs(
+pub(crate) async fn list_instance_logs(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
     Path(instance_id): Path<String>,
@@ -496,7 +495,7 @@ async fn list_instance_logs(
     Ok(Json(logs.into_iter().map(Into::into).collect()))
 }
 
-async fn filter_options(
+pub(crate) async fn filter_options(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
 ) -> Result<Json<BffScheduledJobsFilterOptions>, PlatformError> {
@@ -555,17 +554,6 @@ async fn filter_options(
         applications: app_options,
         statuses,
     }))
-}
-
-pub fn bff_scheduled_jobs_router(state: BffScheduledJobsState) -> Router {
-    Router::new()
-        .route("/", get(list_jobs))
-        .route("/filter-options", get(filter_options))
-        .route("/{id}", get(get_job))
-        .route("/{id}/instances", get(list_instances))
-        .route("/instances/{instanceId}", get(get_instance))
-        .route("/instances/{instanceId}/logs", get(list_instance_logs))
-        .with_state(state)
 }
 
 #[cfg(test)]

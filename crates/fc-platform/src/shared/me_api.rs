@@ -2,8 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -134,7 +133,7 @@ fn parse_applications_claim(entries: &[String]) -> (Vec<String>, bool) {
     ),
     security(("bearer_auth" = []))
 )]
-async fn list_my_clients(
+pub(super) async fn list_my_clients(
     State(state): State<MeState>,
     auth: Authenticated,
 ) -> Result<Json<MyClientsListResponse>, PlatformError> {
@@ -176,7 +175,7 @@ async fn list_my_clients(
     ),
     security(("bearer_auth" = []))
 )]
-async fn get_my_client(
+pub(super) async fn get_my_client(
     State(state): State<MeState>,
     auth: Authenticated,
     Path(client_id): Path<String>,
@@ -217,7 +216,7 @@ async fn get_my_client(
     ),
     security(("bearer_auth" = []))
 )]
-async fn list_my_client_applications(
+pub(super) async fn list_my_client_applications(
     State(state): State<MeState>,
     auth: Authenticated,
     Path(client_id): Path<String>,
@@ -282,7 +281,7 @@ async fn list_my_client_applications(
     ),
     security(("bearer_auth" = []))
 )]
-async fn whoami(
+pub(super) async fn whoami(
     State(state): State<MeState>,
     headers: axum::http::HeaderMap,
     auth: Authenticated,
@@ -376,7 +375,7 @@ async fn whoami(
     ),
     security(("bearer_auth" = []))
 )]
-async fn list_my_applications(
+pub(super) async fn list_my_applications(
     State(state): State<MeState>,
     auth: Authenticated,
 ) -> Result<Json<MyApplicationsListResponse>, PlatformError> {
@@ -415,17 +414,4 @@ async fn list_my_applications(
         // compatibility with the per-client variant.
         client_id: String::new(),
     }))
-}
-
-pub fn me_router(state: MeState) -> Router {
-    Router::new()
-        .route("/", get(whoami))
-        .route("/applications", get(list_my_applications))
-        .route("/clients", get(list_my_clients))
-        .route("/clients/{clientId}", get(get_my_client))
-        .route(
-            "/clients/{clientId}/applications",
-            get(list_my_client_applications),
-        )
-        .with_state(state)
 }

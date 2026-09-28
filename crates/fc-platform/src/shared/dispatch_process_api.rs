@@ -53,7 +53,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::{routing::post, Json, Router};
+use axum::Json;
 use chrono::Utc;
 use dashmap::DashMap;
 use reqwest::header::CONTENT_TYPE;
@@ -254,7 +254,7 @@ fn decode_first<'a, T: Deserialize<'a>>(body: &'a [u8], limit: usize) -> Option<
         .and_then(|r| r.ok())
 }
 
-async fn process_dispatch(
+pub(super) async fn process_dispatch(
     State(state): State<DispatchProcessState>,
     headers: HeaderMap,
     body: Bytes,
@@ -902,7 +902,7 @@ fn settled_reply(status: StatusCode, body: SettledResponse) -> Response {
 
 /// Each id/token pair is verified on its own: one bad entry does not sink
 /// the rest (Go `settled.Handler`).
-async fn settled(State(state): State<DispatchProcessState>, body: Bytes) -> Response {
+pub(super) async fn settled(State(state): State<DispatchProcessState>, body: Bytes) -> Response {
     let Some(req) = decode_first::<SettledRequest>(&body, SETTLED_BODY_LIMIT) else {
         return settled_reply(StatusCode::BAD_REQUEST, SettledResponse::default());
     };
@@ -954,16 +954,6 @@ async fn settled(State(state): State<DispatchProcessState>, body: Bytes) -> Resp
 }
 
 // ── Router ───────────────────────────────────────────────────────────────
-
-/// `/process` and `/settled`, nested under `/api/dispatch`. Outside the
-/// platform's bearer middleware: both authenticate per job with the
-/// scheduler's token.
-pub fn dispatch_process_router(state: DispatchProcessState) -> Router {
-    Router::new()
-        .route("/process", post(process_dispatch))
-        .route("/settled", post(settled))
-        .with_state(state)
-}
 
 #[cfg(test)]
 mod tests {

@@ -13,8 +13,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, post},
-    Json, Router,
+    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -1236,36 +1235,6 @@ pub async fn assign_unassigned_portal_users(
         }
         Err(e) => Err(e.into()),
     }
-}
-
-/// `/api/portal-users` routes.
-pub fn portal_users_router(state: PortalState) -> Router {
-    Router::new()
-        .route("/", post(ensure_portal_user).get(list_portal_users))
-        .route("/{id}", delete(delete_portal_user))
-        .route("/{id}/activate", post(activate_portal_user))
-        .route("/{id}/deactivate", post(deactivate_portal_user))
-        .route("/{id}/apps", post(grant_portal_user_app))
-        .route(
-            "/{id}/apps/{portal_app_code}",
-            delete(revoke_portal_user_app),
-        )
-        .with_state(state)
-}
-
-/// `/api/portal-apps` routes.
-pub fn portal_apps_router(state: PortalState) -> Router {
-    Router::new()
-        .route("/", get(list_portal_apps).post(create_portal_app))
-        .route(
-            "/{id}",
-            axum::routing::put(update_portal_app).delete(delete_portal_app),
-        )
-        .route(
-            "/{id}/assign-unassigned",
-            post(assign_unassigned_portal_users),
-        )
-        .with_state(state)
 }
 
 #[cfg(test)]

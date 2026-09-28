@@ -22,8 +22,9 @@ use tower::ServiceExt;
 
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
-use fc_platform::function::api::{functions_router, FunctionsState};
+use fc_platform::function::api::FunctionsState;
 use fc_platform::function::operations::{FunctionOperations, PublishChecks, TriggerSync};
+use fc_platform::function::routes::functions_router;
 use fc_platform::function::settings_repository::FunctionSettingsRepository;
 use fc_platform::function::{ClientCeilings, FunctionLimits, JsonNode, Manifest, Runtime};
 use fc_platform::role::entity::{permissions, AuthRole};

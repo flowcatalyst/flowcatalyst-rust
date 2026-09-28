@@ -11,7 +11,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
 use crate::dispatch_pool::operations::{
@@ -375,7 +374,7 @@ pub struct SyncScheduledJobsResultResponse {
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_roles(
+pub(super) async fn sync_roles(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -442,7 +441,7 @@ async fn sync_roles(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_event_types(
+pub(super) async fn sync_event_types(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -508,7 +507,7 @@ async fn sync_event_types(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_subscriptions(
+pub(super) async fn sync_subscriptions(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -619,7 +618,7 @@ async fn sync_subscriptions(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_dispatch_pools(
+pub(super) async fn sync_dispatch_pools(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -704,7 +703,7 @@ async fn sync_dispatch_pools(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_principals(
+pub(super) async fn sync_principals(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -789,7 +788,7 @@ async fn sync_principals(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_scheduled_jobs(
+pub(super) async fn sync_scheduled_jobs(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -886,7 +885,7 @@ async fn sync_scheduled_jobs(
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_processes(
+pub(super) async fn sync_processes(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -985,7 +984,7 @@ pub struct SyncOpenApiSpecResponse {
     ),
     security(("bearer_auth" = []))
 )]
-async fn sync_openapi(
+pub(super) async fn sync_openapi(
     State(state): State<SdkSyncState>,
     auth: Authenticated,
     Path(app_code): Path<String>,
@@ -1032,27 +1031,3 @@ async fn sync_openapi(
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
-
-/// Create SDK sync router
-///
-/// Mounts application-scoped sync routes:
-/// - POST /{appCode}/roles/sync
-/// - POST /{appCode}/event-types/sync
-/// - POST /{appCode}/subscriptions/sync
-/// - POST /{appCode}/dispatch-pools/sync
-/// - POST /{appCode}/principals/sync
-/// - POST /{appCode}/processes/sync
-/// - POST /{appCode}/scheduled-jobs/sync
-/// - POST /{appCode}/openapi/sync
-pub fn sdk_sync_router(state: SdkSyncState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(sync_roles))
-        .routes(routes!(sync_event_types))
-        .routes(routes!(sync_subscriptions))
-        .routes(routes!(sync_dispatch_pools))
-        .routes(routes!(sync_principals))
-        .routes(routes!(sync_processes))
-        .routes(routes!(sync_scheduled_jobs))
-        .routes(routes!(sync_openapi))
-        .with_state(state)
-}

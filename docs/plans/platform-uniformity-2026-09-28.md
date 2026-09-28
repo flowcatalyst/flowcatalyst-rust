@@ -57,6 +57,60 @@ tests. Aggregates split their handlers across `api.rs`, `go_api.rs`,
   test (method + path + auth requirement for every route, before vs after)
   proves the refactor moved nothing.
 
+### As built (phase 1, branch `refactor/route-wiring`)
+
+- `shared/platform_context.rs`: `PlatformContext` (built once with the
+  same arguments `build_platform_routes` took), `PlatformRoutesConfig`,
+  and `AggregateRoutes { documented, plain }`. The context also holds the
+  instances several states must share: the application-access cache, the
+  secret resolver, the JWKS cache, the outbound-credentials resolver, the
+  reset emailer, two-factor login, the portal plane, the signing guard,
+  and the `/auth` and `/oauth` per-IP limiter buckets.
+- Every route module has `routes.rs` with
+  `pub fn routes(ctx: &PlatformContext) -> AggregateRoutes`, its state
+  builders (`pub fn <x>_state(ctx)`, which fc-dev also uses for fc-web),
+  and its handler lists (`<x>_router(state)`, kept `pub` so tests can mount
+  a module with a hand-built state). A module nests its routers at their
+  prefixes *inside* `routes()` rather than registering literal full paths:
+  nesting is what gives handlers and layers today's stripped `Uri` and
+  `NestedPath`, so behaviour does not move. Per-group layers (rate limits,
+  the OAuth no-store map, the function contract's error map, the portal
+  hooks) are applied there too.
+- `shared/routes.rs` does the same for the cross-aggregate features that
+  stay in `shared/` (filter options, monitoring, SDK sync, Go's raw-list
+  aliases, `/api/dispatch/*`, dashboard, debug, `/api/me`,
+  `/auth/client`, `.well-known`, public info) plus
+  `developer_portal_routes(ctx, openapi)`, which needs the finished
+  document.
+- `router.rs::build(&ctx)` is the module list (in the order the documented
+  routes were merged before; utoipa keeps the first component schema of a
+  name) plus the cross-cutting layers. `PlatformRoutes`,
+  `build_platform_routes` and `shared/go_routes.rs` are gone.
+- Files: `api.rs` (the `/api` handlers, and handlers both tiers share),
+  `bff.rs` (BFF-only handlers), `routes.rs`. The Go-parity splits merged
+  into `api.rs` (or `bff.rs` for their `/bff` handlers):
+  `{application,event_type,platform_config,principal}/go_api.rs`,
+  `client/search_api.rs`, `service_account/admin_api.rs`,
+  `email_domain_mapping/lookup_api.rs`, `role/permission_api.rs`.
+  `shared/bff_{event_types,roles,scheduled_jobs,audit_logs}_api.rs` became
+  their aggregates' `bff.rs`.
+- Kept as they are, by design: aggregates with several surfaces keep one
+  file per surface (`auth/{auth,oauth,oauth_clients,oidc_login,
+  password_reset,config}_api.rs`, `mfa/*_api.rs`,
+  `function/{api,version_api,policy_api,domain_api,control_api}.rs`,
+  `portal/{api,login_api}.rs`, `platform_config/access_api.rs`); the
+  platform-infrastructure ingest handlers stay in `shared/`
+  (`batch_api.rs`, `sdk_dispatch_jobs_api.rs`, `sdk_audit_batch_api.rs`,
+  `dispatch_process_api.rs`), mounted from their aggregate's `routes()`;
+  the app-scoped role CRUD for SDKs (`shared/application_roles_sdk_api.rs`)
+  is mounted by `role::routes`.
+- Guardrails: `route_table_snapshot_test` (every path's methods, 405
+  `Allow` order, unauthenticated status/body hash, limiter and buckets,
+  document membership, and every OpenAPI document's hash, in the default
+  and the app-key + SPA configurations) and `route_wiring_convention_test`.
+  `route_auth_convention_test` reads the new entry points (one regex
+  widened to accept a call named exactly `routes`).
+
 ## Phase 2: authorization placement (resource checks in use cases)
 
 **Today.** 132 of 139 use cases have an empty `authorize`. Permission *and*

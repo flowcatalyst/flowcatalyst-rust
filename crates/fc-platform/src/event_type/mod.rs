@@ -4,12 +4,13 @@
 
 pub mod access;
 pub mod api;
+pub mod bff;
 pub mod entity;
-pub mod go_api;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 
 // Re-export main types
-pub use api::event_types_router;
+pub use routes::{event_types_router, routes};
 pub use entity::{EventType, EventTypeCode, EventTypeCodeError, EventTypeStatus};
 pub use repository::EventTypeRepository;

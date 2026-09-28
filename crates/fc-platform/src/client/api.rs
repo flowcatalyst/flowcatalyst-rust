@@ -2,19 +2,20 @@
 //!
 //! REST endpoints for client management.
 
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::entity::{Client, ClientStatus};
 use super::repository::ClientRepository;
 use crate::shared::api_common::PaginationParams;
+use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -882,21 +883,55 @@ pub async fn update_client_applications(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Create clients router
-pub fn clients_router(state: ClientsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_client, list_clients))
-        .routes(routes!(search_clients))
-        .routes(routes!(get_client_by_identifier))
-        .routes(routes!(get_client, update_client, delete_client))
-        .routes(routes!(activate_client))
-        .routes(routes!(suspend_client))
-        .routes(routes!(deactivate_client))
-        .routes(routes!(add_note))
-        .routes(routes!(get_client_applications, update_client_applications))
-        .routes(routes!(enable_application))
-        .routes(routes!(disable_application))
-        .with_state(state)
+// ─── Go-parity search (formerly search_api.rs) ────────────────────────────────
+//
+// `POST /api/clients/search` (Go `client/api/api.go:39`, `searchClients`):
+// `{term}` → `{clients, total}`, at most 50 by identifier. Go's gate is
+// `CanReadClients` = anchor and `platform:admin:client:view`.
+
+#[derive(Clone)]
+pub struct ClientSearchState {
+    pub client_repo: std::sync::Arc<ClientRepository>,
+}
+
+/// Go `SearchClientRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchClientRequest {
+    pub term: String,
+}
+
+/// Search clients by name or identifier.
+#[utoipa::path(
+    post,
+    path = "/api/clients/search",
+    tag = "clients",
+    operation_id = "searchClients",
+    request_body = SearchClientRequest,
+    responses(
+        (status = 200, description = "Matching clients", body = ClientListResponse),
+        (status = 403, description = "Not an anchor holding platform:admin:client:view")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn search_clients_by_body(
+    State(state): State<ClientSearchState>,
+    auth: Authenticated,
+    Json(req): Json<SearchClientRequest>,
+) -> Result<Json<ClientListResponse>, PlatformError> {
+    checks::require_anchor_scope(&auth.0)?;
+    checks::require_permission(&auth.0, crate::permissions::admin::CLIENT_READ)?;
+    let clients: Vec<ClientResponse> = state
+        .client_repo
+        .search_top(&req.term)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(ClientListResponse {
+        total: clients.len(),
+        clients,
+    }))
 }
 
 #[cfg(test)]

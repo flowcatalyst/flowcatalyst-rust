@@ -9,7 +9,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::shared::enum_str::{non_empty, parse_opt};
@@ -1234,39 +1233,6 @@ pub async fn list_dispatch_jobs_raw(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
     list_dispatch_jobs_unchecked(&state, &auth, query).await
-}
-
-/// Create dispatch jobs router for the BFF tier (`/bff/dispatch-jobs`).
-/// Cookie-auth, used by the SPA. Includes `batch_create_dispatch_jobs` —
-/// the SPA-facing batch.
-pub fn dispatch_jobs_router(state: DispatchJobsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_dispatch_jobs, create_dispatch_job))
-        .routes(routes!(batch_create_dispatch_jobs))
-        .routes(routes!(get_filter_options))
-        .routes(routes!(list_dispatch_jobs_raw))
-        .routes(routes!(get_dispatch_job))
-        .routes(routes!(get_dispatch_job_raw))
-        .routes(routes!(get_dispatch_job_attempts))
-        .routes(routes!(get_jobs_for_event))
-        .with_state(state)
-}
-
-/// Create dispatch jobs router for the API tier (`/api/dispatch-jobs`).
-/// Bearer-auth, used by SDK consumers. **No `batch_create_dispatch_jobs`**
-/// — SDK callers use `sdk_dispatch_jobs_batch_router::POST /batch` (the
-/// high-volume bulk-insert path). The two routers must not both register
-/// `POST /batch` at the same prefix (axum panics on overlap).
-pub fn dispatch_jobs_api_router(state: DispatchJobsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_dispatch_jobs, create_dispatch_job))
-        .routes(routes!(get_filter_options))
-        .routes(routes!(list_dispatch_jobs_raw))
-        .routes(routes!(get_dispatch_job))
-        .routes(routes!(get_dispatch_job_raw))
-        .routes(routes!(get_dispatch_job_attempts))
-        .routes(routes!(get_jobs_for_event))
-        .with_state(state)
 }
 
 #[cfg(test)]
