@@ -3616,9 +3616,13 @@ dependencies = [
  "aws-config",
  "aws-sdk-secretsmanager",
  "axum",
+ "base64 0.22.1",
+ "chrono",
+ "der",
  "fc-common",
  "fc-fnhost-core",
  "fc-fnhost-js",
+ "fc-function-signing",
  "fc-mcp",
  "fc-outbox",
  "fc-platform",
@@ -3626,7 +3630,9 @@ dependencies = [
  "fc-standby",
  "fc-stream",
  "hex",
+ "p256",
  "parking_lot 0.12.5",
+ "rand_core 0.6.4",
  "regex",
  "reqwest",
  "rsa",
@@ -3649,6 +3655,7 @@ dependencies = [
  "utoipa-axum",
  "utoipa-swagger-ui",
  "uuid",
+ "x509-cert",
 ]
 
 [[package]]
