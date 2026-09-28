@@ -64,3 +64,84 @@ jobs:
           for tag in "${TAG_ARGS[@]}"; do
             docker push "$tag"
           done
+
+  # The binaries a release ships, with their dependency lists embedded
+  # (cargo-auditable) and a CycloneDX SBOM each (docs/operations/
+  # supply-chain.md). fc-server is also what the image above runs (built
+  # there the same way); fc-outbox-processor is the application-side sidecar.
+  # Attached to the GitHub release; on a manual run, kept as a workflow
+  # artifact only.
+  release-binaries:
+    name: Auditable binaries + SBOMs (${{ matrix.target }})
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_AUDITABLE_VERSION: "0.7.6"
+      CARGO_CYCLONEDX_VERSION: "0.5.9"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-binaries-${{ matrix.target }}
+
+      # `.cargo/config.toml` links with lld on Linux.
+      - name: Install lld
+        run: sudo apt-get update && sudo apt-get install -y lld
+
+      - name: Install cargo-auditable and cargo-cyclonedx (pinned, locked)
+        run: |
+          cargo install --locked "cargo-auditable@${CARGO_AUDITABLE_VERSION}"
+          cargo install --locked "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}"
+
+      - name: Build
+        env:
+          FC_BUILD_VERSION: ${{ github.event.release.tag_name || github.sha }}
+        run: |
+          cargo auditable build --release --locked --target ${{ matrix.target }} \
+            -p fc-server -p fc-outbox-processor
+
+      - name: Package with SBOMs
+        env:
+          VERSION: ${{ github.event.release.tag_name || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for bin in fc-server fc-outbox-processor; do
+            stage="${bin}-${VERSION}-${{ matrix.target }}"
+            mkdir -p "$stage"
+            cp "target/${{ matrix.target }}/release/${bin}" LICENSE "$stage/"
+            tar -czf "dist/${stage}.tar.gz" "$stage"
+            cargo cyclonedx --manifest-path "bin/${bin}/Cargo.toml" --format json \
+              --spec-version 1.5 --describe binaries --no-build-deps \
+              --target ${{ matrix.target }}
+            # cargo-cyclonedx writes <package>/<bin>_bin.cdx.json.
+            cp "bin/${bin}/${bin}_bin.cdx.json" "dist/${stage}.cdx.json"
+          done
+          (cd dist && sha256sum * > SHA256SUMS-${{ matrix.target }})
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber

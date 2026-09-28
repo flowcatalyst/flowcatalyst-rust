@@ -68,16 +68,31 @@ axum-extra = { version = "0.10", features = ["cookie"] }
 ## links OpenSSL anymore. Confirm with that command before adding any new
 ## reqwest feature flag.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "system-proxy"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
+# No database driver here: each crate enables the drivers it uses
+# (`features = ["postgres"]`, or per feature in fc-outbox, fc-queue and
+# fc-sdk), so a crate that only speaks Postgres does not compile SQLite's C
+# sources or the MySQL driver. Defaults off: nothing uses the `Any` driver,
+# `migrate` or the `query!` macros (only `#[derive(FromRow)]`).
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "derive", "chrono", "uuid"] }
 mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
-aws-sdk-sqs = "1.91"
-aws-sdk-secretsmanager = "1.78"
-aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "rustls", "default-https-client", "http-1x"] }
+## AWS SDK: one HTTP client and one TLS stack for every service.
+##
+## Each service's default `rustls` feature is the *legacy* connector
+## (hyper 0.14 + rustls 0.21 + h2 0.3). With `BehaviorVersion::latest()`,
+## which every client here is built with, the SDK uses the
+## `default-https-client` (hyper 1 + rustls 0.23) and never the legacy one,
+## so `rustls` only compiled a second, unused HTTP/TLS stack. Defaults off,
+## `rt-tokio` + `default-https-client` on every service.
+aws-sdk-sqs = { version = "1.91", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-secretsmanager = { version = "1.78", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client", "http-1x"] }
 # The fnhost `ecr` feature (owner decision #14): `GetAuthorizationToken`
 # against a private ECR registry, on the host's own IAM role.
-aws-sdk-ecr = "1"
-aws-config = "1.8"
+aws-sdk-ecr = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+# aws-config's own defaults, spelled out: the SSO and credential-process
+# providers stay (local AWS profiles use them).
+aws-config = { version = "1.8", default-features = false, features = ["rt-tokio", "default-https-client", "credentials-process", "sso"] }
 aes-gcm = "0.10"
 async-trait = "0.1"
 anyhow = "1.0"
@@ -113,10 +128,10 @@ pin-project-lite = "0.2"
 url = "2"
 arc-swap = "1"
 lapin = "2.5"
-async-nats = "0.38"
+async-nats = "0.50"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport"] }
 openidconnect = "4.0"
-aws-sdk-elasticloadbalancingv2 = "1.91"
+aws-sdk-elasticloadbalancingv2 = { version = "1.91", default-features = false, features = ["rt-tokio", "default-https-client"] }
 regex = "1.11"
 rand = "0.9"
 failsafe = "1.3"
@@ -129,8 +144,8 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 utoipa-axum = "0.2"
 
 # Test dependencies
-testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres", "nats"] }
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["localstack", "redis", "postgres", "nats"] }
 wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3.19"

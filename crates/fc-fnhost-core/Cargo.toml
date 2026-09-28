@@ -46,7 +46,7 @@ base64 = "0.22"
 urlencoding = "2.1"
 # Function database access (owner decision #7): one shared sqlx pool per
 # connection a function's manifest declares.
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["postgres"] }
 # `aws-sm://` references for a function's database secret, behind the
 # `aws-secrets` feature (on in fc-server).
 aws-sdk-secretsmanager = { workspace = true, optional = true }

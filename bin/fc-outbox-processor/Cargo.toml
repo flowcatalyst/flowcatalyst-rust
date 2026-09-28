@@ -7,7 +7,9 @@ description = "FlowCatalyst Outbox Processor - Reads from app database outbox an
 
 [dependencies]
 fc-common = { path = "../../crates/fc-common" }
-fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mongo", "admin"] }
+# Every backend: consumer applications keep their outbox in SQLite,
+# PostgreSQL, MySQL or MongoDB.
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mysql", "mongo", "admin"] }
 
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -16,3 +18,9 @@ anyhow = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# tests/mysql_backend_test.rs: the binary against a MySQL container.
+sqlx = { workspace = true, features = ["mysql"] }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["mysql"] }

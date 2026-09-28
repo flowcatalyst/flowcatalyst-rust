@@ -33,6 +33,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Supply-chain tools, pinned (docs/operations/supply-chain.md). Built from
+  # crates.io with their own lockfiles (`--locked`).
+  CARGO_AUDITABLE_VERSION: "0.7.6"
+  CARGO_CYCLONEDX_VERSION: "0.5.9"
 
 jobs:
   prepare:
@@ -140,6 +144,15 @@ jobs:
       # The one extra dep needed by openssl-src (perl) is preinstalled
       # on every GitHub runner (macOS/Linux/Windows).
 
+      # cargo-auditable embeds the dependency list in the binary (read it
+      # with `cargo audit bin` or `rust-audit-info`); cargo-cyclonedx writes
+      # the SBOM shipped beside each archive.
+      - name: Install cargo-auditable and cargo-cyclonedx (pinned, locked)
+        shell: bash
+        run: |
+          cargo install --locked "cargo-auditable@${CARGO_AUDITABLE_VERSION}"
+          cargo install --locked "cargo-cyclonedx@${CARGO_CYCLONEDX_VERSION}"
+
       - name: Build
         env:
           FC_SKIP_FRONTEND_BUILD: "1"
@@ -149,7 +162,15 @@ jobs:
           # platform jobs running in parallel on shared runners we hit that
           # ceiling fast. Forwarding GITHUB_TOKEN raises the limit to 5000/hr.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: cargo build --release -p fc-dev --target ${{ matrix.target }}
+        run: cargo auditable build --release --locked -p fc-dev --target ${{ matrix.target }}
+
+      - name: SBOM (CycloneDX)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --manifest-path bin/fc-dev/Cargo.toml --format json \
+            --spec-version 1.5 --describe binaries --no-build-deps \
+            --target ${{ matrix.target }}
 
       - name: Package archive
         shell: bash
@@ -183,6 +204,10 @@ jobs:
               exit 1
               ;;
           esac
+
+          # The SBOM of the binary in the archive, as its own asset.
+          # cargo-cyclonedx writes <package>/<bin>_bin.cdx.json.
+          cp bin/fc-dev/fc-dev_bin.cdx.json "${STAGE}.cdx.json"
 
           # SHA256 sidecar. shasum is preinstalled on macOS, sha256sum on
           # Ubuntu; Git Bash on Windows runners has shasum.
@@ -218,7 +243,10 @@ jobs:
           name: release-${{ matrix.target }}
           # Glob captures the archive, .sha256, and (on Linux) .sig + .pem
           # cosign sidecars. Non-Linux runs simply have no sig/pem to match.
-          path: ${{ env.ARCHIVE }}*
+          # The CycloneDX SBOM travels beside it.
+          path: |
+            ${{ env.ARCHIVE }}*
+            fc-dev-v${{ needs.prepare.outputs.version }}-${{ matrix.target }}.cdx.json
           retention-days: 7
           if-no-files-found: error
 
@@ -263,6 +291,8 @@ jobs:
           \`\`\`
           shasum -a 256 -c fc-dev-v${VERSION}-<target>.tar.gz.sha256
           \`\`\`
+
+          Each archive has a CycloneDX SBOM beside it (\`fc-dev-v${VERSION}-<target>.cdx.json\`), and the binary carries its own dependency list (\`cargo audit bin fc-dev\`).
 
           Linux archives are additionally signed with [cosign](https://docs.sigstore.dev/) keyless (GitHub Actions OIDC identity, recorded in the public Rekor transparency log):
           \`\`\`

@@ -9,8 +9,11 @@ description = "FlowCatalyst SDK for Rust — domain event patterns, outbox integ
 [features]
 default = ["outbox-postgres", "cache", "lock"]
 outbox-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
-outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
-outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
+# The outbox module is written against Postgres (`PgPool`); these two
+# features build it too, so they carry the Postgres driver as well (the
+# workspace used to turn every driver on for every crate).
+outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/postgres", "sqlx/chrono"]
+outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/postgres", "sqlx/chrono"]
 client = ["dep:reqwest"]
 auth = ["dep:reqwest", "dep:jsonwebtoken", "dep:sha2", "dep:base64", "dep:rand"]
 # Axum integration for `auth` — extractors, middleware, RBAC catalogue,

@@ -24,17 +24,17 @@ reqwest = { workspace = true }
 axum = { workspace = true, optional = true }
 
 [dev-dependencies]
-# The SQLite and PostgreSQL repositories are always built for tests.
-sqlx = { workspace = true }
+# The SQLite, PostgreSQL and MySQL repositories are always built for tests.
+sqlx = { workspace = true, features = ["sqlite", "postgres", "mysql"] }
 axum = { workspace = true }
 testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["mysql"] }
 tower = { workspace = true }
 
 [features]
-sqlite = ["dep:sqlx"]
-postgres = ["dep:sqlx"]
-mysql = ["dep:sqlx"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+postgres = ["dep:sqlx", "sqlx/postgres"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
 mongo = ["dep:mongodb", "dep:bson", "dep:futures"]
 standby = ["dep:fc-standby"]
 admin = ["dep:axum"]
