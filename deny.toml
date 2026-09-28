@@ -1,0 +1,238 @@
+# cargo-deny policy for the FlowCatalyst workspace.
+#
+# Run: `cargo deny check` (CI's `supply-chain` job runs it on every push and
+# pull request). The SDK crates have their own, stricter licence policy in
+# `deny-sdk.toml`. See docs/operations/supply-chain.md for how to add a
+# dependency and what to do when a check fails.
+
+[graph]
+# Every crate any build can include: the binaries' optional features (fc-dev's
+# `web`, the router's `alb`/`email`, fc-sdk's backends, ...) and dev
+# dependencies. The targets are the ones we ship.
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+[output]
+feature-depth = 1
+
+# ── RustSec advisories ──────────────────────────────────────────────────
+# Vulnerabilities, unsound crates and unmaintained crates all fail the check,
+# direct or transitive. An `ignore` entry needs a reason that says why the
+# advisory cannot reach us or why no fix is possible yet, and should be
+# revisited when the reason changes.
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    # rsa: Marvin attack, timing side channel in the private-key
+    # operations (RUSTSEC-2023-0071); no fixed release exists. Shipped. The
+    # platform never decrypts with RSA: it signs its JWTs (RS256, through
+    # jsonwebtoken's rust_crypto backend) and verifies tokens, signatures and
+    # certificates. Verification uses only the public key; the exposure is
+    # the signing path, which needs many precisely timed signing requests
+    # measured close to the host. Revisit when rsa 0.10 is released, or move
+    # JWT signing to an aws-lc-rs backend.
+    { id = "RUSTSEC-2023-0071", reason = "no fix; RSA used for signing/verifying only, never decryption (see comment)" },
+    # quick-xml 0.23 (RUSTSEC-2026-0194, RUSTSEC-2026-0195): fc-dev only,
+    # through self_update 0.41, whose S3 backend is its only XML parser.
+    # fc-dev upgrades from GitHub releases (the github backend, JSON); the
+    # parser never runs. self_update 1.x drops it but changes the upgrade
+    # flow (reqwest 0.13, semver-parsed tags) and needs its own change.
+    { id = "RUSTSEC-2026-0194", reason = "fc-dev only; self_update's S3 backend, never used (github backend)" },
+    { id = "RUSTSEC-2026-0195", reason = "fc-dev only; self_update's S3 backend, never used (github backend)" },
+    # number_prefix: unmaintained (RUSTSEC-2025-0119), no fix. fc-dev only,
+    # through self_update 0.41's indicatif 0.17 (the upgrade progress bar):
+    # formats byte counts. Goes with the self_update 1.x move above.
+    { id = "RUSTSEC-2025-0119", reason = "unmaintained, fc-dev's upgrade progress bar only" },
+    # paste: unmaintained (RUSTSEC-2024-0436), no fix. A proc-macro run at
+    # build time by utoipa-axum 0.2 (and pastey elsewhere); no runtime code.
+    # utoipa-axum 0.3 moves to pastey but needs utoipa 6, a migration of the
+    # published OpenAPI documents.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time proc-macro (utoipa-axum 0.2)" },
+    # instant (RUSTSEC-2024-0384, unmaintained) is in Cargo.lock for wasm
+    # targets only (fastrand 1.x, parking_lot 0.11), none of the targets
+    # above, so cargo-deny never meets it; `cargo audit`, which reads the
+    # lockfile, ignores it in .cargo/audit.toml.
+    # rustls-pemfile: unmaintained (RUSTSEC-2025-0134), no fix in lapin 2.x.
+    # In no shipped binary: lapin (fc-queue's `activemq` feature, enabled by
+    # no binary). Moving the feature to lapin 4 is its own change.
+    { id = "RUSTSEC-2025-0134", reason = "unmaintained; only lapin (fc-queue activemq), which no binary enables" },
+]
+
+# ── Licences ────────────────────────────────────────────────────────────
+# The platform is AGPL-3.0-or-later. Everything it links must be
+# AGPL-compatible: permissive licences, MPL-2.0 (file-level copyleft;
+# compatible through its secondary-licence clause) and the data licences
+# below. A copyleft licence other than MPL-2.0 needs review before it is
+# added here.
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unlicense",
+    "MPL-2.0",
+    # Unicode data tables (icu_*, unicode-ident).
+    "Unicode-3.0",
+    # Mozilla's CA root list (webpki-roots).
+    "CDLA-Permissive-2.0",
+    # The embedded PostgreSQL fc-dev bundles (postgresql_embedded).
+    "PostgreSQL",
+]
+# Our own crates. Each is listed so a third-party AGPL/GPL crate still
+# fails the check until someone decides it is acceptable.
+exceptions = [
+    { crate = "fc-common", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-delivery-harness", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-dev", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-fnhost-core", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-fnhost-js", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-function-signing", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-http-listener", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-mcp", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-outbox", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-outbox-processor", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-parity", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-platform", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-platform-jwks", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-queue", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-router", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-server", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-standby", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-stream", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-web", allow = ["AGPL-3.0-or-later"] },
+]
+
+[licenses.private]
+ignore = false
+
+# ── Bans ────────────────────────────────────────────────────────────────
+[bans]
+# Two versions of one crate in the graph fail the check unless listed in
+# `skip` with the reason (usually: which dependency still needs the old one).
+multiple-versions = "deny"
+# Our path dependencies carry no version, which cargo-deny counts as a
+# wildcard for crates not marked `publish = false`; every crates.io
+# dependency has a version requirement, and `[sources]` keeps it that way.
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+deny = [
+    # TLS is rustls everywhere (see the reqwest note in Cargo.toml).
+    { crate = "native-tls", reason = "TLS is rustls; native-tls links the system OpenSSL/Schannel/Security.framework" },
+    { crate = "hyper-tls", reason = "native-tls through hyper; use hyper-rustls" },
+    { crate = "tokio-native-tls", reason = "native-tls through tokio; use tokio-rustls" },
+    # OpenSSL only where webauthn-rs needs it for attestation, vendored
+    # (fc-platform turns on `vendored`).
+    { crate = "openssl", wrappers = ["fc-platform", "webauthn-rs-core", "webauthn-attestation-ca"], reason = "rustls everywhere else" },
+    # Unmaintained or unsound, with maintained replacements.
+    { crate = "atty", reason = "unsound (RUSTSEC-2021-0145) and unmaintained; use std::io::IsTerminal" },
+    { crate = "failure", reason = "unmaintained; use thiserror/anyhow" },
+    { crate = "serde_yaml", reason = "unmaintained; use serde_norway" },
+]
+skip = [
+    # The duplicates as of 2026-09-28, each with who still holds the older
+    # version (generated from `cargo tree -i`). Remove an entry when its
+    # holders move; `cargo deny check` warns about entries that no longer
+    # match. Adding one means: nothing we control can move to the newer
+    # version yet.
+    { crate = "asn1-rs@0.6.2", reason = "0.7.1 elsewhere; der-parser, oid-registry, x509-parser still on 0.6.2" },
+    { crate = "asn1-rs-derive@0.5.1", reason = "0.6.0 elsewhere; asn1-rs still on 0.5.1" },
+    { crate = "async-io@1.13.0", reason = "2.6.0 elsewhere; async-reactor-trait still on 1.13.0" },
+    { crate = "async-lock@2.8.0", reason = "3.4.2 elsewhere; async-io still on 2.8.0" },
+    { crate = "base64@0.21.7", reason = "0.23.1 elsewhere; base64urlsafedata, docker_credential, hdrhistogram, webauthn-rs-core and 1 more still on 0.21.7" },
+    { crate = "base64@0.22.1", reason = "0.23.1 elsewhere; async-nats, bollard, bollard-stubs, bson and 31 more still on 0.22.1" },
+    { crate = "bitflags@1.3.2", reason = "2.13.2 elsewhere; polling, rustix still on 1.3.2" },
+    { crate = "block-buffer@0.10.4", reason = "0.12.1 elsewhere; digest still on 0.10.4" },
+    { crate = "cipher@0.4.4", reason = "0.5.2 elsewhere; aes, aes-gcm, cbc, ctr and 3 more still on 0.4.4" },
+    { crate = "const-oid@0.9.6", reason = "0.10.2 elsewhere; cms, der, digest, pkcs12 and 2 more still on 0.9.6" },
+    { crate = "core-foundation@0.9.4", reason = "0.10.1 elsewhere; security-framework, system-configuration still on 0.9.4" },
+    { crate = "cpufeatures@0.2.17", reason = "0.3.0 elsewhere; aes, argon2, curve25519-dalek, polyval and 2 more still on 0.2.17" },
+    { crate = "crypto-common@0.1.7", reason = "0.2.2 elsewhere; aead, cipher, digest, universal-hash still on 0.1.7" },
+    { crate = "darling@0.23.0", reason = "0.24.1 elsewhere; rmcp-macros, serde_with_macros still on 0.23.0" },
+    { crate = "darling_core@0.23.0", reason = "0.24.1 elsewhere; darling, darling_macro still on 0.23.0" },
+    { crate = "darling_macro@0.23.0", reason = "0.24.1 elsewhere; darling still on 0.23.0" },
+    { crate = "der-parser@9.0.0", reason = "10.0.0 elsewhere; webauthn-rs-core, x509-parser still on 9.0.0" },
+    { crate = "digest@0.10.7", reason = "0.11.3 elsewhere; blake2, crc-fast, curve25519-dalek, ecdsa and 10 more still on 0.10.7" },
+    { crate = "event-listener@2.5.3", reason = "5.4.2 elsewhere; async-lock still on 2.5.3" },
+    { crate = "fastrand@1.9.0", reason = "2.5.0 elsewhere; futures-lite still on 1.9.0" },
+    { crate = "foldhash@0.1.5", reason = "0.2.0 elsewhere; hashbrown still on 0.1.5" },
+    { crate = "futures-lite@1.13.0", reason = "2.6.1 elsewhere; async-io still on 1.13.0" },
+    { crate = "getrandom@0.2.17", reason = "0.4.3 elsewhere; const-random-macro, rand_core, ring still on 0.2.17" },
+    { crate = "getrandom@0.3.4", reason = "0.4.3 elsewhere; ahash, fc-sdk, governor, rand_core still on 0.3.4" },
+    { crate = "hashbrown@0.14.5", reason = "0.17.1 elsewhere; dashmap still on 0.14.5" },
+    { crate = "hashbrown@0.15.5", reason = "0.17.1 elsewhere; hashlink, metrics-util, sqlx-core still on 0.15.5" },
+    { crate = "hashbrown@0.16.1", reason = "0.17.1 elsewhere; gimli still on 0.16.1" },
+    { crate = "hmac@0.12.1", reason = "0.13.0 elsewhere; cookie, fc-delivery-harness, fc-fnhost-core, fc-parity and 10 more still on 0.12.1" },
+    { crate = "inout@0.1.4", reason = "0.2.2 elsewhere; cipher still on 0.1.4" },
+    { crate = "io-lifetimes@1.0.11", reason = "3.0.1 elsewhere; rustix still on 1.0.11" },
+    { crate = "io-lifetimes@2.0.4", reason = "3.0.1 elsewhere; fs-set-times still on 2.0.4" },
+    { crate = "itertools@0.13.0", reason = "0.14.0 elsewhere; bindgen still on 0.13.0" },
+    { crate = "linux-raw-sys@0.4.15", reason = "0.12.1 elsewhere; rustix 0.38 (which, in v8's build script) still on 0.4.15" },
+    { crate = "linux-raw-sys@0.3.8", reason = "0.12.1 elsewhere; rustix still on 0.3.8" },
+    { crate = "matchit@0.8.4", reason = "0.9.2 elsewhere; axum, reqwest-tracing still on 0.8.4" },
+    { crate = "md-5@0.10.6", reason = "0.11.0 elsewhere; sqlx-mysql, sqlx-postgres still on 0.10.6" },
+    { crate = "nom@7.1.3", reason = "8.0.0 elsewhere; amq-protocol, amq-protocol-types, asn1-rs, cexpr and 5 more still on 7.1.3" },
+    { crate = "oid-registry@0.7.1", reason = "0.8.1 elsewhere; x509-parser still on 0.7.1" },
+    { crate = "openssl-probe@0.1.6", reason = "0.2.1 elsewhere; rustls-native-certs still on 0.1.6" },
+    { crate = "pastey@0.1.1", reason = "0.2.2 elsewhere; base64urlsafedata still on 0.1.1" },
+    { crate = "pbkdf2@0.12.2", reason = "0.13.0 elsewhere; pkcs5, scrypt still on 0.12.2" },
+    { crate = "polling@2.8.0", reason = "3.11.0 elsewhere; async-io still on 2.8.0" },
+    { crate = "prettyplease@0.2.37", reason = "0.3.0 elsewhere; bindgen still on 0.2.37" },
+    { crate = "rand@0.8.8", reason = "0.10.3 elsewhere; cookie, jsonwebtoken, nkeys, nuid and 5 more still on 0.8.8" },
+    { crate = "rand@0.9.5", reason = "0.10.3 elsewhere; bollard, bson, fc-delivery-harness, fc-dev and 13 more still on 0.9.5" },
+    { crate = "rand_chacha@0.3.1", reason = "0.9.0 elsewhere; rand still on 0.3.1" },
+    { crate = "rand_core@0.6.4", reason = "0.10.1 elsewhere; crypto-bigint, crypto-common, elliptic-curve, fc-fnhost-core and 11 more still on 0.6.4" },
+    { crate = "rand_core@0.9.5", reason = "0.10.1 elsewhere; rand, rand_chacha, rand_xoshiro still on 0.9.5" },
+    { crate = "rustix@0.37.28", reason = "1.1.4 elsewhere; async-io still on 0.37.28" },
+    { crate = "rustix@0.38.44", reason = "1.1.4 elsewhere; which still on 0.38.44" },
+    { crate = "rustls-native-certs@0.7.3", reason = "0.8.4 elsewhere; rustls-connector still on 0.7.3" },
+    { crate = "security-framework@2.11.1", reason = "3.7.0 elsewhere; rustls-native-certs still on 2.11.1" },
+    { crate = "sha1@0.10.7", reason = "0.11.0 elsewhere; aws-config, fc-parity, fc-platform, p12-keystore and 2 more still on 0.10.7" },
+    { crate = "sha2@0.10.9", reason = "0.11.0 elsewhere; cookie, cranelift-codegen, ed25519-dalek, fc-delivery-harness and 23 more still on 0.10.9" },
+    { crate = "shlex@1.3.0", reason = "2.0.1 elsewhere; bindgen still on 1.3.0" },
+    { crate = "socket2@0.4.10", reason = "0.6.5 elsewhere; async-io still on 0.4.10" },
+    { crate = "socket2@0.5.10", reason = "0.6.5 elsewhere; redis still on 0.5.10" },
+    { crate = "spin@0.9.9", reason = "0.10.1 elsewhere; flume, lazy_static still on 0.9.9" },
+    { crate = "syn@2.0.119", reason = "3.0.6 elsewhere; asn1-rs-derive, asn1-rs-impl, async-stream-impl, async-trait and 47 more still on 2.0.119" },
+    { crate = "synstructure@0.13.2", reason = "0.14.0 elsewhere; asn1-rs-derive still on 0.13.2" },
+    { crate = "thiserror@1.0.69", reason = "2.0.18 elsewhere; asn1-rs, metrics-exporter-prometheus, reqwest-middleware, reqwest-retry and 2 more still on 1.0.69" },
+    { crate = "thiserror-impl@1.0.69", reason = "2.0.18 elsewhere; thiserror still on 1.0.69" },
+    { crate = "tower-http@0.6.8", reason = "0.7.1 elsewhere; fc-dev, fc-platform, fc-router, fc-server and 1 more still on 0.6.8" },
+    { crate = "webpki-roots@0.26.11", reason = "1.0.9 elsewhere; redis, sqlx-core, tokio-websockets still on 0.26.11" },
+    { crate = "windows-sys@0.48.0", reason = "0.61.2 elsewhere; dirs-sys, etcetera, io-lifetimes, polling and 1 more still on 0.48.0" },
+    { crate = "windows-sys@0.52.0", reason = "0.61.2 elsewhere; self-replace, socket2 still on 0.52.0" },
+    { crate = "windows-sys@0.59.0", reason = "0.61.2 elsewhere; console, deno_core, fs-set-times, io-extras and 1 more still on 0.59.0" },
+    { crate = "windows-targets@0.48.5", reason = "0.52.6 elsewhere; windows-sys still on 0.48.5" },
+    { crate = "windows_x86_64_gnu@0.48.5", reason = "0.52.6 elsewhere; windows-targets 0.48 still on 0.48.5" },
+    { crate = "windows_x86_64_msvc@0.48.5", reason = "0.52.6 elsewhere; windows-targets still on 0.48.5" },
+    { crate = "winnow@0.6.26", reason = "1.0.4 elsewhere; cron still on 0.6.26" },
+    { crate = "x509-parser@0.16.0", reason = "0.17.0 elsewhere; webauthn-rs-core still on 0.16.0" },
+    { crate = "zip@2.4.2", reason = "3.0.0 elsewhere; self_update still on 2.4.2" },
+]
+skip-tree = []
+
+# ── Sources ─────────────────────────────────────────────────────────────
+# crates.io only. A git dependency must be added to `allow-git` with a
+# reason, and should be temporary.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
