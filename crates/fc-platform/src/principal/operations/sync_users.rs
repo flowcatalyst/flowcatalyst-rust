@@ -35,7 +35,6 @@ use super::events::{PrincipalsSynced, UserCreated, UserUpdated};
 use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
 use crate::role::ceiling;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
-use crate::shared::authorization_service::AuthContext;
 use crate::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -79,8 +78,6 @@ impl crate::usecase::AuditMasked for SyncUsersCommand {}
 pub struct SyncUsersUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     role_repo: Arc<RoleRepository>,
-    /// Who runs the sync, for the role ceiling.
-    caller: AuthContext,
     unit_of_work: Arc<U>,
 }
 
@@ -88,13 +85,11 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
     pub fn new(
         principal_repo: Arc<PrincipalRepository>,
         role_repo: Arc<RoleRepository>,
-        caller: AuthContext,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
             principal_repo,
             role_repo,
-            caller,
             unit_of_work,
         }
     }
@@ -115,14 +110,16 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         Ok(())
     }
 
-    /// Go's authorize applies only to an unlisted-user sweep, which this
-    /// sync never does; the handler's `can_sync_principals` is the gate.
+    /// The sync creates and updates users with no client, which only an anchor
+    /// may manage (the handler checks it with `can_sync_principals` before the
+    /// body). Each listed user's reach and the role ceiling need the stored rows,
+    /// so `execute` checks them before anything is written.
     async fn authorize(
         &self,
         _command: &SyncUsersCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor(ctx.caller())?)
     }
 
     async fn execute(
@@ -130,6 +127,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         command: SyncUsersCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<PrincipalsSynced>, UseCaseError> {
+        let caller = ctx.caller().clone();
         let now = Utc::now();
         let emails: Vec<String> = command
             .principals
@@ -150,7 +148,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         // Java S1.3: a listed user out of the caller's reach refuses the
         // whole sync.
         for (email, p) in &existing {
-            if !super::sync::administers(&self.caller, p) {
+            if !super::sync::administers(&caller, p) {
                 return Err(super::sync::sync_target_forbidden(email));
             }
         }
@@ -240,7 +238,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
             }
         }
         let definitions = ceiling::definitions(&self.role_repo, &changed).await?;
-        ceiling::require_roles(Some(&self.caller), &changed, &definitions)?;
+        ceiling::require_roles(Some(&caller), &changed, &definitions)?;
 
         let batch = PrincipalSyncBatch {
             principals: order.iter().filter_map(|e| saved.remove(e)).collect(),

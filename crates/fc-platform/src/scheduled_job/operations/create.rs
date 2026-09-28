@@ -60,6 +60,24 @@ impl<U: UnitOfWork> CreateScheduledJobUseCase<U> {
     }
 }
 
+/// Go's `CreateScheduledJob` authorize phase: a client's job needs that
+/// client, a platform job an anchor.
+fn check_create_access(
+    caller: &impl crate::shared::authorization_service::Authority,
+    client_id: Option<&str>,
+) -> Result<(), crate::PlatformError> {
+    match client_id {
+        Some(cid) if !caller.can_access_client(cid) => Err(crate::PlatformError::forbidden(
+            format!("No access to client: {cid}"),
+        )),
+        Some(_) => Ok(()),
+        None if caller.is_anchor() => Ok(()),
+        None => Err(crate::PlatformError::forbidden(
+            "Only anchor users can create platform-scoped jobs",
+        )),
+    }
+}
+
 #[async_trait]
 impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
     type Command = CreateScheduledJobCommand;
@@ -108,15 +126,17 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         Ok(())
     }
 
+    /// Go's `CreateScheduledJob` authorize: a client's job needs that client
+    /// (403 `No access to client: …`), a platform job an anchor.
     async fn authorize(
         &self,
-        _cmd: &Self::Command,
-        _ctx: &ExecutionContext,
+        command: &CreateScheduledJobCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        // Resource-level authorization (anchor for platform-scoped, client
-        // membership for client-scoped) is enforced at the handler layer
-        // before run() is called.
-        Ok(())
+        Ok(check_create_access(
+            ctx.caller(),
+            command.client_id.as_deref(),
+        )?)
     }
 
     async fn execute(

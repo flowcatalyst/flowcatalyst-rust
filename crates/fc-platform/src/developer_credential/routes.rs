@@ -23,14 +23,14 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
 pub fn developer_credentials_state(ctx: &PlatformContext) -> DeveloperCredentialsState {
     DeveloperCredentialsState {
         principal_repo: ctx.repos.principal_repo.clone(),
-        set_use_case: Arc::new(SetDeveloperCredentialUseCase {
-            principal_repo: ctx.repos.principal_repo.clone(),
-            unit_of_work: ctx.unit_of_work.clone(),
-        }),
-        revoke_use_case: Arc::new(RevokeDeveloperCredentialUseCase {
-            principal_repo: ctx.repos.principal_repo.clone(),
-            unit_of_work: ctx.unit_of_work.clone(),
-        }),
+        set_use_case: Arc::new(SetDeveloperCredentialUseCase::new(
+            ctx.repos.principal_repo.clone(),
+            ctx.unit_of_work.clone(),
+        )),
+        revoke_use_case: Arc::new(RevokeDeveloperCredentialUseCase::new(
+            ctx.repos.principal_repo.clone(),
+            ctx.unit_of_work.clone(),
+        )),
         encryption: ctx.encryption.clone(),
     }
 }

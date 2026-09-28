@@ -81,11 +81,7 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
 }
 
 fn ctx() -> ExecutionContext {
-    ExecutionContext::create("prn_1")
-}
-
-fn anchor() -> Caller {
-    caller(UserScope::Anchor, &["*"], None)
+    ExecutionContext::system("prn_1")
 }
 
 fn address() -> FunctionAddress {
@@ -93,7 +89,20 @@ fn address() -> FunctionAddress {
 }
 
 async fn run_err<C: UseCase>(use_case: C, command: C::Command) -> UseCaseError {
-    match use_case.run(command, ctx()).await.into_result() {
+    run_err_in(use_case, command, ctx()).await
+}
+
+/// [`run_err`] as `caller`.
+async fn run_err_as<C: UseCase>(caller: Caller, use_case: C, command: C::Command) -> UseCaseError {
+    run_err_in(use_case, command, ExecutionContext::from_caller(caller)).await
+}
+
+async fn run_err_in<C: UseCase>(
+    use_case: C,
+    command: C::Command,
+    ctx: ExecutionContext,
+) -> UseCaseError {
+    match use_case.run(command, ctx).await.into_result() {
         Ok(_) => panic!("expected a failure"),
         Err(e) => e,
     }
@@ -162,11 +171,11 @@ async fn create_validates_before_anything_else() {
         ),
     ];
     for (command, code) in cases {
-        let err = run_err(ops.create(anchor()), command).await;
+        let err = run_err(ops.create(), command).await;
         assert_error(&err, 400, code);
     }
     let err = run_err(
-        ops.create(anchor()),
+        ops.create(),
         CreateCommand {
             service_name: Some("-x".into()),
             ..create_command()
@@ -180,8 +189,9 @@ async fn create_validates_before_anything_else() {
 async fn create_for_a_client_out_of_scope_is_403_scope_forbidden() {
     let ops = ops();
     let client = caller(UserScope::Client, &["clt_1"], None);
-    let err = run_err(
-        ops.create(client.clone()),
+    let err = run_err_as(
+        client.clone(),
+        ops.create(),
         CreateCommand {
             client_id: Some("clt_2".into()),
             ..create_command()
@@ -190,7 +200,7 @@ async fn create_for_a_client_out_of_scope_is_403_scope_forbidden() {
     .await;
     assert_error(&err, 403, "SCOPE_FORBIDDEN");
     // No clientId is a platform function: anchor only.
-    let err = run_err(ops.create(client), create_command()).await;
+    let err = run_err_as(client, ops.create(), create_command()).await;
     assert_error(&err, 403, "SCOPE_FORBIDDEN");
     assert_eq!(err.message(), "anchor scope required for this resource");
 }
@@ -218,7 +228,7 @@ async fn config_validation() {
     let too_many: BTreeMap<String, String> =
         (0..101).map(|i| (format!("K{i}"), "v".into())).collect();
     let err = run_err(
-        ops.set_config(anchor()),
+        ops.set_config(),
         SetConfigCommand {
             address: address(),
             values: too_many,
@@ -232,7 +242,7 @@ async fn config_validation() {
     );
 
     let err = run_err(
-        ops.set_config(anchor()),
+        ops.set_config(),
         SetConfigCommand {
             address: address(),
             values: BTreeMap::from([("1BAD".to_string(), "v".to_string())]),
@@ -242,7 +252,7 @@ async fn config_validation() {
     assert_error(&err, 400, "SETTING_KEY_INVALID");
 
     let err = run_err(
-        ops.set_config(anchor()),
+        ops.set_config(),
         SetConfigCommand {
             address: address(),
             values: BTreeMap::from([("BIG".to_string(), "é".repeat(4097))]),
@@ -265,7 +275,7 @@ async fn exactly_100_keys_of_8_kib_pass_validation() {
         address: address(),
         values,
     };
-    assert!(ops().set_config(anchor()).validate(&command).await.is_ok());
+    assert!(ops().set_config().validate(&command).await.is_ok());
 }
 
 // ── Secrets ─────────────────────────────────────────────────────────────────
@@ -281,13 +291,13 @@ fn secret_command(key: &str, value: &str) -> SetSecretCommand {
 #[tokio::test]
 async fn secret_validation() {
     let ops = ops();
-    let err = run_err(ops.set_secret(anchor()), secret_command("bad key", "v")).await;
+    let err = run_err(ops.set_secret(), secret_command("bad key", "v")).await;
     assert_error(&err, 400, "SETTING_KEY_INVALID");
-    let err = run_err(ops.set_secret(anchor()), secret_command("API_KEY", "")).await;
+    let err = run_err(ops.set_secret(), secret_command("API_KEY", "")).await;
     assert_error(&err, 400, "SETTING_VALUE_REQUIRED");
     assert_eq!(err.message(), "value is required");
     let err = run_err(
-        ops.set_secret(anchor()),
+        ops.set_secret(),
         secret_command("API_KEY", &"x".repeat(8193)),
     )
     .await;
@@ -298,7 +308,7 @@ async fn secret_validation() {
     );
 
     let err = run_err(
-        ops.delete_secret(anchor()),
+        ops.delete_secret(),
         DeleteSecretCommand {
             address: address(),
             key: "-nope".into(),
@@ -452,7 +462,7 @@ async fn claim_validation_and_scope() {
         Some("acme.com."),
     ] {
         let err = run_err(
-            ops.claim_domain(anchor()),
+            ops.claim_domain(),
             ClaimCommand {
                 owner: FunctionOwner::Platform,
                 hostname: hostname.map(str::to_string),
@@ -462,8 +472,9 @@ async fn claim_validation_and_scope() {
         assert_error(&err, 400, "HOSTNAME_INVALID");
     }
     let client = caller(UserScope::Client, &["clt_1"], None);
-    let err = run_err(
-        ops.claim_domain(client.clone()),
+    let err = run_err_as(
+        client.clone(),
+        ops.claim_domain(),
         ClaimCommand {
             owner: FunctionOwner::Client("clt_2".into()),
             hostname: Some("acme.com".into()),
@@ -471,8 +482,9 @@ async fn claim_validation_and_scope() {
     )
     .await;
     assert_error(&err, 403, "SCOPE_FORBIDDEN");
-    let err = run_err(
-        ops.claim_domain(client),
+    let err = run_err_as(
+        client,
+        ops.claim_domain(),
         ClaimCommand {
             owner: FunctionOwner::Platform,
             hostname: Some("acme.com".into()),
@@ -485,7 +497,7 @@ async fn claim_validation_and_scope() {
 #[tokio::test]
 async fn release_of_an_invalid_hostname_is_400_before_any_load() {
     let err = run_err(
-        ops().release_domain(anchor()),
+        ops().release_domain(),
         ReleaseCommand {
             hostname: "not a host".into(),
         },
@@ -556,7 +568,7 @@ async fn publish_validates_the_ref_and_digest_before_anything_else() {
         ),
     ];
     for (command, code, message) in cases {
-        let err = run_err(ops.publish(anchor()), command).await;
+        let err = run_err(ops.publish(), command).await;
         assert_error(&err, 400, code);
         assert_eq!(err.message(), message);
     }
@@ -690,7 +702,7 @@ async fn promote_checks_the_alias_name_before_loading_anything() {
     let ops = ops();
     let uow = Arc::new(InMemoryUnitOfWork::new());
     let err = run_err(
-        ops.promote_in(anchor(), uow),
+        ops.promote_in(uow),
         PromoteCommand {
             address: address(),
             alias: "BAD".into(),

@@ -72,12 +72,26 @@ impl<U: UnitOfWork> UseCase for GrantPermissionUseCase<U> {
         require_names(&command.role_name, &command.permission)
     }
 
+    /// The role ceiling (owner ruling 14): only a permission the caller holds may
+    /// be granted, 403 `PERMISSION_ABOVE_CALLER`; granting one the role already
+    /// holds changes nothing and is not bounded.
     async fn authorize(
         &self,
-        _command: &GrantPermissionCommand,
-        _ctx: &ExecutionContext,
+        command: &GrantPermissionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let already = self
+            .role_repo
+            .find_by_name(&command.role_name)
+            .await?
+            .is_some_and(|r| r.permissions.contains(&command.permission));
+        if already {
+            return Ok(());
+        }
+        Ok(crate::role::ceiling::require_permissions(
+            Some(ctx.caller()),
+            [command.permission.as_str()],
+        )?)
     }
 
     async fn execute(
@@ -147,12 +161,26 @@ impl<U: UnitOfWork> UseCase for RevokePermissionUseCase<U> {
         require_names(&command.role_name, &command.permission)
     }
 
+    /// The role ceiling (owner ruling 14): removal counts, so revoking a
+    /// permission the role holds needs the caller to hold it, 403
+    /// `PERMISSION_ABOVE_CALLER`; revoking an absent one is a no-op.
     async fn authorize(
         &self,
-        _command: &RevokePermissionCommand,
-        _ctx: &ExecutionContext,
+        command: &RevokePermissionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let held = self
+            .role_repo
+            .find_by_name(&command.role_name)
+            .await?
+            .is_some_and(|r| r.permissions.contains(&command.permission));
+        if !held {
+            return Ok(());
+        }
+        Ok(crate::role::ceiling::require_permissions(
+            Some(ctx.caller()),
+            [command.permission.as_str()],
+        )?)
     }
 
     async fn execute(
@@ -245,12 +273,14 @@ impl<U: UnitOfWork> UseCase for DefinePermissionUseCase<U> {
         Ok(())
     }
 
+    /// The permission catalogue is an anchor's (`/api/roles/permissions` and the
+    /// BFF's create both require anchor scope before the body is read).
     async fn authorize(
         &self,
         _command: &DefinePermissionCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -332,12 +362,14 @@ impl<U: UnitOfWork> UseCase for DeletePermissionUseCase<U> {
         Ok(())
     }
 
+    /// The permission catalogue is an anchor's (`/api/roles/permissions` and the
+    /// BFF's create both require anchor scope before the body is read).
     async fn authorize(
         &self,
         _command: &DeletePermissionCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -1,10 +1,12 @@
 //! Execution Context
 //!
-//! Context for a use case execution. Carries tracing IDs and principal
-//! information through the execution of a use case.
+//! Context for a use case execution. Carries tracing IDs, the principal
+//! recorded on events and audit rows, and the [`Caller`] whose authority the
+//! use case checks in `authorize`.
 
+use super::caller::Caller;
 use super::domain_event::DomainEvent;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::{ApplicationScope, AuthContext};
 use crate::shared::tsid;
 use chrono::{DateTime, Utc};
 
@@ -18,6 +20,12 @@ use chrono::{DateTime, Utc};
 /// - Causal chain tracking via causation_id
 /// - Process/saga tracking via execution_id
 /// - Audit trail via principal_id
+/// - Resource-level authorization via [`caller`](Self::caller)
+///
+/// There is no way to build one without a caller: an authenticated request
+/// uses [`from_auth`](Self::from_auth), a platform-internal path
+/// [`system`](Self::system). The caller field is private, so a struct
+/// literal can't skip it.
 #[derive(Debug, Clone)]
 pub struct ExecutionContext {
     /// Unique ID for this execution (generated)
@@ -26,58 +34,79 @@ pub struct ExecutionContext {
     pub correlation_id: String,
     /// ID of the parent event that caused this execution (if any)
     pub causation_id: Option<String>,
-    /// ID of the principal performing the action
+    /// ID of the principal recorded as performing the action (event
+    /// metadata, audit rows)
     pub principal_id: String,
     /// When the execution was initiated
     pub initiated_at: DateTime<Utc>,
+    /// Whose authority the use case checks.
+    caller: Caller,
 }
 
 impl ExecutionContext {
-    /// Create a new execution context for a fresh request.
-    ///
-    /// The execution_id and correlation_id are both set to a new TSID.
-    /// To continue an existing trace, use [`Self::with_correlation`] or
-    /// [`Self::from_parent_event`] instead.
-    pub fn create(principal_id: impl Into<String>) -> Self {
+    /// A fresh execution: execution_id and correlation_id are both a new
+    /// TSID, with no causation.
+    fn fresh(principal_id: String, caller: Caller) -> Self {
         let exec_id = format!("exec-{}", tsid::generate_untyped());
         Self {
             execution_id: exec_id.clone(),
             correlation_id: exec_id, // correlation starts as execution ID
             causation_id: None,      // no causation for fresh requests
-            principal_id: principal_id.into(),
+            principal_id,
             initiated_at: Utc::now(),
+            caller,
         }
     }
 
-    /// Create a new execution context with a specific correlation ID.
-    ///
-    /// Use this when you have an existing correlation ID from an
-    /// upstream system or request header.
-    pub fn with_correlation(
-        principal_id: impl Into<String>,
-        correlation_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            execution_id: format!("exec-{}", tsid::generate_untyped()),
-            correlation_id: correlation_id.into(),
-            causation_id: None,
-            principal_id: principal_id.into(),
-            initiated_at: Utc::now(),
-        }
+    /// Create an execution context from an authenticated request context:
+    /// the principal recorded is the caller's, and the caller carries its
+    /// full authority (tier, clients, permissions, credential).
+    pub fn from_auth(auth: &AuthContext) -> Self {
+        Self::fresh(auth.principal_id.clone(), Caller::from_auth(auth))
     }
 
-    /// Create a new execution context from a parent event.
-    ///
-    /// Use this when reacting to an event and creating a new execution.
-    /// The parent event's ID becomes the causation_id, and the correlation_id
-    /// is preserved.
-    pub fn from_parent_event<E: DomainEvent>(parent: &E, principal_id: impl Into<String>) -> Self {
+    /// A platform-internal execution ([`Caller::system`]): startup sync,
+    /// bootstrap, login and password-reset outcomes recorded before any
+    /// principal is authenticated. `principal_id` is only what the event and
+    /// audit rows record as the actor (`"system"`, or the principal the
+    /// platform acts for); it grants nothing.
+    pub fn system(principal_id: impl Into<String>) -> Self {
+        Self::fresh(principal_id.into(), Caller::system())
+    }
+
+    /// A context for a [`Caller`] already built (a principal with the
+    /// application scope its handler resolved): the principal recorded is the
+    /// caller's, `"system"` for the system caller.
+    pub fn from_caller(caller: Caller) -> Self {
+        let principal_id = caller.principal_id().unwrap_or("system").to_string();
+        Self::fresh(principal_id, caller)
+    }
+
+    /// Attach the caller's resolved application scope (see
+    /// [`Caller::with_application_scope`]).
+    pub fn with_application_scope(mut self, scope: ApplicationScope) -> Self {
+        self.caller = self.caller.with_application_scope(scope);
+        self
+    }
+
+    /// Continue an existing trace: the same context under an upstream
+    /// correlation ID.
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = correlation_id.into();
+        self
+    }
+
+    /// A new execution reacting to `parent`, for the same caller: the
+    /// parent event's ID becomes the causation_id, and the correlation_id is
+    /// preserved.
+    pub fn from_parent_event<E: DomainEvent>(parent: &E, ctx: &ExecutionContext) -> Self {
         Self {
             execution_id: format!("exec-{}", tsid::generate_untyped()),
             correlation_id: parent.metadata().correlation_id.clone(),
             causation_id: Some(parent.metadata().event_id.clone()),
-            principal_id: principal_id.into(),
+            principal_id: ctx.principal_id.clone(),
             initiated_at: Utc::now(),
+            caller: ctx.caller.clone(),
         }
     }
 
@@ -92,29 +121,13 @@ impl ExecutionContext {
             causation_id: Some(causing_event_id.into()),
             principal_id: self.principal_id.clone(),
             initiated_at: Utc::now(),
+            caller: self.caller.clone(),
         }
     }
 
-    /// Create an execution context from an authenticated request context.
-    ///
-    /// Bridges the auth layer to the use case layer by extracting the
-    /// principal_id from the AuthContext.
-    pub fn from_auth(auth: &AuthContext) -> Self {
-        Self::create(&auth.principal_id)
-    }
-
-    /// Create a new context with a different principal.
-    ///
-    /// Use this for system-initiated operations that run on behalf of
-    /// a different principal than the original request.
-    pub fn with_principal(&self, principal_id: impl Into<String>) -> Self {
-        Self {
-            execution_id: self.execution_id.clone(),
-            correlation_id: self.correlation_id.clone(),
-            causation_id: self.causation_id.clone(),
-            principal_id: principal_id.into(),
-            initiated_at: self.initiated_at,
-        }
+    /// Whose authority the use case checks.
+    pub fn caller(&self) -> &Caller {
+        &self.caller
     }
 }
 
@@ -123,19 +136,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_context() {
-        let ctx = ExecutionContext::create("user-123");
+    fn test_system_context() {
+        let ctx = ExecutionContext::system("user-123");
 
         assert!(ctx.execution_id.starts_with("exec-"));
         assert_eq!(ctx.principal_id, "user-123");
         // correlation_id starts as execution_id for fresh requests
         assert_eq!(ctx.correlation_id, ctx.execution_id);
         assert!(ctx.causation_id.is_none());
+        assert!(ctx.caller().is_system());
     }
 
     #[test]
-    fn test_with_correlation() {
-        let ctx = ExecutionContext::with_correlation("user-123", "corr-456");
+    fn from_auth_records_the_principal_and_carries_its_authority() {
+        let auth = AuthContext {
+            principal_id: "prn_1".into(),
+            principal_type: crate::PrincipalType::User,
+            scope: crate::UserScope::Client,
+            email: None,
+            name: "Test".into(),
+            accessible_clients: vec!["clt_a".into()],
+            permissions: Default::default(),
+            roles: vec![],
+            credential: crate::shared::authorization_service::Credential::BearerToken,
+        };
+        let ctx = ExecutionContext::from_auth(&auth);
+        assert_eq!(ctx.principal_id, "prn_1");
+        assert_eq!(ctx.caller().principal_id(), Some("prn_1"));
+        assert!(!ctx.caller().is_system());
+        assert!(ctx.caller().application_scope().is_none());
+        let scoped = ctx.with_application_scope(ApplicationScope::All);
+        assert!(scoped.caller().allows_application("app_1"));
+    }
+
+    #[test]
+    fn test_with_correlation_id() {
+        let ctx = ExecutionContext::system("user-123").with_correlation_id("corr-456");
 
         assert!(ctx.execution_id.starts_with("exec-"));
         assert_eq!(ctx.correlation_id, "corr-456");
@@ -144,20 +180,12 @@ mod tests {
 
     #[test]
     fn test_with_causation() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let child = ctx.with_causation("evt-789");
 
         assert_eq!(child.execution_id, ctx.execution_id);
         assert_eq!(child.correlation_id, ctx.correlation_id);
         assert_eq!(child.causation_id, Some("evt-789".to_string()));
-    }
-
-    #[test]
-    fn test_with_principal() {
-        let ctx = ExecutionContext::create("user-123");
-        let new_ctx = ctx.with_principal("system");
-
-        assert_eq!(new_ctx.execution_id, ctx.execution_id);
-        assert_eq!(new_ctx.principal_id, "system");
+        assert!(child.caller().is_system());
     }
 }

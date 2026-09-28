@@ -263,7 +263,7 @@ pub async fn create_client(
         name: req.name,
         identifier: req.identifier,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -385,7 +385,7 @@ pub async fn update_client(
         client_id: id,
         name: req.name,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -417,7 +417,7 @@ pub async fn delete_client(
     crate::shared::authorization_service::checks::can_delete_clients(&auth.0)?;
 
     let cmd = DeleteClientCommand { client_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -458,7 +458,7 @@ pub async fn activate_client(
     let cmd = ActivateClientCommand {
         client_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.activate_use_case.run(cmd, ctx).await.into_result()?;
 
     tracing::info!(client_id = %id, principal_id = %auth.0.principal_id, "Client activated");
@@ -512,7 +512,7 @@ pub async fn suspend_client(
         client_id: id.clone(),
         reason: req.reason,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.suspend_use_case.run(cmd, ctx).await.into_result()?;
 
     tracing::info!(
@@ -564,7 +564,7 @@ pub async fn deactivate_client(
     let cmd = DeleteClientCommand {
         client_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     tracing::info!(
@@ -693,7 +693,7 @@ pub async fn add_note(
         category: req.category,
         text: req.text,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.add_note_use_case.run(cmd, ctx).await.into_result()?;
 
     tracing::info!(

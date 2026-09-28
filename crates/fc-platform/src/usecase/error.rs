@@ -52,6 +52,12 @@ macro_rules! details {
     }};
 }
 
+/// Detail key holding the [`PlatformError`] a [`UseCaseError`] was made
+/// from by [`UseCaseError::verbatim`] (or from a `PlatformError::Forbidden`,
+/// a `checks::*` refusal), so it converts back to exactly that error. Never
+/// rendered: the conversion back removes it.
+const PLATFORM_ERROR: &str = "__platformError";
+
 /// The category of a [`UseCaseError`]; decides the HTTP status.
 ///
 /// The serde names are the variant names of the enum `UseCaseError` used
@@ -270,6 +276,69 @@ impl UseCaseError {
         Self::new(ErrorKind::Internal, code, message, HashMap::new())
     }
 
+    /// Carry a handler's [`PlatformError`] through a use case unchanged: the
+    /// conversion back to a `PlatformError` gives exactly `err`, so a check
+    /// that moved from a handler into `authorize` answers byte for byte as
+    /// it did. Supports the refusals such a check makes (`Forbidden` and the
+    /// not-found family); anything else converts as `From` does.
+    pub fn verbatim(err: PlatformError) -> Self {
+        let (kind, code, carried) = match &err {
+            PlatformError::Forbidden { message } => (
+                ErrorKind::Forbidden,
+                "FORBIDDEN",
+                serde_json::json!({"variant": "Forbidden", "message": message}),
+            ),
+            PlatformError::NotFound { entity_type, id } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "NotFound", "entityType": entity_type, "id": id}),
+            ),
+            PlatformError::ClientNotFound { id } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "ClientNotFound", "id": id}),
+            ),
+            PlatformError::PrincipalNotFound { id } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "PrincipalNotFound", "id": id}),
+            ),
+            PlatformError::ServiceAccountNotFound { id } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "ServiceAccountNotFound", "id": id}),
+            ),
+            PlatformError::EventTypeNotFound { code } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "EventTypeNotFound", "code": code}),
+            ),
+            PlatformError::SubscriptionNotFound { code } => (
+                ErrorKind::NotFound,
+                "NOT_FOUND",
+                serde_json::json!({"variant": "SubscriptionNotFound", "code": code}),
+            ),
+            PlatformError::Duplicate { .. }
+            | PlatformError::BusinessRule { .. }
+            | PlatformError::Concurrency { .. }
+            | PlatformError::Validation { .. }
+            | PlatformError::Unauthorized { .. }
+            | PlatformError::Sqlx(_)
+            | PlatformError::Json(_)
+            | PlatformError::Configuration { .. }
+            | PlatformError::InvalidCredentials
+            | PlatformError::TokenExpired
+            | PlatformError::InvalidToken { .. }
+            | PlatformError::Internal { .. }
+            | PlatformError::TooManyRequests { .. }
+            | PlatformError::Coded { .. }
+            | PlatformError::SessionEndpoint { .. } => return Self::from(err),
+        };
+        let mut details = HashMap::new();
+        details.insert(PLATFORM_ERROR.to_string(), carried);
+        Self::new(kind, code, err.to_string(), details)
+    }
+
     /// The error's category.
     pub fn kind(&self) -> ErrorKind {
         self.kind
@@ -310,11 +379,11 @@ impl std::error::Error for UseCaseError {}
 /// The mapping is chosen so that the HTTP response after the
 /// `From<UseCaseError> for PlatformError` round trip keeps the status code
 /// of the original `PlatformError`, and for `NotFound`, `BusinessRule`,
-/// `Concurrency` and `Duplicate` the whole body. `UseCaseError` has no
-/// authentication kinds (those belong to handlers), so `Unauthorized`,
-/// `Forbidden` and the token errors become internal errors: a use case
-/// never receives them from a repository. Its [`ErrorKind::Forbidden`] is
-/// for a use case's own reach checks.
+/// `Concurrency`, `Duplicate` and `Forbidden` the whole body. `Forbidden`
+/// arrives from the `checks::*` rules a use case's `authorize` applies.
+/// `UseCaseError` has no authentication kinds (those belong to handlers),
+/// so `Unauthorized` and the token errors become internal errors: a use
+/// case never receives them from a repository.
 impl From<PlatformError> for UseCaseError {
     fn from(err: PlatformError) -> Self {
         match err {
@@ -363,8 +432,10 @@ impl From<PlatformError> for UseCaseError {
             }
             PlatformError::Sqlx(e) => Self::internal("DATABASE_ERROR", e.to_string()),
             PlatformError::Internal { message } => Self::internal("INTERNAL_ERROR", message),
+            // A `checks::*` refusal made in a use case's `authorize`: marked,
+            // so the round trip back renders exactly the handler's 403.
+            e @ PlatformError::Forbidden { .. } => Self::verbatim(e),
             other @ (PlatformError::Unauthorized { .. }
-            | PlatformError::Forbidden { .. }
             | PlatformError::Json(_)
             | PlatformError::Configuration { .. }
             | PlatformError::InvalidCredentials
@@ -380,6 +451,13 @@ impl From<PlatformError> for UseCaseError {
 
 impl From<UseCaseError> for PlatformError {
     fn from(err: UseCaseError) -> Self {
+        if let Some(original) = err
+            .details
+            .get(PLATFORM_ERROR)
+            .and_then(carried_platform_error)
+        {
+            return original;
+        }
         let UseCaseError {
             kind,
             code,
@@ -452,6 +530,30 @@ impl From<UseCaseError> for PlatformError {
             },
         }
     }
+}
+
+/// The [`PlatformError`] a [`UseCaseError::verbatim`] carries.
+fn carried_platform_error(v: &serde_json::Value) -> Option<PlatformError> {
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
+    Some(match v.get("variant")?.as_str()? {
+        "Forbidden" => PlatformError::Forbidden {
+            message: field("message")?,
+        },
+        "NotFound" => PlatformError::NotFound {
+            entity_type: field("entityType")?,
+            id: field("id")?,
+        },
+        "ClientNotFound" => PlatformError::ClientNotFound { id: field("id")? },
+        "PrincipalNotFound" => PlatformError::PrincipalNotFound { id: field("id")? },
+        "ServiceAccountNotFound" => PlatformError::ServiceAccountNotFound { id: field("id")? },
+        "EventTypeNotFound" => PlatformError::EventTypeNotFound {
+            code: field("code")?,
+        },
+        "SubscriptionNotFound" => PlatformError::SubscriptionNotFound {
+            code: field("code")?,
+        },
+        _ => return None,
+    })
 }
 
 /// `?`-friendly load-or-404 for repository lookups returning
@@ -536,6 +638,51 @@ mod tests {
 
     /// The raw envelope: Go's `error`, `message` and `details`, in that
     /// order.
+    #[tokio::test]
+    async fn a_handler_error_survives_a_use_case_verbatim() {
+        use crate::shared::error::FunctionContractError;
+        use axum::response::IntoResponse;
+        async fn parts(err: PlatformError) -> (u16, String, String) {
+            let resp = err.into_response();
+            let contract = resp
+                .extensions()
+                .get::<FunctionContractError>()
+                .map(|c| format!("{c:?}"))
+                .unwrap_or_default();
+            let status = resp.status().as_u16();
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, String::from_utf8(bytes.to_vec()).unwrap(), contract)
+        }
+        let cases = || {
+            vec![
+                PlatformError::forbidden("Anchor access required"),
+                PlatformError::forbidden_code("SCOPE_FORBIDDEN", "no access"),
+                PlatformError::forbidden_code("ANCHOR_REQUIRED", "anchor scope required"),
+                PlatformError::not_found("Application", "billing"),
+                PlatformError::not_found("Principal", "prn_1"),
+                PlatformError::not_found("User", "prn_1"),
+                PlatformError::ServiceAccountNotFound { id: "sa_1".into() },
+                PlatformError::ClientNotFound { id: "clt_1".into() },
+                PlatformError::not_found("Subscription", "sub_1"),
+                PlatformError::not_found("DispatchPool", "dp_1"),
+                PlatformError::not_found("Connection", "con_1"),
+                PlatformError::not_found("ScheduledJob", "sj_1"),
+            ]
+        };
+        for (direct, via) in cases().into_iter().zip(cases()) {
+            let via = PlatformError::from(UseCaseError::verbatim(via));
+            assert_eq!(parts(direct).await, parts(via).await);
+        }
+        // A `checks::*` refusal needs no `verbatim`: `?` carries it.
+        let via = PlatformError::from(UseCaseError::from(PlatformError::forbidden("no")));
+        assert_eq!(
+            parts(PlatformError::forbidden("no")).await,
+            parts(via).await
+        );
+    }
+
     #[tokio::test]
     async fn every_error_body_is_gos_envelope() {
         use axum::response::IntoResponse;

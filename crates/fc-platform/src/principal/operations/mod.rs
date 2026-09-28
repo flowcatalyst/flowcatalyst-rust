@@ -2,6 +2,7 @@
 //!
 //! Use cases for user (principal) management.
 
+pub mod access;
 pub mod activate;
 pub mod assign_application_access;
 pub mod assign_roles;

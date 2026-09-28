@@ -117,13 +117,13 @@ pub async fn claim_domain(
     let caller = state.caller(&auth.0).await?;
     let event = state
         .ops
-        .claim_domain(caller)
+        .claim_domain()
         .run(
             ClaimCommand {
                 owner,
                 hostname: req.hostname,
             },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_caller(caller.clone()),
         )
         .await
         .into_result()?;
@@ -215,10 +215,10 @@ pub async fn release_domain(
     let caller = state.caller(&auth.0).await?;
     state
         .ops
-        .release_domain(caller)
+        .release_domain()
         .run(
             ReleaseCommand { hostname },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_caller(caller.clone()),
         )
         .await
         .into_result()?;

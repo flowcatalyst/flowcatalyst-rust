@@ -61,11 +61,25 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         Ok(())
     }
 
+    /// The target must be a user the caller administers (Go `requireUserAdmin`,
+    /// post-load; out of reach is `User_NOT_FOUND`). Granting every application
+    /// needs a caller that reaches every application itself (Go's rule; the
+    /// `/api` handler checks it first, where Go does, and attaches the scope).
     async fn authorize(
         &self,
-        _command: &AssignApplicationAccessCommand,
-        _ctx: &ExecutionContext,
+        command: &AssignApplicationAccessCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.user_id,
+            "User",
+        )
+        .await?;
+        if command.all_applications == Some(true) {
+            crate::checks::require_all_applications_grantor(ctx.caller().application_scope())?;
+        }
         Ok(())
     }
 

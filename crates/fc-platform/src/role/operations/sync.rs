@@ -86,11 +86,26 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         Ok(())
     }
 
+    /// The application must be in the caller's application scope (the SDK
+    /// handler resolves `/{appCode}` against it first, answering the same 404,
+    /// and attaches the scope). A missing application is `execute`'s.
     async fn authorize(
         &self,
-        _command: &SyncRolesCommand,
-        _ctx: &ExecutionContext,
+        command: &SyncRolesCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(app) = self
+            .application_repo
+            .find_by_code(&command.application_code)
+            .await?
+        {
+            crate::checks::require_caller_application_access(
+                ctx.caller(),
+                &command.application_code,
+                Some(app),
+            )
+            .map_err(UseCaseError::verbatim)?;
+        }
         Ok(())
     }
 

@@ -610,7 +610,7 @@ pub(super) async fn confirm_reset(
     };
     state
         .reset_password_use_case
-        .run(command, ExecutionContext::create("system"))
+        .run(command, ExecutionContext::system("system"))
         .await
         .into_result()?;
 

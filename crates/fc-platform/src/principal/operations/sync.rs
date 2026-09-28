@@ -35,7 +35,7 @@ use std::sync::Arc;
 use super::events::{PrincipalsSynced, UserCreated, UserUpdated};
 use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::Authority;
 use crate::usecase::{
     Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -85,7 +85,7 @@ impl crate::usecase::AuditMasked for SyncPrincipalsCommand {}
 /// Go `blockNonClientTarget` + `CanAccessScope`): an anchor reaches every
 /// principal; anyone else only CLIENT-tier principals of a client it can
 /// access, and a client-less one only as a super-admin.
-pub fn administers(caller: &AuthContext, target: &Principal) -> bool {
+pub fn administers(caller: &impl Authority, target: &Principal) -> bool {
     if caller.is_anchor() {
         return true;
     }
@@ -120,8 +120,6 @@ fn is_own_sdk_role(role: &RoleAssignment, application_code: &str) -> bool {
 pub struct SyncPrincipalsUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,
-    /// Who runs the sync, for its reach.
-    caller: AuthContext,
     unit_of_work: Arc<U>,
 }
 
@@ -129,13 +127,11 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
     pub fn new(
         principal_repo: Arc<PrincipalRepository>,
         application_repo: Arc<ApplicationRepository>,
-        caller: AuthContext,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
             principal_repo,
             application_repo,
-            caller,
             unit_of_work,
         }
     }
@@ -164,13 +160,28 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         Ok(())
     }
 
-    /// The per-principal reach and the role-name rule need the stored rows,
-    /// so they are checked in `execute` before anything is written.
+    /// The application must be in the caller's application scope (the SDK
+    /// handler resolves `/{appCode}` against it first, answering the same 404,
+    /// and attaches the scope). A missing application is `execute`'s. The
+    /// per-principal reach and the role-name rule need the stored rows, so
+    /// `execute` checks them before anything is written.
     async fn authorize(
         &self,
-        _command: &SyncPrincipalsCommand,
-        _ctx: &ExecutionContext,
+        command: &SyncPrincipalsCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(app) = self
+            .application_repo
+            .find_by_code(&command.application_code)
+            .await?
+        {
+            crate::checks::require_caller_application_access(
+                ctx.caller(),
+                &command.application_code,
+                Some(app),
+            )
+            .map_err(UseCaseError::verbatim)?;
+        }
         Ok(())
     }
 
@@ -179,6 +190,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         command: SyncPrincipalsCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<PrincipalsSynced>, UseCaseError> {
+        let caller = ctx.caller().clone();
         let app_code = command.application_code.as_str();
         self.application_repo
             .find_by_code(app_code)
@@ -214,7 +226,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
 
         // Java S1.3: a listed user out of reach refuses the whole sync.
         for (email, p) in &existing {
-            if !administers(&self.caller, p) {
+            if !administers(&caller, p) {
                 return Err(sync_target_forbidden(email));
             }
         }
@@ -298,7 +310,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 let Some(email) = p.email().map(str::to_lowercase) else {
                     continue;
                 };
-                if listed.contains(email.as_str()) || !administers(&self.caller, &p) {
+                if listed.contains(email.as_str()) || !administers(&caller, &p) {
                     continue;
                 }
                 if !p.roles.iter().any(|ra| is_own_sdk_role(ra, app_code)) {

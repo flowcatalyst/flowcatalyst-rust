@@ -109,13 +109,20 @@ impl<U: UnitOfWork> UseCase for PutFunctionPolicyUseCase<U> {
         Ok(())
     }
 
-    /// Anchor scope and the permission are the handler's.
+    /// A client's function policy is platform-owner data: anchor scope, then
+    /// `platform:function:policy:manage` (Java's handler gate, which the
+    /// handler checks first, before the body; asserted here for any other
+    /// caller).
     async fn authorize(
         &self,
         _command: &PutPolicyCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        Ok(crate::checks::require_permission(
+            ctx.caller(),
+            crate::permissions::function::FUNCTION_POLICY_MANAGE,
+        )?)
     }
 
     async fn execute(

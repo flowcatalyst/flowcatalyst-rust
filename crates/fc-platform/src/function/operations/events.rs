@@ -435,7 +435,7 @@ mod tests {
     use serde_json::json;
 
     fn ctx() -> ExecutionContext {
-        ExecutionContext::create("prn_1")
+        ExecutionContext::system("prn_1")
     }
 
     fn function(owner: FunctionOwner) -> Function {

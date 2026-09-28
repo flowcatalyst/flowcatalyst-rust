@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::api::{
     assert_assignable_roles, assignment_source_label, bounded_role_set, client_application_ids,
-    derive_user_scope, load_administered_user, load_role_administered_user, notify_new_user,
+    derive_user_scope, load_administered_user, load_user_to_shape, notify_new_user,
     resolve_client_ref, resolve_invite_redirect, ApplicationAccessListResponse,
     ApplicationAccessResponse, AvailableApplicationsResponse, BatchAssignRolesResponse,
     CheckEmailDomainResponse, ClientAccessGrantResponse, ClientAccessListResponse,
@@ -107,7 +107,7 @@ pub async fn create_user(
                 user_id: existing.id.clone(),
                 client_id: client_id.clone(),
             };
-            let exec = ExecutionContext::create(&ctx.principal_id);
+            let exec = ExecutionContext::from_auth(ctx);
             state
                 .grant_client_access_use_case
                 .run(cmd, exec)
@@ -137,7 +137,7 @@ pub async fn create_user(
         enforce_password_complexity: req.enforce_password_complexity,
         idp_type: Some(idp_type),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     let event = state
         .create_user_use_case
         .run(cmd, exec)
@@ -309,17 +309,8 @@ pub async fn update(
     // (principal/api/api.go:1026-1032): without it, nothing is touched.
     crate::checks::can_write_principals(ctx)?;
 
-    // Handler-level auth: target-resource access + high-trust gates on
-    // scope/client_id changes. Field-level mutations happen inside the
-    // use case so the write commits atomically with the UserUpdated event.
-    load_administered_user(state, ctx, id).await?;
-
-    if (req.scope.is_some() || req.client_id.is_some()) && !ctx.is_anchor() {
-        return Err(PlatformError::forbidden(
-            "Only anchor users can change a principal's scope or client",
-        ));
-    }
-
+    // The use case applies the per-resource rules after loading the target
+    // (Go `update`): the user's reach, and anchor-only scope/client changes.
     let cmd = UpdateUserCommand {
         principal_id: id.to_string(),
         name: req.name,
@@ -330,7 +321,7 @@ pub async fn update(
         client_id: req.client_id,
         email: req.email,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.update_use_case.run(cmd, exec).await.into_result()?;
 
     let refreshed = state
@@ -393,23 +384,23 @@ pub async fn assign_role(
     crate::checks::can_assign_principal_roles(ctx)?;
 
     // Additive assign: take existing roles + new role, run through UoW.
-    let principal = load_role_administered_user(state, ctx, id).await?;
+    // Loaded to shape the set, as Go's controller does; the use case applies
+    // the reach rule and the role ceiling.
+    let principal = load_user_to_shape(state, id).await?;
     if !ctx.is_anchor() {
         let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
         assert_assignable_roles(state, std::slice::from_ref(&role), &allowed).await?;
     }
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    let mut roles = before.clone();
+    let mut roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     if !roles.iter().any(|r| r == &role) {
         roles.push(role.clone());
     }
-    crate::role::ceiling::require_role_change(ctx, &state.role_repo, &before, &roles).await?;
 
     let cmd = AssignUserRolesCommand {
         user_id: id.to_string(),
         roles,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -436,11 +427,10 @@ pub async fn set_roles(
 
     crate::checks::can_assign_principal_roles(ctx)?;
 
-    let principal = load_role_administered_user(state, ctx, id).await?;
+    // Loaded to shape the set, as Go's controller does; the use case applies
+    // the reach rule and the role ceiling.
+    let principal = load_user_to_shape(state, id).await?;
     let desired = bounded_role_set(state, ctx, &principal, roles).await?;
-
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    crate::role::ceiling::require_role_change(ctx, &state.role_repo, &before, &desired).await?;
 
     let old_roles: HashSet<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     let new_roles_set: HashSet<String> = desired.iter().cloned().collect();
@@ -451,7 +441,7 @@ pub async fn set_roles(
         user_id: id.to_string(),
         roles: desired,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -493,27 +483,27 @@ pub async fn remove_role(
 
     crate::checks::can_assign_principal_roles(ctx)?;
 
-    let principal = load_role_administered_user(state, ctx, id).await?;
+    // Loaded to shape the set, as Go's controller does; the use case applies
+    // the reach rule and the role ceiling.
+    let principal = load_user_to_shape(state, id).await?;
     // A client administrator removes only roles it could assign (Go
     // `removeRole`).
     if !ctx.is_anchor() {
         let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
         assert_assignable_roles(state, &[role.to_string()], &allowed).await?;
     }
-    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     let roles: Vec<String> = principal
         .roles
         .iter()
         .filter(|r| r.role != role)
         .map(|r| r.role.clone())
         .collect();
-    crate::role::ceiling::require_role_change(ctx, &state.role_repo, &before, &roles).await?;
 
     let cmd = AssignUserRolesCommand {
         user_id: id.to_string(),
         roles,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -564,7 +554,7 @@ pub async fn grant_client_access(
         user_id: id.to_string(),
         client_id: client_id.clone(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .grant_client_access_use_case
         .run(cmd, exec)
@@ -595,7 +585,7 @@ pub async fn revoke_client_access(
         user_id: id.to_string(),
         client_id: client_id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .revoke_client_access_use_case
         .run(cmd, exec)
@@ -613,12 +603,11 @@ pub async fn delete(
     use crate::principal::operations::DeleteUserCommand;
 
     crate::checks::can_delete_principals(ctx)?;
-    load_administered_user(state, ctx, id).await?;
 
     let cmd = DeleteUserCommand {
         principal_id: id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.delete_use_case.run(cmd, exec).await.into_result()?;
     Ok(())
 }
@@ -632,12 +621,11 @@ pub async fn activate(
     use crate::principal::operations::ActivateUserCommand;
 
     crate::checks::can_write_principals(ctx)?;
-    load_administered_user(state, ctx, id).await?;
 
     let cmd = ActivateUserCommand {
         principal_id: id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.activate_use_case.run(cmd, exec).await.into_result()?;
 
     tracing::info!(principal_id = %id, admin_id = %ctx.principal_id, "Principal activated");
@@ -656,13 +644,12 @@ pub async fn deactivate(
     use crate::principal::operations::DeactivateUserCommand;
 
     crate::checks::can_write_principals(ctx)?;
-    load_administered_user(state, ctx, id).await?;
 
     let cmd = DeactivateUserCommand {
         principal_id: id.to_string(),
         reason: Some("Admin deactivated principal".to_string()),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .deactivate_use_case
         .run(cmd, exec)
@@ -687,14 +674,13 @@ pub async fn reset_password(
     use crate::principal::operations::ResetPasswordCommand;
 
     crate::checks::can_write_principals(ctx)?;
-    load_administered_user(state, ctx, id).await?;
 
     let cmd = ResetPasswordCommand {
         principal_id: id.to_string(),
         new_password: req.new_password,
         enforce_password_complexity: req.enforce_password_complexity,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .reset_password_use_case
         .run(cmd, exec)
@@ -944,19 +930,20 @@ pub async fn set_application_access(
 
     crate::checks::can_write_principals(ctx)?;
 
-    let principal = load_role_administered_user(state, ctx, id).await?;
+    // Loaded to shape the set, as Go's controller does; the use case applies
+    // the reach rule.
+    let principal = load_user_to_shape(state, id).await?;
 
-    if req.all_applications == Some(true) {
-        // Granting every application exceeds what the caller may itself
-        // reach unless it has every application too (Go's rule).
-        if state.app_access.scope_for(&ctx.principal_id).await?
-            != crate::shared::authorization_service::ApplicationScope::All
-        {
-            return Err(PlatformError::forbidden(
-                "Only an all-applications administrator may grant all-applications access",
-            ));
-        }
-    }
+    // Granting every application needs a caller that reaches every
+    // application itself: checked here, where Go's controller checks it,
+    // and again by the use case, which gets the scope resolved here.
+    let application_scope = if req.all_applications == Some(true) {
+        let scope = state.app_access.scope_for(&ctx.principal_id).await?;
+        crate::checks::require_all_applications_grantor(Some(&scope))?;
+        Some(scope)
+    } else {
+        None
+    };
 
     // A client administrator grants only applications the target's client is
     // entitled to, and its SET keeps the grants outside that reach (Go
@@ -1019,7 +1006,10 @@ pub async fn set_application_access(
         application_ids: req.application_ids.clone(),
         all_applications: req.all_applications,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let mut exec = ExecutionContext::from_auth(ctx);
+    if let Some(scope) = application_scope {
+        exec = exec.with_application_scope(scope);
+    }
     state
         .assign_app_access_use_case
         .run(cmd, exec)

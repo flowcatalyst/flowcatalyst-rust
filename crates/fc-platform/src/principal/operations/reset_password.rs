@@ -86,13 +86,28 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         Ok(())
     }
 
+    /// The target must be a user the caller administers (Go
+    /// `requireUserResourceAccess`, post-load): a client administrator manages
+    /// only CLIENT-tier users (403) of a client it reaches (else
+    /// `Principal_NOT_FOUND`, as a missing id). The coarse `can_write_principals` gate stays in
+    /// the handler, before anything is loaded.
+    /// The system caller (the emailed-token reset, which proved the token) sets
+    /// any user's password.
     async fn authorize(
         &self,
-        _command: &ResetPasswordCommand,
-        _ctx: &ExecutionContext,
+        command: &ResetPasswordCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        // The handler gates this with `require_anchor`. No additional
-        // resource-level check is needed here.
+        if ctx.caller().is_system() {
+            return Ok(());
+        }
+        super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.principal_id,
+            "Principal",
+        )
+        .await?;
         Ok(())
     }
 

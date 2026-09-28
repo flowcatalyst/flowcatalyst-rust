@@ -815,7 +815,7 @@ pub async fn oidc_callback(
     {
         use crate::principal::operations::events::{FederatedClaims, FlowcatalystClaims};
 
-        let ctx = ExecutionContext::create(&principal.id);
+        let ctx = ExecutionContext::system(&principal.id);
 
         // Build role codes from the synced principal
         let roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();

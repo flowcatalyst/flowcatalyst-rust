@@ -404,7 +404,7 @@ pub async fn sync_platform_openapi(
         application_code: "platform".to_string(),
         spec: (*state.platform_openapi).clone(),
     };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_openapi_use_case

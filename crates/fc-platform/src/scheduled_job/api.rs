@@ -451,21 +451,6 @@ fn check_read_access(
     }
 }
 
-/// Go's `CreateScheduledJob` authorize phase: a client's job needs that
-/// client, a platform job an anchor.
-fn check_create_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
-    match client_id {
-        Some(cid) if !auth.0.can_access_client(cid) => Err(PlatformError::forbidden(format!(
-            "No access to client: {cid}"
-        ))),
-        Some(_) => Ok(()),
-        None if auth.0.is_anchor() => Ok(()),
-        None => Err(PlatformError::forbidden(
-            "Only anchor users can create platform-scoped jobs",
-        )),
-    }
-}
-
 // ── CRUD handlers ───────────────────────────────────────────────────────────
 
 #[utoipa::path(
@@ -497,14 +482,9 @@ pub async fn create_scheduled_job(
         delivery_max_attempts: req.delivery_max_attempts,
         target_url: req.target_url,
     };
-    // Go validates the command before its authorize phase checks the scope.
-    state
-        .create_use_case
-        .validate(&cmd)
-        .await
-        .map_err(PlatformError::from)?;
-    check_create_access(&auth, cmd.client_id.as_deref())?;
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    // Go validates the command before its authorize phase checks the scope;
+    // the use case does both, in that order.
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::CREATED,
@@ -682,12 +662,8 @@ pub async fn update_scheduled_job(
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
 
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = UpdateScheduledJobCommand {
         scheduled_job_id: id,
@@ -702,7 +678,7 @@ pub async fn update_scheduled_job(
         delivery_max_attempts: req.delivery_max_attempts,
         target_url: req.target_url,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -720,17 +696,13 @@ pub async fn pause_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = PauseScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.pause_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -748,17 +720,13 @@ pub async fn resume_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = ResumeScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.resume_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -776,17 +744,13 @@ pub async fn archive_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = ArchiveScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.archive_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -804,17 +768,13 @@ pub async fn delete_scheduled_job(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_delete_scheduled_jobs(&auth.0)?;
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = DeleteScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -837,18 +797,14 @@ pub async fn fire_scheduled_job(
 ) -> Result<(StatusCode, Json<FireNowResponse>), PlatformError> {
     let req = req.map(|Json(r)| r).unwrap_or_default();
     crate::shared::authorization_service::checks::can_fire_scheduled_jobs(&auth.0)?;
-    let existing = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("ScheduledJob", &id)?;
-    check_scope_access(&auth, existing.client_id.as_deref())?;
+    // The use case answers 404 for a missing job, then checks the caller's
+    // scope on it (Go `CheckScopeAccess`, post-load).
 
     let cmd = FireScheduledJobCommand {
         scheduled_job_id: id,
         correlation_id: req.correlation_id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.fire_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::ACCEPTED,

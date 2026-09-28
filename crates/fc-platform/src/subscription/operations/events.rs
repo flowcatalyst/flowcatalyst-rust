@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn subscription_events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = SubscriptionPaused::new(&ctx, "sub-1");
         assert_eq!(e.metadata.event_type, "platform:admin:subscription:paused");
         assert_eq!(e.metadata.message_group, "platform:subscription:sub-1");

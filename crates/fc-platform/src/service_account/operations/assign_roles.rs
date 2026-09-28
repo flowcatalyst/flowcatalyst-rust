@@ -27,13 +27,20 @@ impl crate::usecase::AuditMasked for AssignRolesCommand {}
 /// Use case for assigning roles to a service account.
 pub struct AssignRolesUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
+    /// The role ceiling's definitions (owner ruling 14).
+    role_repo: Arc<crate::RoleRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> AssignRolesUseCase<U> {
-    pub fn new(service_account_repo: Arc<ServiceAccountRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        service_account_repo: Arc<ServiceAccountRepository>,
+        role_repo: Arc<crate::RoleRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             service_account_repo,
+            role_repo,
             unit_of_work,
         }
     }
@@ -48,12 +55,35 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
         Ok(())
     }
 
+    /// Anchors only (`can_update_service_accounts`, checked with the permission
+    /// by the handler before the body): an application's own ANCHOR-tier account
+    /// could otherwise grant itself super-admin. Then the role ceiling (owner
+    /// ruling 14): only roles whose every permission the caller holds may be
+    /// added or removed, 403 `ROLE_ABOVE_CALLER`. A missing account is the
+    /// handler's `ServiceAccount_NOT_FOUND`, answered before the ceiling.
     async fn authorize(
         &self,
-        _command: &AssignRolesCommand,
-        _ctx: &ExecutionContext,
+        command: &AssignRolesCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        let account = self
+            .service_account_repo
+            .find_by_id(&command.service_account_id)
+            .await?
+            .ok_or_else(|| {
+                UseCaseError::verbatim(crate::PlatformError::ServiceAccountNotFound {
+                    id: command.service_account_id.clone(),
+                })
+            })?;
+        let before: Vec<String> = account.roles.iter().map(|r| r.role.clone()).collect();
+        crate::role::ceiling::require_role_change(
+            ctx.caller(),
+            &self.role_repo,
+            &before,
+            &command.roles,
+        )
+        .await
     }
 
     async fn execute(

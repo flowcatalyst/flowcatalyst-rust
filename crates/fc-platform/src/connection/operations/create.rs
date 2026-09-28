@@ -34,10 +34,6 @@ pub struct CreateConnectionCommand {
     /// resolved it within the caller's application scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application_code: Option<String>,
-    /// Who is creating it, for the scope check and the signing-reach check
-    /// (never serialised, so never in the audit log).
-    #[serde(skip)]
-    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for CreateConnectionCommand {}
@@ -104,12 +100,9 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
     async fn authorize(
         &self,
         command: &CreateConnectionCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        match command.caller {
-            Some(ref caller) => check_scope_access(caller, command.client_id.as_deref()),
-            None => Ok(()),
-        }
+        check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     async fn execute(
@@ -134,7 +127,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         // connection is delivered with it. `applicationCode`-style ownership
         // counts for nothing.
         crate::service_account::signing_reach::require_usable_signers(
-            command.caller.as_ref(),
+            ctx.caller(),
             &self.service_account_repo,
             &self.connection_repo,
             Some(&command.service_account_id),
@@ -191,7 +184,6 @@ mod tests {
             external_id: None,
             client_id: None,
             application_code: None,
-            caller: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("my-webhook"));

@@ -733,32 +733,10 @@ pub(super) async fn notify_new_user(
     None
 }
 
-/// Go's per-resource user-admin gate (`requireUserResourceAccess` /
-/// `requireUserAdmin`, principal/operations/authz.go): a non-anchor
-/// administrator (a client administrator) acts only on CLIENT-tier users
-/// (403 otherwise, Go `blockNonClientTarget`) homed at a client it reaches;
-/// a user out of reach answers the same 404 as a missing one. Anchors pass.
-fn require_user_resource_access(
-    ctx: &crate::AuthContext,
-    target: &crate::Principal,
-    resource: &str,
-) -> Result<(), PlatformError> {
-    if !ctx.is_anchor() && target.scope != UserScope::Client {
-        return Err(PlatformError::forbidden(
-            "Client administrators can only manage client-scope users",
-        ));
-    }
-    // Go `auth.CanAccessScope`, the rule `check_scope_access` applies; out
-    // of reach answers the not-found a missing id would (PR-3(b)).
-    if !crate::shared::caller_reach::can_access_scope(ctx, target.client_id.as_deref()) {
-        return Err(PlatformError::not_found(resource, &target.id));
-    }
-    Ok(())
-}
-
-/// Load a principal a user-administration write targets, gated by
-/// [`require_user_resource_access`] (Go `requireUserResourceAccess`: out of
-/// reach is `Principal_NOT_FOUND`).
+/// Load a principal a handler still gates itself (the admin password-reset
+/// email, which is not a use case), with the use cases' rule
+/// ([`super::operations::access::require_user_resource_access`]): out of
+/// reach is `Principal_NOT_FOUND`.
 pub(super) async fn load_administered_user(
     state: &PrincipalsState,
     ctx: &crate::AuthContext,
@@ -769,25 +747,22 @@ pub(super) async fn load_administered_user(
         .find_by_id(id)
         .await?
         .or_not_found("Principal", id)?;
-    require_user_resource_access(ctx, &target, "Principal")?;
+    super::operations::access::require_user_resource_access(ctx, &target, "Principal")?;
     Ok(target)
 }
 
-/// [`load_administered_user`] for the role and application-access writes,
-/// which Go gates with `requireUserAdmin`: out of reach is `User_NOT_FOUND`
-/// (principal/operations/authz.go).
-pub(super) async fn load_role_administered_user(
+/// Load a principal whose role or application-access set a handler shapes
+/// before its use case runs (Go loads it in the controller too): a missing
+/// one is `Principal_NOT_FOUND`. The use case applies the reach rule.
+pub(super) async fn load_user_to_shape(
     state: &PrincipalsState,
-    ctx: &crate::AuthContext,
     id: &str,
 ) -> Result<crate::Principal, PlatformError> {
-    let target = state
+    state
         .principal_repo
         .find_by_id(id)
         .await?
-        .or_not_found("Principal", id)?;
-    require_user_resource_access(ctx, &target, "User")?;
-    Ok(target)
+        .or_not_found("Principal", id)
 }
 
 /// Go `clientAppIDs`: the applications a client is entitled to (an enabled
@@ -1048,7 +1023,7 @@ pub async fn create_principal(
     };
     let event = state
         .create_user_use_case
-        .run(cmd, ExecutionContext::create(&ctx.principal_id))
+        .run(cmd, ExecutionContext::from_auth(ctx))
         .await
         .into_result()?;
 
@@ -1644,11 +1619,10 @@ pub async fn sync_users(
     let ctx = ExecutionContext::from_auth(&auth.0);
     let principal_repo = state.principal_repo.clone();
     let role_repo = state.role_repo.clone();
-    let caller = auth.0.clone();
     let event = state
         .unit_of_work
         .run(|session| async move {
-            SyncUsersUseCase::new(principal_repo, role_repo, caller, session)
+            SyncUsersUseCase::new(principal_repo, role_repo, session)
                 .run(command, ctx)
                 .await
                 .into_committed()

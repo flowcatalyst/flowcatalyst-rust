@@ -264,11 +264,29 @@ impl<U: UnitOfWork> UseCase for SyncConnectionsUseCase<U> {
         Ok(())
     }
 
+    /// The application must be in the caller's application scope (the SDK
+    /// handler resolves `/{appCode}` against it first, answering the same 404,
+    /// and attaches the scope), and the target client one the caller holds (403
+    /// `No access to client: …`; the handler resolves the reference first, 404
+    /// for an unknown one).
     async fn authorize(
         &self,
-        _c: &SyncConnectionsCommand,
-        _ctx: &ExecutionContext,
+        command: &SyncConnectionsCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if !ctx.caller().allows_application(&command.application_id) {
+            return Err(UseCaseError::verbatim(crate::PlatformError::not_found(
+                "Application",
+                &command.application_code,
+            )));
+        }
+        if let Some(client_id) = command.client_id.as_deref() {
+            if !ctx.caller().can_access_client(client_id) {
+                return Err(UseCaseError::verbatim(crate::PlatformError::forbidden(
+                    format!("No access to client: {client_id}"),
+                )));
+            }
+        }
         Ok(())
     }
 

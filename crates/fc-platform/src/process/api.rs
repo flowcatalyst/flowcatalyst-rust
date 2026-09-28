@@ -158,7 +158,7 @@ pub async fn create_process(
         diagram_type: req.diagram_type,
         tags: req.tags,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::CREATED,
@@ -297,7 +297,7 @@ pub async fn update_process(
         diagram_type: req.diagram_type,
         tags: req.tags,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -328,7 +328,7 @@ pub async fn archive_process(
         .or_not_found("Process", &id)?;
 
     let cmd = ArchiveProcessCommand { process_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.archive_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -359,7 +359,7 @@ pub async fn delete_process(
         .or_not_found("Process", &id)?;
 
     let cmd = DeleteProcessCommand { process_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }

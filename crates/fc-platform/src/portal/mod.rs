@@ -37,7 +37,7 @@ pub use routes::routes;
 use crate::auth::authorization_code_repository::AuthorizationCodeRepository;
 use crate::auth::password_service::PasswordService;
 use crate::role::entity::permissions;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::Authority;
 use crate::shared::email_service::EmailService;
 use crate::shared::encryption_service::EncryptionService;
 use crate::shared::error::{PlatformError, Result};
@@ -236,7 +236,7 @@ fn scope_forbidden() -> PlatformError {
 }
 
 /// Listing a client's portal identities (and its portal apps).
-pub fn can_read_portal_users(ctx: &AuthContext, client_id: &str) -> Result<()> {
+pub fn can_read_portal_users(ctx: &impl Authority, client_id: &str) -> Result<()> {
     if ctx.is_anchor() {
         return Ok(());
     }
@@ -259,7 +259,7 @@ pub fn can_read_portal_users(ctx: &AuthContext, client_id: &str) -> Result<()> {
 
 /// Ensure/invite, suspension, deletion and app administration of a client's
 /// portal identities (Go `CanManagePortalUsers`).
-pub fn can_write_portal_users(ctx: &AuthContext, client_id: &str) -> Result<()> {
+pub fn can_write_portal_users(ctx: &impl Authority, client_id: &str) -> Result<()> {
     if ctx.is_anchor() {
         return Ok(());
     }
@@ -286,8 +286,8 @@ mod tests {
     use crate::shared::authorization_service::Credential;
     use std::collections::HashSet;
 
-    fn ctx(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
-        AuthContext {
+    fn ctx(scope: UserScope, clients: &[&str], perms: &[&str]) -> crate::AuthContext {
+        crate::AuthContext {
             principal_id: "prn_1".into(),
             principal_type: crate::principal::entity::PrincipalType::User,
             scope,

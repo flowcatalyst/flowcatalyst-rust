@@ -576,7 +576,7 @@ pub async fn publish_version(
         manifest: req.manifest,
     };
     let caller = state.caller(&auth.0).await?;
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_caller(caller.clone());
     // One transaction for the version number's row lock and the commit, as
     // Java's TxOperation.
     let ops = state.ops.clone();
@@ -585,7 +585,7 @@ pub async fn publish_version(
         .ops
         .unit_of_work
         .run(move |scoped| async move {
-            ops.publish_in(caller, scoped)
+            ops.publish_in(scoped)
                 .run(command, ctx)
                 .await
                 .into_committed()
@@ -795,13 +795,13 @@ pub async fn retire_version(
     let caller = state.caller(&auth.0).await?;
     match state
         .ops
-        .retire(caller.clone())
+        .retire()
         .run(
             RetireCommand {
                 address: address.clone(),
                 version: number,
             },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_caller(caller.clone()),
         )
         .await
         .into_result()
@@ -854,7 +854,7 @@ pub async fn promote(
     };
     let caller = state.caller(&auth.0).await?;
     let reach = caller.clone();
-    let ctx = ExecutionContext::from_auth(&auth.0);
+    let ctx = ExecutionContext::from_caller(caller.clone());
     // One transaction for the alias change and the wiring, as Java's
     // TxOperation.
     let ops = state.ops.clone();
@@ -862,7 +862,7 @@ pub async fn promote(
         .ops
         .unit_of_work
         .run(move |scoped| async move {
-            ops.promote_in(caller, scoped)
+            ops.promote_in(scoped)
                 .run(command, ctx)
                 .await
                 .into_committed()
@@ -925,10 +925,10 @@ pub async fn remove_alias(
     let caller = state.caller(&auth.0).await?;
     state
         .ops
-        .remove_alias(caller)
+        .remove_alias()
         .run(
             RemoveAliasCommand { address, alias },
-            ExecutionContext::from_auth(&auth.0),
+            ExecutionContext::from_caller(caller.clone()),
         )
         .await
         .into_result()?;

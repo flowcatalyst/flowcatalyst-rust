@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use super::events::SubscriptionCreated;
 use crate::service_account::signing_reach::require_usable_signers;
-use crate::shared::authorization_service::AuthContext;
 use crate::shared::caller_reach::check_scope_access;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
@@ -149,12 +148,6 @@ pub struct CreateSubscriptionCommand {
     /// Custom configuration entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_config: Option<Vec<ConfigEntry>>,
-
-    /// Who is creating it, for the scope check and the signing-reach check
-    /// (never serialised, so never in the audit log). A named account or
-    /// connection with no caller is refused.
-    #[serde(skip)]
-    pub caller: Option<AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for CreateSubscriptionCommand {}
@@ -236,13 +229,11 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
     async fn authorize(
         &self,
         command: &CreateSubscriptionCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        if let Some(ref caller) = command.caller {
-            check_scope_access(caller, command.client_id.as_deref())?;
-        }
+        check_scope_access(ctx.caller(), command.client_id.as_deref())?;
         require_usable_signers(
-            command.caller.as_ref(),
+            ctx.caller(),
             &self.service_account_repo,
             &self.connection_repo,
             command.service_account_id.as_deref(),
@@ -355,7 +346,6 @@ mod tests {
             delay_seconds: None,
             max_age_seconds: None,
             custom_config: None,
-            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

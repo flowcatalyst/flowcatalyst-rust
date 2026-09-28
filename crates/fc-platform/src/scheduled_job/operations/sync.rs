@@ -112,8 +112,28 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         Ok(())
     }
 
-    async fn authorize(&self, _: &Self::Command, _: &ExecutionContext) -> Result<(), UseCaseError> {
-        Ok(())
+    /// A client's jobs need that client (403 `No access to client: …`); platform
+    /// jobs an anchor or super-admin. The SDK handler resolves the `/{appCode}`
+    /// application within the caller's scope before the body.
+    async fn authorize(
+        &self,
+        command: &SyncScheduledJobsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        match command.client_id.as_deref() {
+            Some(cid) if !ctx.caller().can_access_client(cid) => Err(UseCaseError::verbatim(
+                crate::PlatformError::forbidden(format!("No access to client: {cid}")),
+            )),
+            Some(_) => Ok(()),
+            None if ctx.caller().is_anchor()
+                || ctx.caller().has_permission(crate::permissions::ADMIN_ALL) =>
+            {
+                Ok(())
+            }
+            None => Err(UseCaseError::verbatim(crate::PlatformError::forbidden(
+                "Only anchor users can sync platform-scoped scheduled jobs",
+            ))),
+        }
     }
 
     async fn execute(

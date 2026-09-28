@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn scheduled_job_events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = ScheduledJobFiredManually::new(&ctx, "sjb_1", "nightly", "sji_1");
         assert_eq!(
             e.metadata.event_type,

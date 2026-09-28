@@ -85,12 +85,15 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         Ok(())
     }
 
+    /// A process has no client or owner to reach (Go authorizes nothing beyond
+    /// the permission). The handler checks `can_create_processes` before the body; asserted here
+    /// too so any other caller needs it.
     async fn authorize(
         &self,
         _command: &CreateProcessCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::can_create_processes(ctx.caller())?)
     }
 
     async fn execute(

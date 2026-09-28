@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_event_type_created_metadata() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let metadata = EventTypeCreated::metadata_for(&ctx, "0HZXEQ5Y8JY5Z");
 
         assert_eq!(metadata.event_type, "platform:admin:eventtype:created");
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_event_type_updated() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let event = EventTypeUpdated::new(&ctx, "et-123", "New Name", Some("New Description"));
 
         assert_eq!(
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn schema_events_carry_spec_version() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let event = SchemaFinalised::new(&ctx, "et-123", "2.0", Some("1.0"));
         assert_eq!(
             serde_json::to_value(&event).unwrap(),
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_event_type_archived() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let event = EventTypeArchived::new(&ctx, "et-123", "orders:fulfillment:order:created");
 
         assert_eq!(

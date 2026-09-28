@@ -450,7 +450,7 @@ pub async fn authenticate_complete(
     // No caller identity at this stage — the execute() will resolve the
     // principal once the credential is loaded; for tracing/event metadata
     // we'll start as anonymous and the use case can re-bind.
-    let ctx = ExecutionContext::create("anonymous");
+    let ctx = ExecutionContext::system("anonymous");
     let Ok(credential) = serde_json::from_value::<PublicKeyCredential>(req.credential) else {
         record_user_login_attempt(
             &state.login_attempt_repo,

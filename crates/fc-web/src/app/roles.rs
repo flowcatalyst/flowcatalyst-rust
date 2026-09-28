@@ -14,7 +14,6 @@
 use std::sync::Arc;
 
 use fc_platform::permissions;
-use fc_platform::role::ceiling;
 use fc_platform::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase,
 };
@@ -594,9 +593,9 @@ async fn run_create(
     auth: &AuthContext,
     form: &CreateForm,
 ) -> std::result::Result<String, PlatformError> {
-    // The dialog sends no permissions; the ceiling check is the handler's.
+    // The dialog sends no permissions; the use case applies the role
+    // ceiling to whatever a role is created with.
     let permissions_requested: Vec<String> = Vec::new();
-    ceiling::require_permissions(Some(auth), permissions_requested.iter().map(String::as_str))?;
     let display_name = if form.display_name.trim().is_empty() {
         form.name.clone()
     } else {
@@ -626,8 +625,8 @@ async fn run_create(
 
 // -------------------------------------------------------------- writes
 
-/// Delete: `DELETE /bff/roles/{name}`'s checks (anchor + role:delete, then
-/// the ceiling over every permission the role holds) and use case.
+/// Delete: `DELETE /bff/roles/{name}`'s gate (anchor + role:delete) and use
+/// case, which applies the ceiling over every permission the role holds.
 #[route(POST "/ui/(app)/authorization/roles/{name}/delete")]
 async fn delete_role(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
@@ -638,7 +637,7 @@ async fn delete_role(cx: &Cx) -> Result<SeeOther> {
     let name = decode_segment(path_param::<Name>(cx));
     let role = find_role(cx, &name).await?.ok_or_not_found()?;
     let outcome: std::result::Result<(), PlatformError> = async {
-        ceiling::require_permissions(Some(auth), role.permissions.iter().map(String::as_str))?;
+        // The use case applies the role ceiling over the role's permissions.
         let deps = crate::deps(cx);
         DeleteRoleUseCase::new(deps.auth_state.role_repo.clone(), deps.unit_of_work.clone())
             .run(

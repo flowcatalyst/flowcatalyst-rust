@@ -84,12 +84,27 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
         Ok(())
     }
 
+    /// The role ceiling (owner ruling 14): only platform permissions the caller
+    /// holds may be added or removed, 403 `PERMISSION_ABOVE_CALLER`. A missing
+    /// role is left to `execute`'s 404 (the handlers resolve the role first).
     async fn authorize(
         &self,
-        _command: &UpdateRoleCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateRoleCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let Some(permissions) = command.permissions.as_ref() else {
+            return Ok(());
+        };
+        let Some(role) = self.role_repo.find_by_id(&command.role_id).await? else {
+            return Ok(());
+        };
+        let before: Vec<String> = role.permissions.iter().cloned().collect();
+        Ok(crate::role::ceiling::require_permissions(
+            Some(ctx.caller()),
+            crate::role::ceiling::changed(&before, permissions)
+                .iter()
+                .map(String::as_str),
+        )?)
     }
 
     async fn execute(

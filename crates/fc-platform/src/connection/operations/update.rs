@@ -32,10 +32,6 @@ pub struct UpdateConnectionCommand {
     /// replaced as sent (absent clears them). A status flip sets it false.
     #[serde(default)]
     pub replace_details: bool,
-    /// Who is updating it, for the scope check on the loaded row (never
-    /// serialised). `None` is a platform-authored update.
-    #[serde(skip)]
-    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for UpdateConnectionCommand {}
@@ -72,11 +68,24 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored connection (Go checks it post-load): a
+    /// client's connection needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing connection is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &UpdateConnectionCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateConnectionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self
+            .connection_repo
+            .find_by_id(&command.connection_id)
+            .await?
+        {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 
@@ -93,14 +102,6 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
                 "CONNECTION_NOT_FOUND",
                 format!("Connection with ID '{}' not found", command.connection_id),
             )?;
-        // Go: per-resource scope on the loaded row.
-        if let Some(ref caller) = command.caller {
-            crate::shared::caller_reach::check_scope_access(
-                caller,
-                connection.client_id.as_deref(),
-            )?;
-        }
-
         if let Some(ref name) = command.name {
             connection.name = name.trim().to_string();
         }
@@ -168,7 +169,6 @@ mod tests {
             service_account_id: None,
             application_code: None,
             replace_details: false,
-            caller: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("connectionId"));

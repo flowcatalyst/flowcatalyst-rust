@@ -109,7 +109,7 @@ pub async fn create_cors_origin(
         origin: req.origin,
         description: req.description,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.add_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         axum::http::StatusCode::CREATED,
@@ -219,7 +219,7 @@ pub async fn delete_cors_origin(
     crate::checks::can_delete_cors_origins(&auth.0)?;
 
     let cmd = DeleteCorsOriginCommand { origin_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

@@ -18,7 +18,8 @@
 //! by nobody outside that application's roles, not even a super-admin, so
 //! counting them would stop anyone administering application roles.
 //!
-//! Matching is [`AuthContext::has_permission`]: a held wildcard covers what it
+//! Matching is [`Authority::has_permission`] (the system caller holds
+//! everything): a held wildcard covers what it
 //! names, and a role's own wildcard (`platform:messaging:*:*`) is covered only
 //! by a held wildcard at least as wide. A role name that does not exist grants
 //! nothing, so it is never above anyone.
@@ -27,7 +28,7 @@ use std::collections::HashMap;
 
 use crate::role::entity::AuthRole;
 use crate::role::repository::RoleRepository;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::Authority;
 use crate::usecase::UseCaseError;
 
 const PLATFORM_PREFIX: &str = "platform:";
@@ -56,8 +57,8 @@ pub fn changed<S: AsRef<str>>(before: &[S], after: &[S]) -> Vec<String> {
 
 /// The platform permissions in `permissions` that `caller` does not hold, in
 /// order and without repeats. `None` (no caller) holds nothing.
-pub fn permissions_above<'a>(
-    caller: Option<&AuthContext>,
+pub fn permissions_above<'a, A: Authority + ?Sized>(
+    caller: Option<&A>,
     permissions: impl IntoIterator<Item = &'a str>,
 ) -> Vec<String> {
     let mut above: Vec<String> = Vec::new();
@@ -78,8 +79,8 @@ pub fn permissions_above<'a>(
 /// The roles in `changed` whose permissions `caller` does not all hold, in
 /// the order given. `definitions` maps a role name to its role; a name with
 /// no definition grants nothing.
-pub fn roles_above(
-    caller: Option<&AuthContext>,
+pub fn roles_above<A: Authority + ?Sized>(
+    caller: Option<&A>,
     changed: &[String],
     definitions: &HashMap<String, AuthRole>,
 ) -> Vec<String> {
@@ -95,8 +96,8 @@ pub fn roles_above(
 }
 
 /// Refuses when any changed role is above `caller`: 403 `ROLE_ABOVE_CALLER`.
-pub fn require_roles(
-    caller: Option<&AuthContext>,
+pub fn require_roles<A: Authority + ?Sized>(
+    caller: Option<&A>,
     changed: &[String],
     definitions: &HashMap<String, AuthRole>,
 ) -> Result<(), UseCaseError> {
@@ -116,8 +117,8 @@ pub fn require_roles(
 
 /// Refuses when any changed permission is one `caller` does not hold: 403
 /// `PERMISSION_ABOVE_CALLER`.
-pub fn require_permissions<'a>(
-    caller: Option<&AuthContext>,
+pub fn require_permissions<'a, A: Authority + ?Sized>(
+    caller: Option<&A>,
     changed: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), UseCaseError> {
     let above = permissions_above(caller, changed);
@@ -151,8 +152,8 @@ pub async fn definitions(
 
 /// [`require_roles`] for a change from `before` to `after`, loading the
 /// changed roles' definitions.
-pub async fn require_role_change(
-    caller: &AuthContext,
+pub async fn require_role_change<A: Authority + Sync + ?Sized>(
+    caller: &A,
     role_repo: &RoleRepository,
     before: &[String],
     after: &[String],
@@ -168,8 +169,8 @@ pub async fn require_role_change(
 /// [`require_role_change`] for lists that name a role by name or by id
 /// (email-domain `allowedRoleIds`). A reference that matches no role grants
 /// nothing.
-pub async fn require_role_ref_change(
-    caller: &AuthContext,
+pub async fn require_role_ref_change<A: Authority + Sync + ?Sized>(
+    caller: &A,
     role_repo: &RoleRepository,
     before: &[String],
     after: &[String],
@@ -193,14 +194,14 @@ pub async fn require_role_ref_change(
 }
 
 /// A caller for unit tests: the given tier, clients and permissions. The
-/// one place these IAM tests build an [`AuthContext`] by hand.
+/// one place these IAM tests build an [`crate::AuthContext`] by hand.
 #[cfg(test)]
 pub(crate) fn test_caller(
     scope: crate::principal::entity::UserScope,
     clients: &[&str],
     perms: &[&str],
-) -> AuthContext {
-    AuthContext {
+) -> crate::AuthContext {
+    crate::AuthContext {
         principal_id: "prn_caller".to_string(),
         principal_type: crate::PrincipalType::User,
         scope,
@@ -219,7 +220,7 @@ mod tests {
     use crate::principal::entity::UserScope;
     use crate::role::entity::roles;
 
-    fn caller(perms: &[&str]) -> AuthContext {
+    fn caller(perms: &[&str]) -> crate::AuthContext {
         test_caller(UserScope::Anchor, &["*"], perms)
     }
 
@@ -257,7 +258,7 @@ mod tests {
         );
         // Nobody holds anything without a caller.
         assert_eq!(
-            permissions_above(None, ["platform:iam:user:view"]),
+            permissions_above::<crate::AuthContext>(None, ["platform:iam:user:view"]),
             s(&["platform:iam:user:view"])
         );
     }

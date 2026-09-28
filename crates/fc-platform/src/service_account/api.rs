@@ -579,17 +579,16 @@ pub async fn create_service_account<U: UnitOfWork>(
         creds.parse_auth_type()?;
     }
     let all_applications = req.all_applications == Some(true);
-    // Go serviceaccount/api/api.go:155-159: the rule for granting
-    // application access, only a caller that itself holds all-applications
-    // access may grant it.
-    if all_applications
-        && state.app_access.scope_for(&auth.0.principal_id).await?
-            != crate::shared::authorization_service::ApplicationScope::All
-    {
-        return Err(PlatformError::forbidden(
-            "Only an all-applications administrator may grant all-applications access",
-        ));
-    }
+    // Go serviceaccount/api/api.go:155-159: only a caller that itself holds
+    // all-applications access may grant it. Checked here, where Go checks
+    // it (before the body's other rules), and again by the use case.
+    let application_scope = if all_applications {
+        let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
+        crate::checks::require_all_applications_grantor(Some(&scope))?;
+        Some(scope)
+    } else {
+        None
+    };
     if all_applications && req.application_id.is_some() {
         return Err(PlatformError::bad_request_code(
             "ALL_APPLICATIONS_WITH_APPLICATION_ID",
@@ -612,7 +611,10 @@ pub async fn create_service_account<U: UnitOfWork>(
         all_applications,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let mut ctx = ExecutionContext::from_auth(&auth.0);
+    if let Some(scope) = application_scope {
+        ctx = ctx.with_application_scope(scope);
+    }
 
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(result) => {
@@ -666,7 +668,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 portal_app_id: None,
                 api_access: false,
             };
-            let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
+            let oauth_ctx = ExecutionContext::from_auth(&auth.0);
             state
                 .create_oauth_client_use_case
                 .run(oauth_cmd, oauth_ctx)
@@ -731,7 +733,7 @@ pub async fn update_service_account<U: UnitOfWork>(
         webhook_credentials,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.update_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => Ok(StatusCode::NO_CONTENT),
@@ -762,7 +764,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     crate::checks::can_delete_service_accounts(&auth.0)?;
     let command = DeleteServiceAccountCommand { id };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.delete_use_case.run(command, ctx).await.into_result() {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
@@ -795,7 +797,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_token_use_case
@@ -836,7 +838,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_token_use_case
@@ -877,7 +879,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_secret_use_case
@@ -991,22 +993,12 @@ pub async fn assign_roles<U: UnitOfWork>(
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
     crate::checks::can_update_service_accounts(&auth.0)?;
-    // Owner ruling 14: only roles whose every permission the caller holds
-    // may be added or removed.
-    let account = state
-        .repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::ServiceAccountNotFound { id: id.clone() })?;
-    let before: Vec<String> = account.roles.iter().map(|r| r.role.clone()).collect();
-    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &req.roles)
-        .await?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .assign_roles_use_case

@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_email_domain_mapping_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = EmailDomainMappingCreated::new(&ctx, "edm-1", "example.com");
 
         assert_eq!(
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_email_domain_mapping_updated_and_deleted_events() {
-        let ctx = ExecutionContext::create("admin-456");
+        let ctx = ExecutionContext::system("admin-456");
         let updated = EmailDomainMappingUpdated::new(&ctx, "edm-2", "updated.com");
         assert_eq!(
             updated.metadata.event_type,
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn test_event_metadata_ids_are_unique() {
-        let ctx = ExecutionContext::create("user-1");
+        let ctx = ExecutionContext::system("user-1");
         let event1 = EmailDomainMappingCreated::new(&ctx, "edm-1", "a.com");
         let event2 = EmailDomainMappingCreated::new(&ctx, "edm-2", "b.com");
         assert_ne!(event1.metadata.event_id, event2.metadata.event_id);

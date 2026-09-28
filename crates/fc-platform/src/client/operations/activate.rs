@@ -49,13 +49,16 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         Ok(())
     }
 
+    /// Clients are platform-owner data, written by anchors only (Go's
+    /// `Can*Clients` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
     async fn authorize(
         &self,
         _command: &ActivateClientCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        // Authorization handled in handler
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

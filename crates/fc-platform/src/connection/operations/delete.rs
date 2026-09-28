@@ -53,11 +53,24 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored connection (Go checks it post-load): a
+    /// client's connection needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing connection is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &DeleteConnectionCommand,
-        _ctx: &ExecutionContext,
+        command: &DeleteConnectionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self
+            .connection_repo
+            .find_by_id(&command.connection_id)
+            .await?
+        {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 

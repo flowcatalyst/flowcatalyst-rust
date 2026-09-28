@@ -55,6 +55,8 @@ pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
     domains: DomainDeps,
     unit_of_work: Arc<U>,
+    /// The allow-list's role ceiling (owner ruling 14).
+    role_repo: Arc<crate::RoleRepository>,
 }
 
 impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
@@ -62,11 +64,13 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         idp_repo: Arc<IdentityProviderRepository>,
         domains: DomainDeps,
         unit_of_work: Arc<U>,
+        role_repo: Arc<crate::RoleRepository>,
     ) -> Self {
         Self {
             idp_repo,
             domains,
             unit_of_work,
+            role_repo,
         }
     }
 }
@@ -96,11 +100,26 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
 
+    /// Anchors only, as on create. A changed allow-list is bounded by the
+    /// caller's role ceiling against the stored one (owner ruling 14); a missing
+    /// provider is left to `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &UpdateIdentityProviderCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateIdentityProviderCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        crate::checks::require_anchor_scope(ctx.caller())?;
+        if let Some(after) = command.allowed_role_ids.as_deref() {
+            if let Some(existing) = self.idp_repo.find_by_id(&command.idp_id).await? {
+                crate::role::ceiling::require_role_ref_change(
+                    ctx.caller(),
+                    &self.role_repo,
+                    &existing.allowed_role_ids,
+                    after,
+                )
+                .await?;
+            }
+        }
         Ok(())
     }
 

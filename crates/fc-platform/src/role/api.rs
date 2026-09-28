@@ -244,11 +244,6 @@ pub async fn create_role(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::shared::authorization_service::checks::can_write_roles(&auth.0)?;
-    // Owner ruling 14: only permissions the caller holds.
-    crate::role::ceiling::require_permissions(
-        Some(&auth.0),
-        req.permissions.iter().map(String::as_str),
-    )?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -262,7 +257,7 @@ pub async fn create_role(
         // permissions through the admin API.
         cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -394,17 +389,6 @@ pub async fn update_role(
     crate::shared::authorization_service::checks::can_write_roles(&auth.0)?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
-    // Owner ruling 14: only permissions the caller holds may be added or
-    // removed.
-    if let Some(ref permissions) = req.permissions {
-        let before: Vec<String> = role.permissions.iter().cloned().collect();
-        crate::role::ceiling::require_permissions(
-            Some(&auth.0),
-            crate::role::ceiling::changed(&before, permissions)
-                .iter()
-                .map(String::as_str),
-        )?;
-    }
 
     let cmd = UpdateRoleCommand {
         role_id: role.id,
@@ -414,7 +398,7 @@ pub async fn update_role(
         client_managed: req.client_managed,
         cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -449,14 +433,9 @@ pub async fn delete_role(
     )?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
-    // Owner ruling 14: deleting a role withdraws every permission it holds.
-    crate::role::ceiling::require_permissions(
-        Some(&auth.0),
-        role.permissions.iter().map(String::as_str),
-    )?;
 
     let cmd = DeleteRoleCommand { role_id: role.id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -718,15 +697,7 @@ async fn grant(
     role_name: String,
     permission: String,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    let already = state
-        .role_repo
-        .find_by_name(&role_name)
-        .await?
-        .is_some_and(|r| r.permissions.contains(&permission));
-    if !already {
-        // Owner ruling 14: only a permission the caller holds.
-        crate::role::ceiling::require_permissions(Some(&auth.0), [permission.as_str()])?;
-    }
+    // The use case applies the role ceiling (owner ruling 14).
     let cmd = GrantPermissionCommand {
         role_name: role_name.clone(),
         permission,
@@ -813,15 +784,7 @@ pub async fn revoke_role_permission(
     Path((role_name, permission)): Path<(String, String)>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
     checks::can_write_roles(&auth.0)?;
-    let held = state
-        .role_repo
-        .find_by_name(&role_name)
-        .await?
-        .is_some_and(|r| r.permissions.contains(&permission));
-    if held {
-        // Owner ruling 14: removal counts too.
-        crate::role::ceiling::require_permissions(Some(&auth.0), [permission.as_str()])?;
-    }
+    // The use case applies the role ceiling (owner ruling 14).
     let cmd = RevokePermissionCommand {
         role_name: role_name.clone(),
         permission,

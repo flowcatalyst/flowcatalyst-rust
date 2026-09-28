@@ -264,7 +264,7 @@ pub async fn complete(
                 portal.unit_of_work.clone(),
             );
             let event = match use_case
-                .run(cmd, ExecutionContext::create(""))
+                .run(cmd, ExecutionContext::system(""))
                 .await
                 .into_result()
             {

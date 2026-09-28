@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn from_ctx_copies_tracing_ids_and_generates_an_event_id() {
-        let ctx = ExecutionContext::with_correlation("prn_test", "corr_from_ctx");
+        let ctx = ExecutionContext::system("prn_test").with_correlation_id("corr_from_ctx");
         let meta = EventMetadata::from_ctx(
             &ctx,
             "test.event",
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn from_ctx_carries_causation_and_unique_event_ids() {
-        let mut ctx = ExecutionContext::create("prn");
+        let mut ctx = ExecutionContext::system("prn");
         ctx.causation_id = Some("evt_parent".to_string());
         let a = EventMetadata::from_ctx(&ctx, "t", "1", "s", "sub", "grp");
         let b = EventMetadata::from_ctx(&ctx, "t", "1", "s", "sub", "grp");

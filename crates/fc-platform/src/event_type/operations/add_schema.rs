@@ -84,11 +84,25 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored event type (Go checks it post-load):
+    /// a client's type needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing type is `execute`'s 404. Holds for the
+    /// `/api`, `/bff` and fc-web routes alike.
     async fn authorize(
         &self,
-        _command: &AddSchemaCommand,
-        _ctx: &ExecutionContext,
+        command: &AddSchemaCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(event_type) = self
+            .event_type_repo
+            .find_by_id(&command.event_type_id)
+            .await?
+        {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                event_type.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 

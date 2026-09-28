@@ -10,7 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::Serialize;
 
-use super::access::{resource_not_found, Caller};
+use super::access::resource_not_found;
 use super::events::FunctionCreated;
 use crate::function::entity::Function;
 use crate::function::repository::FunctionRepository;
@@ -80,7 +80,6 @@ pub struct CreateFunctionUseCase<U: UnitOfWork> {
     pub(crate) applications: Arc<ApplicationRepository>,
     pub(crate) clients: Arc<ClientRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -108,9 +107,9 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
     async fn authorize(
         &self,
         command: &CreateCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        self.caller.check_scope_access(command.client_id())
+        ctx.caller().check_scope_access(command.client_id())
     }
 
     async fn execute(
@@ -151,7 +150,7 @@ impl<U: UnitOfWork> UseCase for CreateFunctionUseCase<U> {
             None => FunctionOwner::Platform,
         };
 
-        self.caller
+        ctx.caller()
             .check_application_access(&application.id, &application.code)?;
 
         let service =

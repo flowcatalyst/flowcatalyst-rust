@@ -462,7 +462,7 @@ pub async fn create_oauth_client(
         portal_app_id: req.portal_app_id,
         api_access: req.api_access.unwrap_or(false),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .create_oauth_client_use_case
         .run(cmd, ctx)
@@ -606,7 +606,7 @@ pub async fn update_oauth_client(
         default_scopes: req.default_scopes,
         api_access: req.api_access,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_oauth_client_use_case
         .run(cmd, ctx)
@@ -644,7 +644,7 @@ pub async fn delete_oauth_client(
     let cmd = DeleteOAuthClientCommand {
         oauth_client_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_oauth_client_use_case
         .run(cmd, ctx)
@@ -743,7 +743,7 @@ pub async fn activate_oauth_client(
     let cmd = ActivateOAuthClientCommand {
         oauth_client_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .activate_oauth_client_use_case
         .run(cmd, ctx)
@@ -783,7 +783,7 @@ pub async fn deactivate_oauth_client(
     let cmd = DeactivateOAuthClientCommand {
         oauth_client_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .deactivate_oauth_client_use_case
         .run(cmd, ctx)
@@ -850,7 +850,7 @@ pub async fn regenerate_oauth_client_secret(
         new_client_secret_ref: enc.hash_secret(&plaintext_secret),
         grace_seconds: req.grace_seconds,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .rotate_oauth_client_secret_use_case
         .run(cmd, ctx)
@@ -928,7 +928,7 @@ pub async fn revoke_oauth_client_previous_secret(
     let cmd = RevokeOAuthClientPreviousSecretCommand {
         oauth_client_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .revoke_oauth_client_previous_secret_use_case
         .run(cmd, ctx)

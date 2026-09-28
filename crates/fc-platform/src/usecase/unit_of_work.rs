@@ -1620,7 +1620,7 @@ mod tests {
 
     fn user_created() -> crate::principal::operations::events::UserCreated {
         crate::principal::operations::events::UserCreated::new(
-            &super::super::ExecutionContext::create("prn_actor"),
+            &super::super::ExecutionContext::system("prn_actor"),
             "prn_1",
             "a@b.c",
         )

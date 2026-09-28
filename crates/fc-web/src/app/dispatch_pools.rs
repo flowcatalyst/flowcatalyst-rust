@@ -583,9 +583,8 @@ async fn create_pool(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<impl Vie
                     client_id,
                     rate_limit: rate_limit.map(|r| r as i32),
                     concurrency: Some(concurrency as i32),
-                    caller: None,
                 },
-                ExecutionContext::create(auth.principal_id.clone()),
+                ExecutionContext::from_auth(auth),
             )
             .await
             .into_result()
@@ -774,9 +773,8 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
                 description: Some(form.description).filter(|d| !d.is_empty()),
                 rate_limit: rate_limit.map(|r| r as i32),
                 concurrency: concurrency.map(|c| c as i32),
-                caller: None,
             },
-            ExecutionContext::create(auth.principal_id.clone()),
+            ExecutionContext::from_auth(auth),
         )
         .await
         .into_result()
@@ -801,7 +799,7 @@ async fn suspend(cx: &Cx) -> Result<SeeOther> {
                 SuspendDispatchPoolCommand {
                     id: pool.id.clone(),
                 },
-                ExecutionContext::create(auth.principal_id.clone()),
+                ExecutionContext::from_auth(auth),
             )
             .await
             .into_result()
@@ -826,7 +824,7 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
         ActivateDispatchPoolCommand {
             id: pool.id.clone(),
         },
-        ExecutionContext::create(auth.principal_id.clone()),
+        ExecutionContext::from_auth(auth),
     )
     .await
     .into_result()
@@ -849,7 +847,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
                 DeleteDispatchPoolCommand {
                     id: pool.id.clone(),
                 },
-                ExecutionContext::create(auth.principal_id.clone()),
+                ExecutionContext::from_auth(auth),
             )
             .await
             .into_result()

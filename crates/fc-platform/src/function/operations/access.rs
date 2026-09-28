@@ -14,28 +14,21 @@ use crate::function::domain_repository::FunctionDomainRepository;
 use crate::function::entity::{Function, FunctionDomain};
 use crate::function::repository::{FunctionRepository, OwnerReach};
 use crate::function::{FunctionAddress, FunctionOwner, Hostname};
-use crate::shared::authorization_service::{ApplicationScope, AuthContext};
+use crate::shared::authorization_service::ApplicationScope;
 use crate::usecase::UseCaseError;
 
-/// The authenticated caller, with the application scope its principal
-/// resolves to (Java's `AuthContext` carries both).
-#[derive(Debug, Clone)]
-pub struct Caller {
-    pub auth: AuthContext,
-    pub applications: ApplicationScope,
-}
+/// The use case's caller ([`crate::usecase::Caller`]), with the application
+/// scope its handler resolved (Java's `AuthContext` carries both). The
+/// reach rules below are its methods.
+pub use crate::usecase::Caller;
 
 impl Caller {
-    pub fn new(auth: AuthContext, applications: ApplicationScope) -> Caller {
-        Caller { auth, applications }
-    }
-
     /// Java `Checks.canAccessScope`: a client id needs access to that
     /// client; none (the platform) needs anchor scope.
     pub fn can_access_scope(&self, client_id: Option<&str>) -> bool {
         match client_id {
-            Some(id) => self.auth.can_access_client(id),
-            None => self.auth.is_anchor(),
+            Some(id) => self.can_access_client(id),
+            None => self.is_anchor(),
         }
     }
 
@@ -45,7 +38,7 @@ impl Caller {
 
     /// Java `Access.canReach`: the owner, and the owning application.
     pub fn can_reach(&self, f: &Function) -> bool {
-        self.can_reach_owner(&f.owner) && self.applications.allows(&f.application_id)
+        self.can_reach_owner(&f.owner) && self.allows_application(&f.application_id)
     }
 
     /// Java `Access.canReachDomain`: the owner alone (a domain has no
@@ -77,7 +70,7 @@ impl Caller {
         application_id: &str,
         application_code: &str,
     ) -> Result<(), UseCaseError> {
-        if self.applications.allows(application_id) {
+        if self.allows_application(application_id) {
             return Ok(());
         }
         Err(UseCaseError::forbidden(
@@ -88,21 +81,24 @@ impl Caller {
 
     /// The owner half of the list route's reach, applied in SQL.
     pub fn owner_reach(&self) -> OwnerReach {
-        if self.auth.is_anchor() {
+        let clients = crate::shared::authorization_service::Authority::accessible_clients(self);
+        if self.is_anchor() {
             OwnerReach::Everything
-        } else if self.auth.accessible_clients.iter().any(|c| c == "*") {
+        } else if clients.iter().any(|c| c == "*") {
             OwnerReach::AnyClient
         } else {
-            OwnerReach::Clients(self.auth.accessible_clients.clone())
+            OwnerReach::Clients(clients.to_vec())
         }
     }
 
     /// The application half of the list route's reach: `None` for every
-    /// application, else exactly the granted ones (none when empty).
+    /// application, else exactly the granted ones (none when empty or
+    /// unresolved).
     pub fn application_reach(&self) -> Option<Vec<String>> {
-        match &self.applications {
-            ApplicationScope::All => None,
-            ApplicationScope::Only(ids) => {
+        match self.application_scope() {
+            Some(ApplicationScope::All) => None,
+            None => Some(Vec::new()),
+            Some(ApplicationScope::Only(ids)) => {
                 let mut ids: Vec<String> = ids.iter().cloned().collect();
                 ids.sort();
                 Some(ids)
@@ -152,27 +148,26 @@ pub async fn domain_by_hostname(
 pub(crate) mod tests {
     use super::*;
     use crate::function::Runtime;
+    use crate::shared::authorization_service::AuthContext;
     use crate::{PrincipalType, UserScope};
     use std::collections::HashSet;
 
     pub(crate) fn caller(scope: UserScope, clients: &[&str], apps: Option<&[&str]>) -> Caller {
-        Caller::new(
-            AuthContext {
-                principal_id: "prn_1".into(),
-                principal_type: PrincipalType::User,
-                scope,
-                email: None,
-                name: "Test".into(),
-                accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
-                permissions: HashSet::new(),
-                roles: vec![],
-                credential: crate::shared::authorization_service::Credential::BearerToken,
-            },
-            match apps {
-                None => ApplicationScope::All,
-                Some(ids) => ApplicationScope::Only(ids.iter().map(|a| a.to_string()).collect()),
-            },
-        )
+        Caller::from_auth(&AuthContext {
+            principal_id: "prn_1".into(),
+            principal_type: PrincipalType::User,
+            scope,
+            email: None,
+            name: "Test".into(),
+            accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
+            permissions: HashSet::new(),
+            roles: vec![],
+            credential: crate::shared::authorization_service::Credential::BearerToken,
+        })
+        .with_application_scope(match apps {
+            None => ApplicationScope::All,
+            Some(ids) => ApplicationScope::Only(ids.iter().map(|a| a.to_string()).collect()),
+        })
     }
 
     fn function(owner: FunctionOwner) -> Function {

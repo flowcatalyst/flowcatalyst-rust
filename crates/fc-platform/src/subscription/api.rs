@@ -431,9 +431,8 @@ pub async fn create_subscription(
         delay_seconds: req.delay_seconds,
         max_age_seconds: req.max_age_seconds,
         custom_config: config_entries(req.custom_config),
-        caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -580,9 +579,8 @@ pub async fn update_subscription(
         delay_seconds: req.delay_seconds,
         max_age_seconds: req.max_age_seconds,
         custom_config: config_entries(req.custom_config),
-        caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -613,19 +611,13 @@ pub async fn pause_subscription(
 
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
-    let subscription = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    // Go `CheckScopeAccess`: a client's subscription needs that client, a
-    // platform one anchor scope.
-    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
+    // The use case answers 404 for a missing subscription, then checks the
+    // caller's scope on it (Go `CheckScopeAccess`).
 
     let cmd = PauseSubscriptionCommand {
         subscription_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.pause_use_case.run(cmd, ctx).await.into_result()?;
 
     // Unconditional and idempotent, as Go: 204 however often it is sent.
@@ -657,19 +649,13 @@ pub async fn resume_subscription(
 
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
-    let subscription = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    // Go `CheckScopeAccess`: a client's subscription needs that client, a
-    // platform one anchor scope.
-    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
+    // The use case answers 404 for a missing subscription, then checks the
+    // caller's scope on it (Go `CheckScopeAccess`).
 
     let cmd = ResumeSubscriptionCommand {
         subscription_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.resume_use_case.run(cmd, ctx).await.into_result()?;
 
     // Unconditional and idempotent, as Go: 204 however often it is sent.
@@ -701,17 +687,13 @@ pub async fn delete_subscription(
 
     crate::shared::authorization_service::checks::can_delete_subscriptions(&auth.0)?;
 
-    let subscription = state
-        .subscription_repo
-        .find_by_id(&id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
-    crate::shared::caller_reach::require_scope_access(&auth.0, subscription.client_id.as_deref())?;
+    // The use case answers 404 for a missing subscription, then checks the
+    // caller's scope on it (Go `CheckScopeAccess`).
 
     let cmd = DeleteSubscriptionCommand {
         subscription_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)

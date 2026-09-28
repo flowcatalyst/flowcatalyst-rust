@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 
-use super::access::{function_by_address, resource_not_found, Caller};
+use super::access::{function_by_address, resource_not_found};
 use super::events::{ConfigUpdated, SecretDeleted, SecretSet};
 use crate::function::entity::{FunctionConfig, FunctionSecret, SecretValue};
 use crate::function::repository::FunctionRepository;
@@ -46,7 +46,6 @@ pub struct SetFunctionConfigUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) settings: Arc<FunctionSettingsRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -93,7 +92,7 @@ impl<U: UnitOfWork> UseCase for SetFunctionConfigUseCase<U> {
         command: SetConfigCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<ConfigUpdated>, UseCaseError> {
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let config = FunctionConfig {
             function_id: function.id.clone(),
             values: command.values.clone(),
@@ -130,7 +129,6 @@ pub struct SetFunctionSecretUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) settings: Arc<FunctionSettingsRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -173,7 +171,7 @@ impl<U: UnitOfWork> UseCase for SetFunctionSecretUseCase<U> {
         command: SetSecretCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<SecretSet>, UseCaseError> {
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let secret = FunctionSecret {
             function_id: function.id.clone(),
             key: command.key.clone(),
@@ -205,7 +203,6 @@ pub struct DeleteFunctionSecretUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) settings: Arc<FunctionSettingsRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -233,7 +230,7 @@ impl<U: UnitOfWork> UseCase for DeleteFunctionSecretUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<SecretDeleted>, UseCaseError> {
         // 404 `FUNCTION_SECRET_NOT_FOUND` when the key was never set.
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         if !self.settings.has_secret(&function.id, &command.key).await? {
             return Err(resource_not_found("FunctionSecret", &command.key));
         }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::Serialize;
 
-use super::access::{function_by_address, Caller};
+use super::access::function_by_address;
 use super::events::FunctionDeleted;
 use super::trigger_sync::TriggerSync;
 use crate::function::repository::FunctionRepository;
@@ -31,7 +31,6 @@ pub struct DeleteFunctionUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) trigger_sync: TriggerSync,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -57,7 +56,7 @@ impl<U: UnitOfWork> UseCase for DeleteFunctionUseCase<U> {
         command: DeleteCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<FunctionDeleted>, UseCaseError> {
-        let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         self.trigger_sync
             .on_delete(&*self.unit_of_work, &function, &ctx)
             .await?;

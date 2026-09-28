@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 
-use super::access::{function_by_address, resource_not_found, Caller};
+use super::access::{function_by_address, resource_not_found};
 use super::events::VersionRetired;
 use crate::function::repository::FunctionRepository;
 use crate::function::version_repository::FunctionVersionRepository;
@@ -34,7 +34,6 @@ pub struct RetireVersionUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) versions: Arc<FunctionVersionRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -60,7 +59,7 @@ impl<U: UnitOfWork> UseCase for RetireVersionUseCase<U> {
         command: RetireCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<VersionRetired>, UseCaseError> {
-        let f = function_by_address(&self.functions, &command.address, &self.caller).await?;
+        let f = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let mut v = self
             .versions
             .find_by_function_and_version(&f.id, command.version)

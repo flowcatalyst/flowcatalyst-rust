@@ -53,11 +53,23 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         Ok(())
     }
 
+    /// The target must be a user the caller administers (Go
+    /// `requireUserResourceAccess`, post-load): a client administrator manages
+    /// only CLIENT-tier users (403) of a client it reaches (else
+    /// `Principal_NOT_FOUND`, as a missing id). The coarse `can_write_principals` gate stays in
+    /// the handler, before anything is loaded.
     async fn authorize(
         &self,
-        _command: &DeactivateUserCommand,
-        _ctx: &ExecutionContext,
+        command: &DeactivateUserCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.principal_id,
+            "Principal",
+        )
+        .await?;
         Ok(())
     }
 

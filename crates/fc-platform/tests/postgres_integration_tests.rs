@@ -564,7 +564,7 @@ async fn test_unit_of_work_commit() {
 
     // Commit an event via UnitOfWork
     let uow = PgUnitOfWork::new(pool.clone());
-    let ctx = ExecutionContext::create("test-principal-id");
+    let ctx = ExecutionContext::system("test-principal-id");
     let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
 
     #[derive(serde::Serialize)]
@@ -617,7 +617,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
     impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
 
     let uow = PgUnitOfWork::new(pool.clone());
-    let ctx = ExecutionContext::create("test-principal-id");
+    let ctx = ExecutionContext::system("test-principal-id");
     let commit = |client: Client| {
         let uow = &uow;
         let repo = &client_repo;
@@ -921,7 +921,7 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     }
     impl fc_platform::usecase::AuditMasked for SyncEventTypesCommand {}
 
-    let ctx = ExecutionContext::create("test-principal-id");
+    let ctx = ExecutionContext::system("test-principal-id");
     let event = EventTypesSynced {
         metadata: EventTypesSynced::metadata_for(&ctx, code),
         application_code: code.to_string(),

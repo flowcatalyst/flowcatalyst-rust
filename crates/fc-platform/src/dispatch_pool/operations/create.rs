@@ -34,11 +34,6 @@ pub struct CreateDispatchPoolCommand {
     /// Max concurrent dispatches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<i32>,
-
-    /// Who is creating it, for Go's scope check (never serialised). `None`
-    /// is a platform-authored pool.
-    #[serde(skip)]
-    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 /// Go `validate.CodeUnderscorePattern`, the pool-code rule: a lowercase
@@ -120,15 +115,9 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
     async fn authorize(
         &self,
         command: &CreateDispatchPoolCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        match command.caller {
-            Some(ref caller) => crate::shared::caller_reach::check_scope_access(
-                caller,
-                command.client_id.as_deref(),
-            ),
-            None => Ok(()),
-        }
+        crate::shared::caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     async fn execute(
@@ -192,7 +181,6 @@ mod tests {
             client_id: Some("client-123".to_string()),
             rate_limit: Some(1000),
             concurrency: Some(10),
-            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

@@ -1146,7 +1146,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
             .collect(),
     };
     pools
-        .run(command, ExecutionContext::create("prn_t"))
+        .run(command, ExecutionContext::system("prn_t"))
         .await
         .into_result()
         .unwrap();
@@ -1172,7 +1172,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
             .collect(),
     };
     pools
-        .run(command, ExecutionContext::create("prn_t"))
+        .run(command, ExecutionContext::system("prn_t"))
         .await
         .into_result()
         .unwrap();
@@ -1218,7 +1218,7 @@ async fn sdk_syncs_leave_a_functions_pool_and_jobs_alone() {
                 .into_iter()
                 .collect(),
         };
-        jobs.run(command, ExecutionContext::create("prn_t"))
+        jobs.run(command, ExecutionContext::system("prn_t"))
             .await
             .into_result()
             .unwrap();

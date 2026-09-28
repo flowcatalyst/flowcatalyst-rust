@@ -131,42 +131,21 @@ pub struct PlatformConfigState {
         Arc<super::operations::SetPlatformConfigPropertyUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
-/// Go's property-route rule (platformconfig/api/api.go:47-57, 90-100,
-/// 147-157, operations/set_property.go:60-73): an anchor caller passes; any
-/// other caller needs a platform-config access grant on one of its roles
-/// for the application, with read or write as asked, else 403.
+/// Go's property-route rule ([`super::access::require_config_access`]).
 async fn require_config_access(
     state: &PlatformConfigState,
     ctx: &crate::AuthContext,
     app_code: &str,
     write: bool,
 ) -> Result<(), PlatformError> {
-    if ctx.is_anchor() {
-        return Ok(());
-    }
-    let granted = if ctx.roles.is_empty() {
-        false
-    } else {
-        state
-            .access_repo
-            .find_by_role_codes(app_code, &ctx.roles)
-            .await?
-            .iter()
-            .any(|a| if write { a.can_write } else { a.can_read })
-    };
-    if granted {
-        Ok(())
-    } else if write {
-        Err(PlatformError::forbidden(format!(
-            "No write access to platform config for {}",
-            app_code
-        )))
-    } else {
-        Err(PlatformError::forbidden(format!(
-            "No read access to platform config for {}",
-            app_code
-        )))
-    }
+    super::access::require_config_access(
+        &state.access_repo,
+        ctx.is_anchor(),
+        &ctx.roles,
+        app_code,
+        write,
+    )
+    .await
 }
 
 /// Read a config property: anchor, or a read grant (Go).
@@ -384,7 +363,7 @@ pub async fn set_property(
         value_type: parse_opt(req.value_type.as_deref())?,
         description: req.description,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .set_property_use_case
         .run(cmd, ctx)
@@ -552,31 +531,21 @@ fn coordinate(client_id: Option<&str>) -> (ConfigScope, Option<&str>) {
     }
 }
 
-/// Go's property-route gate: anchor, or a read/write grant for the app on
-/// one of the caller's roles.
+/// Go's property-route gate ([`super::access::require_config_access`]).
 async fn require_property_access(
     state: &GoPlatformConfigState,
     ctx: &AuthContext,
     app: &str,
     write: bool,
 ) -> Result<(), PlatformError> {
-    if ctx.is_anchor() {
-        return Ok(());
-    }
-    let granted = !ctx.roles.is_empty()
-        && state
-            .access_repo
-            .find_by_role_codes(app, &ctx.roles)
-            .await?
-            .iter()
-            .any(|a| if write { a.can_write } else { a.can_read });
-    if granted {
-        return Ok(());
-    }
-    let kind = if write { "write" } else { "read" };
-    Err(PlatformError::forbidden(format!(
-        "No {kind} access to platform config for {app}"
-    )))
+    super::access::require_config_access(
+        &state.access_repo,
+        ctx.is_anchor(),
+        &ctx.roles,
+        app,
+        write,
+    )
+    .await
 }
 
 /// Rust's application confinement on top of Go's gate: a code naming a

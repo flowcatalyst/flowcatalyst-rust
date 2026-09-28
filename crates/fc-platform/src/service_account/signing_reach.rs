@@ -219,10 +219,10 @@ pub fn is_super_admin(caller: &AuthContext) -> bool {
 /// one carried over unchanged may be dangling (it signs nothing) and is then
 /// not refused. A connection outside the caller's scope is 403
 /// `CONNECTION_OUT_OF_REACH`; an account the caller may not use is 403
-/// `SERVICE_ACCOUNT_OUT_OF_REACH`. Nothing to check needs no caller; anything
-/// to check without one is 403 `UNAUTHENTICATED`.
+/// `SERVICE_ACCOUNT_OUT_OF_REACH`. The system caller (a platform-authored
+/// write) signs with anything.
 pub async fn require_usable_signers(
-    caller: Option<&AuthContext>,
+    caller: &crate::usecase::Caller,
     accounts: &ServiceAccountRepository,
     connections: &ConnectionRepository,
     service_account_id: Option<&str>,
@@ -235,11 +235,8 @@ pub async fn require_usable_signers(
     if service_account_id.is_none() && connection_id.is_none() {
         return Ok(());
     }
-    let Some(caller) = caller else {
-        return Err(UseCaseError::forbidden(
-            "UNAUTHENTICATED",
-            "authentication required",
-        ));
+    let Some(caller) = caller.auth() else {
+        return Ok(());
     };
     let reach = SigningReach::for_caller(caller, accounts).await?;
 

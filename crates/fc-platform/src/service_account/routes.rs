@@ -54,6 +54,7 @@ pub fn service_accounts_state(ctx: &PlatformContext) -> ServiceAccountsState<PgU
         )),
         assign_roles_use_case: Arc::new(AssignRolesUseCase::new(
             repos.service_account_repo.clone(),
+            repos.role_repo.clone(),
             uow.clone(),
         )),
         regenerate_token_use_case: Arc::new(RegenerateAuthTokenUseCase::new(

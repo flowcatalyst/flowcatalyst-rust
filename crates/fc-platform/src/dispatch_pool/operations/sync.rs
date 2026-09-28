@@ -117,11 +117,25 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         Ok(())
     }
 
+    /// Dispatch pools are platform-global, so `removeUnlisted` is a
+    /// platform-wide sweep: anchor or super-admin only (Go
+    /// `dispatchpool/operations/sync.go`: 403
+    /// `ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP`). The SDK handler resolves the
+    /// `/{appCode}` application within the caller's scope before the body.
     async fn authorize(
         &self,
-        _command: &SyncDispatchPoolsCommand,
-        _ctx: &ExecutionContext,
+        command: &SyncDispatchPoolsCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if command.remove_unlisted
+            && !ctx.caller().is_anchor()
+            && !ctx.caller().has_permission(crate::permissions::ADMIN_ALL)
+        {
+            return Err(UseCaseError::forbidden(
+                "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP",
+                "Only anchor users may sweep (removeUnlisted) dispatch pools — they are platform-global",
+            ));
+        }
         Ok(())
     }
 

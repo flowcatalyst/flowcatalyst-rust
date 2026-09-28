@@ -7,8 +7,7 @@ use std::sync::Arc;
 use super::create::{is_http_url, parse_queue, EventTypeBindingInput};
 use super::events::SubscriptionUpdated;
 use crate::service_account::signing_reach::require_usable_signers;
-use crate::shared::authorization_service::AuthContext;
-use crate::shared::caller_reach::{check_scope_access, non_blank};
+use crate::shared::caller_reach::non_blank;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
 use crate::usecase::{Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError};
 use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
@@ -80,12 +79,6 @@ pub struct UpdateSubscriptionCommand {
     /// New custom configuration (replaces the existing entries if given)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_config: Option<Vec<ConfigEntry>>,
-
-    /// Who is updating it, for the scope check and the signing-reach check
-    /// (never serialised, so never in the audit log). `None` is a
-    /// platform-authored update, which neither applies to.
-    #[serde(skip)]
-    pub caller: Option<AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for UpdateSubscriptionCommand {}
@@ -144,11 +137,24 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         Ok(())
     }
 
+    /// Go `CheckScopeAccess` on the stored subscription (Go checks it post-load): a
+    /// client's subscription needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing subscription is `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &UpdateSubscriptionCommand,
-        _ctx: &ExecutionContext,
+        command: &UpdateSubscriptionCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
+        if let Some(target) = self
+            .subscription_repo
+            .find_by_id(&command.subscription_id)
+            .await?
+        {
+            crate::shared::caller_reach::check_scope_access(
+                ctx.caller(),
+                target.client_id.as_deref(),
+            )?;
+        }
         Ok(())
     }
 
@@ -169,12 +175,6 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
                     command.subscription_id
                 ),
             )?;
-        // Go: per-resource scope on the loaded row (a non-anchor must not
-        // touch another tenant's subscription by guessing its id).
-        if let Some(ref caller) = command.caller {
-            check_scope_access(caller, subscription.client_id.as_deref())?;
-        }
-
         // Where deliveries go and who signs them, before the update.
         let account_before = non_blank(subscription.service_account_id.clone());
         let connection_before = non_blank(subscription.connection_id.clone());
@@ -266,7 +266,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         let connection_changed = connection_before != connection_after;
         if account_changed || connection_changed || endpoint_before != subscription.endpoint {
             require_usable_signers(
-                command.caller.as_ref(),
+                ctx.caller(),
                 &self.service_account_repo,
                 &self.connection_repo,
                 account_after.as_deref(),
@@ -312,7 +312,6 @@ mod tests {
             delay_seconds: None,
             max_age_seconds: None,
             custom_config: None,
-            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

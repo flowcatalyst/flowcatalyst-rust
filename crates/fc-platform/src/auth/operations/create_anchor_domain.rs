@@ -56,12 +56,16 @@ impl<U: UnitOfWork> UseCase for CreateAnchorDomainUseCase<U> {
         Ok(())
     }
 
+    /// Anchor domains are platform-owner data, written by anchors only (Go's
+    /// `Can*AnchorDomains` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
     async fn authorize(
         &self,
         _command: &CreateAnchorDomainCommand,
-        _ctx: &ExecutionContext,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

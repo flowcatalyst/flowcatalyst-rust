@@ -47,12 +47,27 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
         Ok(())
     }
 
+    /// Self-service: only your own passkey (409 `PRINCIPAL_MISMATCH` otherwise).
+    /// A missing credential is `execute`'s 404. The handler requires the
+    /// signed-in session (401) first.
     async fn authorize(
         &self,
-        _command: &RevokePasskeyCommand,
-        _ctx: &ExecutionContext,
+        command: &RevokePasskeyCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        // Owner check happens in execute() because we need to load the row first.
+        let Some(credential) = self
+            .credential_repo
+            .find_by_id(&command.credential_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        if ctx.principal_id != credential.principal_id {
+            return Err(UseCaseError::business_rule(
+                "PRINCIPAL_MISMATCH",
+                "you may only revoke your own passkeys",
+            ));
+        }
         Ok(())
     }
 
@@ -69,13 +84,6 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
                 "CREDENTIAL_NOT_FOUND",
                 format!("passkey '{}' not found", command.credential_id),
             )?;
-
-        if ctx.principal_id != credential.principal_id {
-            return Err(UseCaseError::business_rule(
-                "PRINCIPAL_MISMATCH",
-                "you may only revoke your own passkeys",
-            ));
-        }
 
         let event = PasskeyRevoked::new(&ctx, &credential.id, &credential.principal_id);
 

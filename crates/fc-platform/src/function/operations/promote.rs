@@ -38,7 +38,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 
-use super::access::{function_by_address, resource_not_found, Caller};
+use super::access::{function_by_address, resource_not_found};
 use super::events::{AliasChanged, AliasRemoved};
 use super::trigger_sync::{missing_settings, TriggerSync};
 use crate::function::entity::{require_valid_alias_name, FunctionVersion, VersionState};
@@ -75,7 +75,6 @@ pub struct PromoteVersionUseCase<U: UnitOfWork> {
     pub(crate) routes: Arc<FunctionRouteRepository>,
     pub(crate) trigger_sync: TriggerSync,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 /// Everything decided before the commit.
@@ -113,7 +112,7 @@ impl<U: UnitOfWork> UseCase for PromoteVersionUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<AliasChanged>, UseCaseError> {
         let mut function =
-            function_by_address(&self.functions, &command.address, &self.caller).await?;
+            function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         if let Some(expected) = command.expected_version {
             let current = match function.version_id_of(&command.alias) {
                 Some(id) => self.versions.find_by_id(id).await?.map_or(0, |v| v.version),
@@ -182,7 +181,7 @@ impl<U: UnitOfWork> UseCase for PromoteVersionUseCase<U> {
                 &version.manifest,
                 version.version,
                 &command.alias,
-                &self.caller,
+                ctx.caller(),
             )
             .await?;
 
@@ -243,7 +242,6 @@ pub struct RemoveAliasUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
     pub(crate) versions: Arc<FunctionVersionRepository>,
     pub(crate) unit_of_work: Arc<U>,
-    pub(crate) caller: Caller,
 }
 
 #[async_trait]
@@ -270,7 +268,7 @@ impl<U: UnitOfWork> UseCase for RemoveAliasUseCase<U> {
         ctx: ExecutionContext,
     ) -> Result<Committed<AliasRemoved>, UseCaseError> {
         let mut function =
-            function_by_address(&self.functions, &command.address, &self.caller).await?;
+            function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let version_id = function.remove_alias(&command.alias, Utc::now())?;
         // An alias never outlives its version (the FK cascades), so the
         // version it named still exists.

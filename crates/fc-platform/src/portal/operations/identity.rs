@@ -148,8 +148,20 @@ impl<U: UnitOfWork> UseCase for EnsurePortalIdentityUseCase<U> {
         }
     }
 
-    async fn authorize(&self, _: &EnsureCommand, _: &ExecutionContext) -> Result<(), UseCaseError> {
-        Ok(())
+    /// Go `CanManagePortalUsers` for the command's client: an anchor, or a
+    /// caller holding that client and `platform:iam:portal-user:manage` (403
+    /// `SCOPE_FORBIDDEN` / `PERMISSION_REQUIRED`). The `/api/portal` handlers
+    /// check it first, where Go's controller does (after the body names the
+    /// client); the portal login runs as the system caller.
+    async fn authorize(
+        &self,
+        command: &EnsureCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(crate::portal::can_write_portal_users(
+            ctx.caller(),
+            &command.client_id,
+        )?)
     }
 
     async fn execute(
@@ -239,12 +251,20 @@ impl<U: UnitOfWork> UseCase for GrantPortalIdentityAppUseCase<U> {
         validate_app_grant(cmd)
     }
 
+    /// Go `CanManagePortalUsers` for the command's client: an anchor, or a
+    /// caller holding that client and `platform:iam:portal-user:manage` (403
+    /// `SCOPE_FORBIDDEN` / `PERMISSION_REQUIRED`). The `/api/portal` handlers
+    /// check it first, where Go's controller does (after the body names the
+    /// client); the portal login runs as the system caller.
     async fn authorize(
         &self,
-        _: &AppGrantCommand,
-        _: &ExecutionContext,
+        command: &AppGrantCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::portal::can_write_portal_users(
+            ctx.caller(),
+            &command.client_id,
+        )?)
     }
 
     async fn execute(
@@ -300,12 +320,20 @@ impl<U: UnitOfWork> UseCase for RevokePortalIdentityAppUseCase<U> {
         validate_app_grant(cmd)
     }
 
+    /// Go `CanManagePortalUsers` for the command's client: an anchor, or a
+    /// caller holding that client and `platform:iam:portal-user:manage` (403
+    /// `SCOPE_FORBIDDEN` / `PERMISSION_REQUIRED`). The `/api/portal` handlers
+    /// check it first, where Go's controller does (after the body names the
+    /// client); the portal login runs as the system caller.
     async fn authorize(
         &self,
-        _: &AppGrantCommand,
-        _: &ExecutionContext,
+        command: &AppGrantCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::portal::can_write_portal_users(
+            ctx.caller(),
+            &command.client_id,
+        )?)
     }
 
     async fn execute(
@@ -403,12 +431,20 @@ impl<U: UnitOfWork> UseCase for SetPortalIdentityStatusUseCase<U> {
         Ok(())
     }
 
+    /// Go `CanManagePortalUsers` for the command's client: an anchor, or a
+    /// caller holding that client and `platform:iam:portal-user:manage` (403
+    /// `SCOPE_FORBIDDEN` / `PERMISSION_REQUIRED`). The `/api/portal` handlers
+    /// check it first, where Go's controller does (after the body names the
+    /// client); the portal login runs as the system caller.
     async fn authorize(
         &self,
-        _: &SetStatusCommand,
-        _: &ExecutionContext,
+        command: &SetStatusCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        Ok(crate::portal::can_write_portal_users(
+            ctx.caller(),
+            &command.client_id,
+        )?)
     }
 
     async fn execute(
@@ -477,8 +513,20 @@ impl<U: UnitOfWork> UseCase for DeletePortalIdentityUseCase<U> {
         Ok(())
     }
 
-    async fn authorize(&self, _: &DeleteCommand, _: &ExecutionContext) -> Result<(), UseCaseError> {
-        Ok(())
+    /// Go `CanManagePortalUsers` for the command's client: an anchor, or a
+    /// caller holding that client and `platform:iam:portal-user:manage` (403
+    /// `SCOPE_FORBIDDEN` / `PERMISSION_REQUIRED`). The `/api/portal` handlers
+    /// check it first, where Go's controller does (after the body names the
+    /// client); the portal login runs as the system caller.
+    async fn authorize(
+        &self,
+        command: &DeleteCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(crate::portal::can_write_portal_users(
+            ctx.caller(),
+            &command.client_id,
+        )?)
     }
 
     async fn execute(

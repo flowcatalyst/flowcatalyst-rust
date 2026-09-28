@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn access_revoked_is_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = PlatformConfigAccessRevoked::new(&ctx, "pca_1", "orders", "orders:admin");
         assert_eq!(
             e.metadata.event_type,

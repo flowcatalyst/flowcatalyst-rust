@@ -356,8 +356,6 @@ pub struct AuthConfigState {
     pub anchor_domain_repo: Arc<AnchorDomainRepository>,
     pub client_auth_config_repo: Arc<ClientAuthConfigRepository>,
     pub idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
-    /// Role definitions, for the role ceiling on IdP role mappings.
-    pub role_repo: Arc<crate::RoleRepository>,
     /// Used for counting users by email domain
     pub principal_repo: Arc<crate::PrincipalRepository>,
     pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
@@ -419,7 +417,7 @@ pub async fn create_anchor_domain(
     let cmd = CreateAnchorDomainCommand {
         domain: req.domain.trim().to_lowercase(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_anchor_domain_use_case
         .run(cmd, ctx)
@@ -556,7 +554,7 @@ pub async fn delete_anchor_domain(
     let cmd = DeleteAnchorDomainCommand {
         anchor_domain_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_anchor_domain_use_case
         .run(cmd, ctx)
@@ -604,7 +602,7 @@ pub async fn update_anchor_domain(
         anchor_domain_id: id,
         domain: req.domain,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_anchor_domain_use_case
         .run(cmd, ctx)
@@ -672,7 +670,7 @@ pub async fn create_client_auth_config(
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         oidc_client_secret_ref,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -791,7 +789,7 @@ pub async fn update_client_auth_config(
         granted_client_ids: req.granted_client_ids,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -826,7 +824,7 @@ pub async fn delete_client_auth_config(
     crate::checks::can_delete_auth_configs(&auth.0)?;
 
     let cmd = DeleteAuthConfigCommand { auth_config_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_auth_config_use_case
         .run(cmd, ctx)
@@ -883,7 +881,7 @@ pub async fn update_config_type(
         granted_client_ids: None,
         config_type: Some(parse_config_type(&req.config_type)?),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -961,7 +959,7 @@ pub async fn create_internal_auth_config(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -1014,7 +1012,7 @@ pub async fn create_oidc_auth_config(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -1069,7 +1067,7 @@ pub async fn update_oidc_config(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1118,7 +1116,7 @@ pub async fn update_client_binding(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1167,7 +1165,7 @@ pub async fn update_additional_clients(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1216,7 +1214,7 @@ pub async fn update_granted_clients(
         granted_client_ids: Some(req.granted_client_ids),
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1252,21 +1250,13 @@ pub async fn create_idp_role_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_identity_providers(&auth.0)?;
-    // Owner ruling 14: a mapping hands its role out at login.
-    crate::role::ceiling::require_role_change(
-        &auth.0,
-        &state.role_repo,
-        &[],
-        std::slice::from_ref(&req.platform_role_name),
-    )
-    .await?;
 
     let cmd = CreateIdpRoleMappingCommand {
         idp_type: req.idp_type,
         idp_role_name: req.idp_role_name,
         platform_role_name: req.platform_role_name,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_idp_role_mapping_use_case
         .run(cmd, ctx)
@@ -1345,20 +1335,9 @@ pub async fn delete_idp_role_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_identity_providers(&auth.0)?;
-    // Owner ruling 14: removing a mapping withdraws its role; a missing
-    // mapping is the use case's 404.
-    if let Some(mapping) = state.idp_role_mapping_repo.find_by_id(&id).await? {
-        crate::role::ceiling::require_role_change(
-            &auth.0,
-            &state.role_repo,
-            std::slice::from_ref(&mapping.platform_role_name),
-            &[],
-        )
-        .await?;
-    }
 
     let cmd = DeleteIdpRoleMappingCommand { mapping_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_idp_role_mapping_use_case
         .run(cmd, ctx)

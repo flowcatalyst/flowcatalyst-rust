@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn identity_events_use_gos_envelope() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = IdentityEnsured::new(&ctx, "ptu_1", "clt_1", "a@b.c", true, "INVITE");
         assert_eq!(e.metadata.event_type, "platform:portal:identity:ensured");
         assert_eq!(e.metadata.source, "platform:portal");
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn app_events_use_gos_envelope() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let app = crate::portal::PortalApp::new("clt_1", "Suppliers", "Suppliers Portal");
         let e = PortalAppChanged::new(&ctx, APP_CREATED, &app);
         assert_eq!(
@@ -290,7 +290,7 @@ mod tests {
     /// The status is the enum, written as the string it replaced.
     #[test]
     fn identity_status_set_writes_the_status_as_its_name() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         for (status, name) in [
             (IdentityStatus::Active, "ACTIVE"),
             (IdentityStatus::Disabled, "DISABLED"),

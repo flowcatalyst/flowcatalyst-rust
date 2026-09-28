@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn process_events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = ProcessUpdated::new(&ctx, "prc_1", "Order flow");
         assert_eq!(e.metadata.event_type, "platform:admin:process:updated");
         assert_eq!(e.metadata.subject, "platform.process.prc_1");

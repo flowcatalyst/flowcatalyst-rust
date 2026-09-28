@@ -49,12 +49,21 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         Ok(())
     }
 
+    /// The role ceiling (owner ruling 14): deleting a role withdraws every
+    /// permission it holds, so each platform one must be the caller's, 403
+    /// `PERMISSION_ABOVE_CALLER`. A missing role is left to `execute`'s 404.
     async fn authorize(
         &self,
-        _command: &DeleteRoleCommand,
-        _ctx: &ExecutionContext,
+        command: &DeleteRoleCommand,
+        ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        let Some(role) = self.role_repo.find_by_id(&command.role_id).await? else {
+            return Ok(());
+        };
+        Ok(crate::role::ceiling::require_permissions(
+            Some(ctx.caller()),
+            role.permissions.iter().map(String::as_str),
+        )?)
     }
 
     async fn execute(

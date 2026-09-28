@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn connection_payloads_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = ConnectionCreated::new(&ctx, "con_1", "erp", "ERP");
         assert_eq!(e.metadata.subject, "platform.connection.con_1");
         assert_eq!(
