@@ -602,7 +602,7 @@ fn rust_host(
 
 async fn host_row(pool: &sqlx::PgPool, host_id: &str) -> Option<(String, Value, Option<Value>)> {
     sqlx::query_as::<_, (String, Value, Option<Value>)>(
-        "SELECT pool, loaded, runtimes FROM fn_hosts WHERE id = $1",
+        "SELECT pool, loaded, runtimes FROM fnr_hosts WHERE id = $1",
     )
     .bind(host_id)
     .fetch_optional(pool)
@@ -1645,7 +1645,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
     // Java's drain only flags the reconciler: a DRAINING heartbeat goes out
     // only if a reconcile cycle runs during the drain, so the row usually
     // keeps its last state until the platform marks it stale.
-    let (state,): (String,) = sqlx::query_as("SELECT state FROM fn_hosts WHERE id = $1")
+    let (state,): (String,) = sqlx::query_as("SELECT state FROM fnr_hosts WHERE id = $1")
         .bind(JAVA_HOST_ID)
         .fetch_one(&db)
         .await

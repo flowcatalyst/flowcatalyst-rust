@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ValidationError;
 
-/// A config or secret key name, shared by `fn_config` / `fn_secrets` and by
+/// A config or secret key name, shared by `fnr_config` / `fnr_secrets` and by
 /// a manifest's `config`, `secrets` and `db[].secretRef` entries:
 /// `^[A-Za-z][A-Za-z0-9_./-]{0,99}$`, the same rule as the tables' CHECK.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

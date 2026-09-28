@@ -50,7 +50,7 @@ backward-compatible with the SPA, `fc-dev fn`, the SDKs and JVM hosts:
   - The entrypoint is optional and defaults to `wasi:http/incoming-handler`. `wasm` and `component` are
     interchangeable for `RUNTIME_MISMATCH`.
   - At publish, the platform reads the header of an uploaded artifact (`422 ARTIFACT_RUNTIME_MISMATCH`).
-  - Hosts report `runtimes` in the heartbeat, stored in `fn_hosts.runtimes` (migration 037).
+  - Hosts report `runtimes` in the heartbeat, stored in `fnr_hosts.runtimes` (migration 037, since 062).
   - Publish refuses (`409 POOL_RUNTIME_UNSUPPORTED`) only when every live host in the pool reports runtimes and
     none reports this one. Otherwise the manifest check's plan carries `warnings`.
 - **Error bodies.** Every one is `{error, code, message, details?}`, with `code == error`.
@@ -203,12 +203,12 @@ units per host (adapters, edge endpoints, customer custom code), at low cost.
 
 ```
  fcdev / CI ──PUT artifact, POST version, PUT alias──▶ ┌─ fc-platform (Rust) ────────────────────────────────┐
-                                                       │ fn_* tables (mirror Java V13/V15/V16)              │
+                                                       │ fnr_* tables (Java V13/V15/V16 shape, renamed)     │
                                                        │ /api/functions*, /api/function-{policies,domains,  │
                                                        │   routes,pools}, /api/openapi-functions.json,      │
                                                        │   /api/schemas/function-manifest.json              │
                                                        │ promote ⇒ dispatch pool fn-<fid>, subscriptions    │
-                                                       │   (source FUNCTION), scheduled jobs, fn_routes     │
+                                                       │   (source FUNCTION), scheduled jobs, fnr_routes    │
                                                        │ ArtifactBlobStore: file:// | s3://                 │
                                                        │ /control/functions/{desired-state, heartbeat,      │
                                                        │   events, artifacts/{versionId}}                   │
@@ -344,7 +344,7 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 >   model's `SubscriptionMode`. `fc_platform::function::dispatch_mode` converts it.
 
 **P3: functions, config, secrets, policies, domains and routes** (about 2,000)
-- Aggregates and repositories, following CLAUDE.md layering, for: `Function`, `ClientPolicy`, `FunctionDomain`, `FunctionRoute`, `fn_config`, `fn_secrets`. Secrets use `EncryptionService` (`encrypted:`).
+- Aggregates and repositories, following CLAUDE.md layering, for: `Function`, `ClientPolicy`, `FunctionDomain`, `FunctionRoute`, `fnr_config`, `fnr_secrets`. Secrets use `EncryptionService` (`encrypted:`).
 - Use cases: CreateFunction, UpdateFunction (with `FUNCTION_IMMUTABLE_FIELD` checked against the raw body), DeleteFunction, SetFunctionConfig, SetFunctionSecret, DeleteFunctionSecret, PutFunctionPolicy, ClaimFunctionDomain, ReleaseFunctionDomain.
 - Every use case gets the same events and error codes as Java, and `AuditMasked` where a command carries secrets.
 - Routes: `/api/functions` (list, get, create, update, delete, status), `/api/function-pools`, `/api/function-policies*`, `/api/function-domains*`, `/api/function-routes`, and the config and secrets routes. An out-of-reach target answers 404 through an `Access::can_reach` port.
@@ -376,8 +376,8 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - A port of `FunctionTriggerSync` and `PromotePlan`, which create, update and delete, through their own use cases and events:
   - the dispatch pool `fn-<fid>`
   - subscriptions `fn-<fid>-<hash8>` with source FUNCTION and endpoint `<FC_FN_POOL_URL>/functions/<address><path>`
-  - scheduled jobs, and `fn_trigger_objects`
-  - `fn_routes`, replaced wholesale
+  - scheduled jobs, and `fnr_trigger_objects`
+  - `fnr_routes`, replaced wholesale
 - The dry-run `plan` in `manifest/check`.
 - Needs the Rust dispatcher and scheduler to send the signed webhooks the host expects. Verify the header names and signing against `WebhookVerifier.java`.
 
@@ -386,7 +386,7 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 >   own classes: `tests/data/function/promote-golden.json`). Promote, update and delete run on
 >   `PgUnitOfWork::run`, one transaction each, as Java's `TxOperation`s.
 > - `TriggerSync` commits each pool, subscription and job with that aggregate's own event and command.
->   A link rides in the same commit (`LinkedRepository`); `fn_routes` rides in the alias change's commit
+>   A link rides in the same commit (`LinkedRepository`); `fnr_routes` rides in the alias change's commit
 >   (`PromotedFunctionRepository`). The unit of work now keeps a repository's own business refusal
 >   (`PUBLIC_ROUTE_TAKEN` from the unique constraint) as a 409.
 > - **Cron.** Java's code accepts exactly six fields, robfig style: `0` is Sunday, and when both day
@@ -671,7 +671,7 @@ seam for `js`; listeners, permits, deadlines, reconciler and heartbeat are fc-fn
 function-host role and fc-dev's in-process host load it behind a default `js` cargo feature
 (`fc_fnhost_js::loaders`: components and JS); without the feature the binary carries no V8.
 
-- **Contract.** `runtime: js` (stored `JS`, migration 056 widens the CHECK). The artifact is one ES module bundle,
+- **Contract.** `runtime: js` (stored `JS`, migration 056 widened the CHECK; 062 since). The artifact is one ES module bundle,
   UTF-8; the platform checks it is text at publish (`422 ARTIFACT_RUNTIME_MISMATCH`, as for a non-component under
   `component`). `entrypoint` is an export name, `default` unless given; the export is a function
   `(Request) => Response | Promise<Response>`, or an object with `fetch`. `limits.wasmMemoryMb` caps the isolate.

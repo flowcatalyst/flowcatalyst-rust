@@ -236,7 +236,7 @@ impl Harness {
     }
 
     async fn version_state(&self, version_id: &str) -> String {
-        let (state,): (String,) = sqlx::query_as("SELECT state FROM fn_versions WHERE id = $1")
+        let (state,): (String,) = sqlx::query_as("SELECT state FROM fnr_versions WHERE id = $1")
             .bind(version_id)
             .fetch_one(&self.app.pool)
             .await
@@ -260,7 +260,7 @@ async fn function(h: &Harness, tag: &str, client_id: Option<&str>) -> Fixture {
     h.app.repos.application_repo.insert(&a).await.unwrap();
     let id = format!("fnc_{}", &run()[..13]);
     sqlx::query(
-        "INSERT INTO fn_functions (id, application_id, application_code, service_name, name, \
+        "INSERT INTO fnr_functions (id, application_id, application_code, service_name, name, \
          client_id, runtime, status) VALUES ($1, $2, $3, 'svc', 'fn', $4, 'WASM', 'ACTIVE')",
     )
     .bind(&id)
@@ -292,7 +292,7 @@ async fn publish(
         "endpoints": [], "subscriptions": [], "schedules": [], "public": [],
         "config": [], "secrets": [], "db": [], "httpAllow": []});
     sqlx::query(
-        "INSERT INTO fn_versions (id, function_id, version, artifact_ref, digest, manifest, \
+        "INSERT INTO fnr_versions (id, function_id, version, artifact_ref, digest, manifest, \
          state, published_by) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'PUBLISHED', 'prn_publisher')",
     )
     .bind(&id)
@@ -309,7 +309,7 @@ async fn publish(
 
 async fn promote(h: &Harness, f: &Fixture, version_id: &str) {
     sqlx::query(
-        "INSERT INTO fn_aliases (function_id, alias, version_id, updated_by) \
+        "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by) \
          VALUES ($1, 'live', $2, 'prn_promoter') \
          ON CONFLICT (function_id, alias) DO UPDATE SET version_id = EXCLUDED.version_id",
     )
@@ -746,7 +746,7 @@ async fn stale_hosts_are_purged_on_any_heartbeat_but_never_the_heartbeating_host
     for (id, age) in [(&stale, 25), (&fresh, 23), (&me, 25)] {
         let at = now - Duration::hours(age);
         sqlx::query(
-            "INSERT INTO fn_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
+            "INSERT INTO fnr_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
              VALUES ($1, 'purge', 'ACTIVE', '[]', $2, $2)",
         )
         .bind(id)
@@ -842,7 +842,7 @@ async fn an_unknown_or_stale_host_is_409_host_unknown() {
     assert_eq!(r.error(), "HOST_UNKNOWN");
     let stale = format!("host-stale-{}", run());
     sqlx::query(
-        "INSERT INTO fn_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
+        "INSERT INTO fnr_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
          VALUES ($1, $2, 'ACTIVE', '[]', $3, $3)",
     )
     .bind(&stale)
@@ -901,7 +901,7 @@ async fn a_function_or_version_the_host_does_not_serve_is_409() {
     let g = function(&h, "fnsbdis", Some("clt_x")).await;
     let gv = publish(&h, &g, 1, &pool, None).await;
     promote(&h, &g, &gv).await;
-    sqlx::query("UPDATE fn_functions SET status = 'DISABLED' WHERE id = $1")
+    sqlx::query("UPDATE fnr_functions SET status = 'DISABLED' WHERE id = $1")
         .bind(&g.id)
         .execute(&h.app.pool)
         .await
@@ -1138,7 +1138,7 @@ async fn an_artifact_streams_from_the_store_and_anything_else_is_404() {
     h.store.put(&f.id, &digest, file.path()).await.unwrap();
     let platform_ref = format!("platform://{}/{}", f.id, digest.hex());
     let v = publish(&h, &f, 1, "arts", Some(&platform_ref)).await;
-    sqlx::query("UPDATE fn_versions SET digest = $2 WHERE id = $1")
+    sqlx::query("UPDATE fnr_versions SET digest = $2 WHERE id = $1")
         .bind(&v)
         .bind(digest.value())
         .execute(&h.app.pool)

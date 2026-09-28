@@ -55,7 +55,7 @@ pub const HOST_CLIENT_ID: &str = "fcdev-fn-host";
 /// The `fn` CLI's fixed OAuth client id (Java `FunctionDevBootstrap.CLI_CLIENT_ID`).
 pub const CLI_CLIENT_ID: &str = "fcdev-fn-cli";
 /// The host id fc-dev's host reports, unless `FC_FN_HOST_ID` names one. A
-/// stable id keeps restarts from leaving stale hosts in `fn_hosts`.
+/// stable id keeps restarts from leaving stale hosts in `fnr_hosts`.
 const HOST_ID: &str = "fc-dev";
 
 /// The function host's start flags (Java `StartOptions`).

@@ -319,8 +319,9 @@ pub struct LoadedSummary {
     pub error: Option<String>,
 }
 
-/// One `fn_trigger_objects` row; `present` is false when the linked object
-/// was deleted by hand.
+/// One object (pool, subscription or scheduled job) the function's live
+/// manifest wired; `present` is false when the linked object was deleted by
+/// hand.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WiringEntry {

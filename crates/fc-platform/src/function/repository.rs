@@ -1,4 +1,4 @@
-//! `fn_functions` + `fn_aliases` (Java `function/FunctionRepository.java`).
+//! `fnr_functions` + `fnr_aliases` (Java `function/FunctionRepository.java`).
 //! Aliases are hydrated with one `ANY` query per read and replaced
 //! wholesale on write. Writes happen only on the unit of work's transaction.
 
@@ -80,7 +80,7 @@ impl FunctionRepository {
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Function>> {
         let row = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_functions WHERE id = $1"
+            "SELECT {COLUMNS} FROM fnr_functions WHERE id = $1"
         ))
         .bind(id)
         .fetch_optional(&self.pool)
@@ -90,7 +90,7 @@ impl FunctionRepository {
 
     pub async fn find_by_address(&self, address: &FunctionAddress) -> Result<Option<Function>> {
         let row = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_functions \
+            "SELECT {COLUMNS} FROM fnr_functions \
              WHERE application_code = $1 AND service_name = $2 AND name = $3"
         ))
         .bind(address.application())
@@ -108,7 +108,7 @@ impl FunctionRepository {
             return Ok(Vec::new());
         }
         let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_functions WHERE id = ANY($1)"
+            "SELECT {COLUMNS} FROM fnr_functions WHERE id = ANY($1)"
         ))
         .bind(ids)
         .fetch_all(&self.pool)
@@ -120,7 +120,7 @@ impl FunctionRepository {
     /// null, ACTIVE))`): desired state's starting set.
     pub async fn list_active(&self) -> Result<Vec<Function>> {
         let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_functions WHERE status = 'ACTIVE' \
+            "SELECT {COLUMNS} FROM fnr_functions WHERE status = 'ACTIVE' \
              ORDER BY application_code ASC, service_name ASC, name ASC"
         ))
         .fetch_all(&self.pool)
@@ -138,7 +138,7 @@ impl FunctionRepository {
         let services: Vec<&str> = addresses.iter().map(|a| a.service()).collect();
         let names: Vec<&str> = addresses.iter().map(|a| a.name()).collect();
         let rows = sqlx::query_as::<_, FunctionRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_functions \
+            "SELECT {COLUMNS} FROM fnr_functions \
              WHERE (application_code, service_name, name) IN \
                    (SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[]))"
         ))
@@ -158,7 +158,7 @@ impl FunctionRepository {
         offset: i64,
     ) -> Result<Vec<Function>> {
         let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new(format!("SELECT {COLUMNS} FROM fn_functions WHERE TRUE"));
+            QueryBuilder::new(format!("SELECT {COLUMNS} FROM fnr_functions WHERE TRUE"));
         push_filter(&mut qb, filter);
         qb.push(" ORDER BY application_code ASC, service_name ASC, name ASC LIMIT ");
         qb.push_bind(limit);
@@ -174,7 +174,7 @@ impl FunctionRepository {
     /// The total for [`Self::find_with_filters`]'s filter, ignoring the page.
     pub async fn count_with_filters(&self, filter: &FunctionListFilter) -> Result<i64> {
         let mut qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM fn_functions WHERE TRUE");
+            QueryBuilder::new("SELECT COUNT(*) FROM fnr_functions WHERE TRUE");
         push_filter(&mut qb, filter);
         let (count,): (i64,) = qb.build_query_as().fetch_one(&self.pool).await?;
         Ok(count)
@@ -194,7 +194,7 @@ impl FunctionRepository {
         }
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
         let alias_rows = sqlx::query_as::<_, AliasRow>(
-            "SELECT function_id, alias, version_id, updated_by, updated_at FROM fn_aliases \
+            "SELECT function_id, alias, version_id, updated_by, updated_at FROM fnr_aliases \
              WHERE function_id = ANY($1) ORDER BY function_id ASC, alias ASC",
         )
         .bind(&ids)
@@ -284,7 +284,7 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
     let address = FunctionAddress::new(&row.application_code, &row.service_name, &row.name)
         .map_err(|_| {
             corrupt_value(
-                "fn_functions",
+                "fnr_functions",
                 "application_code/service_name/name",
                 &format!("{}.{}.{}", row.application_code, row.service_name, row.name),
                 &row.id,
@@ -292,14 +292,14 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
         })?;
     let owner = FunctionOwner::of_client_id(row.client_id.as_deref()).map_err(|_| {
         corrupt_value(
-            "fn_functions",
+            "fnr_functions",
             "client_id",
             row.client_id.as_deref().unwrap_or(""),
             &row.id,
         )
     })?;
-    let runtime: Runtime = decode(&row.runtime, "fn_functions", "runtime", &row.id)?;
-    let status: FunctionStatus = decode(&row.status, "fn_functions", "status", &row.id)?;
+    let runtime: Runtime = decode(&row.runtime, "fnr_functions", "runtime", &row.id)?;
+    let status: FunctionStatus = decode(&row.status, "fnr_functions", "status", &row.id)?;
     Ok(Function {
         id: row.id,
         application_id: row.application_id,
@@ -316,12 +316,12 @@ fn to_entity(row: FunctionRow, aliases: Vec<FunctionAlias>) -> Result<Function> 
 
 #[async_trait]
 impl Persist<Function> for FunctionRepository {
-    /// Upserts `fn_functions`, setting only `description`, `status` and
+    /// Upserts `fnr_functions`, setting only `description`, `status` and
     /// `updated_at` on conflict (nothing moves a function), then replaces
     /// the alias rows: those no longer listed are deleted, the rest upserted.
     async fn persist(&self, f: &Function, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "INSERT INTO fn_functions \
+            "INSERT INTO fnr_functions \
                 (id, application_id, application_code, service_name, name, client_id, \
                  runtime, description, status, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
@@ -345,7 +345,7 @@ impl Persist<Function> for FunctionRepository {
         .await?;
 
         let aliases: Vec<&str> = f.aliases.iter().map(|a| a.alias.as_str()).collect();
-        sqlx::query("DELETE FROM fn_aliases WHERE function_id = $1 AND NOT (alias = ANY($2))")
+        sqlx::query("DELETE FROM fnr_aliases WHERE function_id = $1 AND NOT (alias = ANY($2))")
             .bind(&f.id)
             .bind(&aliases)
             .execute(&mut **tx.inner)
@@ -356,7 +356,7 @@ impl Persist<Function> for FunctionRepository {
             let updated_by: Vec<&str> = f.aliases.iter().map(|a| a.updated_by.as_str()).collect();
             let updated_at: Vec<DateTime<Utc>> = f.aliases.iter().map(|a| a.updated_at).collect();
             sqlx::query(
-                "INSERT INTO fn_aliases (function_id, alias, version_id, updated_by, updated_at) \
+                "INSERT INTO fnr_aliases (function_id, alias, version_id, updated_by, updated_at) \
                  SELECT $1, * FROM UNNEST($2::text[], $3::text[], $4::text[], $5::timestamptz[]) \
                  ON CONFLICT (function_id, alias) DO UPDATE SET \
                     version_id = EXCLUDED.version_id, \
@@ -377,7 +377,7 @@ impl Persist<Function> for FunctionRepository {
     /// Versions, aliases, routes, config, secrets and trigger-object links
     /// cascade by foreign key.
     async fn delete(&self, f: &Function, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fn_functions WHERE id = $1")
+        sqlx::query("DELETE FROM fnr_functions WHERE id = $1")
             .bind(&f.id)
             .execute(&mut **tx.inner)
             .await?;

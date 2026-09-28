@@ -736,20 +736,21 @@ async fn test_go_mirrored_migrations_are_idempotent() {
     }
 }
 
-/// Migration 034 (Java V13 + V15 - V16) is idempotent: re-running its SQL is
-/// a no-op, a tracker without the entry is backfilled by its probe, and a
-/// database Java migrated only to V13 is brought to the same shape. The
+/// Migration 062 (the retired 034 + 037 + 056 as `fnr_*`, owner decision
+/// #48) is idempotent: re-running its SQL is a no-op, a tracker without the
+/// entry is backfilled by its probe (and gains no row for a retired
+/// migration), and a database only Rust migrated has no `fn_*` table. The
 /// constraints behave as Java's `FunctionSchemaTest` pins them.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn test_functions_migration_is_idempotent() {
     let (pool, _container) = setup_test_db().await;
-    let sql = include_str!("../../../migrations/034_functions.sql");
+    let sql = include_str!("../../../migrations/062_function_registry_fnr.sql");
 
     sqlx::raw_sql(sql)
         .execute(&pool)
         .await
-        .expect("re-running 034 is a no-op");
+        .expect("re-running 062 is a no-op");
 
     sqlx::query("DELETE FROM _schema_migrations")
         .execute(&pool)
@@ -757,29 +758,21 @@ async fn test_functions_migration_is_idempotent() {
         .unwrap();
     run_migrations(&pool, MigrationProfile::Production)
         .await
-        .expect("migrations over existing fn_ tables");
-    let (tracked,): (bool,) = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = '034_functions')",
+        .expect("migrations over existing fnr_ tables");
+    let tracked: Vec<(String,)> = sqlx::query_as(
+        "SELECT migration_id FROM _schema_migrations \
+         WHERE migration_id IN ('062_function_registry_fnr', '034_functions', \
+                                '037_function_component_runtime', '056_function_js_runtime')",
     )
-    .fetch_one(&pool)
+    .fetch_all(&pool)
     .await
     .unwrap();
-    assert!(tracked, "the probe recognises an applied 034");
+    assert_eq!(
+        tracked,
+        [("062_function_registry_fnr".to_string(),)],
+        "the probe recognises an applied 062; retired migrations are never backfilled"
+    );
 
-    // A database Java left at V13: fn_domains still has the verification
-    // columns and fn_routes lacks alias_prefixes. 034 brings it to V16.
-    sqlx::raw_sql(
-        "ALTER TABLE fn_routes DROP COLUMN alias_prefixes; \
-         ALTER TABLE fn_domains ADD COLUMN verification_token VARCHAR(64) NOT NULL DEFAULT 'x', \
-                                ADD COLUMN verified_at TIMESTAMPTZ;",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::raw_sql(sql)
-        .execute(&pool)
-        .await
-        .expect("034 over a V13 schema");
     let columns = |table: &'static str| {
         let pool = pool.clone();
         async move {
@@ -795,11 +788,11 @@ async fn test_functions_migration_is_idempotent() {
         }
     };
     assert_eq!(
-        columns("fn_domains").await,
+        columns("fnr_domains").await,
         ["id", "client_id", "hostname", "created_at"]
     );
     assert_eq!(
-        columns("fn_routes").await,
+        columns("fnr_routes").await,
         [
             "id",
             "function_id",
@@ -809,27 +802,49 @@ async fn test_functions_migration_is_idempotent() {
             "alias_prefixes"
         ]
     );
-    let mut tables: Vec<(String,)> = sqlx::query_as(
-        "SELECT table_name::text FROM information_schema.tables \
-         WHERE table_schema = 'public' AND table_name LIKE 'fn\\_%' ORDER BY table_name",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    tables.sort();
     assert_eq!(
-        tables.into_iter().map(|(t,)| t).collect::<Vec<_>>(),
+        columns("fnr_hosts").await,
         [
-            "fn_aliases",
-            "fn_client_policies",
-            "fn_config",
-            "fn_domains",
-            "fn_functions",
-            "fn_hosts",
-            "fn_routes",
-            "fn_secrets",
-            "fn_trigger_objects",
-            "fn_versions"
+            "id",
+            "pool",
+            "state",
+            "loaded",
+            "started_at",
+            "last_heartbeat",
+            "runtimes"
+        ]
+    );
+    let tables_like = |pattern: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let rows: Vec<(String,)> = sqlx::query_as(
+                "SELECT table_name::text FROM information_schema.tables \
+                 WHERE table_schema = 'public' AND table_name LIKE $1 ORDER BY table_name",
+            )
+            .bind(pattern)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            rows.into_iter().map(|(t,)| t).collect::<Vec<_>>()
+        }
+    };
+    assert!(
+        tables_like("fn\\_%").await.is_empty(),
+        "Rust creates no fn_ table"
+    );
+    assert_eq!(
+        tables_like("fnr\\_%").await,
+        [
+            "fnr_aliases",
+            "fnr_client_policies",
+            "fnr_config",
+            "fnr_domains",
+            "fnr_functions",
+            "fnr_hosts",
+            "fnr_routes",
+            "fnr_secrets",
+            "fnr_trigger_objects",
+            "fnr_versions"
         ]
     );
 
@@ -841,17 +856,17 @@ async fn test_functions_migration_is_idempotent() {
     let err = |r: Result<(), sqlx::Error>| r.expect_err("constraint").to_string();
     let function = |id: &str, service: &str| {
         format!(
-            "INSERT INTO fn_functions (id, application_id, application_code, service_name, name, runtime) \
+            "INSERT INTO fnr_functions (id, application_id, application_code, service_name, name, runtime) \
              VALUES ('{id}', 'app_1', 'app-code', '{service}', 'fn-name', 'JVM')"
         )
     };
     exec(function("f1", "a-b")).await.unwrap();
     exec(function("f2", &"a".repeat(63))).await.unwrap();
-    assert!(err(exec(function("f3", "a-")).await).contains("fn_functions_service_name_check"));
-    assert!(err(exec(function("f4", "A")).await).contains("fn_functions_service_name_check"));
+    assert!(err(exec(function("f3", "a-")).await).contains("fnr_functions_service_name_check"));
+    assert!(err(exec(function("f4", "A")).await).contains("fnr_functions_service_name_check"));
     let version = |id: &str, n: i32, digest: &str, state: &str| {
         format!(
-            "INSERT INTO fn_versions (id, function_id, version, artifact_ref, digest, manifest, state, published_by) \
+            "INSERT INTO fnr_versions (id, function_id, version, artifact_ref, digest, manifest, state, published_by) \
              VALUES ('{id}', 'f1', {n}, 'oci://artifact', '{digest}', '{{}}'::jsonb, '{state}', 'prn_1')"
         )
     };
@@ -864,7 +879,7 @@ async fn test_functions_migration_is_idempotent() {
         "PUBLISHED"
     ))
     .await)
-    .contains("fn_versions_digest_check"));
+    .contains("fnr_versions_digest_check"));
     assert!(err(exec(version(
         "v3",
         3,
@@ -872,20 +887,20 @@ async fn test_functions_migration_is_idempotent() {
         "READY"
     ))
     .await)
-    .contains("fn_versions_ready_at_check"));
+    .contains("fnr_versions_ready_at_check"));
     let route = |id: &str, function: &str| {
         format!(
-            "INSERT INTO fn_routes (id, function_id, hostname, path_prefix) \
+            "INSERT INTO fnr_routes (id, function_id, hostname, path_prefix) \
              VALUES ('{id}', '{function}', 'api.example.com', '/shared')"
         )
     };
     exec(route("r1", "f1")).await.unwrap();
-    assert!(err(exec(route("r2", "f2")).await).contains("fn_routes_hostname_path_prefix_key"));
+    assert!(err(exec(route("r2", "f2")).await).contains("fnr_routes_hostname_path_prefix_key"));
     assert!(err(exec(
-        "INSERT INTO fn_client_policies (client_id, max_duration_ms) VALUES ('clt_1', 0)".into()
+        "INSERT INTO fnr_client_policies (client_id, max_duration_ms) VALUES ('clt_1', 0)".into()
     )
     .await)
-    .contains("fn_client_policies_max_duration_ms_check"));
+    .contains("fnr_client_policies_max_duration_ms_check"));
 
     // msg_subscriptions.source admits FUNCTION, and nothing unknown.
     let (def,): (String,) = sqlx::query_as(
@@ -897,6 +912,18 @@ async fn test_functions_migration_is_idempotent() {
     .unwrap();
     for source in ["CODE", "API", "UI", "FUNCTION"] {
         assert!(def.contains(&format!("'{source}'")), "{def}");
+    }
+
+    // The runtime CHECK is 037's and 056's end state.
+    let (def,): (String,) = sqlx::query_as(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint \
+         WHERE conname = 'fnr_functions_runtime_check'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for runtime in ["JVM", "WASM", "COMPONENT", "JS"] {
+        assert!(def.contains(&format!("'{runtime}'")), "{def}");
     }
 }
 

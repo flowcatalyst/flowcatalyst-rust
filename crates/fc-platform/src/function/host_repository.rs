@@ -1,4 +1,4 @@
-//! `fn_hosts` (Java `function/FunctionHostRepository.java`).
+//! `fnr_hosts` (Java `function/FunctionHostRepository.java`).
 //!
 //! **Written by the heartbeat only, outside the unit of work.** A host row is
 //! telemetry a host sends every 15 s, not a business operation: Java writes
@@ -47,7 +47,7 @@ impl FunctionHostRepository {
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionHost>> {
         let row = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts WHERE id = $1",
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -64,7 +64,7 @@ impl FunctionHostRepository {
         seen_since: DateTime<Utc>,
     ) -> Result<Vec<FunctionHost>> {
         let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts \
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts \
              WHERE pool = $1 AND last_heartbeat >= $2 ORDER BY id ASC",
         )
         .bind(pool)
@@ -83,14 +83,14 @@ impl FunctionHostRepository {
     /// many stale rows were purged.
     pub async fn heartbeat(&self, host: &FunctionHost, purge_before: DateTime<Utc>) -> Result<u64> {
         let mut tx = self.pool.begin().await?;
-        let purged = sqlx::query("DELETE FROM fn_hosts WHERE last_heartbeat < $1 AND id <> $2")
+        let purged = sqlx::query("DELETE FROM fnr_hosts WHERE last_heartbeat < $1 AND id <> $2")
             .bind(purge_before)
             .bind(&host.id)
             .execute(&mut *tx)
             .await?
             .rows_affected();
         sqlx::query(
-            "INSERT INTO fn_hosts (id, pool, state, loaded, runtimes, started_at, last_heartbeat) \
+            "INSERT INTO fnr_hosts (id, pool, state, loaded, runtimes, started_at, last_heartbeat) \
              VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (id) DO UPDATE SET \
                 state = EXCLUDED.state, \
@@ -117,7 +117,7 @@ impl FunctionHostRepository {
     pub async fn list_reporting(&self, address: &FunctionAddress) -> Result<Vec<FunctionHost>> {
         let probe = serde_json::json!([{ "address": address.render() }]);
         let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts \
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fnr_hosts \
              WHERE loaded @> $1 ORDER BY id ASC",
         )
         .bind(probe)
@@ -130,7 +130,7 @@ impl FunctionHostRepository {
     /// `seen_since`, with that count, by pool name.
     pub async fn pools(&self, seen_since: DateTime<Utc>) -> Result<Vec<PoolSummary>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT pool, COUNT(*) FROM fn_hosts WHERE last_heartbeat >= $1 \
+            "SELECT pool, COUNT(*) FROM fnr_hosts WHERE last_heartbeat >= $1 \
              GROUP BY pool ORDER BY pool ASC",
         )
         .bind(seen_since)
@@ -144,7 +144,7 @@ impl FunctionHostRepository {
 }
 
 fn to_entity(row: HostRow) -> Result<FunctionHost> {
-    let state: HostState = decode(&row.state, "fn_hosts", "state", &row.id)?;
+    let state: HostState = decode(&row.state, "fnr_hosts", "state", &row.id)?;
     Ok(FunctionHost {
         loaded: read_loaded(&row.loaded),
         runtimes: row.runtimes.as_ref().and_then(read_runtimes),

@@ -123,7 +123,7 @@ async fn a_corrupt_live_version_with_no_readable_pool_fails_every_pool() {
     let golden: Value = serde_json::from_str(&data("desired-state-golden.json")).unwrap();
     let app = TestApp::setup().await;
     let desired = builder(&app, golden["appKey"].as_str().unwrap()).await;
-    sqlx::raw_sql("UPDATE fn_versions SET manifest = '[]'::jsonb WHERE id = 'fnv_F09V1'")
+    sqlx::raw_sql("UPDATE fnr_versions SET manifest = '[]'::jsonb WHERE id = 'fnv_F09V1'")
         .execute(&app.pool)
         .await
         .unwrap();

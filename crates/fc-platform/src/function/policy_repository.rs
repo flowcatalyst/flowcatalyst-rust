@@ -1,4 +1,4 @@
-//! `fn_client_policies` (Java `function/ClientPolicyRepository.java`).
+//! `fnr_client_policies` (Java `function/ClientPolicyRepository.java`).
 //! Natural key: [`FunctionOwner::key`], so the platform's own policy is the
 //! row `PLATFORM`. `signers` is read tolerantly: a rule with a blank issuer
 //! or subject is dropped, and so is an unknown runtime within a rule.
@@ -40,7 +40,7 @@ impl ClientPolicyRepository {
 
     pub async fn find_by_owner(&self, owner: &FunctionOwner) -> Result<Option<ClientPolicy>> {
         let row = sqlx::query_as::<_, PolicyRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_client_policies WHERE client_id = $1"
+            "SELECT {COLUMNS} FROM fnr_client_policies WHERE client_id = $1"
         ))
         .bind(owner.key())
         .fetch_optional(&self.pool)
@@ -51,7 +51,7 @@ impl ClientPolicyRepository {
     /// Every stored row: the platform's first, then client ids ascending.
     pub async fn list_all(&self) -> Result<Vec<ClientPolicy>> {
         let rows = sqlx::query_as::<_, PolicyRow>(&format!(
-            "SELECT {COLUMNS} FROM fn_client_policies \
+            "SELECT {COLUMNS} FROM fnr_client_policies \
              ORDER BY CASE WHEN client_id = $1 THEN 0 ELSE 1 END, client_id ASC"
         ))
         .bind(FunctionOwner::PLATFORM_KEY)
@@ -64,7 +64,7 @@ impl ClientPolicyRepository {
 fn to_entity(row: PolicyRow) -> Result<ClientPolicy> {
     let owner = FunctionOwner::from_key(&row.client_id).map_err(|_| {
         corrupt_value(
-            "fn_client_policies",
+            "fnr_client_policies",
             "client_id",
             &row.client_id,
             &row.client_id,
@@ -136,7 +136,7 @@ impl Persist<ClientPolicy> for ClientPolicyRepository {
     /// `created_at`.
     async fn persist(&self, p: &ClientPolicy, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "INSERT INTO fn_client_policies \
+            "INSERT INTO fnr_client_policies \
                 (client_id, created_at, signers, max_duration_ms, max_concurrency, \
                  max_wasm_memory_mb, max_db_pool_size, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
@@ -162,7 +162,7 @@ impl Persist<ClientPolicy> for ClientPolicyRepository {
     }
 
     async fn delete(&self, p: &ClientPolicy, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fn_client_policies WHERE client_id = $1")
+        sqlx::query("DELETE FROM fnr_client_policies WHERE client_id = $1")
             .bind(p.owner.key())
             .execute(&mut **tx.inner)
             .await?;

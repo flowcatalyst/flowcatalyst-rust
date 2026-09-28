@@ -361,6 +361,29 @@ It needs Docker, a JDK 25 (`java`, `javac`) and Maven 3.9, and skips with a mess
 `target/jvm-e2e/javalin-<commit>` and builds it once. `FC_JVM_BUILD_DIR=<built tree>` reuses a build.
 Deployment is in [configuration](../operations/configuration.md#jvm-function-host-javas-fc-fnhost).
 
+## The registry's tables: one prefix per implementation (temporary)
+
+Three platforms have a function registry, and they share databases (fc-dev's shared cluster, production's cutover
+onto a Go-migrated database). Their tables are incompatible, and each creates them with `CREATE TABLE IF NOT EXISTS`,
+so on one database the first to migrate would win and the others fail later. Until the owner picks one
+implementation, each has its own prefix (owner decision #48, 2026-09-28):
+
+| Platform | Prefix | Tables |
+|---|---|---|
+| Java (`flowcatalyst-javalin`) | `fn_` | `fn_functions`, `fn_versions`, `fn_aliases`, `fn_hosts`, `fn_client_policies`, `fn_domains`, `fn_routes`, `fn_trigger_objects`, `fn_config`, `fn_secrets` |
+| Rust (this platform) | `fnr_` | the same ten tables, same columns and constraints, as `fnr_*` (migration 062) |
+| Go (`flowcatalyst-go`) | `fng_` | its own runner's tables (its migration 059 creates them as `fn_*` today; Go is moving them to `fng_`) |
+
+Rust never creates, alters or drops a `fn_*` table: the migrations that did (034, 037, 056) are retired (see
+[fc-dev.md](fc-dev.md#retired-migrations)). The hosts are unaffected: a host, Java's included, talks to the
+platform's API, not its tables.
+
+**Functions registered before the move need publishing again.** On a database where Rust's old 034 ran, the
+functions, versions, aliases, config, secrets, policies, domains and routes Rust wrote are still in `fn_*`, and
+062 copies none of them into `fnr_*`: on a shared database those rows may be Java's, and nothing tells them apart.
+Deploy each function again (`fc-dev fn deploy …`, then its config and secrets), and re-create its client policy,
+domains and routes. The old `fn_*` rows are left as they are.
+
 ## Which to choose
 
 | | Rust component | TypeScript / JavaScript |

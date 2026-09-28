@@ -12,7 +12,7 @@
 //!   independent problem, each with a JSON pointer, or the manifest.
 //! - [`Manifest::parse_strict`], the publish reader, returns the first of
 //!   those problems (same code and message) as the error.
-//! - [`Manifest::read_stored`] reads an `fn_versions.manifest` row: tolerant
+//! - [`Manifest::read_stored`] reads an `fnr_versions.manifest` row: tolerant
 //!   of unknown keys and missing optionals, dropping a malformed entry rather
 //!   than failing, and failing only when `runtime` or `entrypoint` is
 //!   unreadable.
@@ -489,7 +489,7 @@ impl Manifest {
         Self::check(root, function_runtime, defaults, ceilings).map_err(|r| r.first_error())
     }
 
-    /// Reads a stored `fn_versions.manifest`. Ignores unknown keys, applies
+    /// Reads a stored `fnr_versions.manifest`. Ignores unknown keys, applies
     /// no ceilings, and drops a malformed endpoint, subscription, schedule,
     /// public route or `db` entry instead of failing.
     /// [`Manifest::read_stored_reporting`] says what it dropped.

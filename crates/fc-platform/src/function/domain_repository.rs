@@ -1,4 +1,4 @@
-//! `fn_domains` (Java `function/FunctionDomainRepository.java`).
+//! `fnr_domains` (Java `function/FunctionDomainRepository.java`).
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -29,7 +29,7 @@ impl FunctionDomainRepository {
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionDomain>> {
         let row = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fn_domains WHERE id = $1",
+            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -43,7 +43,7 @@ impl FunctionDomainRepository {
     pub async fn covering(&self, hostname: &Hostname) -> Result<Option<FunctionDomain>> {
         let candidates = hostname.zone_candidates();
         let mut rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fn_domains WHERE hostname = ANY($1)",
+            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE hostname = ANY($1)",
         )
         .bind(&candidates)
         .fetch_all(&self.pool)
@@ -67,7 +67,7 @@ impl FunctionDomainRepository {
         let candidates: Vec<Vec<String>> = hostnames.iter().map(|h| h.zone_candidates()).collect();
         let all: Vec<&String> = candidates.iter().flatten().collect();
         let rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fn_domains WHERE hostname = ANY($1)",
+            "SELECT id, client_id, hostname, created_at FROM fnr_domains WHERE hostname = ANY($1)",
         )
         .bind(&all)
         .fetch_all(&self.pool)
@@ -88,7 +88,7 @@ impl FunctionDomainRepository {
     pub async fn any_under(&self, zone: &Hostname) -> Result<bool> {
         let suffix = format!(".{}", zone.value());
         let (exists,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM fn_domains WHERE right(hostname, char_length($1)) = $1)",
+            "SELECT EXISTS (SELECT 1 FROM fnr_domains WHERE right(hostname, char_length($1)) = $1)",
         )
         .bind(&suffix)
         .fetch_one(&self.pool)
@@ -99,7 +99,7 @@ impl FunctionDomainRepository {
     /// One owner's claims, by hostname.
     pub async fn list_by_owner(&self, owner: &FunctionOwner) -> Result<Vec<FunctionDomain>> {
         let rows = sqlx::query_as::<_, DomainRow>(
-            "SELECT id, client_id, hostname, created_at FROM fn_domains \
+            "SELECT id, client_id, hostname, created_at FROM fnr_domains \
              WHERE client_id IS NOT DISTINCT FROM $1 ORDER BY hostname ASC",
         )
         .bind(owner.client_id_or_none())
@@ -112,14 +112,14 @@ impl FunctionDomainRepository {
 fn to_entity(row: DomainRow) -> Result<FunctionDomain> {
     let owner = FunctionOwner::of_client_id(row.client_id.as_deref()).map_err(|_| {
         corrupt_value(
-            "fn_domains",
+            "fnr_domains",
             "client_id",
             row.client_id.as_deref().unwrap_or(""),
             &row.id,
         )
     })?;
     let hostname = Hostname::try_parse(&row.hostname)
-        .ok_or_else(|| corrupt_value("fn_domains", "hostname", &row.hostname, &row.id))?;
+        .ok_or_else(|| corrupt_value("fnr_domains", "hostname", &row.hostname, &row.id))?;
     Ok(FunctionDomain {
         id: row.id,
         owner,
@@ -133,7 +133,7 @@ impl Persist<FunctionDomain> for FunctionDomainRepository {
     /// Insert-only: a claim never changes once made.
     async fn persist(&self, d: &FunctionDomain, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
-            "INSERT INTO fn_domains (id, client_id, hostname, created_at) VALUES ($1, $2, $3, $4) \
+            "INSERT INTO fnr_domains (id, client_id, hostname, created_at) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (id) DO NOTHING",
         )
         .bind(&d.id)
@@ -146,7 +146,7 @@ impl Persist<FunctionDomain> for FunctionDomainRepository {
     }
 
     async fn delete(&self, d: &FunctionDomain, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query("DELETE FROM fn_domains WHERE id = $1")
+        sqlx::query("DELETE FROM fnr_domains WHERE id = $1")
             .bind(&d.id)
             .execute(&mut **tx.inner)
             .await?;

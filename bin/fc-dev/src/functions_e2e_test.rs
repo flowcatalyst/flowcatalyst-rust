@@ -602,7 +602,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
             format!("{JS_ADDRESS}: version 1 deployed and live")
         );
         let (runtime,): (String,) =
-            sqlx::query_as("SELECT runtime FROM fn_functions WHERE name = 'hello-js'")
+            sqlx::query_as("SELECT runtime FROM fnr_functions WHERE name = 'hello-js'")
                 .fetch_one(&repos.pool)
                 .await
                 .unwrap();
