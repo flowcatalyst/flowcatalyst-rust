@@ -1,0 +1,87 @@
+label,scenario,subject,run,wall_s,compile_s,link_s,links,run_s,load1_before,load1_after,free_gb,notes,cargo_s,platform_s,platform_frontend_s,cpu_s
+baseline,cold-check,fc-platform,1,125.766,116.005,9.695,79,,70.52,129.32,62,,125.7,37.5,36.6
+baseline,cold-check,fc-server,1,173.704,157.750,15.650,131,,52.90,147.33,123,,173.4,38.9,38.3
+baseline,incr-check,repository.rs->fc-server,1,11.315,11.200,0.000,0,,66.23,60.72,124,,11.2,10.1,9.6
+baseline,incr-check,repository.rs->fc-server,2,7.167,7.100,0.000,0,,60.72,52.38,124,,7.1,5.7,4.4
+baseline,incr-check,repository.rs->fc-server,3,12.538,12.400,0.000,0,,52.38,47.07,125,,12.4,10.5,8.2
+baseline,incr-check,repository.rs->fc-server,4,797.373,34.900,0.000,0,,47.07,160.22,128,,34.9,31.2,26.9
+baseline,incr-check,repository.rs->fc-server,5,60.240,17.600,0.000,0,,160.22,143.33,131,,17.6,14.1,9.2
+baseline,incr-check,unit_of_work.rs->fc-server,1,17.523,17.400,0.000,0,,115.23,85.58,134,,17.4,15.8,15.3
+baseline,incr-check,unit_of_work.rs->fc-server,2,8.695,8.600,0.000,0,,85.58,80.17,135,,8.6,7.3,5.7
+baseline,incr-check,unit_of_work.rs->fc-server,3,9.055,9.000,0.000,0,,80.17,69.81,135,,9.0,7.2,5.7
+baseline,incr-check,unit_of_work.rs->fc-server,4,9.375,9.100,0.000,0,,69.81,60.77,136,,9.1,7.7,6.0
+baseline,incr-check,unit_of_work.rs->fc-server,5,11.675,11.600,0.000,0,,60.77,56.26,137,,11.6,8.0,6.5
+baseline,incr-check,health.rs->fc-server,1,2.353,2.300,0.000,0,,43.23,43.23,138,,2.3,0.0,0.0
+baseline,incr-check,health.rs->fc-server,2,1.539,1.500,0.000,0,,43.23,40.57,139,,1.5,0.0,0.0
+baseline,incr-check,health.rs->fc-server,3,2.567,2.500,0.000,0,,40.57,40.57,139,,2.5,0.0,0.0
+baseline,incr-check,health.rs->fc-server,4,1.456,1.400,0.000,0,,40.57,40.57,139,,1.4,0.0,0.0
+baseline,incr-check,health.rs->fc-server,5,1.391,1.300,0.000,0,,40.57,38.12,139,,1.3,0.0,0.0
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,1,40.501,39.556,0.844,1,1.799,162.69,146.78,200,,40.4,38.2,18.0
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,2,60.085,57.594,2.306,1,3.452,146.78,176.67,200,,59.9,58.6,33.5
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,3,45.292,44.627,0.473,1,1.418,176.67,171.87,200,,45.1,41.7,34.9
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,4,25.578,24.927,0.573,1,1.471,171.87,248.40,199,,25.5,23.9,15.8
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,5,19.760,19.168,0.532,1,1.052,248.40,318.13,198,,19.7,18.5,13.1
+baseline,test-all,repository.rs->fc-platform-tests,1,38.455,-42.623,80.923,64,,209.69,144.17,182,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,38.3,296.4,11.3
+baseline,test-all,repository.rs->fc-platform-tests,2,38.090,-75.765,113.665,64,,144.17,113.99,182,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,37.9,365.6,7.2
+baseline,cold-test,scheduled_job_cron_golden_test,1,457.582,441.631,15.869,131,,455.97,210.44,174,,457.5,98.3,87.5
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,1,21.587,20.642,0.858,1,1.598,210.44,201.35,171,,21.5,21.2,10.0,15.9
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,2,35.281,34.319,0.781,1,.722,201.35,194.78,166,,35.1,33.5,18.5,13.3
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,3,13.103,12.681,0.319,1,.720,194.78,155.46,166,,13.0,12.1,8.1,9.7
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,4,15.348,14.720,0.480,1,.787,155.46,128.39,165,,15.2,14.2,8.8,10.8
+baseline,test-one,repository.rs->scheduled_job_cron_golden_test,5,15.251,14.308,0.892,1,.713,128.39,106.68,165,,15.2,14.1,8.6,10.8
+baseline,test-all,repository.rs->fc-platform-tests,1,41.272,-44.891,85.891,64,,245.59,159.61,139,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,41.0,311.5,11.2,163.2
+baseline,test-all,repository.rs->fc-platform-tests,2,36.326,-74.722,110.822,64,,159.61,104.49,139,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,36.1,324.4,7.7,145.6
+deps-lto,cold-test,scheduled_job_cron_golden_test,1,331.598,315.158,16.242,131,,84.50,283.80,151,,331.4,93.6,70.5,1986.0
+deps-lto,test-one,repository.rs->scheduled_job_cron_golden_test,1,14.791,14.411,0.289,1,.722,283.80,227.04,150,,14.7,14.4,8.7,13.3
+deps-lto,test-one,repository.rs->scheduled_job_cron_golden_test,2,11.489,11.068,0.332,1,.689,227.04,181.39,149,,11.4,10.7,6.5,9.0
+deps-lto,test-one,repository.rs->scheduled_job_cron_golden_test,3,10.665,10.305,0.295,1,.739,181.39,169.55,149,,10.6,9.9,6.0,8.5
+deps-lto,test-one,repository.rs->scheduled_job_cron_golden_test,4,11.791,11.377,0.323,1,.696,169.55,137.41,149,,11.7,11.2,6.8,9.4
+deps-lto,test-one,repository.rs->scheduled_job_cron_golden_test,5,13.375,12.994,0.306,1,.683,137.41,122.16,149,,13.3,12.0,7.9,9.6
+deps-lto,test-all,repository.rs->fc-platform-tests,1,84.033,-25.425,109.125,64,,190.38,150.58,121,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,83.7,452.7,31.3,177.5
+deps-lto,test-all,repository.rs->fc-platform-tests,2,47.977,-64.514,112.314,64,,150.58,116.32,121,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,47.8,405.6,12.1,148.1
+all-lto,cold-test,scheduled_job_cron_golden_test,1,333.334,317.623,15.577,131,,93.76,107.97,135,,333.2,73.7,58.0,1963.4
+all-lto,test-one,repository.rs->scheduled_job_cron_golden_test,1,19.142,18.681,0.419,1,.719,107.97,81.68,133,,19.1,18.7,12.4,14.4
+all-lto,test-one,repository.rs->scheduled_job_cron_golden_test,2,23.981,23.326,0.374,1,1.040,81.68,66.11,133,,23.7,15.7,9.2,10.0
+all-lto,test-one,repository.rs->scheduled_job_cron_golden_test,3,18.389,17.902,0.398,1,.736,66.11,50.35,133,,18.3,17.0,11.4,10.1
+all-lto,test-one,repository.rs->scheduled_job_cron_golden_test,4,15.468,15.035,0.365,1,1.222,50.35,41.12,132,,15.4,14.2,9.2,9.7
+all-lto,test-one,repository.rs->scheduled_job_cron_golden_test,5,15.745,15.228,0.472,1,.730,41.12,34.66,133,,15.7,14.2,7.8,10.0
+all-lto,test-all,repository.rs->fc-platform-tests,1,49.721,-58.070,107.570,64,,71.78,96.92,118,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,49.5,360.1,14.5,168.8
+all-lto,test-all,repository.rs->fc-platform-tests,2,64.754,-105.262,169.662,64,,96.92,124.96,118,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,64.4,484.5,13.1,158.3
+deps-o1,cold-test,scheduled_job_cron_golden_test,1,317.380,297.598,19.602,131,,82.20,76.36,133,,317.2,83.8,70.8,1590.6
+deps-o1,test-one,repository.rs->scheduled_job_cron_golden_test,1,19.131,18.669,0.431,1,1.128,76.36,60.76,131,,19.1,18.7,11.3,14.1
+deps-o1,test-one,repository.rs->scheduled_job_cron_golden_test,2,19.886,19.456,0.344,1,.964,60.76,45.49,132,,19.8,18.8,7.9,10.4
+deps-o1,test-one,repository.rs->scheduled_job_cron_golden_test,3,24.019,22.426,1.474,1,.861,45.49,35.75,132,,23.9,22.6,15.0,10.4
+deps-o1,test-one,repository.rs->scheduled_job_cron_golden_test,4,13.393,12.981,0.319,1,.853,35.75,29.75,132,,13.3,12.5,7.8,9.6
+deps-o1,test-one,repository.rs->scheduled_job_cron_golden_test,5,18.217,17.749,0.351,1,.867,29.75,26.71,132,,18.1,17.1,11.2,10.2
+deps-o1,test-all,repository.rs->fc-platform-tests,1,50.231,-100.650,150.650,64,,94.08,151.83,117,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,50.0,449.6,12.2,167.3
+deps-o1,test-all,repository.rs->fc-platform-tests,2,47.920,-109.401,156.601,64,,151.83,121.51,118,links run in parallel: link_s is the sum; compile_s = cargo_s - link_s is only a bound,47.2,420.9,9.6,148.5
+deps-o1,incr-check,repository.rs->fc-server,1,7.741,7.6,0.000,0,,136.70,127.44,117,,7.6,6.4,5.9,6.1
+deps-o1,incr-check,repository.rs->fc-server,2,6.097,6.0,0.000,0,,127.44,116.48,117,,6.0,5.0,4.0,5.3
+deps-o1,incr-check,repository.rs->fc-server,3,5.518,5.5,0.000,0,,116.48,110.60,117,,5.5,4.9,4.0,5.3
+deps-o1,incr-check,repository.rs->fc-server,4,5.754,5.7,0.000,0,,110.60,106.31,117,,5.7,5.1,4.0,5.4
+deps-o1,incr-check,repository.rs->fc-server,5,5.643,5.6,0.000,0,,106.31,103.00,117,,5.6,4.9,3.9,5.5
+deps-lto,incr-check,repository.rs->fc-server,1,7.976,7.9,0.000,0,,197.63,172.42,113,,7.9,6.0,5.5,6.2
+deps-lto,incr-check,repository.rs->fc-server,2,6.196,6.1,0.000,0,,172.42,159.25,113,,6.1,5.2,4.0,5.6
+deps-lto,incr-check,repository.rs->fc-server,3,7.956,7.9,0.000,0,,159.25,136.06,116,,7.9,6.4,4.7,5.9
+deps-lto,incr-check,repository.rs->fc-server,4,7.041,7.0,0.000,0,,136.06,126.21,127,,7.0,5.6,4.6,5.7
+deps-lto,incr-check,repository.rs->fc-server,5,7.425,7.4,0.000,0,,126.21,117.78,141,,7.4,5.8,4.6,5.7
+baseline,cold-test,scheduled_job_cron_golden_test,1,339.973,324.577,15.223,131,,74.26,69.31,351,,339.8,65.9,56.7,1882.1
+sccache-targetdir-empty,cold-test,scheduled_job_cron_golden_test,1,308.473,290.756,17.644,131,,43.78,124.00,348,,308.4,62.1,53.2,509.0
+sccache-targetdir-warm,cold-test,scheduled_job_cron_golden_test,1,321.863,306.794,15.006,131,,124.00,171.74,340,,321.8,75.2,65.0,522.4
+sccache-targetdir-warm,test-one,repository.rs->scheduled_job_cron_golden_test,1,14.256,13.912,0.288,1,.709,171.74,140.32,339,,14.2,13.9,8.7,13.3
+sccache-targetdir-warm,test-one,repository.rs->scheduled_job_cron_golden_test,2,12.161,11.801,0.299,1,.689,140.32,110.74,339,,12.1,11.1,7.0,9.2
+sccache-targetdir-warm,test-one,repository.rs->scheduled_job_cron_golden_test,3,10.300,9.947,0.253,1,.681,110.74,95.08,339,,10.2,9.4,6.0,9.0
+sccache-linkerenv-empty,cold-test,scheduled_job_cron_golden_test,1,1107.533,1049.764,57.236,131,,109.46,399.24,324,,1107.0,161.0,82.6,568.5
+sccache-linkerenv-warm,cold-test,scheduled_job_cron_golden_test,1,1126.943,1038.755,87.845,131,,399.24,209.48,318,,1126.6,81.7,66.8,574.6
+sccache-linkerenv-warm,test-one,repository.rs->scheduled_job_cron_golden_test,1,20.357,19.291,1.009,1,.723,209.48,154.04,316,,20.3,19.7,11.3,17.4
+sccache-linkerenv-warm,test-one,repository.rs->scheduled_job_cron_golden_test,2,19.891,18.940,0.760,1,.692,154.04,117.57,314,,19.7,18.5,10.2,13.0
+sccache-linkerenv-warm,test-one,repository.rs->scheduled_job_cron_golden_test,3,15.603,15.162,0.338,1,.785,117.57,89.49,312,,15.5,14.4,7.9,10.4
+sccache-empty,cold-test,scheduled_job_cron_golden_test,1,404.943,390.084,14.816,131,,427.73,174.51,306,,404.9,70.5,59.4,523.8
+sccache-warm,cold-test,scheduled_job_cron_golden_test,1,384.546,366.723,17.777,131,,174.51,311.28,287,,384.5,150.2,111.3,549.3
+sccache-warm,test-one,repository.rs->scheduled_job_cron_golden_test,1,19.365,18.940,0.360,1,.900,311.28,231.00,286,,19.3,18.9,11.8,14.8
+sccache-warm,test-one,repository.rs->scheduled_job_cron_golden_test,2,16.215,15.539,0.461,1,.724,231.00,189.30,286,,16.0,13.8,8.6,10.1
+sccache-warm,test-one,repository.rs->scheduled_job_cron_golden_test,3,16.537,16.157,0.343,1,.682,189.30,145.92,286,,16.5,15.5,9.5,9.7
+openssl-vendored,cold-check,fc-server,1,180.456,164.101,16.299,131,,114.17,116.68,299,,180.4,36.1,35.5,1120.8
+openssl-system,cold-check,fc-server,1,161.213,147.058,14.042,131,,116.68,245.33,295,,161.1,37.5,36.6,995.4
+openssl-vendored,cold-check,fc-server,1,192.523,178.111,14.289,131,,226.32,320.09,296,,192.4,40.6,39.5,1117.8
+openssl-system,cold-check,fc-server,1,186.660,170.678,15.822,131,,301.03,319.50,296,,186.5,42.0,41.2,1009.1
