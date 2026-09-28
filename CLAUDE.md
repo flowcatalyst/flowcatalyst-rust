@@ -12,11 +12,14 @@ The platform exposes exactly two programmable tiers and an internal one:
 - **`/auth/*`, `/oauth/*`, `/.well-known/*`, `/api/dispatch/*`, `/api/monitoring/*`,
   `/api/me/*`, `/api/public/*`** — platform-owned, do not move.
 
-**There is no `/api/admin/*` or `/api/sdk/*` anymore.** Any write handler under
-`/api/*` MUST call an explicit authorization check (`require_anchor`,
-`require_permission`, or one of the `can_*` helpers) — because the URL prefix
-no longer provides a second line of defense. Missing a permission call on a
-write handler is a privilege-escalation bug.
+**There is no `/api/admin/*` or `/api/sdk/*` anymore.** Every write handler
+under `/api/*` MUST call the coarse permission gate (`require_anchor`,
+`require_permission`, or a `can_*` helper) before reading the body: Go answers
+403 before 400, and `UseCase::run` validates before it authorizes.
+Resource-level rules (client reach, application scope, anchor-only, ownership,
+role and permission ceilings) belong in the use case's `authorize`, from
+`ctx.caller()`, so every caller (API, BFF, fc-web, orchestrations) gets them.
+Missing either is a privilege-escalation bug.
 
 ## UoW Invariant (Sealed)
 
@@ -178,7 +181,7 @@ Vite hashed assets (`/assets/*`) are served with `Cache-Control: public, max-age
 ### UseCase Trait Contract
 Every write operation MUST implement the `UseCase` trait, which enforces three steps:
 1. **`validate`** — Input validation (field presence, format, length). Return `Ok(())` if none needed.
-2. **`authorize`** — Resource-level authorization (ownership, access checks). Return `Ok(())` if none needed.
+2. **`authorize`** — May this caller act on this target? From `ctx.caller()`: a `Caller` that is the request's principal (`ExecutionContext::from_auth`, plus `.with_application_scope` where needed) or the explicit `Caller::system()` (`ExecutionContext::system(id)`). Use the `checks::*`, `caller_reach::*` and `role::ceiling` helpers (they take any `Authority`). A rule on the stored row loads it and leaves a missing row to `execute`'s 404; a handler's exact refusal carries through with `UseCaseError::verbatim`. An empty `Ok(())` needs an entry, with its reason, in `tests/use_case_shape_convention_test.rs`.
 3. **`execute`** — Business logic: load aggregate, check business rules, build domain event, call `unit_of_work.commit()`.
 
 Handlers call `use_case.run(command, ctx)` which executes validate → authorize → execute in order.
