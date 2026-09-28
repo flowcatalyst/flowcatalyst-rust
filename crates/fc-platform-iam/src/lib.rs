@@ -2,8 +2,9 @@
 //!
 //! Clients, applications, principals, roles, service accounts, OAuth
 //! clients, identity providers, email-domain mappings, platform config,
-//! audit logs. Until they move to their own crate, it also holds the
-//! sign-in flows (`auth`, `mfa`, `webauthn`, `portal`).
+//! audit logs; and the model the sign-in flows (fc-platform-auth) work on:
+//! OAuth clients, auth configs, the token service, password hashing, 2FA
+//! state, portal identities and apps.
 //!
 //! Every module keeps its path from the single `fc-platform` crate this was
 //! split from (docs/plans/build-speed-2026-09-28.md, section 6); `fc-platform`
@@ -28,4 +29,3 @@ pub mod principal;
 pub mod role;
 pub mod service_account;
 pub mod shared;
-pub mod webauthn;

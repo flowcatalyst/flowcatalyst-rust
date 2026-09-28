@@ -18,7 +18,7 @@ use crate::application::client_config_repository::ApplicationClientConfigReposit
 use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
 use crate::audit::service::AuditService;
-use crate::auth::password_reset_api::PasswordResetEmailer;
+use crate::auth::password_reset_emailer::PasswordResetEmailer;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserIdentity};
 use crate::principal::operations::set_client_association::{
@@ -629,7 +629,7 @@ pub struct PrincipalsState {
     /// Backs `POST /api/principals/{id}/send-password-reset`, which emails the
     /// user a single-use reset link (same flow as user-initiated
     /// `/auth/password-reset/request`), and the magic link sent on create.
-    pub password_reset_emailer: Arc<crate::auth::password_reset_api::PasswordResetEmailer>,
+    pub password_reset_emailer: Arc<crate::auth::password_reset_emailer::PasswordResetEmailer>,
     /// Welcomes a user created with a password (Go `AccountCreated`).
     pub new_user_notifier: Option<crate::mfa::notify::Notifier>,
     // Use cases — writes go through these so that events + audit logs are

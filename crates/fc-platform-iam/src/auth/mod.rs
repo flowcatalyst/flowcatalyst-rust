@@ -1,6 +1,11 @@
-//! Authentication Aggregate
+//! Authentication Aggregate: the IAM model.
 //!
-//! Authentication, OAuth, and OIDC functionality.
+//! OAuth clients, anchor domains, auth configs and IdP role mappings (their
+//! entities, repositories, operations and admin APIs), the token service
+//! (`auth_service`), password hashing and the signing keys. The sign-in
+//! flows (token endpoint, OIDC login, sessions, refresh tokens,
+//! authorization codes, password reset) are fc-platform-auth's, whose
+//! `auth` module re-exports this one.
 
 // Auth config
 pub mod config_api;
@@ -8,47 +13,20 @@ pub mod config_entity;
 pub mod config_repository;
 pub mod operations;
 
-// Core auth
-pub mod auth_api;
+// Tokens, passwords, keys
 pub mod auth_service;
-pub mod login_backoff;
+pub mod password_reset_emailer;
 pub mod password_service;
-pub mod session_cookie;
 pub mod signing_keys;
 
-// OAuth
-pub mod oauth_api;
+// OAuth clients
 pub mod oauth_client_repository;
 pub mod oauth_clients_api;
 pub mod oauth_entity;
-
-// OIDC
-pub mod jwks_cache;
-pub mod oidc_login_api;
-pub mod oidc_login_state;
-pub mod oidc_login_state_repository;
-pub mod oidc_payload_repository;
-pub mod oidc_sync_service;
-
-// Authorization codes
-pub mod authorization_code;
-pub mod authorization_code_repository;
-
-// Password reset API
-pub mod password_reset_api;
-
-// Pending auth state (OAuth authorize flow)
-pub mod pending_auth_repository;
-
-// Refresh tokens
-pub mod refresh_rotation;
-pub mod refresh_token;
-pub mod refresh_token_repository;
 
 // Re-export main types
 pub use auth_service::AuthService;
 pub use config_api::AuthConfigState;
 pub use config_entity::ClientAuthConfig;
 pub use config_repository::ClientAuthConfigRepository;
-pub use oauth_api::OAuthState;
 pub use password_service::PasswordService;

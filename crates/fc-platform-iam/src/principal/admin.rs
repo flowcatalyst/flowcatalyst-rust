@@ -736,7 +736,7 @@ pub async fn send_password_reset(
     emailer
         .send_reset_email_with(
             &principal,
-            crate::auth::password_reset_api::ResetOptions {
+            crate::auth::password_reset_emailer::ResetOptions {
                 reset_2fa,
                 ..Default::default()
             },

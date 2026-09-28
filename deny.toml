@@ -109,6 +109,7 @@ exceptions = [
     { crate = "fc-outbox-processor", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-parity", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform", allow = ["AGPL-3.0-or-later"] },
+    { crate = "fc-platform-auth", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-core", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-functions", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-platform-iam", allow = ["AGPL-3.0-or-later"] },
@@ -144,8 +145,8 @@ deny = [
     { crate = "hyper-tls", reason = "native-tls through hyper; use hyper-rustls" },
     { crate = "tokio-native-tls", reason = "native-tls through tokio; use tokio-rustls" },
     # OpenSSL only where webauthn-rs needs it for attestation, vendored
-    # (fc-platform-iam, which holds webauthn, turns on `vendored`).
-    { crate = "openssl", wrappers = ["fc-platform", "fc-platform-iam", "webauthn-rs-core", "webauthn-attestation-ca"], reason = "rustls everywhere else" },
+    # (fc-platform-auth, which holds webauthn, turns on `vendored`).
+    { crate = "openssl", wrappers = ["fc-platform", "fc-platform-auth", "fc-platform-iam", "webauthn-rs-core", "webauthn-attestation-ca"], reason = "rustls everywhere else" },
     # Unmaintained or unsound, with maintained replacements.
     { crate = "atty", reason = "unsound (RUSTSEC-2021-0145) and unmaintained; use std::io::IsTerminal" },
     { crate = "failure", reason = "unmaintained; use thiserror/anyhow" },

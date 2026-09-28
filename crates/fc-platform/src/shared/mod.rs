@@ -11,10 +11,10 @@ pub use fc_platform_core::shared::{
     secret_ref, tsid, webhook_signer,
 };
 
-// fc-platform-iam's (until the sign-in flows move out).
-pub use fc_platform_iam::shared::{
-    authorization_service, branding, client_selection_api, me_api, middleware, role_sync_service,
-};
+// fc-platform-iam's.
+pub use fc_platform_iam::shared::{authorization_service, branding, middleware, role_sync_service};
+// fc-platform-auth's.
+pub use fc_platform_auth::shared::{client_selection_api, me_api};
 // fc-platform-messaging's.
 pub use fc_platform_messaging::shared::{
     batch_api, dispatch_process_api, dispatch_queue, projections_service, sdk_dispatch_jobs_api,

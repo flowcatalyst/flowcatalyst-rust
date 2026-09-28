@@ -1,19 +1,14 @@
 [package]
-name = "fc-platform"
+name = "fc-platform-auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "FlowCatalyst Platform - Core domain models, services, and APIs"
+description = "FlowCatalyst Platform - the sign-in flows: OAuth/OIDC, sessions, refresh tokens, password reset, two-factor login, passkeys, the portal login plane"
 
 [dependencies]
-# The kernel: use cases, errors, the authorization context, middleware.
 fc-platform-core = { path = "../fc-platform-core" }
-# The domain crates; this one assembles them (routes, context, OpenAPI).
-fc-platform-auth = { path = "../fc-platform-auth" }
 fc-platform-iam = { path = "../fc-platform-iam" }
-fc-platform-messaging = { path = "../fc-platform-messaging" }
-fc-platform-scheduled-jobs = { path = "../fc-platform-scheduled-jobs" }
-fc-platform-functions = { path = "../fc-platform-functions" }
+# The kernel: use cases, errors, the authorization context, middleware.
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
@@ -83,11 +78,12 @@ webauthn-rs = { workspace = true }
 ## On Linux/macOS the first build is ~1-2 min slower (one-off),
 ## subsequent builds hit the cache and are unchanged.
 ##
-## This dep is unused by fc-platform's own code; the feature
+## This dep is unused by this crate's own code; the feature
 ## propagates through workspace-wide unification to webauthn-rs's
 ## openssl pull. Keep it here (not in fc-server) so dev builds in
-## fc-platform get the same toolchain shape as release builds.
+## this crate get the same toolchain shape as release builds.
 openssl = { version = "0.10", features = ["vendored"] }
+
 
 # HTTP client for OIDC. Inherit from workspace so we pick up the
 # `default-features = false` + rustls-tls posture; declaring our own
@@ -139,8 +135,8 @@ aws-sdk-secretsmanager = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 
 [dev-dependencies]
-# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
 fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
 # Log capture in unit tests.
 tracing-subscriber = { workspace = true }
 # The dispatch scheduler's SQS publish, end to end against LocalStack.
