@@ -1048,7 +1048,7 @@ pub async fn create_principal(
     };
     let event = state
         .create_user_use_case
-        .run(cmd, ExecutionContext::create(&ctx.principal_id))
+        .run(cmd, ExecutionContext::from_auth(ctx))
         .await
         .into_result()?;
 

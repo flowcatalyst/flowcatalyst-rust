@@ -224,7 +224,7 @@ pub async fn create_email_domain_mapping(
             remember_device_days: req.remember_device_days.unwrap_or(0),
         },
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         axum::http::StatusCode::CREATED,
@@ -392,7 +392,7 @@ pub async fn update_email_domain_mapping(
             remember_device_days: req.remember_device_days,
         },
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -423,7 +423,7 @@ pub async fn delete_email_domain_mapping(
     crate::checks::can_delete_email_domain_mappings(&auth.0)?;
 
     let cmd = DeleteEmailDomainMappingCommand { mapping_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

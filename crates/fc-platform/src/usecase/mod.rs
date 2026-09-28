@@ -5,9 +5,11 @@
 //! - `UseCaseError` - categorized error types for consistent handling
 //! - `DomainEvent` - trait for domain events with CloudEvents structure
 //! - `ExecutionContext` - tracing and principal context for use case execution
+//! - `Caller` - the authority a use case's `authorize` checks
 //! - `UnitOfWork` - atomic commit of entity + event + audit log
 
 pub mod audit_operation;
+pub mod caller;
 pub mod domain_event;
 pub mod error;
 pub mod execution_context;
@@ -18,6 +20,7 @@ pub mod use_case;
 #[cfg(test)]
 mod event_persistence_snapshot_tests;
 
+pub use caller::{Caller, CallerCredential};
 pub use domain_event::{DomainEvent, EventMetadata, RecordedEvent};
 pub use error::{ErrorKind, OrNotFound, UseCaseError};
 pub use execution_context::ExecutionContext;

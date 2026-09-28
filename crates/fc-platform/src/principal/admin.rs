@@ -107,7 +107,7 @@ pub async fn create_user(
                 user_id: existing.id.clone(),
                 client_id: client_id.clone(),
             };
-            let exec = ExecutionContext::create(&ctx.principal_id);
+            let exec = ExecutionContext::from_auth(ctx);
             state
                 .grant_client_access_use_case
                 .run(cmd, exec)
@@ -137,7 +137,7 @@ pub async fn create_user(
         enforce_password_complexity: req.enforce_password_complexity,
         idp_type: Some(idp_type),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     let event = state
         .create_user_use_case
         .run(cmd, exec)
@@ -330,7 +330,7 @@ pub async fn update(
         client_id: req.client_id,
         email: req.email,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.update_use_case.run(cmd, exec).await.into_result()?;
 
     let refreshed = state
@@ -409,7 +409,7 @@ pub async fn assign_role(
         user_id: id.to_string(),
         roles,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -451,7 +451,7 @@ pub async fn set_roles(
         user_id: id.to_string(),
         roles: desired,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -513,7 +513,7 @@ pub async fn remove_role(
         user_id: id.to_string(),
         roles,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_roles_use_case
         .run(cmd, exec)
@@ -564,7 +564,7 @@ pub async fn grant_client_access(
         user_id: id.to_string(),
         client_id: client_id.clone(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .grant_client_access_use_case
         .run(cmd, exec)
@@ -595,7 +595,7 @@ pub async fn revoke_client_access(
         user_id: id.to_string(),
         client_id: client_id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .revoke_client_access_use_case
         .run(cmd, exec)
@@ -618,7 +618,7 @@ pub async fn delete(
     let cmd = DeleteUserCommand {
         principal_id: id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.delete_use_case.run(cmd, exec).await.into_result()?;
     Ok(())
 }
@@ -637,7 +637,7 @@ pub async fn activate(
     let cmd = ActivateUserCommand {
         principal_id: id.to_string(),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state.activate_use_case.run(cmd, exec).await.into_result()?;
 
     tracing::info!(principal_id = %id, admin_id = %ctx.principal_id, "Principal activated");
@@ -662,7 +662,7 @@ pub async fn deactivate(
         principal_id: id.to_string(),
         reason: Some("Admin deactivated principal".to_string()),
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .deactivate_use_case
         .run(cmd, exec)
@@ -694,7 +694,7 @@ pub async fn reset_password(
         new_password: req.new_password,
         enforce_password_complexity: req.enforce_password_complexity,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .reset_password_use_case
         .run(cmd, exec)
@@ -1019,7 +1019,7 @@ pub async fn set_application_access(
         application_ids: req.application_ids.clone(),
         all_applications: req.all_applications,
     };
-    let exec = ExecutionContext::create(&ctx.principal_id);
+    let exec = ExecutionContext::from_auth(ctx);
     state
         .assign_app_access_use_case
         .run(cmd, exec)

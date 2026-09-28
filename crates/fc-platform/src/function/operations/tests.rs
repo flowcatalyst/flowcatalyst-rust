@@ -81,7 +81,7 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
 }
 
 fn ctx() -> ExecutionContext {
-    ExecutionContext::create("prn_1")
+    ExecutionContext::system("prn_1")
 }
 
 fn anchor() -> Caller {

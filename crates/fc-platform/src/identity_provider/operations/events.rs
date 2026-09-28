@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn identity_provider_events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let e = IdentityProviderCreated::new(&ctx, "idp_1", "okta");
         assert_eq!(
             e.metadata.event_type,

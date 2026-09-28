@@ -23,7 +23,7 @@ use crate::application::operations::{
 };
 use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
-use crate::shared::authorization_service::checks;
+use crate::shared::authorization_service::{checks, AuthContext};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::PgUnitOfWork;
@@ -372,7 +372,7 @@ pub async fn create_application<U: UnitOfWork>(
         logo_mime_type: req.logo_mime_type,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(event) => Ok((
@@ -513,7 +513,7 @@ pub async fn update_application<U: UnitOfWork>(
         logo_mime_type: req.logo_mime_type,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.update_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => Ok(StatusCode::NO_CONTENT),
@@ -549,7 +549,7 @@ pub async fn delete_application<U: UnitOfWork>(
         &state.service_account_repo,
         &state.application_repo,
         &id,
-        &auth.0.principal_id,
+        &auth.0,
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
@@ -563,7 +563,7 @@ pub async fn delete_application_cascade(
     service_account_repo: &Arc<ServiceAccountRepository>,
     application_repo: &Arc<ApplicationRepository>,
     id: &str,
-    principal_id: &str,
+    auth: &AuthContext,
 ) -> Result<(), PlatformError> {
     use crate::application::operations::{DeleteApplicationCommand, DeleteApplicationUseCase};
     use crate::service_account::operations::{
@@ -577,7 +577,7 @@ pub async fn delete_application_cascade(
     // cleared via FK SET NULL.
     let sas = service_account_repo.find_by_application(id).await?;
 
-    let principal_id = principal_id.to_owned();
+    let auth = auth.clone();
     let app_id_for_closure = id.to_owned();
     let sa_repo = service_account_repo.clone();
     let app_repo = application_repo.clone();
@@ -589,7 +589,7 @@ pub async fn delete_application_cascade(
             let delete_sa_uc = DeleteServiceAccountUseCase::new(sa_repo, session.clone());
             let delete_app_uc = DeleteApplicationUseCase::new(app_repo, session);
 
-            let ctx = ExecutionContext::create(&principal_id);
+            let ctx = ExecutionContext::from_auth(&auth);
 
             for sa in sas {
                 delete_sa_uc
@@ -640,7 +640,7 @@ pub async fn activate_application<U: UnitOfWork>(
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = ActivateApplicationCommand { id: id.clone() };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .activate_use_case
@@ -689,7 +689,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
         &state.oauth_client_repo,
         &state.application_repo,
         &id,
-        &auth.0.principal_id,
+        &auth.0,
     )
     .await?;
     let app = state
@@ -710,7 +710,7 @@ pub async fn deactivate_application_cascade(
     oauth_client_repo: &Arc<OAuthClientRepository>,
     application_repo: &Arc<ApplicationRepository>,
     id: &str,
-    principal_id: &str,
+    auth: &AuthContext,
 ) -> Result<(), PlatformError> {
     use crate::auth::operations::{DeactivateOAuthClientCommand, DeactivateOAuthClientUseCase};
     use crate::service_account::operations::{
@@ -730,7 +730,7 @@ pub async fn deactivate_application_cascade(
         oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
     }
 
-    let principal_id = principal_id.to_owned();
+    let auth = auth.clone();
     let app_id_for_closure = id.to_owned();
     let sa_repo = service_account_repo.clone();
     let oauth_repo = oauth_client_repo.clone();
@@ -748,7 +748,7 @@ pub async fn deactivate_application_cascade(
                     app_repo, session,
                 );
 
-            let ctx = ExecutionContext::create(&principal_id);
+            let ctx = ExecutionContext::from_auth(&auth);
 
             for sa in sas {
                 if !sa.active {
@@ -872,7 +872,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
         &state.client_repo,
         &state.oauth_client_repo,
         &id,
-        &auth.0.principal_id,
+        &auth.0,
     )
     .await?;
 
@@ -898,7 +898,7 @@ pub async fn provision_application_service_account(
     client_repo: &Arc<ClientRepository>,
     oauth_client_repo: &Arc<OAuthClientRepository>,
     id: &str,
-    principal_id: &str,
+    auth: &AuthContext,
 ) -> Result<ServiceAccountCredentialsResponse, PlatformError> {
     use crate::application::operations::{
         AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
@@ -934,7 +934,7 @@ pub async fn provision_application_service_account(
     let oauth_client_name = format!("{} Service Account Client", app.name);
 
     let app_id = app.id.clone();
-    let principal_id = principal_id.to_owned();
+    let auth = auth.clone();
     let sa_repo = service_account_repo.clone();
     let client_repo = client_repo.clone();
     let app_repo = application_repo.clone();
@@ -962,7 +962,7 @@ pub async fn provision_application_service_account(
                 AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
             let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);
 
-            let ctx = crate::usecase::ExecutionContext::create(&principal_id);
+            let ctx = crate::usecase::ExecutionContext::from_auth(&auth);
 
             // 1. Create the ServiceAccount (a SERVICE principal is created
             //    behind it, with an id of its own).
@@ -1017,7 +1017,7 @@ pub async fn provision_application_service_account(
                 application_ids: vec![app_id],
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
-                created_by: Some(principal_id.clone()),
+                created_by: Some(auth.principal_id.clone()),
                 portal_client_id: None,
                 portal_app_id: None,
                 api_access: false,
@@ -1105,7 +1105,7 @@ pub async fn provision_login_client<U: UnitOfWork>(
         &state.application_repo,
         &state.oauth_client_repo,
         &id,
-        &auth.0.principal_id,
+        &auth.0,
         req,
     )
     .await?;
@@ -1130,7 +1130,7 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
     application_repo: &ApplicationRepository,
     oauth_client_repo: &OAuthClientRepository,
     id: &str,
-    principal_id: &str,
+    auth: &AuthContext,
     req: ProvisionLoginClientRequest,
 ) -> Result<LoginClientCredentialsResponse, PlatformError> {
     use crate::auth::operations::CreateOAuthClientCommand;
@@ -1193,12 +1193,12 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         application_ids: vec![app.id.clone()],
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
-        created_by: Some(principal_id.to_owned()),
+        created_by: Some(auth.principal_id.clone()),
         portal_client_id: None,
         portal_app_id: None,
         api_access: false,
     };
-    let ctx = ExecutionContext::create(principal_id);
+    let ctx = ExecutionContext::from_auth(auth);
     create_oauth_client_use_case
         .run(cmd, ctx)
         .await
@@ -1457,7 +1457,7 @@ pub async fn update_client_config<U: UnitOfWork>(
         base_url_override: req.base_url_override,
         config: req.config,
     };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_client_config_use_case
         .run(cmd, ctx)
@@ -1531,7 +1531,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
         application_id: id.clone(),
         client_id: client_id.clone(),
     };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .enable_for_client_use_case
         .run(cmd, ctx)
@@ -1574,7 +1574,7 @@ pub async fn disable_for_client<U: UnitOfWork>(
         application_id: id.clone(),
         client_id: client_id.clone(),
     };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .disable_for_client_use_case
         .run(cmd, ctx)

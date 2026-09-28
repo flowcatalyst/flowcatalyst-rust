@@ -176,7 +176,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
         caller: Some(auth.0.clone()),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(event) => Ok((
@@ -313,7 +313,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
         caller: Some(auth.0.clone()),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.update_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => Ok(StatusCode::NO_CONTENT),
@@ -356,7 +356,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     let command = ArchiveDispatchPoolCommand { id: id.clone() };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.archive_use_case.run(command, ctx).await.into_result() {
         // Unconditional, as Go: 204 however often it is sent.
@@ -403,7 +403,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     // Go's SuspendDispatchPool: status SUSPENDED, event
     // platform:admin:dispatch-pool:suspended (it used to archive the pool).
     let command = crate::dispatch_pool::operations::SuspendDispatchPoolCommand { id: id.clone() };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.suspend_use_case.run(command, ctx).await.into_result() {
         // Unconditional, as Go: 204 however often it is sent.
@@ -450,7 +450,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     // Go's ActivateDispatchPool: status ACTIVE, event
     // platform:admin:dispatch-pool:activated (it used to change nothing).
     let command = crate::dispatch_pool::operations::ActivateDispatchPoolCommand { id: id.clone() };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .activate_use_case
@@ -495,7 +495,7 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     crate::shared::caller_reach::require_scope_access(&auth.0, pool.client_id.as_deref())?;
 
     let command = DeleteDispatchPoolCommand { id };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.delete_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => Ok(StatusCode::NO_CONTENT),

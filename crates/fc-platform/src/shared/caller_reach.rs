@@ -2,12 +2,12 @@
 //! or dispatch job is written (owner decision #24; Java
 //! `IngestApi.requireWritableClient`, security-fixes-2026-09-24 S3.2).
 
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::Authority;
 use crate::shared::error::{PlatformError, Result};
 
 /// The client ids the caller holds explicitly (never `*`), in claim order.
-pub fn client_ids(ctx: &AuthContext) -> Vec<String> {
-    ctx.accessible_clients
+pub fn client_ids(ctx: &impl Authority) -> Vec<String> {
+    ctx.accessible_clients()
         .iter()
         .filter(|c| c.as_str() != "*")
         .cloned()
@@ -15,16 +15,16 @@ pub fn client_ids(ctx: &AuthContext) -> Vec<String> {
 }
 
 /// Whether the caller may act within client `client_id`: an anchor always,
-/// otherwise as [`AuthContext::can_access_client`] says (Java
+/// otherwise as [`Authority::can_access_client`] says (Java
 /// `AuthContext.canAccessClient`).
-pub fn reaches_client(ctx: &AuthContext, client_id: &str) -> bool {
+pub fn reaches_client(ctx: &impl Authority, client_id: &str) -> bool {
     ctx.is_anchor() || ctx.can_access_client(client_id)
 }
 
 /// Whether the caller reaches a resource owned by `client_id`, where `None`
 /// is the platform, which only an anchor reaches (Java
 /// `Checks.canAccessScope`).
-pub fn reaches_scope(ctx: &AuthContext, client_id: Option<&str>) -> bool {
+pub fn reaches_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
     match client_id {
         Some(id) => reaches_client(ctx, id),
         None => ctx.is_anchor(),
@@ -47,13 +47,13 @@ pub fn non_blank(value: Option<String>) -> Option<String> {
 /// sends no `clientId` on a dispatch job) needs under a client-scoped
 /// credential; any other non-anchor must name one.
 pub fn require_writable_client(
-    ctx: &AuthContext,
+    ctx: &impl Authority,
     client_id: Option<String>,
 ) -> Result<Option<String>> {
     match non_blank(client_id) {
         None if ctx.is_anchor() => Ok(None),
         None => match client_ids(ctx).as_slice() {
-            [only] if !ctx.accessible_clients.iter().any(|c| c == "*") => Ok(Some(only.clone())),
+            [only] if !ctx.accessible_clients().iter().any(|c| c == "*") => Ok(Some(only.clone())),
             _ => Err(PlatformError::forbidden_code(
                 "FORBIDDEN",
                 "clientId is required: a client-scoped caller cannot write platform-scoped rows",
@@ -74,7 +74,7 @@ pub fn require_writable_client(
 /// filter) and anyone else their explicit clients. `Ok(None)` means the
 /// caller reaches no client, so the list is empty.
 pub fn read_client_filter(
-    ctx: &AuthContext,
+    ctx: &impl Authority,
     requested: Vec<String>,
 ) -> Result<Option<Vec<String>>> {
     if !requested.is_empty() {
@@ -98,7 +98,7 @@ pub fn read_client_filter(
 /// A single event or dispatch job is visible when it is platform-scoped or
 /// the caller can access its client; `what` names it in the refusal ("No
 /// access to this event").
-pub fn ensure_row_visible(ctx: &AuthContext, client_id: Option<&str>, what: &str) -> Result<()> {
+pub fn ensure_row_visible(ctx: &impl Authority, client_id: Option<&str>, what: &str) -> Result<()> {
     match client_id {
         Some(cid) if !ctx.can_access_client(cid) => Err(PlatformError::forbidden(format!(
             "No access to this {what}"
@@ -110,7 +110,7 @@ pub fn ensure_row_visible(ctx: &AuthContext, client_id: Option<&str>, what: &str
 /// Go `auth.CanAccessScope` (shared/auth/auth.go:400): a client's resource
 /// needs that client; a platform resource (`None`) needs anchor scope or
 /// the super-admin wildcard.
-pub fn can_access_scope(ctx: &AuthContext, client_id: Option<&str>) -> bool {
+pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
     match client_id {
         Some(id) => reaches_client(ctx, id),
         None => ctx.is_anchor() || ctx.has_permission(crate::permissions::ADMIN_ALL),
@@ -121,7 +121,7 @@ pub fn can_access_scope(ctx: &AuthContext, client_id: Option<&str>) -> bool {
 /// scope check under a coarse permission check: 403 `SCOPE_FORBIDDEN`
 /// with Go's two messages.
 pub fn check_scope_access(
-    ctx: &AuthContext,
+    ctx: &impl Authority,
     client_id: Option<&str>,
 ) -> std::result::Result<(), crate::usecase::UseCaseError> {
     if can_access_scope(ctx, client_id) {
@@ -138,7 +138,7 @@ pub fn check_scope_access(
 }
 
 /// [`check_scope_access`] for a handler.
-pub fn require_scope_access(ctx: &AuthContext, client_id: Option<&str>) -> Result<()> {
+pub fn require_scope_access(ctx: &impl Authority, client_id: Option<&str>) -> Result<()> {
     check_scope_access(ctx, client_id).map_err(Into::into)
 }
 
@@ -146,6 +146,7 @@ pub fn require_scope_access(ctx: &AuthContext, client_id: Option<&str>) -> Resul
 mod tests {
     use super::*;
     use crate::service_account::signing_reach::tests::caller;
+    use crate::shared::authorization_service::AuthContext;
     use crate::UserScope;
 
     fn ctx(scope: UserScope, clients: &[&str]) -> AuthContext {

@@ -167,7 +167,7 @@ pub async fn create_connection(
         application_code,
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     // Go answers with the stored connection, not `{id}`: the SPA puts it
     // straight into a select.
@@ -315,7 +315,7 @@ pub async fn update_connection(
         replace_details: true,
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -354,7 +354,7 @@ pub async fn delete_connection(
     crate::shared::caller_reach::require_scope_access(&auth.0, conn.client_id.as_deref())?;
 
     let cmd = DeleteConnectionCommand { connection_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -396,7 +396,7 @@ pub async fn pause_connection(
         replace_details: false,
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     let conn = state
         .connection_repo
@@ -443,7 +443,7 @@ pub async fn activate_connection(
         replace_details: false,
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     let conn = state
         .connection_repo

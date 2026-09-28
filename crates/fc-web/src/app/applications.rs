@@ -929,7 +929,7 @@ async fn deactivate(cx: &Cx) -> Result<SeeOther> {
         &deps.oauth_client_repo,
         &deps.application_repo,
         &id,
-        &auth.principal_id,
+        auth,
     )
     .await;
     let base = detail_href(&id);
@@ -950,7 +950,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         &deps.service_account_repo,
         &deps.application_repo,
         &id,
-        &auth.principal_id,
+        auth,
     )
     .await;
     finish(
@@ -999,7 +999,7 @@ async fn provision_service_account(cx: &Cx) -> Result<impl View> {
         &deps.client_repo,
         &deps.oauth_client_repo,
         &id,
-        &auth.principal_id,
+        auth,
     )
     .await
     .map_err(|e| provision_refused(cx, &id, e))?;
@@ -1045,7 +1045,7 @@ async fn provision_login_client(cx: &Cx, Form(form): Form<LoginClientForm>) -> R
         &deps.application_repo,
         &deps.oauth_client_repo,
         &id,
-        &auth.principal_id,
+        auth,
         ProvisionLoginClientRequest {
             client_type: non_empty(&form.client_type),
             redirect_uris,

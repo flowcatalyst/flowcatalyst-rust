@@ -612,7 +612,7 @@ pub async fn create_service_account<U: UnitOfWork>(
         all_applications,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(result) => {
@@ -666,7 +666,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 portal_app_id: None,
                 api_access: false,
             };
-            let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
+            let oauth_ctx = ExecutionContext::from_auth(&auth.0);
             state
                 .create_oauth_client_use_case
                 .run(oauth_cmd, oauth_ctx)
@@ -731,7 +731,7 @@ pub async fn update_service_account<U: UnitOfWork>(
         webhook_credentials,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.update_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => Ok(StatusCode::NO_CONTENT),
@@ -762,7 +762,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     crate::checks::can_delete_service_accounts(&auth.0)?;
     let command = DeleteServiceAccountCommand { id };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.delete_use_case.run(command, ctx).await.into_result() {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
@@ -795,7 +795,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_token_use_case
@@ -836,7 +836,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_token_use_case
@@ -877,7 +877,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
         service_account_id: id.clone(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .regenerate_secret_use_case
@@ -1006,7 +1006,7 @@ pub async fn assign_roles<U: UnitOfWork>(
         roles: req.roles,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .assign_roles_use_case

@@ -52,6 +52,11 @@ macro_rules! details {
     }};
 }
 
+/// Detail key marking a [`UseCaseError`] made from a
+/// `PlatformError::Forbidden` (a `checks::*` refusal in `authorize`), so it
+/// converts back to exactly that error. Never rendered.
+const PLATFORM_FORBIDDEN: &str = "__platformForbidden";
+
 /// The category of a [`UseCaseError`]; decides the HTTP status.
 ///
 /// The serde names are the variant names of the enum `UseCaseError` used
@@ -310,11 +315,11 @@ impl std::error::Error for UseCaseError {}
 /// The mapping is chosen so that the HTTP response after the
 /// `From<UseCaseError> for PlatformError` round trip keeps the status code
 /// of the original `PlatformError`, and for `NotFound`, `BusinessRule`,
-/// `Concurrency` and `Duplicate` the whole body. `UseCaseError` has no
-/// authentication kinds (those belong to handlers), so `Unauthorized`,
-/// `Forbidden` and the token errors become internal errors: a use case
-/// never receives them from a repository. Its [`ErrorKind::Forbidden`] is
-/// for a use case's own reach checks.
+/// `Concurrency`, `Duplicate` and `Forbidden` the whole body. `Forbidden`
+/// arrives from the `checks::*` rules a use case's `authorize` applies.
+/// `UseCaseError` has no authentication kinds (those belong to handlers),
+/// so `Unauthorized` and the token errors become internal errors: a use
+/// case never receives them from a repository.
 impl From<PlatformError> for UseCaseError {
     fn from(err: PlatformError) -> Self {
         match err {
@@ -363,8 +368,17 @@ impl From<PlatformError> for UseCaseError {
             }
             PlatformError::Sqlx(e) => Self::internal("DATABASE_ERROR", e.to_string()),
             PlatformError::Internal { message } => Self::internal("INTERNAL_ERROR", message),
+            // A `checks::*` refusal made in a use case's `authorize`: marked,
+            // so the round trip back renders exactly the handler's 403.
+            PlatformError::Forbidden { message } => {
+                let mut details = HashMap::new();
+                details.insert(
+                    PLATFORM_FORBIDDEN.to_string(),
+                    serde_json::Value::Bool(true),
+                );
+                Self::new(ErrorKind::Forbidden, "FORBIDDEN", message, details)
+            }
             other @ (PlatformError::Unauthorized { .. }
-            | PlatformError::Forbidden { .. }
             | PlatformError::Json(_)
             | PlatformError::Configuration { .. }
             | PlatformError::InvalidCredentials
@@ -421,6 +435,11 @@ impl From<UseCaseError> for PlatformError {
                 details,
             },
             ErrorKind::Concurrency => PlatformError::Concurrency { code, message },
+            // A handler-style `PlatformError::Forbidden` carried through a
+            // use case comes back as itself.
+            ErrorKind::Forbidden if details.contains_key(PLATFORM_FORBIDDEN) => {
+                PlatformError::Forbidden { message }
+            }
             // Java's envelope for an authorization error: its own code
             // (`SCOPE_FORBIDDEN`, `FORBIDDEN`, …) and message.
             ErrorKind::Forbidden => PlatformError::Coded {
@@ -536,6 +555,37 @@ mod tests {
 
     /// The raw envelope: Go's `error`, `message` and `details`, in that
     /// order.
+    #[tokio::test]
+    async fn a_checks_refusal_survives_a_use_case_unchanged() {
+        use crate::shared::error::FunctionContractError;
+        use axum::response::IntoResponse;
+        async fn parts(err: PlatformError) -> (u16, String, String) {
+            let resp = err.into_response();
+            let contract = resp
+                .extensions()
+                .get::<FunctionContractError>()
+                .map(|c| format!("{c:?}"))
+                .unwrap_or_default();
+            let status = resp.status().as_u16();
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, String::from_utf8(bytes.to_vec()).unwrap(), contract)
+        }
+        let cases = || {
+            vec![
+                PlatformError::forbidden("Anchor access required"),
+                PlatformError::forbidden_code("SCOPE_FORBIDDEN", "no access"),
+                PlatformError::forbidden_code("ANCHOR_REQUIRED", "anchor scope required"),
+                PlatformError::not_found("Application", "billing"),
+            ]
+        };
+        for (direct, via) in cases().into_iter().zip(cases()) {
+            let via = PlatformError::from(UseCaseError::from(via));
+            assert_eq!(parts(direct).await, parts(via).await);
+        }
+    }
+
     #[tokio::test]
     async fn every_error_body_is_gos_envelope() {
         use axum::response::IntoResponse;

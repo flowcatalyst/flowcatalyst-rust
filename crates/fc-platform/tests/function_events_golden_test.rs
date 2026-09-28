@@ -123,7 +123,7 @@ fn rust_events() -> Vec<(&'static str, Builder)> {
     fn pack<E: DomainEvent>(e: E) -> Built {
         (e.metadata().clone(), serde_json::to_string(&e).unwrap())
     }
-    let ctx = || ExecutionContext::create("prn_1");
+    let ctx = || ExecutionContext::system("prn_1");
     let platform_fn = || {
         function(
             "fnc_1",

@@ -262,7 +262,7 @@ pub async fn create_role(
         // permissions through the admin API.
         cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -414,7 +414,7 @@ pub async fn update_role(
         client_managed: req.client_managed,
         cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -456,7 +456,7 @@ pub async fn delete_role(
     )?;
 
     let cmd = DeleteRoleCommand { role_id: role.id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)

@@ -234,7 +234,7 @@ pub async fn create_event_type(
         &auth.0,
         cmd.client_id.as_deref(),
     )?;
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -434,7 +434,7 @@ pub async fn update_event_type(
         description: req.description,
         client_scoped: req.client_scoped,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -513,7 +513,7 @@ pub async fn delete_event_type(
     )?;
 
     let cmd = DeleteEventTypeCommand { event_type_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)

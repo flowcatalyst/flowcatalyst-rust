@@ -399,7 +399,7 @@ fn test_user_logged_in_event() {
     };
     use fc_platform::usecase::ExecutionContext;
 
-    let ctx = ExecutionContext::create("principal-123");
+    let ctx = ExecutionContext::system("principal-123");
     let fc_claims = FlowcatalystClaims {
         email: "user@example.com".to_string(),
         principal_type: "USER".to_string(),
@@ -443,7 +443,7 @@ fn test_user_logged_in_event_internal() {
     use fc_platform::principal::operations::events::{FlowcatalystClaims, UserLoggedIn};
     use fc_platform::usecase::ExecutionContext;
 
-    let ctx = ExecutionContext::create("principal-123");
+    let ctx = ExecutionContext::system("principal-123");
     let fc_claims = FlowcatalystClaims {
         email: "admin@example.com".to_string(),
         principal_type: "USER".to_string(),

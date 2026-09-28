@@ -384,7 +384,7 @@ pub async fn set_property(
         value_type: parse_opt(req.value_type.as_deref())?,
         description: req.description,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .set_property_use_case
         .run(cmd, ctx)

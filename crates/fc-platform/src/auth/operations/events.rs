@@ -295,7 +295,7 @@ mod tests {
     /// Payloads are Go's, key for key (auth/operations/events.go ToDataJSON).
     #[test]
     fn oauth_client_payloads_match_go() {
-        let ctx = ExecutionContext::create("prn_actor");
+        let ctx = ExecutionContext::system("prn_actor");
         assert_eq!(
             payload_keys(&OAuthClientCreated::new(&ctx, "oac_1", "cid", "Name")),
             ["clientId", "clientName", "oauthClientId"]
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn anchor_auth_config_and_mapping_events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_actor");
+        let ctx = ExecutionContext::system("prn_actor");
         let a = AnchorDomainCreated::new(&ctx, "anc_1", "acme.com");
         assert_eq!(
             a.metadata.event_type,

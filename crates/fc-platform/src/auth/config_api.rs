@@ -419,7 +419,7 @@ pub async fn create_anchor_domain(
     let cmd = CreateAnchorDomainCommand {
         domain: req.domain.trim().to_lowercase(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_anchor_domain_use_case
         .run(cmd, ctx)
@@ -556,7 +556,7 @@ pub async fn delete_anchor_domain(
     let cmd = DeleteAnchorDomainCommand {
         anchor_domain_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_anchor_domain_use_case
         .run(cmd, ctx)
@@ -604,7 +604,7 @@ pub async fn update_anchor_domain(
         anchor_domain_id: id,
         domain: req.domain,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_anchor_domain_use_case
         .run(cmd, ctx)
@@ -672,7 +672,7 @@ pub async fn create_client_auth_config(
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         oidc_client_secret_ref,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -791,7 +791,7 @@ pub async fn update_client_auth_config(
         granted_client_ids: req.granted_client_ids,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -826,7 +826,7 @@ pub async fn delete_client_auth_config(
     crate::checks::can_delete_auth_configs(&auth.0)?;
 
     let cmd = DeleteAuthConfigCommand { auth_config_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_auth_config_use_case
         .run(cmd, ctx)
@@ -883,7 +883,7 @@ pub async fn update_config_type(
         granted_client_ids: None,
         config_type: Some(parse_config_type(&req.config_type)?),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -961,7 +961,7 @@ pub async fn create_internal_auth_config(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -1014,7 +1014,7 @@ pub async fn create_oidc_auth_config(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .create_auth_config_use_case
         .run(cmd, ctx)
@@ -1069,7 +1069,7 @@ pub async fn update_oidc_config(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1118,7 +1118,7 @@ pub async fn update_client_binding(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1167,7 +1167,7 @@ pub async fn update_additional_clients(
         granted_client_ids: None,
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1216,7 +1216,7 @@ pub async fn update_granted_clients(
         granted_client_ids: Some(req.granted_client_ids),
         config_type: None,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .update_auth_config_use_case
         .run(cmd, ctx)
@@ -1266,7 +1266,7 @@ pub async fn create_idp_role_mapping(
         idp_role_name: req.idp_role_name,
         platform_role_name: req.platform_role_name,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state
         .create_idp_role_mapping_use_case
         .run(cmd, ctx)
@@ -1358,7 +1358,7 @@ pub async fn delete_idp_role_mapping(
     }
 
     let cmd = DeleteIdpRoleMappingCommand { mapping_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .delete_idp_role_mapping_use_case
         .run(cmd, ctx)

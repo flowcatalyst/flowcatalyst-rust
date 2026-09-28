@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_role_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = RoleCreated::new(&ctx, "role-1", "orders:admin");
 
         assert_eq!(event.metadata.event_type, "platform:admin:role:created");
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_role_deleted_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = RoleDeleted::new(&ctx, "role-1", "orders:admin");
 
         assert_eq!(event.metadata.event_type, "platform:admin:role:deleted");

@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_pool_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = DispatchPoolCreated::new(&ctx, "dp-1", "main-pool", "Main Pool");
 
         assert_eq!(
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_pool_archived_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = DispatchPoolArchived::new(&ctx, "dp-1", "main-pool");
 
         assert_eq!(

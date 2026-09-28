@@ -258,7 +258,7 @@ pub(super) async fn create_identity_provider(
         sync_roles_from_idp: req.sync_roles_from_idp,
         allowed_role_ids,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let (idp_repo, domains) = (state.idp_repo.clone(), state.domains.clone());
     let event = state
         .pg_unit_of_work
@@ -391,7 +391,7 @@ pub(super) async fn update_identity_provider(
         sync_roles_from_idp: req.sync_roles_from_idp,
         allowed_role_ids: req.allowed_role_ids,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let (idp_repo, domains) = (state.idp_repo.clone(), state.domains.clone());
     state
         .pg_unit_of_work
@@ -439,7 +439,7 @@ pub(super) async fn delete_identity_provider(
     crate::checks::can_delete_identity_providers(&auth.0)?;
 
     let cmd = DeleteIdentityProviderCommand { idp_id: id };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

@@ -184,6 +184,44 @@ impl AuthContext {
     }
 }
 
+/// What an authorization rule needs to know about whoever is acting. The
+/// [`checks`] and [`caller_reach`](crate::shared::caller_reach) rules take
+/// any `Authority`, so one rule text serves a handler (an [`AuthContext`])
+/// and a use case's `authorize` (a [`Caller`](crate::usecase::Caller),
+/// which may also be the system).
+pub trait Authority {
+    /// Anchor tier (the system caller counts as anchor).
+    fn is_anchor(&self) -> bool;
+    /// Holds client `client_id`, or `*`.
+    fn can_access_client(&self, client_id: &str) -> bool;
+    /// Holds `permission`, directly or by a wildcard pattern.
+    fn has_permission(&self, permission: &str) -> bool;
+    /// Holds any one of `permissions`.
+    fn has_any_permission(&self, permissions: &[&str]) -> bool {
+        permissions.iter().any(|p| self.has_permission(p))
+    }
+    /// The client ids held, `*` for every client.
+    fn accessible_clients(&self) -> &[String];
+}
+
+impl Authority for AuthContext {
+    fn is_anchor(&self) -> bool {
+        AuthContext::is_anchor(self)
+    }
+    fn can_access_client(&self, client_id: &str) -> bool {
+        AuthContext::can_access_client(self, client_id)
+    }
+    fn has_permission(&self, permission: &str) -> bool {
+        AuthContext::has_permission(self, permission)
+    }
+    fn has_any_permission(&self, permissions: &[&str]) -> bool {
+        AuthContext::has_any_permission(self, permissions)
+    }
+    fn accessible_clients(&self) -> &[String] {
+        &self.accessible_clients
+    }
+}
+
 /// The client id in one `clients` claim entry: the claim carries
 /// `id:identifier` pairs (or `*`) and everything inward reasons in bare ids
 /// (Go `auth.ParseClientsClaim`; Java `ScopeClaim`). Client ids never
@@ -497,7 +535,7 @@ pub mod checks {
     use super::*;
 
     /// Require anchor scope
-    pub fn require_anchor(context: &AuthContext) -> Result<()> {
+    pub fn require_anchor(context: &impl Authority) -> Result<()> {
         if context.is_anchor() {
             Ok(())
         } else {
@@ -510,7 +548,7 @@ pub mod checks {
     /// `permission required: <code>`. Scope grants no bypass: an anchor
     /// needs the permission too. The function API gates every route with
     /// this.
-    pub fn require_permission(context: &AuthContext, permission: &str) -> Result<()> {
+    pub fn require_permission(context: &impl Authority, permission: &str) -> Result<()> {
         if context.has_permission(permission) {
             Ok(())
         } else {
@@ -527,7 +565,7 @@ pub mod checks {
     /// (Checks.java:74-77): 403 `ANCHOR_REQUIRED`, `anchor scope required`.
     /// [`require_anchor`] is the same check with the platform's older
     /// `FORBIDDEN` body.
-    pub fn require_anchor_scope(context: &AuthContext) -> Result<()> {
+    pub fn require_anchor_scope(context: &impl Authority) -> Result<()> {
         if context.is_anchor() {
             Ok(())
         } else {
@@ -543,7 +581,7 @@ pub mod checks {
     /// Go's `anchorWith` (shared/auth/auth.go:704-709): anchor scope, then
     /// one permission, with Go's bodies (403 `ANCHOR_REQUIRED`, then 403
     /// `PERMISSION_REQUIRED`).
-    fn anchor_with(context: &AuthContext, permission: &str) -> Result<()> {
+    fn anchor_with(context: &impl Authority, permission: &str) -> Result<()> {
         require_anchor_scope(context)?;
         require_permission(context, permission)
     }
@@ -551,7 +589,7 @@ pub mod checks {
     /// Any one of several permissions, answering as Go's `requireAny`
     /// (shared/auth/auth.go:473-481): 403 `PERMISSION_REQUIRED`,
     /// `one of: <a>, <b>`.
-    fn require_any_permission(context: &AuthContext, permissions: &[&str]) -> Result<()> {
+    fn require_any_permission(context: &impl Authority, permissions: &[&str]) -> Result<()> {
         if context.has_any_permission(permissions) {
             Ok(())
         } else {
@@ -565,26 +603,26 @@ pub mod checks {
     /// OAuth clients, read (list, get, by client_id): anchor plus
     /// `platform:auth:oauth-client:view` (Go's `CanReadOAuthClients`,
     /// shared/auth/auth.go:732).
-    pub fn can_read_oauth_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_read_oauth_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::OAUTH_CLIENT_READ)
     }
 
     /// OAuth clients, create: anchor plus `platform:auth:oauth-client:create`
     /// (Go's `CanCreateOAuthClients`, auth.go:733).
-    pub fn can_create_oauth_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_create_oauth_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::OAUTH_CLIENT_CREATE)
     }
 
     /// OAuth clients, update, activate, deactivate: anchor plus
     /// `platform:auth:oauth-client:update` (Go's `CanUpdateOAuthClients`,
     /// auth.go:734).
-    pub fn can_update_oauth_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_update_oauth_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::OAUTH_CLIENT_UPDATE)
     }
 
     /// OAuth clients, delete: anchor plus `platform:auth:oauth-client:delete`
     /// (Go's `CanDeleteOAuthClients`, auth.go:735).
-    pub fn can_delete_oauth_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_oauth_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::OAUTH_CLIENT_DELETE)
     }
 
@@ -592,13 +630,13 @@ pub mod checks {
     /// or withdraw a credential, so they share anchor plus
     /// `platform:auth:oauth-client:regenerate-secret` (Go's
     /// `CanRotateOAuthClientSecrets`, auth.go:737-742).
-    pub fn can_write_oauth_client_secrets(context: &AuthContext) -> Result<()> {
+    pub fn can_write_oauth_client_secrets(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::OAUTH_CLIENT_REGENERATE_SECRET)
     }
 
     /// Service accounts, read: `platform:iam:service-account:view`, as Go's
     /// `CanReadServiceAccounts` (shared/auth/auth.go:675-677).
-    pub fn can_read_service_accounts(context: &AuthContext) -> Result<()> {
+    pub fn can_read_service_accounts(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_READ)
     }
 
@@ -610,45 +648,45 @@ pub mod checks {
     /// Applications, read (list, get, by code, client configs, roles):
     /// `platform:admin:application:view` (Go `CanReadApplications`,
     /// auth.go:575).
-    pub fn can_read_applications(context: &AuthContext) -> Result<()> {
+    pub fn can_read_applications(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::APPLICATION_READ)
     }
 
     /// Clients, read (list, search, by identifier, get): anchor plus
     /// `platform:admin:client:view` (Go `CanReadClients`, auth.go:713).
-    pub fn can_read_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_read_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_READ)
     }
 
     /// Connections, read: `platform:messaging:connection:view` (Go
     /// `CanReadConnections`, auth.go:515). Rows are then confined to the
     /// caller's clients.
-    pub fn can_read_connections(context: &AuthContext) -> Result<()> {
+    pub fn can_read_connections(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::CONNECTION_READ)
     }
 
     /// Connections, create: `platform:messaging:connection:create` (Go
     /// `CanCreateConnections`, auth.go:517).
-    pub fn can_create_connections(context: &AuthContext) -> Result<()> {
+    pub fn can_create_connections(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::CONNECTION_CREATE)
     }
 
     /// Connections, update, pause and activate:
     /// `platform:messaging:connection:update` (Go `CanUpdateConnections`).
-    pub fn can_update_connections(context: &AuthContext) -> Result<()> {
+    pub fn can_update_connections(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::CONNECTION_UPDATE)
     }
 
     /// Connections, delete: `platform:messaging:connection:delete` (Go
     /// `CanDeleteConnections`).
-    pub fn can_delete_connections(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_connections(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::CONNECTION_DELETE)
     }
 
     /// Dispatch pools, any write (create, update, archive, suspend,
     /// activate): one of the pool create/update/delete permissions (Go
     /// `CanWriteDispatchPools`, auth.go:561).
-    pub fn can_write_dispatch_pools(context: &AuthContext) -> Result<()> {
+    pub fn can_write_dispatch_pools(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -661,46 +699,46 @@ pub mod checks {
 
     /// Dispatch pools, delete: `platform:messaging:dispatch-pool:delete` (Go
     /// `CanDeleteDispatchPools`, auth.go:557).
-    pub fn can_delete_dispatch_pools(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_dispatch_pools(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::DISPATCH_POOL_DELETE)
     }
 
     /// CORS origins, read: anchor plus `platform:admin:cors-origin:view` (Go
     /// `CanReadCorsOrigins`, auth.go:788).
-    pub fn can_read_cors_origins(context: &AuthContext) -> Result<()> {
+    pub fn can_read_cors_origins(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CORS_ORIGIN_READ)
     }
 
     /// Dispatch pools, read: `platform:messaging:dispatch-pool:view` (Go
     /// `CanReadDispatchPools`, auth.go:547). Rows are then confined to the
     /// caller's clients.
-    pub fn can_read_dispatch_pools(context: &AuthContext) -> Result<()> {
+    pub fn can_read_dispatch_pools(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::DISPATCH_POOL_READ)
     }
 
     /// Email-domain mappings, read: anchor plus
     /// `platform:iam:email-domain-mapping:view` (Go
     /// `CanReadEmailDomainMappings`, auth.go:763).
-    pub fn can_read_email_domain_mappings(context: &AuthContext) -> Result<()> {
+    pub fn can_read_email_domain_mappings(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_READ)
     }
 
     /// Login attempts, read: anchor plus `platform:admin:login-attempt:view`
     /// (Go `CanReadLoginAttempts`, auth.go:793).
-    pub fn can_read_login_attempts(context: &AuthContext) -> Result<()> {
+    pub fn can_read_login_attempts(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::LOGIN_ATTEMPT_READ)
     }
 
     /// Principals, read: `platform:iam:user:view` (Go `CanReadPrincipals`,
     /// auth.go:800). Rows are then confined to the caller's clients.
-    pub fn can_read_principals(context: &AuthContext) -> Result<()> {
+    pub fn can_read_principals(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::iam::USER_READ)
     }
 
     /// The dashboard's platform-wide counts: anchor, then the client or the
     /// application view permission (Go's stats handler: `RequireAnchor` then
     /// `CanViewDashboardStats`, auth.go:393).
-    pub fn can_view_dashboard_stats(context: &AuthContext) -> Result<()> {
+    pub fn can_view_dashboard_stats(context: &impl Authority) -> Result<()> {
         require_anchor_scope(context)?;
         require_any_permission(
             context,
@@ -717,7 +755,7 @@ pub mod checks {
     /// here; Rust keeps one because an account's tier follows its client
     /// links, so a non-anchor holder could otherwise create or relink a
     /// client-less account, which is ANCHOR tier.
-    pub fn can_write_service_accounts(context: &AuthContext) -> Result<()> {
+    pub fn can_write_service_accounts(context: &impl Authority) -> Result<()> {
         require_anchor_scope(context)?;
         require_any_permission(
             context,
@@ -735,14 +773,14 @@ pub mod checks {
     /// `CanUpdateServiceAccounts`, auth.go:683-685, with decision #19's anchor
     /// requirement; Java 6068fe6b S1.2). Anchor scope alone let an
     /// application's own ANCHOR-tier account grant itself super-admin.
-    pub fn can_update_service_accounts(context: &AuthContext) -> Result<()> {
+    pub fn can_update_service_accounts(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)
     }
 
     /// Service accounts, delete: `platform:iam:service-account:delete`, as
     /// Go's `CanDeleteServiceAccounts` (auth.go:687-689), with the same
     /// anchor requirement as [`can_write_service_accounts`].
-    pub fn can_delete_service_accounts(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_service_accounts(context: &impl Authority) -> Result<()> {
         require_anchor_scope(context)?;
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)
     }
@@ -754,128 +792,128 @@ pub mod checks {
     // staff role, a provisioned service account) write them.
 
     /// Clients, create (Go `CanCreateClients`).
-    pub fn can_create_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_create_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_CREATE)
     }
 
     /// Clients, update, notes and enabled applications (Go
     /// `CanUpdateClients`; Java ClientApi for the application links, which
     /// Go gates by anchor alone).
-    pub fn can_update_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_update_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_UPDATE)
     }
 
     /// Clients, delete (Go `CanDeleteClients`).
-    pub fn can_delete_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_DELETE)
     }
 
     /// Clients, activate (Go `CanActivateClients`).
-    pub fn can_activate_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_activate_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_ACTIVATE)
     }
 
     /// Clients, suspend (Go `CanSuspendClients`).
-    pub fn can_suspend_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_suspend_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_SUSPEND)
     }
 
     /// Clients, deactivate (Go `CanDeactivateClients`).
-    pub fn can_deactivate_clients(context: &AuthContext) -> Result<()> {
+    pub fn can_deactivate_clients(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CLIENT_DEACTIVATE)
     }
 
     /// Identity providers, read; also IdP role mappings, read (Go
     /// `CanReadIdentityProviders`).
-    pub fn can_read_identity_providers(context: &AuthContext) -> Result<()> {
+    pub fn can_read_identity_providers(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::IDENTITY_PROVIDER_READ)
     }
 
     /// Identity providers, create (Go `CanCreateIdentityProviders`).
-    pub fn can_create_identity_providers(context: &AuthContext) -> Result<()> {
+    pub fn can_create_identity_providers(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::IDENTITY_PROVIDER_CREATE)
     }
 
     /// Identity providers, update; also IdP role mappings, create and
     /// delete (Go `CanUpdateIdentityProviders`).
-    pub fn can_update_identity_providers(context: &AuthContext) -> Result<()> {
+    pub fn can_update_identity_providers(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::IDENTITY_PROVIDER_UPDATE)
     }
 
     /// Identity providers, delete (Go `CanDeleteIdentityProviders`).
-    pub fn can_delete_identity_providers(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_identity_providers(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::IDENTITY_PROVIDER_DELETE)
     }
 
     /// Email-domain mappings, create (Go `CanCreateEmailDomainMappings`).
-    pub fn can_create_email_domain_mappings(context: &AuthContext) -> Result<()> {
+    pub fn can_create_email_domain_mappings(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_CREATE)
     }
 
     /// Email-domain mappings, update (Go `CanUpdateEmailDomainMappings`).
-    pub fn can_update_email_domain_mappings(context: &AuthContext) -> Result<()> {
+    pub fn can_update_email_domain_mappings(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_UPDATE)
     }
 
     /// Email-domain mappings, delete (Go `CanDeleteEmailDomainMappings`).
-    pub fn can_delete_email_domain_mappings(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_email_domain_mappings(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_DELETE)
     }
 
     /// Anchor domains, read (Go `CanReadAnchorDomains`).
-    pub fn can_read_anchor_domains(context: &AuthContext) -> Result<()> {
+    pub fn can_read_anchor_domains(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::ANCHOR_DOMAIN_READ)
     }
 
     /// Anchor domains, create (Go `CanCreateAnchorDomains`).
-    pub fn can_create_anchor_domains(context: &AuthContext) -> Result<()> {
+    pub fn can_create_anchor_domains(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::ANCHOR_DOMAIN_CREATE)
     }
 
     /// Anchor domains, update (Go `CanUpdateAnchorDomains`).
-    pub fn can_update_anchor_domains(context: &AuthContext) -> Result<()> {
+    pub fn can_update_anchor_domains(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::ANCHOR_DOMAIN_UPDATE)
     }
 
     /// Anchor domains, delete (Go `CanDeleteAnchorDomains`).
-    pub fn can_delete_anchor_domains(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_anchor_domains(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::ANCHOR_DOMAIN_DELETE)
     }
 
     /// Client auth configs, read (Go `CanReadAuthConfigs`).
-    pub fn can_read_auth_configs(context: &AuthContext) -> Result<()> {
+    pub fn can_read_auth_configs(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_READ)
     }
 
     /// Client auth configs, create (Go `CanCreateAuthConfigs`).
-    pub fn can_create_auth_configs(context: &AuthContext) -> Result<()> {
+    pub fn can_create_auth_configs(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_CREATE)
     }
 
     /// Client auth configs, update (Go `CanUpdateAuthConfigs`).
-    pub fn can_update_auth_configs(context: &AuthContext) -> Result<()> {
+    pub fn can_update_auth_configs(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_UPDATE)
     }
 
     /// Client auth configs, delete (Go `CanDeleteAuthConfigs`).
-    pub fn can_delete_auth_configs(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_auth_configs(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_DELETE)
     }
 
     /// CORS origins, create (Go `CanCreateCorsOrigins`).
-    pub fn can_create_cors_origins(context: &AuthContext) -> Result<()> {
+    pub fn can_create_cors_origins(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CORS_ORIGIN_CREATE)
     }
 
     /// CORS origins, delete (Go `CanDeleteCorsOrigins`).
-    pub fn can_delete_cors_origins(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_cors_origins(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::admin::CORS_ORIGIN_DELETE)
     }
 
     /// Applications, create, update, activate, deactivate: any of the
     /// application create/update/delete permissions (Go's
     /// `CanWriteApplications`). The handlers keep their anchor check on top.
-    pub fn can_write_applications(context: &AuthContext) -> Result<()> {
+    pub fn can_write_applications(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -887,7 +925,7 @@ pub mod checks {
     }
 
     /// Applications, delete (Go's `CanDeleteApplications`).
-    pub fn can_delete_applications(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_applications(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::APPLICATION_DELETE)
     }
 
@@ -896,7 +934,7 @@ pub mod checks {
     /// decision #25, stricter than Go). The permission is checked first, so
     /// a caller lacking it is refused exactly as Go refuses it; only a
     /// non-anchor holder of the permission meets the extra anchor rule.
-    pub fn can_administer_roles(context: &AuthContext, permission: &str) -> Result<()> {
+    pub fn can_administer_roles(context: &impl Authority, permission: &str) -> Result<()> {
         require_permission(context, permission)?;
         require_anchor_scope(context)
     }
@@ -904,7 +942,7 @@ pub mod checks {
     /// Role administration through `/bff/roles`: anchor scope, as Go's BFF
     /// asks (`RequireAnchor`, shared/bff/roles.go), then the role
     /// permission (owner decision #25).
-    pub fn can_administer_bff_roles(context: &AuthContext, permission: &str) -> Result<()> {
+    pub fn can_administer_bff_roles(context: &impl Authority, permission: &str) -> Result<()> {
         anchor_with(context, permission)
     }
 
@@ -912,7 +950,7 @@ pub mod checks {
     /// permission, as Go's `CanWriteRoles` (`one of: …`), then anchor reach
     /// (owner decision #25), in that order for the reason given on
     /// [`can_administer_roles`].
-    pub fn can_write_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_write_roles(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -926,7 +964,7 @@ pub mod checks {
 
     /// Re-running the built-in role sync: anchor and any role write
     /// permission (Java RolesBff sync-platform).
-    pub fn can_sync_platform_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_platform_roles(context: &impl Authority) -> Result<()> {
         require_anchor_scope(context)?;
         require_any_permission(
             context,
@@ -941,12 +979,12 @@ pub mod checks {
     /// Client-access grant and revoke: anchor reach and
     /// `platform:iam:client-access:grant` / `:revoke` (owner decision #25;
     /// Go asks anchor alone).
-    pub fn can_grant_client_access(context: &AuthContext) -> Result<()> {
+    pub fn can_grant_client_access(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::iam::CLIENT_ACCESS_GRANT)
     }
 
     /// See [`can_grant_client_access`].
-    pub fn can_revoke_client_access(context: &AuthContext) -> Result<()> {
+    pub fn can_revoke_client_access(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::iam::CLIENT_ACCESS_REVOKE)
     }
 
@@ -956,7 +994,7 @@ pub mod checks {
     /// (shared/auth/auth.go, reached through `RequireUserAdmin`). Scope is
     /// reach, never authority: an anchor needs the permission too. The
     /// handler keeps its own tier check on top.
-    pub fn can_write_principals(context: &AuthContext) -> Result<()> {
+    pub fn can_write_principals(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -973,7 +1011,10 @@ pub mod checks {
     /// client-less (platform) user is an anchor's alone (403
     /// `ANCHOR_REQUIRED`). A client administrator is confined to its own
     /// clients this way.
-    pub fn require_user_admin(context: &AuthContext, target_client_id: Option<&str>) -> Result<()> {
+    pub fn require_user_admin(
+        context: &impl Authority,
+        target_client_id: Option<&str>,
+    ) -> Result<()> {
         if context.is_anchor() {
             return can_write_principals(context);
         }
@@ -996,20 +1037,20 @@ pub mod checks {
     /// `platform:iam:user:assign-roles` itself (owner ruling 14; Java
     /// `Access.requireRoleAssigner`). Holding user create, update or delete
     /// no longer changes roles; the role ceiling then bounds which roles.
-    pub fn can_assign_principal_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_assign_principal_roles(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::iam::USER_ASSIGN_ROLES)
     }
 
     /// Principals, delete: `platform:iam:user:delete`, as Go's
     /// `CanDeletePrincipals`.
-    pub fn can_delete_principals(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_principals(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::iam::USER_DELETE)
     }
 
     /// Platform-config access grants, read: anchor plus
     /// `platform:admin:config:view` (Go's `CanReadPlatformConfig`,
     /// shared/auth/auth.go:784).
-    pub fn can_read_platform_config(context: &AuthContext) -> Result<()> {
+    pub fn can_read_platform_config(context: &impl Authority) -> Result<()> {
         require_anchor(context)?;
         if context.has_permission(permissions::admin::CONFIG_READ) {
             Ok(())
@@ -1024,7 +1065,7 @@ pub mod checks {
     /// `platform:admin:config:manage` (Go's `CanUpdatePlatformConfig`,
     /// shared/auth/auth.go:785, checks `…:config:update`; owner decision #44
     /// renames it). A stored role holding Go's `…:config:update` still passes.
-    pub fn can_update_platform_config(context: &AuthContext) -> Result<()> {
+    pub fn can_update_platform_config(context: &impl Authority) -> Result<()> {
         require_anchor(context)?;
         if context.has_permission(permissions::admin::CONFIG_MANAGE)
             || context.has_permission(permissions::admin::CONFIG_UPDATE_GO)
@@ -1040,21 +1081,21 @@ pub mod checks {
     /// The `/bff/developer` reads: anchor scope, then
     /// `platform:developer:application-openapi:view` (Go
     /// `CanReadDeveloperPortal`, shared/auth/auth.go:796).
-    pub fn can_read_developer_portal(context: &AuthContext) -> Result<()> {
+    pub fn can_read_developer_portal(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::developer::APPLICATION_OPENAPI_VIEW)
     }
 
     /// `POST /bff/developer/sync-platform-openapi`: anchor scope, then
     /// `platform:developer:application-openapi:sync` (Go
     /// `CanSyncPlatformOpenAPI`, shared/auth/auth.go:797).
-    pub fn can_sync_platform_openapi(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_platform_openapi(context: &impl Authority) -> Result<()> {
         anchor_with(context, permissions::developer::APPLICATION_OPENAPI_SYNC)
     }
 
     /// Developer portal: read an application's OpenAPI document.
     /// Resource scoping (which application the principal can see) is handled
     /// in the handler against `iam_principal_application_access`.
-    pub fn can_read_application_openapi(context: &AuthContext) -> Result<()> {
+    pub fn can_read_application_openapi(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::developer::APPLICATION_OPENAPI_VIEW,
             permissions::developer::APPLICATION_OPENAPI_MANAGE,
@@ -1069,7 +1110,7 @@ pub mod checks {
 
     /// SDK ingest: sync an application's OpenAPI document.
     /// Service-account-belongs-to-application is enforced in the handler.
-    pub fn can_sync_application_openapi(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_application_openapi(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::developer::APPLICATION_OPENAPI_SYNC,
             permissions::developer::APPLICATION_OPENAPI_MANAGE,
@@ -1083,7 +1124,7 @@ pub mod checks {
     }
 
     /// Check read access to events
-    pub fn can_read_events(context: &AuthContext) -> Result<()> {
+    pub fn can_read_events(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_READ) {
             Ok(())
         } else {
@@ -1093,12 +1134,12 @@ pub mod checks {
 
     /// Audit logs, read: `platform:admin:audit-log:view`, answering as Go's
     /// `CanWritePermission(ac, viewPerm)` (audit/api/api.go:43).
-    pub fn can_read_audit_logs(context: &AuthContext) -> Result<()> {
+    pub fn can_read_audit_logs(context: &impl Authority) -> Result<()> {
         require_permission(context, permissions::admin::AUDIT_LOG_READ)
     }
 
     /// Check raw read access to events (includes payload)
-    pub fn can_read_events_raw(context: &AuthContext) -> Result<()> {
+    pub fn can_read_events_raw(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_VIEW_RAW) {
             Ok(())
         } else {
@@ -1107,7 +1148,7 @@ pub mod checks {
     }
 
     /// Check read access to event types
-    pub fn can_read_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_read_event_types(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_TYPE_READ) {
             Ok(())
         } else {
@@ -1116,7 +1157,7 @@ pub mod checks {
     }
 
     /// Check create access to event types
-    pub fn can_create_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_create_event_types(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_TYPE_CREATE) {
             Ok(())
         } else {
@@ -1125,7 +1166,7 @@ pub mod checks {
     }
 
     /// Check update access to event types
-    pub fn can_update_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_update_event_types(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_TYPE_UPDATE) {
             Ok(())
         } else {
@@ -1134,7 +1175,7 @@ pub mod checks {
     }
 
     /// Check delete access to event types
-    pub fn can_delete_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_event_types(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_TYPE_DELETE) {
             Ok(())
         } else {
@@ -1143,7 +1184,7 @@ pub mod checks {
     }
 
     /// Check read access to subscriptions
-    pub fn can_read_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_read_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SUBSCRIPTION_READ) {
             Ok(())
         } else {
@@ -1152,7 +1193,7 @@ pub mod checks {
     }
 
     /// Check create access to subscriptions
-    pub fn can_create_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_create_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SUBSCRIPTION_CREATE) {
             Ok(())
         } else {
@@ -1161,7 +1202,7 @@ pub mod checks {
     }
 
     /// Check update access to subscriptions
-    pub fn can_update_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_update_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SUBSCRIPTION_UPDATE) {
             Ok(())
         } else {
@@ -1170,7 +1211,7 @@ pub mod checks {
     }
 
     /// Check delete access to subscriptions
-    pub fn can_delete_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SUBSCRIPTION_DELETE) {
             Ok(())
         } else {
@@ -1179,7 +1220,7 @@ pub mod checks {
     }
 
     /// Check read access to dispatch jobs
-    pub fn can_read_dispatch_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_read_dispatch_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::DISPATCH_JOB_READ) {
             Ok(())
         } else {
@@ -1188,7 +1229,7 @@ pub mod checks {
     }
 
     /// Check raw read access to dispatch jobs (includes payload)
-    pub fn can_read_dispatch_jobs_raw(context: &AuthContext) -> Result<()> {
+    pub fn can_read_dispatch_jobs_raw(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::DISPATCH_JOB_VIEW_RAW) {
             Ok(())
         } else {
@@ -1199,7 +1240,7 @@ pub mod checks {
     }
 
     /// Check admin access (any admin permission)
-    pub fn is_admin(context: &AuthContext) -> Result<()> {
+    pub fn is_admin(context: &impl Authority) -> Result<()> {
         if context.is_anchor() || context.has_permission(permissions::ADMIN_ALL) {
             Ok(())
         } else {
@@ -1208,7 +1249,7 @@ pub mod checks {
     }
 
     /// Check write access to events (create)
-    pub fn can_write_events(context: &AuthContext) -> Result<()> {
+    pub fn can_write_events(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::BATCH_EVENTS_WRITE,
             permissions::application_service::EVENT_CREATE,
@@ -1220,7 +1261,7 @@ pub mod checks {
     }
 
     /// Check write access to event types (create, update, or delete)
-    pub fn can_write_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_write_event_types(context: &impl Authority) -> Result<()> {
         // Go `CanWriteEventTypes`: 403 `PERMISSION_REQUIRED`, `one of: …`.
         require_any_permission(
             context,
@@ -1235,7 +1276,7 @@ pub mod checks {
     // ── Process documentation ────────────────────────────────────────────
 
     /// Check read access to processes
-    pub fn can_read_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_read_processes(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::PROCESS_READ,
             permissions::application_service::PROCESS_READ,
@@ -1247,7 +1288,7 @@ pub mod checks {
     }
 
     /// Check create access to processes
-    pub fn can_create_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_create_processes(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::PROCESS_CREATE) {
             Ok(())
         } else {
@@ -1256,7 +1297,7 @@ pub mod checks {
     }
 
     /// Check update access to processes
-    pub fn can_update_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_update_processes(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::PROCESS_UPDATE) {
             Ok(())
         } else {
@@ -1265,7 +1306,7 @@ pub mod checks {
     }
 
     /// Check delete access to processes
-    pub fn can_delete_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_processes(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::PROCESS_DELETE) {
             Ok(())
         } else {
@@ -1274,7 +1315,7 @@ pub mod checks {
     }
 
     /// Check write access to processes (create, update, archive, or delete)
-    pub fn can_write_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_write_processes(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::PROCESS_CREATE,
             permissions::admin::PROCESS_UPDATE,
@@ -1288,7 +1329,7 @@ pub mod checks {
     }
 
     /// Check sync access to processes (SDK push from an application)
-    pub fn can_sync_processes(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_processes(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::PROCESS_SYNC,
             permissions::application_service::PROCESS_SYNC,
@@ -1300,7 +1341,7 @@ pub mod checks {
     }
 
     /// Check write access to subscriptions (create, update, or delete)
-    pub fn can_write_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_write_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::SUBSCRIPTION_CREATE,
             permissions::admin::SUBSCRIPTION_UPDATE,
@@ -1313,7 +1354,7 @@ pub mod checks {
     }
 
     /// Check create access to dispatch jobs
-    pub fn can_create_dispatch_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_create_dispatch_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
             Ok(())
         } else {
@@ -1322,7 +1363,7 @@ pub mod checks {
     }
 
     /// Check retry access to dispatch jobs
-    pub fn can_retry_dispatch_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_retry_dispatch_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
             Ok(())
         } else {
@@ -1331,7 +1372,7 @@ pub mod checks {
     }
 
     /// Check write access to dispatch jobs (batch)
-    pub fn can_write_dispatch_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_write_dispatch_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
             Ok(())
         } else {
@@ -1341,7 +1382,7 @@ pub mod checks {
 
     // ── Scheduled jobs ──────────────────────────────────────────────────────
 
-    pub fn can_read_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_read_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_READ) {
             Ok(())
         } else {
@@ -1349,7 +1390,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_create_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_create_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_CREATE) {
             Ok(())
         } else {
@@ -1357,7 +1398,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_update_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_update_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_UPDATE) {
             Ok(())
         } else {
@@ -1365,7 +1406,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_delete_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_DELETE) {
             Ok(())
         } else {
@@ -1373,7 +1414,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_pause_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_pause_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_PAUSE) {
             Ok(())
         } else {
@@ -1381,7 +1422,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_fire_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_fire_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_permission(permissions::admin::SCHEDULED_JOB_FIRE) {
             Ok(())
         } else {
@@ -1392,7 +1433,7 @@ pub mod checks {
     /// Go's `CanWriteScheduledJobs` (shared/auth/auth.go:881): any of
     /// scheduled-job create, update or delete. Go gates update, pause,
     /// resume, archive and the instance log/complete callbacks with it.
-    pub fn can_write_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_write_scheduled_jobs(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -1407,13 +1448,12 @@ pub mod checks {
     /// client-scoped resource needs that client, a platform one (no client)
     /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`. One rule,
     /// kept in [`crate::shared::caller_reach::check_scope_access`].
-    pub fn check_scope_access(context: &AuthContext, client_id: Option<&str>) -> Result<()> {
+    pub fn check_scope_access(context: &impl Authority, client_id: Option<&str>) -> Result<()> {
         crate::shared::caller_reach::require_scope_access(context, client_id)
     }
-
     /// Sync endpoints: admin path. Application-scoped sync uses the
     /// application_service permission below.
-    pub fn can_sync_scheduled_jobs(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_scheduled_jobs(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::SCHEDULED_JOB_SYNC,
             permissions::admin::SCHEDULED_JOB_MANAGE,
@@ -1424,7 +1464,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_read_scheduled_job_instances(context: &AuthContext) -> Result<()> {
+    pub fn can_read_scheduled_job_instances(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::SCHEDULED_JOB_INSTANCE_READ,
             permissions::admin::SCHEDULED_JOB_READ,
@@ -1443,7 +1483,7 @@ pub mod checks {
     /// `ADMIN_ALL` also work.
     /// Go gates these with `CanWriteScheduledJobs` (scheduled-job create,
     /// update or delete), so those grant it too.
-    pub fn can_write_scheduled_job_instance(context: &AuthContext) -> Result<()> {
+    pub fn can_write_scheduled_job_instance(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::application_service::SCHEDULED_JOB_INSTANCE_WRITE,
             permissions::admin::SCHEDULED_JOB_MANAGE,
@@ -1460,7 +1500,7 @@ pub mod checks {
     }
 
     /// SDK-driven sync of scheduled-job definitions for an application.
-    pub fn can_sync_scheduled_jobs_app(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_scheduled_jobs_app(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::application_service::SCHEDULED_JOB_SYNC,
             permissions::admin::SCHEDULED_JOB_SYNC,
@@ -1480,7 +1520,7 @@ pub mod checks {
     // exists for the resource. Per-application scope is verified inside the
     // use case (the app_code in the URL is the partition key).
 
-    pub fn can_sync_event_types(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_event_types(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::EVENT_TYPE_SYNC,
             permissions::admin::EVENT_TYPE_MANAGE,
@@ -1494,7 +1534,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_sync_subscriptions(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_subscriptions(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::SUBSCRIPTION_SYNC,
             permissions::admin::SUBSCRIPTION_MANAGE,
@@ -1513,7 +1553,7 @@ pub mod checks {
     /// `CanReadRoles` (auth.go:588), or role manage, or the
     /// application-service role view. Refused as Go: 403
     /// `PERMISSION_REQUIRED`.
-    pub fn can_read_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_read_roles(context: &impl Authority) -> Result<()> {
         require_any_permission(
             context,
             &[
@@ -1525,7 +1565,7 @@ pub mod checks {
     }
 
     /// Create a single role through the application-scoped SDK surface.
-    pub fn can_create_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_create_roles(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::iam::ROLE_MANAGE,
             permissions::iam::ROLE_CREATE,
@@ -1538,7 +1578,7 @@ pub mod checks {
     }
 
     /// Delete a single role through the application-scoped SDK surface.
-    pub fn can_delete_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_delete_roles(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::iam::ROLE_MANAGE,
             permissions::iam::ROLE_DELETE,
@@ -1550,7 +1590,7 @@ pub mod checks {
         }
     }
 
-    pub fn can_sync_roles(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_roles(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::iam::ROLE_MANAGE,
             permissions::iam::ROLE_CREATE,
@@ -1568,7 +1608,7 @@ pub mod checks {
 
     /// Dispatch-pool sync is admin-tier only — no application-service
     /// permission exists for dispatch pools today.
-    pub fn can_sync_dispatch_pools(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_dispatch_pools(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::admin::DISPATCH_POOL_SYNC,
             permissions::admin::DISPATCH_POOL_MANAGE,
@@ -1581,7 +1621,7 @@ pub mod checks {
 
     /// Principal sync is admin-tier only — no application-service
     /// permission exists for users today.
-    pub fn can_sync_principals(context: &AuthContext) -> Result<()> {
+    pub fn can_sync_principals(context: &impl Authority) -> Result<()> {
         if context.has_any_permission(&[
             permissions::iam::USER_MANAGE,
             permissions::iam::USER_CREATE,

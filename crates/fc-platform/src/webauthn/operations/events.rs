@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     fn ctx() -> ExecutionContext {
-        ExecutionContext::create("prn_TESTPRINCIPAL")
+        ExecutionContext::system("prn_TESTPRINCIPAL")
     }
 
     #[test]

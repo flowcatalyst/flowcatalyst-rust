@@ -526,7 +526,7 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
                     application_code: None,
                     caller: Some(auth.clone()),
                 },
-                ExecutionContext::create(&auth.principal_id),
+                ExecutionContext::from_auth(auth),
             )
             .await
             .into_result()
@@ -698,7 +698,7 @@ async fn run_update(
 ) -> std::result::Result<(), PlatformError> {
     let deps = crate::deps(cx);
     UpdateConnectionUseCase::new(deps.connection_repo.clone(), deps.unit_of_work.clone())
-        .run(command, ExecutionContext::create(&auth.principal_id))
+        .run(command, ExecutionContext::from_auth(auth))
         .await
         .into_result()
         .map(|_| ())
@@ -797,7 +797,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteConnectionCommand {
             connection_id: conn.id.clone(),
         },
-        ExecutionContext::create(&auth.principal_id),
+        ExecutionContext::from_auth(auth),
     )
     .await
     .into_result()

@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn every_event_carries_the_account_id_not_the_principal_id() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let sa = account();
         let subject = "platform.serviceaccount.sac_1";
         let group = "platform:serviceaccount:sac_1";
@@ -277,13 +277,13 @@ mod tests {
     fn a_legacy_principal_without_an_account_row_uses_its_own_id() {
         let mut sa = account();
         sa.service_account_table_id = None;
-        let e = ServiceAccountCreated::new(&ExecutionContext::create("admin-123"), &sa);
+        let e = ServiceAccountCreated::new(&ExecutionContext::system("admin-123"), &sa);
         assert_eq!(e.service_account_id, "prn_1");
     }
 
     #[test]
     fn test_service_account_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = ServiceAccountCreated::new(&ctx, &account());
 
         assert_eq!(
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_service_account_roles_assigned_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = ServiceAccountRolesAssigned::new(
             &ctx,
             &account(),

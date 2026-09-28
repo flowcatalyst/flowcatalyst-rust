@@ -433,7 +433,7 @@ pub async fn create_subscription(
         custom_config: config_entries(req.custom_config),
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
@@ -582,7 +582,7 @@ pub async fn update_subscription(
         custom_config: config_entries(req.custom_config),
         caller: Some(auth.0.clone()),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -625,7 +625,7 @@ pub async fn pause_subscription(
     let cmd = PauseSubscriptionCommand {
         subscription_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.pause_use_case.run(cmd, ctx).await.into_result()?;
 
     // Unconditional and idempotent, as Go: 204 however often it is sent.
@@ -669,7 +669,7 @@ pub async fn resume_subscription(
     let cmd = ResumeSubscriptionCommand {
         subscription_id: id.clone(),
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.resume_use_case.run(cmd, ctx).await.into_result()?;
 
     // Unconditional and idempotent, as Go: 204 however often it is sent.
@@ -711,7 +711,7 @@ pub async fn delete_subscription(
     let cmd = DeleteSubscriptionCommand {
         subscription_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)

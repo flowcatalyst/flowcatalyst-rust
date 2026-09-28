@@ -504,7 +504,7 @@ pub async fn create_scheduled_job(
         .await
         .map_err(PlatformError::from)?;
     check_create_access(&auth, cmd.client_id.as_deref())?;
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::CREATED,
@@ -702,7 +702,7 @@ pub async fn update_scheduled_job(
         delivery_max_attempts: req.delivery_max_attempts,
         target_url: req.target_url,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -730,7 +730,7 @@ pub async fn pause_scheduled_job(
     let cmd = PauseScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.pause_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -758,7 +758,7 @@ pub async fn resume_scheduled_job(
     let cmd = ResumeScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.resume_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -786,7 +786,7 @@ pub async fn archive_scheduled_job(
     let cmd = ArchiveScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.archive_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -814,7 +814,7 @@ pub async fn delete_scheduled_job(
     let cmd = DeleteScheduledJobCommand {
         scheduled_job_id: id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -848,7 +848,7 @@ pub async fn fire_scheduled_job(
         scheduled_job_id: id,
         correlation_id: req.correlation_id,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.fire_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
         StatusCode::ACCEPTED,

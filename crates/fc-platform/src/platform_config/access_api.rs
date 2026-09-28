@@ -149,7 +149,7 @@ pub async fn create_access(
         can_read: req.can_read,
         can_write: req.can_write,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .grant_access_use_case
         .run(cmd, ctx)
@@ -213,7 +213,7 @@ pub async fn update_access(
         can_read: req.can_read,
         can_write: req.can_write,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .grant_access_use_case
         .run(cmd, ctx)
@@ -262,7 +262,7 @@ pub async fn delete_access(
         application_code: app_code,
         role_code,
     };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let ctx = ExecutionContext::from_auth(&auth.0);
     state
         .revoke_access_use_case
         .run(cmd, ctx)

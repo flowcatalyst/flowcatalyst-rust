@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_application_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = ApplicationCreated::new(&ctx, "app-1", "orders", "Orders Application");
 
         assert_eq!(
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_application_service_account_provisioned_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = ApplicationServiceAccountProvisioned::new(
             &ctx,
             "app-1",
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn client_applications_updated_empty_lists_are_null() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = ClientApplicationsUpdated::new(&ctx, "clt_1", vec![], vec![], vec![]);
         assert_eq!(
             serde_json::to_value(&event).unwrap(),

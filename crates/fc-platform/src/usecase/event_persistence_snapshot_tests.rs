@@ -74,21 +74,18 @@ fn fixed_time() -> DateTime<Utc> {
 
 /// A context carrying a causation id (event raised in reaction to another).
 fn ctx() -> ExecutionContext {
-    ExecutionContext {
-        execution_id: "exec-snap".to_string(),
-        correlation_id: "corr-snap".to_string(),
-        causation_id: Some("evt_parent".to_string()),
-        principal_id: "prn_actor".to_string(),
-        initiated_at: fixed_time(),
-    }
+    let mut ctx = ExecutionContext::system("prn_actor").with_causation("evt_parent");
+    ctx.execution_id = "exec-snap".to_string();
+    ctx.correlation_id = "corr-snap".to_string();
+    ctx.initiated_at = fixed_time();
+    ctx
 }
 
 /// A fresh-request context (no causation id).
 fn fresh_ctx() -> ExecutionContext {
-    ExecutionContext {
-        causation_id: None,
-        ..ctx()
-    }
+    let mut ctx = ctx();
+    ctx.causation_id = None;
+    ctx
 }
 
 /// Pin the two non-deterministic metadata fields of a freshly built event.

@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_client_created_event() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let event = ClientCreated::new(&ctx, "client-1", "Acme Corp", "acme-corp");
 
         assert_eq!(event.metadata.event_type, "platform:admin:client:created");
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_client_suspended_event() {
-        let ctx = ExecutionContext::create("user-123");
+        let ctx = ExecutionContext::system("user-123");
         let event = ClientSuspended::new(&ctx, "client-1", "Payment overdue");
 
         assert_eq!(event.metadata.event_type, "platform:admin:client:suspended");

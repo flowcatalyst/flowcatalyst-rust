@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn events_are_go_shaped() {
-        let ctx = ExecutionContext::create("prn_1");
+        let ctx = ExecutionContext::system("prn_1");
         let s = DispatchPoolSuspended::new(&ctx, "dpl_1", "bulk");
         assert_eq!(
             s.metadata.event_type,

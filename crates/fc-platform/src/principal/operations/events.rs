@@ -407,7 +407,7 @@ impl PasswordResetRequested {
         // Password reset is unauthenticated — attribute it to "system".
         Self {
             metadata: metadata(
-                &ExecutionContext::create("system"),
+                &ExecutionContext::system("system"),
                 Self::EVENT_TYPE,
                 principal_id,
             ),
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_user_created_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = UserCreated::new(&ctx, "user-1", "user@example.com");
 
         assert_eq!(event.metadata.event_type, "platform:iam:user:created");
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_user_deactivated_event() {
-        let ctx = ExecutionContext::create("admin-123");
+        let ctx = ExecutionContext::system("admin-123");
         let event = UserDeactivated::new(&ctx, "user-1");
 
         assert_eq!(event.metadata.event_type, "platform:iam:user:deactivated");
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn logged_in_keeps_the_user_subject() {
-        let ctx = ExecutionContext::create("usr_1");
+        let ctx = ExecutionContext::system("usr_1");
         let event = UserLoggedIn::new(
             &ctx,
             "usr_1",
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn principals_synced_subject_is_per_application() {
-        let ctx = ExecutionContext::create("usr_1");
+        let ctx = ExecutionContext::system("usr_1");
         let meta = PrincipalsSynced::metadata_for(&ctx, "hr");
         assert_eq!(meta.subject, "platform.principals.hr");
         assert_eq!(meta.message_group, "platform:principals:hr");

@@ -1499,7 +1499,7 @@ async fn auto_sync_developer_portal(
             return Ok(());
         }
     };
-    let ctx = ExecutionContext::create(principal_id);
+    let ctx = ExecutionContext::system(principal_id);
 
     // ── Event types + schemas for the `platform` application ──────────
     // Only definitions that are new or differ from what is stored go to the

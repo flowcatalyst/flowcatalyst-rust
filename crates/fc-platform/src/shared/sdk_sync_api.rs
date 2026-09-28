@@ -403,7 +403,7 @@ pub(super) async fn sync_roles(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_roles_use_case
@@ -469,7 +469,7 @@ pub(super) async fn sync_event_types(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_event_types_use_case
@@ -580,7 +580,7 @@ pub(super) async fn sync_subscriptions(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_subscriptions_use_case
@@ -665,7 +665,7 @@ pub(super) async fn sync_dispatch_pools(
             .collect(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_dispatch_pools_use_case
@@ -739,7 +739,7 @@ pub(super) async fn sync_principals(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
     let (principal_repo, application_repo, caller) = (
         state.principal_repo.clone(),
         state.application_repo.clone(),
@@ -849,7 +849,7 @@ pub(super) async fn sync_scheduled_jobs(
             .collect(),
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_scheduled_jobs_use_case
@@ -915,7 +915,7 @@ pub(super) async fn sync_processes(
         remove_unlisted: query.remove_unlisted,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_processes_use_case
@@ -1003,7 +1003,7 @@ pub(super) async fn sync_openapi(
         spec: req.spec,
     };
 
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
         .sync_openapi_use_case
