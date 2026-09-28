@@ -54,6 +54,40 @@ axum Router (fc-dev --features web)
 - **CSRF** is handled by Topcoat's origin policy (`Sec-Fetch-Site`/`Origin`)
   on every non-GET request.
 
+### Authorization rules for server calls (owner, 2026-09-28)
+
+Every page, route, shard and procedure is its own HTTP endpoint, reachable
+without the page around it, so each one must enforce what the matching API
+route enforces. Today the permission check is shared (`checks::*`) but the
+**row-level check is not**: each drawer shard loads by id and then calls
+`ensure_row_visible` (client reach) by hand (e.g. `app/events.rs`). A shard
+that forgets lets a client-scoped user open another client's record by id.
+The SPA can't have this bug, because the API is its single enforcement point.
+The rules:
+
+1. **Reads go through shared loaders, not repositories.** Each API read
+   handler's body (permission check, lookup, client reach / application
+   scope / anchor rules) moves into an fc-platform function, e.g.
+   `event::read::load_for(auth, id)`, that the axum handler and the fc-web
+   shard both call. Same principle as "run the API's handler bodies, not a
+   copy" for writes.
+2. **No repository access in fc-web handlers.** `deps.*_repo` inside a
+   `#[page]`/`#[route]`/`#[shard]`/`#[procedure]` body is a convention-test
+   failure once the loaders exist; data comes from the shared loaders and
+   writes from the use cases.
+3. **The origin policy is pinned by a test.** A cross-origin POST (and a
+   `Sec-Fetch-Site: cross-site` one) to a `/ui/(app)` route answers 403, so a
+   Topcoat upgrade or a router-builder change can't silently disable CSRF
+   protection. Never call `RouterBuilder::origin_policy` to loosen it without
+   an owner decision.
+4. **Shard ↔ API parity (optional):** a test pairs each shard with its API
+   route and asserts both allow and deny the same callers (anchor, client
+   in reach, client out of reach, no permission).
+
+Status: rules recorded; the loaders, the convention-test extension (2) and the
+origin test (3) are **not built yet**. Do them before adding more sections
+(Topcoat is on hold).
+
 ### Fit and finish: matching the SPA
 
 The reference is the SPA in `frontend/`, which is now Go's production UI:

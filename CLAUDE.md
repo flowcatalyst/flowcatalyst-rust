@@ -494,6 +494,20 @@ crates/fc-web/Cargo.toml`.
 - **Run the API's handler bodies, not a copy.** When an API handler holds
   the rules (reach, ceilings, orchestration), extract its body into
   fc-platform (e.g. `principal::admin`) and call that from both.
+- **Reads too: shards and pages load through shared loaders, never a
+  repository.** A shard is an endpoint of its own, reachable without its
+  page, so it must enforce the same row-level rules (client reach,
+  application scope, anchor-only) as the API read it mirrors. Put the API
+  read handler's body (permission + lookup + reach) in an fc-platform
+  function (e.g. `event::read::load_for(auth, id)`) and call it from both;
+  don't call `deps.*_repo` and re-check reach by hand. Until those loaders
+  exist, every by-id load must call `ensure_row_visible` (or the API's
+  equivalent) before rendering.
+- **Never loosen Topcoat's origin policy** (`RouterBuilder::origin_policy`):
+  it is the UI's CSRF protection, alongside the `SameSite=Lax` session
+  cookie. A test should pin it (cross-origin POST → 403). See
+  `docs/topcoat-trial.md`, "Authorization rules for server calls", for the
+  pending enforcement work.
 - **Pages work as plain HTML first.** Filters are GET forms and actions are
   POST forms.
   - Modals are native `<dialog>` (Topcoat's `dialog` / `alert_dialog`
