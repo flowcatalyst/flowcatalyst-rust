@@ -26,8 +26,9 @@ use tower::ServiceExt;
 use fc_platform::scheduler::DispatchAuthService;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::shared::dispatch_process_api::{
-    delivery_http_client, dispatch_process_router, ClientCodeResolver, DispatchProcessState,
+    delivery_http_client, ClientCodeResolver, DispatchProcessState,
 };
+use fc_platform::shared::routes::dispatch_process_router;
 use fc_platform::{ClientRepository, DispatchJobRepository};
 
 const APP_KEY: &str = "process-test-app-key";

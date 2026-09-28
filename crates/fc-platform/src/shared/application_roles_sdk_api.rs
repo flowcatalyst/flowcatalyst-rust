@@ -5,8 +5,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::{delete, get},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -260,12 +259,4 @@ pub async fn delete_role(
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(())
-}
-
-/// Create application roles SDK router
-pub fn application_roles_sdk_router(state: ApplicationRolesSdkState) -> Router {
-    Router::new()
-        .route("/{appCode}/roles", get(list_roles).post(create_role))
-        .route("/{appCode}/roles/{roleName}", delete(delete_role))
-        .with_state(state)
 }

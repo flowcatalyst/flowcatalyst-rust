@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use axum::routing::{delete, get};
 use axum::Router;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -11,6 +12,7 @@ use super::api::RolesState;
 use super::operations::{CreateRoleUseCase, DeleteRoleUseCase, UpdateRoleUseCase};
 use super::permission_api::RolePermissionsState;
 use super::permission_repository::PermissionCatalogRepository;
+use crate::shared::application_roles_sdk_api::ApplicationRolesSdkState;
 use crate::shared::bff_roles_api::BffRolesState;
 use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 
@@ -23,7 +25,24 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
                 ctx.repos.role_repo.clone(),
                 ctx.unit_of_work.clone(),
             ))),
-        plain: Router::new().nest("/bff/roles", bff_roles_router(bff_roles_state(ctx)).into()),
+        plain: Router::new()
+            .nest("/bff/roles", bff_roles_router(bff_roles_state(ctx)).into())
+            // App-scoped role CRUD for SDKs (`shared::application_roles_sdk_api`).
+            .nest(
+                "/api/applications",
+                application_roles_sdk_router(ApplicationRolesSdkState {
+                    app_access: ctx.app_access.clone(),
+                    role_repo: ctx.repos.role_repo.clone(),
+                    create_use_case: Arc::new(CreateRoleUseCase::new(
+                        ctx.repos.role_repo.clone(),
+                        ctx.unit_of_work.clone(),
+                    )),
+                    delete_use_case: Arc::new(DeleteRoleUseCase::new(
+                        ctx.repos.role_repo.clone(),
+                        ctx.unit_of_work.clone(),
+                    )),
+                }),
+            ),
     }
 }
 
@@ -110,5 +129,20 @@ pub fn bff_roles_router(state: BffRolesState) -> OpenApiRouter {
             crate::shared::bff_roles_api::update_role,
             crate::shared::bff_roles_api::delete_role
         ))
+        .with_state(state)
+}
+
+/// Create application roles SDK router
+pub fn application_roles_sdk_router(state: ApplicationRolesSdkState) -> Router {
+    Router::new()
+        .route(
+            "/{appCode}/roles",
+            get(crate::shared::application_roles_sdk_api::list_roles)
+                .post(crate::shared::application_roles_sdk_api::create_role),
+        )
+        .route(
+            "/{appCode}/roles/{roleName}",
+            delete(crate::shared::application_roles_sdk_api::delete_role),
+        )
         .with_state(state)
 }

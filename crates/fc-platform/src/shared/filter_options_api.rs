@@ -4,14 +4,12 @@
 
 use axum::{
     extract::{Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -642,31 +640,4 @@ pub async fn get_event_type_aggregates(
     aggregates.sort_by(|a, b| a.label.cmp(&b.label));
 
     Ok(Json(AggregatesResponse { aggregates }))
-}
-
-/// Create filter options router
-pub fn filter_options_router(state: FilterOptionsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(get_all_options))
-        .routes(routes!(get_client_options))
-        .routes(routes!(get_event_type_options))
-        .routes(routes!(get_subscription_options))
-        .routes(routes!(get_dispatch_pool_options))
-        .routes(routes!(get_events_filter_options))
-        .routes(routes!(get_dispatch_jobs_filter_options))
-        .routes(routes!(get_event_type_applications))
-        .routes(routes!(get_event_type_subdomains))
-        .routes(routes!(get_event_type_aggregates))
-        .with_state(state)
-}
-
-/// Create event-type filters router (for mounting at /bff/event-types/filters)
-/// This provides the same endpoints as filter_options_router but at a different path
-/// to maintain backwards compatibility with frontend expectations.
-pub fn event_type_filters_router(state: FilterOptionsState) -> Router {
-    Router::new()
-        .route("/applications", get(get_event_type_applications))
-        .route("/subdomains", get(get_event_type_subdomains))
-        .route("/aggregates", get(get_event_type_aggregates))
-        .with_state(state)
 }

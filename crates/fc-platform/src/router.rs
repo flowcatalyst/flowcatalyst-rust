@@ -1,144 +1,25 @@
-//! Centralized Platform Router Builder
+//! The platform router: the route modules, then the cross-cutting layers.
 //!
-//! Eliminates duplicated route wiring across binary crates (fc-server,
-//! fc-dev). Each binary still constructs the state
-//! objects and adds its own middleware/static-file layers on top.
+//! Every route lives in its module's `routes(ctx)` (e.g. `client::routes`),
+//! which builds its own state from the [`PlatformContext`] and returns its
+//! routes at their full paths, with any per-route-group layers (rate
+//! limits, error mapping) applied there. This file only lists the modules
+//! and adds what spans all of them: the OpenAPI documents and Swagger UI,
+//! `/health`, Go's extractor-rejection envelope, the SPA, and the
+//! profile-only gate. It imports no handler or state type
+//! (`tests/route_wiring_convention_test.rs`).
+//!
+//! The binaries add their own layers on top (`AuthLayer`, tracing, CORS).
 
 use axum::{
     response::{IntoResponse, Json},
     routing::get,
     Router,
 };
-use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::api::{
-    application_roles_sdk_router,
-    bff_dashboard_router,
-    // Plain Router routes
-    client_selection_router,
-    debug_dispatch_jobs_router,
-    debug_events_router,
-    dispatch_process_router,
-    // OpenApiRouter routes
-    filter_options_router,
-    me_router,
-    monitoring_router,
-    public_router,
-    sdk_sync_router,
-    well_known_router,
-    ApplicationRolesSdkState,
-    BffDashboardState,
-    ClientSelectionState,
-    DebugState,
-    DispatchProcessState,
-    FilterOptionsState,
-    MeState,
-    MonitoringState,
-    PublicApiState,
-    SdkSyncState,
-    WellKnownState,
-};
-use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
-use crate::shared::platform_context::AggregateRoutes;
-use crate::shared::rate_limit_middleware::rate_limit_per_ip;
+use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 use std::sync::Arc;
-
-/// Dependencies handed to `build()` so the Developer-portal BFF state can be
-/// finalised once the platform's own OpenAPI document has been computed.
-pub struct BffDeveloperDeps {
-    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
-    pub openapi_spec_repo: Arc<crate::application_openapi_spec::repository::OpenApiSpecRepository>,
-    pub event_type_repo: Arc<crate::event_type::repository::EventTypeRepository>,
-    pub principal_repo: Arc<crate::PrincipalRepository>,
-    pub sync_openapi_use_case: Arc<
-        crate::application_openapi_spec::operations::SyncOpenApiSpecUseCase<
-            crate::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub platform_application_id: String,
-}
-
-// =============================================================================
-// Route path constants
-// =============================================================================
-
-// BFF routes
-pub const PATH_BFF_DEVELOPER: &str = "/bff/developer";
-pub const PATH_BFF_EVENTS: &str = "/bff/events";
-pub const PATH_BFF_DISPATCH_JOBS: &str = "/bff/dispatch-jobs";
-pub const PATH_BFF_FILTER_OPTIONS: &str = "/bff/filter-options";
-pub const PATH_BFF_ROLES: &str = "/bff/roles";
-/// Temporary (docs/spec/audit-redaction.md, Java repo): the redact-existing sweep.
-pub const PATH_BFF_AUDIT_LOGS: &str = "/bff/audit-logs";
-pub const PATH_BFF_EVENT_TYPES: &str = "/bff/event-types";
-pub const PATH_BFF_SCHEDULED_JOBS: &str = "/bff/scheduled-jobs";
-pub const PATH_BFF_DASHBOARD: &str = "/bff/dashboard";
-pub const PATH_BFF_DEBUG_EVENTS: &str = "/bff/debug/events";
-pub const PATH_BFF_DEBUG_DISPATCH_JOBS: &str = "/bff/debug/dispatch-jobs";
-
-// API routes (single programmable surface; gated by permissions, not URL tier)
-pub const PATH_API_EVENTS: &str = "/api/events";
-pub const PATH_API_EVENT_TYPES: &str = "/api/event-types";
-pub const PATH_API_PROCESSES: &str = "/api/processes";
-pub const PATH_BFF_PROCESSES: &str = "/bff/processes";
-pub const PATH_API_CLIENTS: &str = "/api/clients";
-pub const PATH_API_PRINCIPALS: &str = "/api/principals";
-pub const PATH_API_ROLES: &str = "/api/roles";
-pub const PATH_API_SUBSCRIPTIONS: &str = "/api/subscriptions";
-pub const PATH_API_OAUTH_CLIENTS: &str = "/api/oauth-clients";
-// Audit logs admin CRUD reuses the same prefix as batch ingest; the two routers
-// occupy non-overlapping sub-paths, so both nest at `/api/audit-logs`.
-pub const PATH_API_ANCHOR_DOMAINS: &str = "/api/anchor-domains";
-pub const PATH_API_AUTH_CONFIGS: &str = "/api/auth-configs";
-pub const PATH_API_IDP_ROLE_MAPPINGS: &str = "/api/idp-role-mappings";
-pub const PATH_API_DISPATCH_JOBS: &str = "/api/dispatch-jobs";
-pub const PATH_API_DISPATCH_POOLS: &str = "/api/dispatch-pools";
-pub const PATH_API_SCHEDULED_JOBS: &str = "/api/scheduled-jobs";
-pub const PATH_API_SERVICE_ACCOUNTS: &str = "/api/service-accounts";
-pub const PATH_API_CONNECTIONS: &str = "/api/connections";
-pub const PATH_API_CORS: &str = "/api/platform/cors";
-pub const PATH_API_IDENTITY_PROVIDERS: &str = "/api/identity-providers";
-pub const PATH_API_EMAIL_DOMAIN_MAPPINGS: &str = "/api/email-domain-mappings";
-// Admin config reuses `/api/config`; shared with platform_config_router on
-// non-overlapping sub-paths.
-pub const PATH_API_CONFIG_ACCESS: &str = "/api/config-access";
-pub const PATH_API_LOGIN_ATTEMPTS: &str = "/api/login-attempts";
-
-// Monitoring
-pub const PATH_MONITORING: &str = "/api/monitoring";
-
-// Auth routes
-pub const PATH_AUTH: &str = "/auth";
-/// User-facing "me" routes (my clients, my applications, etc.). Mounted under
-/// `/api/me` to match the TypeScript platform — note this is distinct from the
-/// OIDC session-user endpoint `/auth/me` served by `auth_router`.
-pub const PATH_API_ME: &str = "/api/me";
-pub const PATH_AUTH_CLIENT: &str = "/auth/client";
-pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
-
-// Portal identity plane (Go portalidentity/api + portalauth): the admin
-// surface and the public portal login surface.
-pub const PATH_API_PORTAL_USERS: &str = "/api/portal-users";
-pub const PATH_API_PORTAL_APPS: &str = "/api/portal-apps";
-pub const PATH_PORTAL: &str = "/portal";
-
-// OAuth / OIDC
-pub const PATH_OAUTH: &str = "/oauth";
-pub const PATH_WELL_KNOWN: &str = "/.well-known";
-
-// NOTE: the legacy `/api/sdk/*` tier was consolidated into `/api/*`. Batch
-// ingest endpoints (events, dispatch-jobs) now live under their resource's
-// main router; all other SDK-tier CRUD was duplicative and has been removed.
-
-// Dispatch processing (internal callback from message router)
-pub const PATH_API_DISPATCH: &str = "/api/dispatch";
-
-// Public / shared API routes
-pub const PATH_API_APPLICATIONS: &str = "/api/applications";
-pub const PATH_API_AUDIT_LOGS: &str = "/api/audit-logs";
-pub const PATH_API_CONFIG: &str = "/api/config";
-pub const PATH_API_PUBLIC: &str = "/api/public";
 
 // Health
 pub const PATH_HEALTH: &str = "/health";
@@ -157,48 +38,10 @@ pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 // PlatformRoutes
 // =============================================================================
 
-/// Holds all pre-constructed API state structs and assembles the full
-/// platform router. Binaries create this after building repos/services,
-/// call `build()`, then layer on middleware and static files.
+/// The platform's routes, built from one [`PlatformContext`].
 pub struct PlatformRoutes {
-    // -- OpenApiRouter routes (collected in Swagger) --
-    pub filter_options: FilterOptionsState,
-    pub monitoring: MonitoringState,
-
-    // -- Plain Router routes (NOT in Swagger) --
-    pub bff_dashboard: BffDashboardState,
-    pub debug: DebugState,
-    pub me: MeState,
-    pub well_known: WellKnownState,
-    pub client_selection: ClientSelectionState,
-    pub application_roles_sdk: ApplicationRolesSdkState,
-    pub sdk_sync: SdkSyncState,
-    pub public: PublicApiState,
-    /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
-    /// is constructed inside `build()` so the platform's own OpenAPI document
-    /// (returned by `build()` itself) can be stored against the seeded
-    /// `code='platform'` application row without an HTTP self-call.
-    pub bff_developer: BffDeveloperDeps,
-    /// Optional — dispatch processing endpoint state. None when dispatch processing
-    /// is not needed (e.g., tests or standalone platform server without router).
-    pub dispatch_process: Option<DispatchProcessState>,
-    /// Routes Go serves that Rust lacked (`shared::go_routes`).
-    pub go_routes: crate::shared::go_routes::GoRoutesState,
-
-    /// Optional static directory for SPA serving. When set, serves:
-    /// - `/assets/*` with immutable cache headers (Vite hashed assets)
-    /// - SPA fallback (index.html) for unmatched GET requests
-    /// - Explicit SPA routes for paths that conflict with API nests (e.g., /auth/login)
-    pub static_dir: Option<String>,
-
-    /// Distributed rate-limit store (Redis when reachable, Postgres
-    /// fallback). Used to enforce cluster-wide per-IP + per-`client_id`
-    /// limits on the OAuth/auth edge — see `RateLimitPolicies`.
-    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
-    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
-
     /// What the route modules are built from.
-    pub ctx: crate::shared::platform_context::PlatformContext,
+    pub ctx: PlatformContext,
 }
 
 impl PlatformRoutes {
@@ -208,17 +51,13 @@ impl PlatformRoutes {
     /// Swagger UI, and SPA serving (if `static_dir` is set).
     /// It does **not** include auth middleware, CORS, or tracing layers.
     pub fn build(self) -> (Router, serde_json::Value) {
-        // Per-IP rate limiters: separate buckets so a high-volume OAuth
-        // client doesn't starve the auth login flow (and vice versa). The
-        // limits compose with — they don't replace — the per-account
-        // backoff in `auth::login_backoff`.
-        let auth_layer =
-            axum::middleware::from_fn_with_state(self.ctx.auth_ip_limit.clone(), rate_limit_per_ip);
-
-        // The route modules, in order. Each returns its documented and
-        // plain routes at their full paths.
         let ctx = &self.ctx;
-        let modules = AggregateRoutes::new()
+
+        // The route modules, in order. The order is part of the OpenAPI
+        // document: utoipa keeps the first component schema of a name
+        // (`StatusChangeResponse` is two types), and axum lists a path's
+        // methods in the `Allow` header in the order they were merged.
+        let AggregateRoutes { documented, plain } = AggregateRoutes::new()
             .merge(crate::event::routes(ctx))
             .merge(crate::event_type::routes(ctx))
             .merge(crate::process::routes(ctx))
@@ -232,6 +71,7 @@ impl PlatformRoutes {
             .merge(crate::subscription::routes(ctx))
             .merge(crate::auth::routes(ctx))
             .merge(crate::audit::routes(ctx))
+            .merge(crate::shared::routes(ctx))
             .merge(crate::function::routes(ctx))
             .merge(crate::dispatch_job_actions::routes(ctx))
             .merge(crate::app_docs::routes(ctx))
@@ -246,25 +86,9 @@ impl PlatformRoutes {
             .merge(crate::identity_provider::routes(ctx))
             .merge(crate::login_attempt::routes(ctx))
             .merge(crate::portal::routes(ctx));
-        let AggregateRoutes {
-            documented: module_documented,
-            plain: module_plain,
-        } = modules;
 
-        // 1. OpenApiRouter routes (auto-collected in Swagger spec)
-        let (router, mut openapi) = OpenApiRouter::new()
-            .merge(module_documented)
-            .nest(
-                PATH_BFF_FILTER_OPTIONS,
-                filter_options_router(self.filter_options),
-            )
-            .nest(PATH_MONITORING, monitoring_router(self.monitoring))
-            // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
-            // so the SDK code generators produce typed bindings for them.
-            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
-            // Go-parity routes, at their full paths (`shared::go_routes`).
-            .merge(crate::shared::go_routes::go_routes_router(self.go_routes))
-            .split_for_parts();
+        // 1. The documented routes (auto-collected in the OpenAPI spec).
+        let (router, mut openapi) = documented.split_for_parts();
 
         // Capture the full spec (including `/bff/*` paths) before we
         // strip BFF entries from the public surface. Served at
@@ -286,7 +110,7 @@ impl PlatformRoutes {
             .retain(|path, _| !path.starts_with("/bff/"));
 
         // The operations Go documents that are routed through the plain
-        // routers below (`shared::openapi_contract`).
+        // routes (`shared::openapi_contract`).
         openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
 
         // 3. Set OpenAPI metadata
@@ -325,61 +149,16 @@ impl PlatformRoutes {
         // boot is correct for the lifetime of this binary; "Sync All" pushes
         // this value into the seeded `code='platform'` application row.
         let platform_openapi = Arc::new(openapi.clone());
-        let bff_developer_state = BffDeveloperState {
-            application_repo: self.bff_developer.application_repo,
-            openapi_spec_repo: self.bff_developer.openapi_spec_repo,
-            event_type_repo: self.bff_developer.event_type_repo,
-            principal_repo: self.bff_developer.principal_repo,
-            sync_openapi_use_case: self.bff_developer.sync_openapi_use_case,
-            platform_openapi,
-            platform_application_id: self.bff_developer.platform_application_id,
-        };
 
-        // 4. Merge plain Router routes (not in Swagger)
+        // 4. The plain routes (not in the OpenAPI document), after the
+        //    developer portal, which needs the document.
         let app = Router::new()
             .merge(router)
-            .nest(
-                PATH_BFF_DEVELOPER,
-                bff_developer_router(bff_developer_state),
-            )
-            .merge(module_plain)
-            .nest(PATH_BFF_DASHBOARD, bff_dashboard_router(self.bff_dashboard))
-            .nest(
-                PATH_BFF_DEBUG_EVENTS,
-                debug_events_router(self.debug.clone()),
-            )
-            .nest(
-                PATH_BFF_DEBUG_DISPATCH_JOBS,
-                debug_dispatch_jobs_router(self.debug),
-            )
-            // Auth
-            .nest(PATH_API_ME, me_router(self.me))
-            .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
-            .nest(
-                PATH_AUTH_CLIENT,
-                client_selection_router(self.client_selection).layer(auth_layer.clone()),
-            )
-            // Shared API
-            .nest(
-                PATH_API_APPLICATIONS,
-                application_roles_sdk_router(self.application_roles_sdk),
-            )
-            // sdk_sync_router moved up into the OpenAPI chain so its routes
-            // appear in /q/openapi and SDK generators pick them up.
-            // Go's SPA-bootstrap alias of `/api/public/platform`.
-            .nest(
-                PATH_API_CONFIG,
-                crate::shared::public_api::platform_info_router(self.public.clone()),
-            )
-            // Public
-            .nest(PATH_API_PUBLIC, public_router(self.public));
-
-        // Dispatch processing (optional — only when message router callback is needed)
-        let app = if let Some(dispatch_process) = self.dispatch_process {
-            app.nest(PATH_API_DISPATCH, dispatch_process_router(dispatch_process))
-        } else {
-            app
-        };
+            .merge(crate::shared::routes::developer_portal_routes(
+                ctx,
+                platform_openapi,
+            ))
+            .merge(plain);
 
         // Go's spec routes (internal/server/wire_spec.go): the programmable
         // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
@@ -421,7 +200,7 @@ impl PlatformRoutes {
         // SPA serving (if static_dir is configured). No static_dir: no root
         // handler. The binary can add its own (fc-dev uses embedded assets,
         // fc-server may redirect to Swagger).
-        let app = match self.static_dir {
+        let app = match ctx.config.static_dir {
             Some(ref static_dir) => serve_spa(app, static_dir),
             None => app,
         };

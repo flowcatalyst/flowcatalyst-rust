@@ -2,8 +2,7 @@
 
 use axum::{
     extract::{Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -81,7 +80,9 @@ pub struct PublicApiState {
         (status = 200, description = "Platform feature flags", body = PlatformInfoResponse)
     )
 )]
-async fn get_platform_info(State(state): State<PublicApiState>) -> Json<PlatformInfoResponse> {
+pub(super) async fn get_platform_info(
+    State(state): State<PublicApiState>,
+) -> Json<PlatformInfoResponse> {
     let platform_name = crate::mfa::notify::PlatformName {
         configs: Some(state.config_repo.clone()),
     }
@@ -105,7 +106,7 @@ async fn get_platform_info(State(state): State<PublicApiState>) -> Json<Platform
         (status = 200, description = "Login theme configuration", body = LoginThemeResponse)
     )
 )]
-async fn get_login_theme(
+pub(super) async fn get_login_theme(
     State(state): State<PublicApiState>,
     Query(query): Query<LoginThemeQuery>,
 ) -> Json<LoginThemeResponse> {
@@ -187,18 +188,4 @@ pub async fn load_client_login_theme(
 /// query error) falls back to the default theme.
 pub async fn load_login_theme(config_repo: &PlatformConfigRepository) -> LoginThemeResponse {
     load_client_login_theme(config_repo, None).await
-}
-
-/// `/platform` alone, for Go's SPA-bootstrap alias `/api/config/platform`.
-pub fn platform_info_router(state: PublicApiState) -> Router {
-    Router::new()
-        .route("/platform", get(get_platform_info))
-        .with_state(state)
-}
-
-pub fn public_router(state: PublicApiState) -> Router {
-    Router::new()
-        .route("/platform", get(get_platform_info))
-        .route("/login-theme", get(get_login_theme))
-        .with_state(state)
 }

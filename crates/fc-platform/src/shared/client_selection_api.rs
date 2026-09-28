@@ -10,11 +10,7 @@
 //! client or `scope` confined it, would be widened, so a bearer is refused
 //! like no credential at all.
 
-use axum::{
-    extract::State,
-    routing::{get, post},
-    Json, Router,
-};
+use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -349,13 +345,4 @@ pub async fn get_current_client(
         no_client_context: client.is_none(),
         client,
     }))
-}
-
-/// Create client selection router
-pub fn client_selection_router(state: ClientSelectionState) -> Router {
-    Router::new()
-        .route("/accessible", get(list_accessible_clients))
-        .route("/switch", post(switch_client))
-        .route("/current", get(get_current_client))
-        .with_state(state)
 }

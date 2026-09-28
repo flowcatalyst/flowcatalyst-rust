@@ -408,39 +408,42 @@ pub mod api {
     pub use crate::platform_config::routes::{admin_platform_config_router, config_access_router};
     pub use crate::event::routes::sdk_events_batch_router;
     pub use crate::shared::batch_api::SdkEventsState;
-    pub use crate::shared::bff_dashboard_api::{bff_dashboard_router, BffDashboardState};
+    pub use crate::shared::bff_dashboard_api::BffDashboardState;
+    pub use crate::shared::routes::bff_dashboard_router;
     pub use crate::event_type::routes::bff_event_types_router;
     pub use crate::shared::bff_event_types_api::BffEventTypesState;
     pub use crate::role::routes::bff_roles_router;
     pub use crate::shared::bff_roles_api::BffRolesState;
     pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
     pub use crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState;
-    pub use crate::shared::dispatch_process_api::{dispatch_process_router, DispatchProcessState};
-    pub use crate::shared::me_api::{me_router, MeState};
-    pub use crate::shared::public_api::{public_router, PublicApiState};
+    pub use crate::shared::dispatch_process_api::DispatchProcessState;
+    pub use crate::shared::routes::dispatch_process_router;
+    pub use crate::shared::me_api::MeState;
+    pub use crate::shared::routes::me_router;
+    pub use crate::shared::public_api::PublicApiState;
+    pub use crate::shared::routes::public_router;
     pub use crate::audit::routes::sdk_audit_batch_router;
     pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
     pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
     pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
-    pub use crate::shared::sdk_sync_api::{sdk_sync_router, SdkSyncState};
+    pub use crate::shared::routes::sdk_sync_router;
+    pub use crate::shared::sdk_sync_api::SdkSyncState;
 
     // Shared APIs
-    pub use crate::shared::application_roles_sdk_api::{
-        application_roles_sdk_router, ApplicationRolesSdkState,
-    };
-    pub use crate::shared::client_selection_api::{client_selection_router, ClientSelectionState};
-    pub use crate::shared::debug_api::{
-        debug_dispatch_jobs_router, debug_events_router, DebugState,
-    };
-    pub use crate::shared::filter_options_api::{
-        event_type_filters_router, filter_options_router, FilterOptionsState,
-    };
-    pub use crate::shared::health_api::health_router;
+    pub use crate::role::routes::application_roles_sdk_router;
+    pub use crate::shared::application_roles_sdk_api::ApplicationRolesSdkState;
+    pub use crate::shared::client_selection_api::ClientSelectionState;
+    pub use crate::shared::debug_api::DebugState;
+    pub use crate::shared::filter_options_api::FilterOptionsState;
     pub use crate::shared::monitoring_api::{
-        monitoring_router, CircuitBreakerRegistry, InFlightTracker, LeaderState, MonitoringState,
+        CircuitBreakerRegistry, InFlightTracker, LeaderState, MonitoringState,
     };
-    pub use crate::shared::platform_config_api::platform_config_router;
-    pub use crate::shared::well_known_api::{well_known_router, WellKnownState};
+    pub use crate::shared::routes::{
+        client_selection_router, debug_dispatch_jobs_router, debug_events_router,
+        event_type_filters_router, filter_options_router, health_router, monitoring_router,
+        platform_config_router, well_known_router,
+    };
+    pub use crate::shared::well_known_api::WellKnownState;
 
     // Centralized router builder
     pub use crate::router::PlatformRoutes;

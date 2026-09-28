@@ -31,7 +31,6 @@ pub mod dispatch_process_api;
 pub mod dispatch_queue;
 pub mod filter_options_api;
 pub mod go_read_aliases_api;
-pub mod go_routes;
 pub mod health_api;
 pub mod me_api;
 pub mod monitoring_api;
@@ -41,6 +40,7 @@ pub mod platform_config_api;
 pub mod platform_context;
 pub mod public_api;
 pub mod router_config_api;
+pub mod routes;
 pub mod sdk_audit_batch_api;
 pub mod sdk_dispatch_jobs_api;
 pub mod sdk_sync_api;
@@ -70,14 +70,11 @@ pub mod webhook_signer;
 
 // Re-export commonly used items
 pub use api_common::{PaginatedResponse, PaginationParams};
-pub use application_roles_sdk_api::application_roles_sdk_router;
 pub use authorization_service::AuthorizationService;
-pub use client_selection_api::client_selection_router;
 pub use error::{NotFoundExt, PlatformError, Result};
-pub use filter_options_api::filter_options_router;
-pub use health_api::health_router;
 pub use middleware::{AppState, Authenticated, ClientIp};
-pub use monitoring_api::monitoring_router;
-pub use platform_config_api::platform_config_router;
+pub use routes::{
+    client_selection_router, filter_options_router, health_router, monitoring_router,
+    platform_config_router, routes, well_known_router,
+};
 pub use tsid::EntityType;
-pub use well_known_api::well_known_router;

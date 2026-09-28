@@ -13,7 +13,8 @@
 use std::sync::Arc;
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
-use fc_platform::shared::well_known_api::{well_known_router, WellKnownState};
+use fc_platform::shared::routes::well_known_router;
+use fc_platform::shared::well_known_api::WellKnownState;
 use fc_platform::{Principal, UserScope};
 use fc_platform_jwks::{clock, BearerAuthenticator, JwksKeySource};
 
