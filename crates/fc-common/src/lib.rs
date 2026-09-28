@@ -42,6 +42,7 @@ use utoipa::ToSchema;
 
 pub mod audit_redaction;
 pub mod config;
+pub mod diagnostics;
 pub mod logging;
 pub mod tsid;
 
