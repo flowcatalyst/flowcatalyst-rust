@@ -11,11 +11,15 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use super::env::{dev_router_config, RouterEnv};
+use crate::api;
 use crate::api::platform_auth::{self, RouterAuthChoice, RouterAuthDecision};
+use crate::api::AuthConfig;
+use crate::api::ConfigReloader;
 use crate::api::{
     create_router_with_options, DashboardSignIn, PlatformAuth, RouterDeps, RouterOptions,
 };
 use crate::config_sync::{ConfigSyncConfig, ConfigSyncService};
+use crate::flight_recorder::FlightRecorder;
 use crate::health::{HealthService, HealthServiceConfig};
 use crate::lifecycle::{LifecycleConfig, LifecycleManager};
 use crate::manager::{stall_config_for_mediation_timeout, ConsumerFactory, QueueManager};
@@ -27,6 +31,10 @@ use crate::platform_token::PlatformTokenSource;
 use crate::settled::HttpSettledReporter;
 use crate::standby::StandbyAwareProcessor;
 use crate::warning::{WarningService, WarningServiceConfig};
+use fc_common::diagnostics;
+use fc_common::diagnostics::supervise;
+use fc_common::diagnostics::OnPanic;
+use tokio::time;
 
 /// What the embedding binary supplies.
 pub struct RouterRuntimeOptions {
@@ -164,9 +172,7 @@ impl RouterRuntime {
             .consumer_factory(opts.consumer_factory)
             .strict_routing(env.strict_routing)
             .deferral_budget(env.deferral_budget)
-            .flight_recorder(Arc::new(crate::flight_recorder::FlightRecorder::new(
-                env.flight_recorder_events,
-            )));
+            .flight_recorder(Arc::new(FlightRecorder::new(env.flight_recorder_events)));
         // A-01: a platform to report settled BLOCK_ON_ERROR siblings to.
         if let Some(url) = env.platform_url.as_deref().filter(|u| !u.trim().is_empty()) {
             let reporter = HttpSettledReporter::new(url, None);
@@ -183,9 +189,9 @@ impl RouterRuntime {
                 let follower = queue_manager.clone();
                 // Supervised: a frozen leader flag would stop (or never
                 // start) intake for good.
-                fc_common::diagnostics::spawn_supervised(
+                diagnostics::spawn_supervised(
                     "router.leadership_follower",
-                    fc_common::diagnostics::OnPanic::Restart,
+                    OnPanic::Restart,
                     move || {
                         let mut rx = rx.clone();
                         let follower = follower.clone();
@@ -309,12 +315,9 @@ impl RouterRuntime {
     ) -> Router {
         let (auth_state, platform_auth) = match self.api_auth.decision.choice {
             RouterAuthChoice::Open { .. } => (None, None),
-            RouterAuthChoice::Legacy => (
-                Some(crate::api::create_auth_state(
-                    crate::api::AuthConfig::from_env(),
-                )),
-                None,
-            ),
+            RouterAuthChoice::Legacy => {
+                (Some(api::create_auth_state(AuthConfig::from_env())), None)
+            }
             RouterAuthChoice::PlatformBearer => (
                 None,
                 Some(PlatformAuth::new(self.api_auth.verify_url.as_deref())),
@@ -322,14 +325,14 @@ impl RouterRuntime {
         };
         // One discovery shared with the guard: the dashboard's authorize URL
         // is in the same document the issuer comes from.
-        let dashboard_sign_in = std::sync::Arc::new(DashboardSignIn::new(
+        let dashboard_sign_in = Arc::new(DashboardSignIn::new(
             platform_auth.as_ref().and_then(PlatformAuth::key_source),
             self.api_auth.dashboard_client_id.as_deref(),
         ));
         let config_reloader = self
             .config_sync
             .clone()
-            .map(|s| s as Arc<dyn crate::api::ConfigReloader>);
+            .map(|s| s as Arc<dyn ConfigReloader>);
         create_router_with_options(
             RouterDeps {
                 publisher,
@@ -372,10 +375,10 @@ impl RouterRuntime {
             .await;
         self.lifecycle.shutdown().await;
         if let Some(handle) = self.manager_handle.take() {
-            match tokio::time::timeout(Duration::from_secs(30), handle).await {
+            match time::timeout(Duration::from_secs(30), handle).await {
                 Ok(Ok(())) => info!("Manager task completed gracefully"),
                 Ok(Err(e)) if e.is_panic() => {
-                    fc_common::diagnostics::supervise::note_task_panic("router.manager");
+                    supervise::note_task_panic("router.manager");
                     tracing::error!(
                         "Manager task had panicked (logged with its backtrace when it happened)"
                     )
@@ -389,7 +392,7 @@ impl RouterRuntime {
         // interesting ones.
         if let Some(n) = self._notifications.as_ref() {
             if n.service.pending_count() > 0
-                && tokio::time::timeout(Duration::from_secs(10), n.service.send_batch())
+                && time::timeout(Duration::from_secs(10), n.service.send_batch())
                     .await
                     .is_err()
             {

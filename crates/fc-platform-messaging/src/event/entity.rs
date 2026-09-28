@@ -1,6 +1,7 @@
 //! Event Entity — CloudEvents spec 1.0, matches msg_events PostgreSQL table
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
 use serde::{Deserialize, Serialize};
 
 /// CloudEvents spec version
@@ -81,7 +82,7 @@ impl Event {
         data: serde_json::Value,
     ) -> Self {
         Self {
-            id: fc_platform_core::shared::tsid::generate_untyped(),
+            id: tsid::generate_untyped(),
             event_type: event_type.into(),
             source: source.into(),
             subject: None,

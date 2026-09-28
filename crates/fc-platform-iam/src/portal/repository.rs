@@ -21,6 +21,10 @@ use super::entity::{
     PortalIdentity, PortalOAuthClient,
 };
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 // ── Portal identities ─────────────────────────────────────────────────────
 
@@ -290,16 +294,12 @@ fn escape_like(s: &str) -> String {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<PortalIdentity> for PortalIdentityRepository {
+impl Persist<PortalIdentity> for PortalIdentityRepository {
     /// Conflict on (client, email) updates the mutable fields, so re-ensuring
     /// keeps the original id/source/created_at. Grants then apply against the
     /// id that actually holds the row: revoked grants are deleted, every
     /// grant in `apps` is inserted if missing, nothing else is touched.
-    async fn persist(
-        &self,
-        i: &PortalIdentity,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn persist(&self, i: &PortalIdentity, tx: &mut DbTx<'_>) -> Result<()> {
         let name = (!i.name.is_empty()).then_some(i.name.as_str());
         let row_id: String = sqlx::query_scalar(
             "INSERT INTO portal_identities \
@@ -356,11 +356,7 @@ impl fc_platform_core::usecase::Persist<PortalIdentity> for PortalIdentityReposi
     }
 
     /// Offboarding is deleting the row; grants cascade.
-    async fn delete(
-        &self,
-        i: &PortalIdentity,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, i: &PortalIdentity, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM portal_identities WHERE id = $1")
             .bind(&i.id)
             .execute(&mut **tx.inner)
@@ -514,12 +510,8 @@ impl PortalAppRepository {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<PortalApp> for PortalAppRepository {
-    async fn persist(
-        &self,
-        a: &PortalApp,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<PortalApp> for PortalAppRepository {
+    async fn persist(&self, a: &PortalApp, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "INSERT INTO portal_apps \
                  (id, client_id, code, name, description, active, created_at, updated_at) \
@@ -544,11 +536,7 @@ impl fc_platform_core::usecase::Persist<PortalApp> for PortalAppRepository {
     }
 
     /// The app's grants go with it (FK cascade).
-    async fn delete(
-        &self,
-        a: &PortalApp,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, a: &PortalApp, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM portal_apps WHERE id = $1")
             .bind(&a.id)
             .execute(&mut **tx.inner)
@@ -797,9 +785,7 @@ impl PortalResetTokenRepository {
                  (id, principal_id, token_hash, expires_at, created_at, purpose, redirect_uri) \
              VALUES ($1, $2, $3, $4, NOW(), $5, $6)",
         )
-        .bind(fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::PasswordResetToken,
-        ))
+        .bind(tsid::generate(EntityType::PasswordResetToken))
         .bind(subject_id)
         .bind(token_hash)
         .bind(expires_at)

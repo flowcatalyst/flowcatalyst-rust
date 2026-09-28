@@ -36,6 +36,7 @@ use crate::client::repository::ClientRepository;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
+use fc_common::audit_redaction;
 
 /// Largest batch accepted, as in Go.
 const MAX_BATCH: usize = 100;
@@ -235,7 +236,7 @@ fn plan_batch(
         // reaches into as well.
         let operation_data = item
             .operation_data
-            .map(|data| fc_common::audit_redaction::redact_document(&data, &[]));
+            .map(|data| audit_redaction::redact_document(&data, &[]));
 
         let mut log = AuditLog::new(
             item.entity_type,
@@ -292,6 +293,7 @@ pub(crate) async fn batch_audit_logs(
 mod tests {
     use super::*;
     use crate::principal::entity::{PrincipalType, UserScope};
+    use crate::shared::authorization_service::Credential;
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -305,7 +307,7 @@ mod tests {
             accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
             permissions: HashSet::new(),
             roles: Vec::new(),
-            credential: crate::shared::authorization_service::Credential::BearerToken,
+            credential: Credential::BearerToken,
         }
     }
 

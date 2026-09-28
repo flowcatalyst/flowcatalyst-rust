@@ -6,6 +6,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::de::DeserializeOwned;
 use serde::Serializer;
 
+use axum::http::StatusCode;
 use fc_platform_core::shared::error::PlatformError;
 
 /// A timestamp as Java's `Json` mapper writes it (shared/json/Json.java):
@@ -32,7 +33,7 @@ pub fn micros_opt_ser<S: Serializer>(at: &Option<DateTime<Utc>>, s: S) -> Result
 /// does not bind to the request type.
 pub fn invalid_json(error: &serde_json::Error) -> PlatformError {
     PlatformError::Coded {
-        status: axum::http::StatusCode::BAD_REQUEST,
+        status: StatusCode::BAD_REQUEST,
         code: "INVALID_JSON".to_string(),
         message: error.to_string(),
         details: Default::default(),

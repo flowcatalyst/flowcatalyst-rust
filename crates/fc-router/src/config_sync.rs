@@ -14,6 +14,10 @@ use crate::manager::QueueManager;
 use crate::platform_token::{origin_of, PlatformTokenSource};
 use crate::warning::WarningService;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningCategory, WarningSeverity};
+use futures::future;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Configuration for the config sync service
 #[derive(Debug, Clone)]
@@ -273,7 +277,7 @@ fn retryable_status(status: reqwest::StatusCode, authenticated: bool) -> bool {
 /// The router's credential for its own platform and the origin it may be
 /// sent to (Go `ConfigSource.Credentials` / `CredentialOrigin`).
 struct PlatformCredentials {
-    token: std::sync::Arc<PlatformTokenSource>,
+    token: Arc<PlatformTokenSource>,
     origin: String,
 }
 
@@ -426,7 +430,7 @@ impl ConfigSyncService {
                 }
             })
             .collect();
-        let results = futures::future::join_all(tasks).await;
+        let results = future::join_all(tasks).await;
 
         let mut contributions: Vec<(String, RouterConfig)> = Vec::new();
         let mut succeeded = 0usize;
@@ -527,7 +531,7 @@ impl ConfigSyncService {
                             "Failed to fetch config, retrying..."
                         );
                         last_error = Some(e);
-                        tokio::time::sleep(self.config.retry_delay).await;
+                        time::sleep(self.config.retry_delay).await;
                     } else {
                         last_error = Some(e);
                     }
@@ -804,12 +808,12 @@ impl ConfigSyncService {
             }
             tokio::select! {
                 _ = shutdown.cancelled() => return,
-                _ = tokio::time::sleep(retry) => {}
+                _ = time::sleep(retry) => {}
             }
         }
 
-        let mut ticker = tokio::time::interval(self.config.sync_interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut ticker = time::interval(self.config.sync_interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ticker.tick().await; // the first tick fires immediately
         loop {
             tokio::select! {
@@ -927,12 +931,12 @@ pub fn merge_configs(sources: &[(String, RouterConfig)]) -> RouterConfig {
 pub fn spawn_config_sync_task(
     config_sync: Arc<ConfigSyncService>,
     shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
+) -> JoinHandle<()> {
     let interval = config_sync.sync_interval();
 
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut ticker = time::interval(interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         // Skip the first tick (initial sync already done)
         ticker.tick().await;
@@ -961,6 +965,11 @@ pub fn spawn_config_sync_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+    use tokio::time;
 
     #[test]
     fn test_config_sync_config_defaults() {
@@ -1187,7 +1196,7 @@ mod tests {
     // ========================================================================
 
     fn test_service(config_url: String) -> ConfigSyncService {
-        let manager = Arc::new(QueueManager::new(crate::mediator::HttpMediatorConfig::dev()));
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
         let warning_service = Arc::new(WarningService::noop());
         let mut config = ConfigSyncConfig::new(config_url);
         // Keep the per-URL retry loop fast and short — these tests exercise
@@ -1339,13 +1348,13 @@ mod tests {
         let token = CancellationToken::new();
         let task = tokio::spawn(service.clone().run(token.clone()));
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(5);
         while manager.get_pool("BOOT").is_none() {
             assert!(
-                std::time::Instant::now() < deadline,
+                Instant::now() < deadline,
                 "the config must be applied once the source recovers"
             );
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
         assert!(calls.load(Ordering::SeqCst) >= 4);
         assert_eq!(
@@ -1359,7 +1368,7 @@ mod tests {
             "the failure-streak warning is resolved once the config lands"
         );
         token.cancel();
-        tokio::time::timeout(Duration::from_secs(2), task)
+        time::timeout(Duration::from_secs(2), task)
             .await
             .expect("run() exits on cancel")
             .unwrap();
@@ -1371,9 +1380,7 @@ mod tests {
 
     /// A platform that mints `tok-<n>` at /oauth/token and serves its
     /// router-config only to `Bearer tok-<accept_from>` or later.
-    async fn platform_server(
-        accept_from: u32,
-    ) -> (wiremock::MockServer, Arc<std::sync::atomic::AtomicU32>) {
+    async fn platform_server(accept_from: u32) -> (wiremock::MockServer, Arc<AtomicU32>) {
         use std::sync::atomic::{AtomicU32, Ordering};
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1419,7 +1426,7 @@ mod tests {
     }
 
     fn credentialed_service(urls: &str, platform: &str, attempts: u32) -> ConfigSyncService {
-        let manager = Arc::new(QueueManager::new(crate::mediator::HttpMediatorConfig::dev()));
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
         let mut config = ConfigSyncConfig::new(urls.to_string());
         config.max_retry_attempts = attempts;
         config.retry_delay = Duration::from_millis(1);
@@ -1466,7 +1473,7 @@ mod tests {
             .collect();
         assert_eq!(pools, vec!["INTEGRAL-POOL", "PLATFORM-POOL"]);
         assert_eq!(merged.queues.len(), 2);
-        assert_eq!(mints.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(mints.load(Ordering::SeqCst), 1);
 
         let integral_requests = integral.received_requests().await.unwrap();
         assert!(!integral_requests.is_empty());
@@ -1487,7 +1494,7 @@ mod tests {
         let svc = credentialed_service(&url, &platform.uri(), 3);
         let cfg = svc.fetch_config().await.expect("second token is accepted");
         assert_eq!(cfg.processing_pools[0].code, "PLATFORM-POOL");
-        assert_eq!(mints.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(mints.load(Ordering::SeqCst), 2);
     }
 
     /// A refusal retrying cannot change fails the source at once; an

@@ -19,18 +19,43 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::authorization_code::{Pkce, PkceMethod};
 use crate::auth::pending_auth_repository::{PendingAuth, PendingAuthRepository};
+use crate::auth::refresh_rotation;
+use crate::auth::refresh_rotation::Rejection;
 use crate::auth::{authorization_code::AuthorizationCode, refresh_token::RefreshToken};
 use crate::auth::{
     authorization_code_repository::AuthorizationCodeRepository,
     refresh_token_repository::RefreshTokenRepository,
 };
+use crate::portal::token;
+use crate::portal::PortalState;
+use axum_extra::extract::cookie::CookieJar;
+use base64::engine::general_purpose;
+use fc_platform_core::permissions;
+use fc_platform_core::principal_kind::PrincipalType;
+use fc_platform_core::shared::encryption_service::EncryptionService;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::middleware;
+use fc_platform_core::shared::middleware::ClientIp;
+use fc_platform_core::shared::rate_limit_middleware::IpRateLimiterState;
+use fc_platform_core::shared::rate_limit_store;
+use fc_platform_core::shared::rate_limit_store::Bucket;
+use fc_platform_core::shared::rate_limit_store::RateLimitPolicies;
+use fc_platform_core::shared::rate_limit_store::RateLimitStore;
+use fc_platform_iam::auth::auth_service;
 use fc_platform_iam::auth::auth_service::AuthService;
+use fc_platform_iam::auth::auth_service::SessionIdentity;
 use fc_platform_iam::auth::auth_service::{extract_bearer_token, AccessTokenClaims};
+use fc_platform_iam::auth::oauth_entity::OAuthClientType;
 use fc_platform_iam::auth::oauth_entity::{GrantType, OAuthClient};
 use fc_platform_iam::auth::password_service::PasswordService;
+use fc_platform_iam::developer_credential;
 use fc_platform_iam::login_attempt::entity::{AttemptType, LoginAttempt, LoginOutcome};
 use fc_platform_iam::login_attempt::repository::LoginAttemptRepository;
+use fc_platform_iam::portal;
+use fc_platform_iam::principal::entity::Principal;
+use fc_platform_iam::role::repository::RoleRepository;
+use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 use fc_platform_iam::{
     auth::oauth_client_repository::OAuthClientRepository,
     principal::repository::PrincipalRepository,
@@ -93,9 +118,7 @@ fn basic_auth_creds(headers: &HeaderMap) -> Option<(String, String)> {
     if !scheme.eq_ignore_ascii_case("Basic") {
         return None;
     }
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(encoded.trim())
-        .ok()?;
+    let decoded = general_purpose::STANDARD.decode(encoded.trim()).ok()?;
     let decoded = String::from_utf8(decoded).ok()?;
     let (id, secret) = decoded.split_once(':')?;
     let unescape = |s: &str| {
@@ -198,11 +221,10 @@ pub struct UserInfoResponse {
 pub struct OAuthState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
     /// Stamps a service account's `last_used_at` when it authenticates.
-    pub service_account_repo:
-        Arc<fc_platform_iam::service_account::repository::ServiceAccountRepository>,
+    pub service_account_repo: Arc<ServiceAccountRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
     /// Role → permission / application resolution for the minted claims
-    pub role_repo: Arc<fc_platform_iam::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     pub auth_service: Arc<AuthService>,
     /// Authorization code storage (PostgreSQL)
     pub auth_code_repo: Arc<AuthorizationCodeRepository>,
@@ -216,22 +238,20 @@ pub struct OAuthState {
     pub login_attempt_repo: Arc<LoginAttemptRepository>,
     /// Per-`client_id` rate limit on `/oauth/token` (composes with the
     /// per-IP middleware that wraps `/oauth/*`).
-    pub client_token_rate_limit:
-        fc_platform_core::shared::rate_limit_middleware::IpRateLimiterState,
+    pub client_token_rate_limit: IpRateLimiterState,
     /// Cluster-wide rate-limit store (Redis or Postgres). Per-client_id
     /// distributed enforcement on `/oauth/token` and `/oauth/authorize`
     /// runs through this on top of the in-memory governor.
-    pub rate_limit_store: Arc<dyn fc_platform_core::shared::rate_limit_store::RateLimitStore>,
+    pub rate_limit_store: Arc<dyn RateLimitStore>,
     /// Per-bucket policies (window + limit), loaded once from env.
-    pub rate_limit_policies: Arc<fc_platform_core::shared::rate_limit_store::RateLimitPolicies>,
+    pub rate_limit_policies: Arc<RateLimitPolicies>,
     /// Verifies client secrets. `None` when `FLOWCATALYST_APP_KEY` is unset,
     /// in which case every confidential client is refused.
-    pub encryption_service:
-        Option<Arc<fc_platform_core::shared::encryption_service::EncryptionService>>,
+    pub encryption_service: Option<Arc<EncryptionService>>,
     /// The portal identity plane: redeems authorization codes whose subject
     /// is a `ptu_…` portal identity (Go `State.PortalIdentities` /
     /// `PortalApps`). `None` refuses portal codes (fail closed).
-    pub portal: Option<crate::portal::PortalState>,
+    pub portal: Option<PortalState>,
 }
 
 /// Authorization endpoint - initiates the OAuth2 flow
@@ -247,7 +267,7 @@ pub struct OAuthState {
 )]
 pub async fn authorize(
     State(state): State<OAuthState>,
-    jar: axum_extra::extract::cookie::CookieJar,
+    jar: CookieJar,
     Query(req): Query<AuthorizeRequest>,
 ) -> Response {
     // Require `state` for CSRF protection on the callback. Missing/empty
@@ -267,9 +287,9 @@ pub async fn authorize(
     // client that's spamming us can't amplify load on the OAuth client cache.
     // The per-IP layer wrapping `/oauth/*` already throttles raw volume; this
     // catches a single client_id sprayed across many IPs.
-    if let Err(resp) = fc_platform_core::shared::rate_limit_store::enforce_distributed(
+    if let Err(resp) = rate_limit_store::enforce_distributed(
         &*state.rate_limit_store,
-        fc_platform_core::shared::rate_limit_store::Bucket::OAUTH_AUTHORIZE_CLIENT,
+        Bucket::OAUTH_AUTHORIZE_CLIENT,
         &req.client_id,
         state.rate_limit_policies.oauth_authorize_client,
     )
@@ -586,9 +606,9 @@ pub async fn authorize(
 /// a USER. `Ok(None)` is "no session" (send the user to log in).
 async fn signed_in_user(
     state: &OAuthState,
-    jar: &axum_extra::extract::cookie::CookieJar,
-) -> Result<Option<fc_platform_iam::auth::auth_service::SessionIdentity>, PlatformError> {
-    let Some(cookie) = jar.get(fc_platform_core::shared::middleware::SESSION_COOKIE_NAME) else {
+    jar: &CookieJar,
+) -> Result<Option<SessionIdentity>, PlatformError> {
+    let Some(cookie) = jar.get(middleware::SESSION_COOKIE_NAME) else {
         return Ok(None);
     };
     let Ok(session) = state.auth_service.validate_session_token(cookie.value()) else {
@@ -598,9 +618,7 @@ async fn signed_in_user(
         .principal_repo
         .find_by_id(&session.principal_id)
         .await?
-        .filter(|p| {
-            p.active && p.principal_type == fc_platform_core::principal_kind::PrincipalType::User
-        })
+        .filter(|p| p.active && p.principal_type == PrincipalType::User)
         .map(|_| session))
 }
 
@@ -704,18 +722,16 @@ async fn authenticate_client(
         .and_then(|v| v.strip_prefix("Basic "))
     {
         // Decode Basic auth: base64(client_id:client_secret)
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(basic)
-            .map_err(|_| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(ErrorResponse {
-                        error: "invalid_client".to_string(),
-                        error_description: Some("Invalid Basic auth encoding".to_string()),
-                    }),
-                )
-                    .into_response()
-            })?;
+        let decoded = general_purpose::STANDARD.decode(basic).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Invalid Basic auth encoding".to_string()),
+                }),
+            )
+                .into_response()
+        })?;
         let decoded_str = String::from_utf8(decoded).map_err(|_| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -897,7 +913,7 @@ async fn authenticate_client_or_bearer(
 pub async fn token(
     State(state): State<OAuthState>,
     headers: HeaderMap,
-    fc_platform_core::shared::middleware::ClientIp(client_ip): fc_platform_core::shared::middleware::ClientIp,
+    ClientIp(client_ip): ClientIp,
     Form(mut req): Form<TokenRequest>,
 ) -> Response {
     // Go `Token`: client_secret_basic is resolved into the request up front,
@@ -941,7 +957,7 @@ pub async fn token(
         if let Err(retry_after) = state.client_token_rate_limit.check(client_id) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
-                [(axum::http::header::RETRY_AFTER, retry_after.to_string())],
+                [(header::RETRY_AFTER, retry_after.to_string())],
                 Json(ErrorResponse {
                     error: "rate_limit_exceeded".to_string(),
                     error_description: Some(
@@ -951,9 +967,9 @@ pub async fn token(
             )
                 .into_response();
         }
-        if let Err(resp) = fc_platform_core::shared::rate_limit_store::enforce_distributed(
+        if let Err(resp) = rate_limit_store::enforce_distributed(
             &*state.rate_limit_store,
-            fc_platform_core::shared::rate_limit_store::Bucket::OAUTH_TOKEN_CLIENT,
+            Bucket::OAUTH_TOKEN_CLIENT,
             client_id,
             state.rate_limit_policies.oauth_token_client,
         )
@@ -1032,12 +1048,12 @@ const OIDC_RESERVED_SCOPES: &[&str] = &[
 /// requested. `explicit` reports whether any were.
 async fn granted_scope(
     state: &OAuthState,
-    principal: &fc_platform_iam::principal::entity::Principal,
+    principal: &Principal,
     requested: Option<&str>,
-) -> fc_platform_core::shared::error::Result<(Vec<String>, bool)> {
+) -> Result<(Vec<String>, bool), PlatformError> {
     let ceiling = state
         .role_repo
-        .flatten_permissions(&fc_platform_iam::auth::auth_service::role_names(principal))
+        .flatten_permissions(&auth_service::role_names(principal))
         .await?;
     let requested: Vec<&str> = requested
         .unwrap_or("")
@@ -1052,7 +1068,7 @@ async fn granted_scope(
         .filter(|r| {
             ceiling
                 .iter()
-                .any(|held| fc_platform_core::permissions::matches_pattern(r, held))
+                .any(|held| permissions::matches_pattern(r, held))
         })
         .map(str::to_string)
         .collect();
@@ -1066,13 +1082,10 @@ async fn granted_scope(
 /// for a client with no applications.
 async fn confine_to_client(
     state: &OAuthState,
-    principal: &fc_platform_iam::principal::entity::Principal,
+    principal: &Principal,
     client: &OAuthClient,
-) -> fc_platform_core::shared::error::Result<(
-    fc_platform_iam::principal::entity::Principal,
-    Vec<String>,
-)> {
-    let roles = fc_platform_iam::auth::auth_service::role_names(principal);
+) -> Result<(Principal, Vec<String>), PlatformError> {
+    let roles = auth_service::role_names(principal);
     if client.application_ids.is_empty() {
         return Ok((principal.clone(), roles));
     }
@@ -1109,10 +1122,10 @@ async fn confine_to_client(
 /// roles, `azp` = the client.
 async fn mint_interactive_access_token(
     state: &OAuthState,
-    principal: &fc_platform_iam::principal::entity::Principal,
+    principal: &Principal,
     client: Option<&OAuthClient>,
     requested_scope: Option<&str>,
-) -> fc_platform_core::shared::error::Result<String> {
+) -> Result<String, PlatformError> {
     let Some(client) = client else {
         return state
             .auth_service
@@ -1137,11 +1150,11 @@ async fn mint_interactive_access_token(
 /// only its applications' roles and its share of the application access.
 async fn mint_id_token(
     state: &OAuthState,
-    principal: &fc_platform_iam::principal::entity::Principal,
+    principal: &Principal,
     client_id_for_aud: &str,
     client: Option<&OAuthClient>,
     nonce: Option<String>,
-) -> fc_platform_core::shared::error::Result<String> {
+) -> Result<String, PlatformError> {
     match client.filter(|c| !c.application_ids.is_empty()) {
         None => state
             .auth_service
@@ -1328,7 +1341,7 @@ async fn handle_authorization_code_grant(
 
     // Portal-plane subject (Go token.go:725-733): a code minted by a
     // /portal/authorize flow for a ptu_ portal identity, not a principal.
-    if fc_platform_iam::portal::is_portal_subject(&auth_code.principal_id) {
+    if portal::is_portal_subject(&auth_code.principal_id) {
         let Some(portal) = state.portal.as_ref() else {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1342,13 +1355,7 @@ async fn handle_authorization_code_grant(
         let client_id = authenticated_client
             .as_ref()
             .map_or(auth_code.client_id.as_str(), |c| c.client_id.as_str());
-        return crate::portal::token::redeem_portal_code(
-            portal,
-            &state.auth_service,
-            &auth_code,
-            client_id,
-        )
-        .await;
+        return token::redeem_portal_code(portal, &state.auth_service, &auth_code, client_id).await;
     }
 
     // Get the principal. One deactivated since the code was issued gets no
@@ -1517,7 +1524,7 @@ async fn handle_refresh_token_grant(
     // sibling leeway, the client binding, and the family's inherited
     // expiry (see `refresh_rotation`).
     let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
-    let rotated = match crate::auth::refresh_rotation::rotate(
+    let rotated = match refresh_rotation::rotate(
         &*state.refresh_token_repo,
         &refresh_token_str,
         requesting_client_id,
@@ -1525,7 +1532,7 @@ async fn handle_refresh_token_grant(
     .await
     {
         Ok(Ok(rotated)) => rotated,
-        Ok(Err(crate::auth::refresh_rotation::Rejection::Refused { token_client_id })) => {
+        Ok(Err(Rejection::Refused { token_client_id })) => {
             warn!(
                 stored_client_id = %token_client_id,
                 requesting_client_id = ?requesting_client_id,
@@ -1752,7 +1759,7 @@ async fn handle_client_credentials_grant(
     };
 
     // Verify client type is CONFIDENTIAL
-    if client.client_type != fc_platform_iam::auth::oauth_entity::OAuthClientType::Confidential {
+    if client.client_type != OAuthClientType::Confidential {
         return (
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
@@ -1836,9 +1843,7 @@ async fn handle_client_credentials_grant(
         // A client authenticates as a service account, never a user: a USER
         // principal here would mint that user's full authority for whoever
         // holds the client secret (Java 6a06a7f0 S2.3).
-        Ok(Some(p))
-            if p.principal_type != fc_platform_core::principal_kind::PrincipalType::Service =>
-        {
+        Ok(Some(p)) if p.principal_type != PrincipalType::Service => {
             warn!(client_id = %client_id, principal_id = %principal_id, "client_credentials refused: linked principal is not a service account");
             let attempt = LoginAttempt {
                 identifier: Some(client_id.clone()),
@@ -1999,12 +2004,7 @@ async fn handle_developer_credential_grant(
             .into_response()
     };
     let principal = match state.principal_repo.find_by_id(&client_id).await {
-        Ok(Some(p))
-            if p.active
-                && p.principal_type == fc_platform_core::principal_kind::PrincipalType::User =>
-        {
-            p
-        }
+        Ok(Some(p)) if p.active && p.principal_type == PrincipalType::User => p,
         Ok(_) => return invalid(),
         Err(e) => {
             error!(error = %e, "Failed to look up developer principal");
@@ -2014,7 +2014,7 @@ async fn handle_developer_credential_grant(
     if !principal
         .roles
         .iter()
-        .any(|r| r.role == fc_platform_iam::developer_credential::DEVELOPER_ROLE)
+        .any(|r| r.role == developer_credential::DEVELOPER_ROLE)
     {
         return invalid();
     }
@@ -2159,7 +2159,7 @@ pub async fn issue_code(
 
     let method = pending.code_challenge_method.as_deref();
     let pkce = Pkce::from_parts(pending.code_challenge.clone(), method).map_err(|_| {
-        fc_platform_core::shared::enum_str::corrupt_value(
+        enum_str::corrupt_value(
             "oauth_oidc_payloads",
             "payload.codeChallengeMethod",
             method.unwrap_or_default(),
@@ -2394,9 +2394,9 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
     let mut clients = claims.clients.clone();
     if let Ok(Some(principal)) = state.principal_repo.find_by_id(&claims.sub).await {
         if principal.active {
-            roles = fc_platform_iam::auth::auth_service::role_names(&principal);
-            applications = fc_platform_iam::auth::auth_service::applications_claim(&principal);
-            clients = fc_platform_iam::auth::auth_service::clients_claim(&principal);
+            roles = auth_service::role_names(&principal);
+            applications = auth_service::applications_claim(&principal);
+            clients = auth_service::clients_claim(&principal);
             let client = match claims.azp.as_deref().filter(|a| !a.is_empty()) {
                 Some(azp) => state
                     .oauth_client_repo
@@ -2410,7 +2410,7 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
                 if let Ok((scoped, narrowed)) = confine_to_client(&state, &principal, &client).await
                 {
                     roles = narrowed;
-                    applications = fc_platform_iam::auth::auth_service::applications_claim(&scoped);
+                    applications = auth_service::applications_claim(&scoped);
                 }
             }
         }

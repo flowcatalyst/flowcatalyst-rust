@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EmailDomainMappingCreated;
+use crate::email_domain_mapping::entity;
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::identity_provider::repository::IdentityProviderRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new email domain mapping.
@@ -49,7 +52,7 @@ pub struct TwoFactorPolicyInput {
     pub remember_device_days: i32,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateEmailDomainMappingCommand {}
+impl AuditMasked for CreateEmailDomainMappingCommand {}
 
 pub struct CreateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
@@ -100,7 +103,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
             command.primary_client_id.as_deref(),
         )?;
 
-        crate::email_domain_mapping::entity::validate_two_factor(
+        entity::validate_two_factor(
             command.two_factor.require_2fa,
             &command.two_factor.allowed_2fa_methods,
         )?;
@@ -117,11 +120,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         _command: &CreateEmailDomainMappingCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

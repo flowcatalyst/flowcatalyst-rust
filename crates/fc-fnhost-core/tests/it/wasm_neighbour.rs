@@ -17,7 +17,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 use support::wasm::{entry, guest, manifest, Options, WasmHarness};
+use tokio::task::JoinHandle;
+use tokio::time;
 
 const A: &str = "app.orders.a";
 const B: &str = "app.orders.b";
@@ -32,8 +37,8 @@ struct Stats {
     max: Duration,
 }
 
-impl std::fmt::Display for Stats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Stats {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "p50 {:.2} ms, p99 {:.2} ms, max {:.2} ms",
@@ -65,11 +70,11 @@ async fn call(h: &WasmHarness, address: &str, path: &str) -> u16 {
 /// A at `rate` calls/s, open loop, for `seconds`; each latency from its
 /// scheduled start. Every call must succeed.
 async fn drive_a(h: &Arc<WasmHarness>, rate: f64, seconds: f64) -> Vec<Duration> {
-    let start = tokio::time::Instant::now();
+    let start = time::Instant::now();
     let total = (rate * seconds) as usize;
     let mut calls = Vec::with_capacity(total);
     for i in 0..total {
-        tokio::time::sleep_until(start + Duration::from_secs_f64(i as f64 / rate)).await;
+        time::sleep_until(start + Duration::from_secs_f64(i as f64 / rate)).await;
         let h = h.clone();
         calls.push(tokio::spawn(async move {
             let sent = Instant::now();
@@ -91,7 +96,7 @@ fn hammer_b(
     h: &Arc<WasmHarness>,
     workers: usize,
     stop: &Arc<AtomicBool>,
-) -> (Vec<tokio::task::JoinHandle<()>>, Arc<AtomicUsize>) {
+) -> (Vec<JoinHandle<()>>, Arc<AtomicUsize>) {
     let spun = Arc::new(AtomicUsize::new(0));
     let handles = (0..workers)
         .map(|_| {
@@ -102,7 +107,7 @@ fn hammer_b(
                         504 => {
                             spun.fetch_add(1, Ordering::Relaxed);
                         }
-                        _ => tokio::time::sleep(Duration::from_millis(5)).await,
+                        _ => time::sleep(Duration::from_millis(5)).await,
                     }
                 }
             })
@@ -150,7 +155,7 @@ async fn neighbour_run(
     let alone = stats(drive_a(&h, 100.0, seconds).await);
     let stop = Arc::new(AtomicBool::new(false));
     let (workers, spun) = hammer_b(&h, b_concurrency * 3, &stop);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    time::sleep(Duration::from_millis(300)).await;
     let busy = stats(drive_a(&h, 100.0, seconds).await);
     stop.store(true, Ordering::Relaxed);
     for w in workers {

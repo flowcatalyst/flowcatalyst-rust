@@ -12,6 +12,8 @@ use std::sync::Arc;
 use super::events::PlatformConfigAccessGranted;
 use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +27,7 @@ pub struct GrantPlatformConfigAccessCommand {
     pub can_write: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for GrantPlatformConfigAccessCommand {}
+impl AuditMasked for GrantPlatformConfigAccessCommand {}
 
 pub struct GrantPlatformConfigAccessUseCase<U: UnitOfWork> {
     access_repo: Arc<PlatformConfigAccessRepository>,
@@ -73,11 +75,7 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
         _command: &GrantPlatformConfigAccessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_update_platform_config(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_update_platform_config(ctx.caller())?)
     }
 
     async fn execute(

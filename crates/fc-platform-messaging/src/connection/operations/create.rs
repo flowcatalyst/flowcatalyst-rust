@@ -8,14 +8,17 @@ use std::sync::Arc;
 use super::events::ConnectionCreated;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
+use crate::service_account::signing_reach;
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
+use std::sync::OnceLock;
 
 fn code_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").unwrap())
 }
 
@@ -38,7 +41,7 @@ pub struct CreateConnectionCommand {
     pub application_code: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateConnectionCommand {}
+impl AuditMasked for CreateConnectionCommand {}
 
 pub struct CreateConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
@@ -128,7 +131,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         // `CreateConnection`, b1ce6e55): every subscription on this
         // connection is delivered with it. `applicationCode`-style ownership
         // counts for nothing.
-        crate::service_account::signing_reach::require_usable_signers(
+        signing_reach::require_usable_signers(
             ctx.caller(),
             &*self.service_account_repo,
             &self.connection_repo,

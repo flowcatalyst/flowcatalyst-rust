@@ -10,6 +10,10 @@ use axum::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+use base64::engine::general_purpose;
+use fc_platform::auth::oauth_entity::GrantType;
+use fc_platform::auth::oauth_entity::OAuthClient;
+use fc_platform::domain::Principal;
 use fc_platform::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
 use support::{read_json, TestApp};
 
@@ -214,7 +218,7 @@ async fn an_unmapped_domain_is_404_email_domain_not_mapped() {
 }
 
 /// A user in the database, with a password, for the session tests.
-async fn seed_user(app: &TestApp, email: &str, password: &str) -> fc_platform::domain::Principal {
+async fn seed_user(app: &TestApp, email: &str, password: &str) -> Principal {
     use fc_platform::auth::password_service::PasswordService;
     use fc_platform::domain::{Principal, UserScope};
     let mut user = Principal::new_user(email, UserScope::Anchor);
@@ -270,7 +274,7 @@ async fn the_session_cookie_is_the_subject_reloaded_per_request() {
 
     // Go's claim shape: identity only.
     let payload: Value = serde_json::from_slice(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+        &general_purpose::URL_SAFE_NO_PAD
             .decode(cookie.split('.').nth(1).unwrap())
             .unwrap(),
     )
@@ -354,17 +358,17 @@ const PKCE_VERIFIER: &str = "verifier-0123456789-0123456789-0123456789-abcdef";
 
 /// A public PKCE client, as AgentPlanner is registered.
 async fn seed_public_client(app: &TestApp) {
-    let client = fc_platform::auth::oauth_entity::OAuthClient::new("agent-planner", "Planner")
+    let client = OAuthClient::new("agent-planner", "Planner")
         .with_redirect_uri(PLANNER_REDIRECT)
-        .with_grant_type(fc_platform::auth::oauth_entity::GrantType::RefreshToken);
+        .with_grant_type(GrantType::RefreshToken);
     app.repos.oauth_client_repo.insert(&client).await.unwrap();
 }
 
 fn authorize_request(prompt: Option<&str>) -> Request<Body> {
     use base64::Engine as _;
     use sha2::Digest as _;
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(sha2::Sha256::digest(PKCE_VERIFIER.as_bytes()));
+    let challenge =
+        general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(PKCE_VERIFIER.as_bytes()));
     let mut uri = format!(
         "/oauth/authorize?response_type=code&client_id=agent-planner&redirect_uri={}&state=s1&scope=openid%20offline_access&code_challenge={challenge}&code_challenge_method=S256",
         urlencoding::encode(PLANNER_REDIRECT)
@@ -628,7 +632,7 @@ async fn client_selection_and_passkeys_take_the_session_cookie_only() {
 
 /// Sign `user` in to the planner client through the code flow and return
 /// its refresh token.
-async fn planner_refresh_token(app: &TestApp, user: &fc_platform::domain::Principal) -> String {
+async fn planner_refresh_token(app: &TestApp, user: &Principal) -> String {
     let session = app.auth_service.generate_session_token(user).unwrap();
     let resp = send(
         app,
@@ -824,7 +828,7 @@ async fn client_credentials_requires_a_service_principal() {
     use fc_platform::shared::encryption_service::EncryptionService;
 
     use crate::support::APP_KEY;
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let secret_ref = EncryptionService::new(APP_KEY)
         .unwrap()

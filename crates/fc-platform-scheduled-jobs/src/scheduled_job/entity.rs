@@ -6,6 +6,8 @@
 //! aggregate; see `repository.rs` for direct-write infrastructure methods.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +96,7 @@ impl ScheduledJob {
     pub fn new(code: impl Into<String>, name: impl Into<String>, crons: Vec<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ScheduledJob,
-            ),
+            id: tsid::generate(EntityType::ScheduledJob),
             client_id: None,
             application_id: None,
             code: code.into(),
@@ -401,6 +401,8 @@ pub struct ScheduledJobInstanceLog {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn new_active_with_defaults() {
@@ -419,7 +421,7 @@ mod tests {
         let mut job = ScheduledJob::new("c", "n", vec!["* * * * *".into()]);
         let v0 = job.version;
         let t0 = job.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
 
         job.pause();
         assert_eq!(job.status, ScheduledJobStatus::Paused);

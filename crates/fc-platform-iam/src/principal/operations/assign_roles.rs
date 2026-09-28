@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use super::events::RolesAssigned;
 use crate::principal::repository::PrincipalRepository;
+use crate::role::ceiling;
 use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use fc_platform_core::principal_kind::PrincipalType;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -21,7 +23,7 @@ pub struct AssignUserRolesCommand {
     pub roles: Vec<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AssignUserRolesCommand {}
+impl AuditMasked for AssignUserRolesCommand {}
 
 pub struct AssignUserRolesUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -79,13 +81,7 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
         )
         .await?;
         let before: Vec<String> = target.roles.iter().map(|r| r.role.clone()).collect();
-        crate::role::ceiling::require_role_change(
-            ctx.caller(),
-            &self.role_repo,
-            &before,
-            &command.roles,
-        )
-        .await
+        ceiling::require_role_change(ctx.caller(), &self.role_repo, &before, &command.roles).await
     }
 
     async fn execute(

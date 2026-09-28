@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ClientActivated;
 use crate::client::entity::ClientStatus;
 use crate::client::repository::ClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -19,7 +21,7 @@ pub struct ActivateClientCommand {
     pub client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ActivateClientCommand {}
+impl AuditMasked for ActivateClientCommand {}
 
 /// Use case for activating a suspended or pending client.
 pub struct ActivateClientUseCase<U: UnitOfWork> {
@@ -60,11 +62,7 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         _command: &ActivateClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

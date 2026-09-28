@@ -17,6 +17,8 @@ use tracing::warn;
 
 use super::auth::DispatchAuthService;
 use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
+use crate::dispatch_job::entity;
+use tracing::field::Empty;
 
 /// What the poller hands the dispatcher for one claimed job.
 #[derive(Debug, Clone)]
@@ -65,7 +67,7 @@ impl MessageGroupDispatcher {
             mediation_target: self.processing_endpoint.clone(),
             message_group_id: tok.message_group.clone().filter(|g| !g.is_empty()),
             high_priority: false,
-            dispatch_mode: crate::dispatch_job::entity::parse_dispatch_mode(Some(&tok.mode)),
+            dispatch_mode: entity::parse_dispatch_mode(Some(&tok.mode)),
             dispatch_mode_specified: true,
         }
     }
@@ -75,7 +77,7 @@ impl MessageGroupDispatcher {
     #[tracing::instrument(
         name = "scheduler.publish",
         skip_all,
-        fields(jobs = tokens.len(), unpublished = tracing::field::Empty)
+        fields(jobs = tokens.len(), unpublished = Empty)
     )]
     pub async fn publish_claim(&self, tokens: &[DispatchJobToken]) -> PublishOutcome {
         if tokens.is_empty() {

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::ExecutionContext;
+use crate::shared::tsid;
 
 /// Base trait for all domain events.
 ///
@@ -88,7 +89,7 @@ impl EventMetadata {
         message_group: impl Into<String>,
     ) -> Self {
         Self {
-            event_id: crate::shared::tsid::generate_untyped(),
+            event_id: tsid::generate_untyped(),
             event_type: event_type.to_string(),
             spec_version: spec_version.to_string(),
             source: source.to_string(),

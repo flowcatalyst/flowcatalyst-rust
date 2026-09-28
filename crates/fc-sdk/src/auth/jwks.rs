@@ -13,6 +13,8 @@ use tracing::{debug, warn};
 
 use super::claims::{AccessTokenClaims, AuthContext};
 use super::AuthError;
+use jsonwebtoken::errors::ErrorKind;
+use std::time::Duration;
 
 /// JWKS response from the provider.
 #[derive(Debug, Clone, Deserialize)]
@@ -69,7 +71,7 @@ impl JwksCache {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
             ttl_secs,
@@ -276,11 +278,11 @@ impl TokenValidator {
             decode::<AccessTokenClaims>(token, &decoding_key, &validation).map_err(|e| match e
                 .kind()
             {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::TokenExpired,
-                jsonwebtoken::errors::ErrorKind::InvalidAudience => {
+                ErrorKind::ExpiredSignature => AuthError::TokenExpired,
+                ErrorKind::InvalidAudience => {
                     AuthError::InvalidToken(format!("Invalid audience: {}", e))
                 }
-                jsonwebtoken::errors::ErrorKind::InvalidIssuer => {
+                ErrorKind::InvalidIssuer => {
                     AuthError::InvalidToken(format!("Invalid issuer: {}", e))
                 }
                 _ => AuthError::InvalidToken(format!("{}", e)),
@@ -369,7 +371,7 @@ impl HmacTokenValidator {
 
         let token_data = decode::<AccessTokenClaims>(token, &self.decoding_key, &validation)
             .map_err(|e| match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::TokenExpired,
+                ErrorKind::ExpiredSignature => AuthError::TokenExpired,
                 _ => AuthError::InvalidToken(format!("{}", e)),
             })?;
 

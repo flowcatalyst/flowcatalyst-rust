@@ -3,6 +3,8 @@
 //! Represents a tenant/organization in the multi-tenant system.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 /// Client status — matches TypeScript ClientStatus enum
@@ -97,9 +99,7 @@ impl Client {
     pub fn new(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Client,
-            ),
+            id: tsid::generate(EntityType::Client),
             name: name.into(),
             identifier: identifier.into(),
             status: ClientStatus::Active,

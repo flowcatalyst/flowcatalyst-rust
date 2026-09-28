@@ -7,8 +7,12 @@ mod support;
 
 use std::sync::Arc;
 
+use fc_fnhost_core::logging::SlogJsonLayer;
 use serde_json::json;
+use std::io;
+use std::io::Write;
 use support::listener::{doc, entry, Harness};
+use tracing::subscriber;
 
 const ADDR: &str = "app.orders.ship";
 
@@ -20,9 +24,8 @@ async fn every_log_line_inside_an_invocation_carries_its_fields() {
         let lines = lines.clone();
         move || CaptureWriter(lines.clone())
     };
-    let subscriber =
-        tracing_subscriber::registry().with(fc_fnhost_core::logging::SlogJsonLayer::new(writer));
-    let _default = tracing::subscriber::set_default(subscriber);
+    let subscriber = tracing_subscriber::registry().with(SlogJsonLayer::new(writer));
+    let _default = subscriber::set_default(subscriber);
 
     let h = Harness::start(doc(vec![entry(
         ADDR,
@@ -54,13 +57,13 @@ async fn every_log_line_inside_an_invocation_carries_its_fields() {
 
 struct CaptureWriter(Arc<parking_lot::Mutex<Vec<u8>>>);
 
-impl std::io::Write for CaptureWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for CaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().extend_from_slice(buf);
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }

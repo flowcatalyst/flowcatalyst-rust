@@ -37,6 +37,7 @@ use fc_platform_iam::{
     login_attempt::{entity::LoginOutcome, repository::LoginAttemptRepository},
     principal::repository::PrincipalRepository,
 };
+use webauthn_rs::prelude::Passkey;
 
 #[derive(Clone)]
 pub struct WebauthnApiState {
@@ -369,10 +370,7 @@ pub async fn authenticate_begin(
     }
 }
 
-async fn resolve_real_credentials(
-    state: &WebauthnApiState,
-    email: &str,
-) -> Option<Vec<webauthn_rs::prelude::Passkey>> {
+async fn resolve_real_credentials(state: &WebauthnApiState, email: &str) -> Option<Vec<Passkey>> {
     if ensure_internal_auth(email, &state.email_domain_mapping_repo)
         .await
         .is_err()

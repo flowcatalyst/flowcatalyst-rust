@@ -10,8 +10,16 @@ use utoipa::ToSchema;
 
 use super::entity::{Connection, ConnectionStatus};
 use super::repository::ConnectionRepository;
+use crate::connection::operations::CreateConnectionUseCase;
+use crate::connection::operations::DeleteConnectionUseCase;
+use crate::connection::operations::UpdateConnectionUseCase;
+use axum::http::StatusCode;
+use fc_platform_core::directory::ApplicationAccess;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -109,22 +117,10 @@ pub struct ConnectionsQuery {
 pub struct ConnectionsState {
     pub connection_repo: Arc<ConnectionRepository>,
     /// Resolves an `applicationCode` within the caller's application scope.
-    pub app_access: Arc<dyn fc_platform_core::directory::ApplicationAccess>,
-    pub create_use_case: Arc<
-        crate::connection::operations::CreateConnectionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub update_use_case: Arc<
-        crate::connection::operations::UpdateConnectionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::connection::operations::DeleteConnectionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub app_access: Arc<dyn ApplicationAccess>,
+    pub create_use_case: Arc<CreateConnectionUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateConnectionUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteConnectionUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new connection
@@ -145,11 +141,11 @@ pub async fn create_connection(
     State(state): State<ConnectionsState>,
     auth: Authenticated,
     Json(req): Json<CreateConnectionRequest>,
-) -> Result<(axum::http::StatusCode, Json<ConnectionResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<ConnectionResponse>), PlatformError> {
     use crate::connection::operations::CreateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_connections(&auth.0)?;
+    checks::can_create_connections(&auth.0)?;
 
     // An application the caller cannot act on is the same 404 as a
     // missing one (owner ruling).
@@ -184,7 +180,7 @@ pub async fn create_connection(
         .find_by_id(&event.connection_id)
         .await?
         .or_not_found("Connection", &event.connection_id)?;
-    Ok((axum::http::StatusCode::CREATED, Json(conn.into())))
+    Ok((StatusCode::CREATED, Json(conn.into())))
 }
 
 /// List connections
@@ -208,13 +204,13 @@ pub async fn list_connections(
     auth: Authenticated,
     Query(query): Query<ConnectionsQuery>,
 ) -> Result<Json<ConnectionsListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_connections(&auth.0)?;
+    checks::can_read_connections(&auth.0)?;
 
     let connections = state
         .connection_repo
         .find_with_filters(
             query.client_id.as_deref(),
-            fc_platform_core::shared::enum_str::parse_opt(query.status.as_deref())?,
+            enum_str::parse_opt(query.status.as_deref())?,
             query.service_account_id.as_deref(),
         )
         .await?;
@@ -251,7 +247,7 @@ pub async fn get_connection(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectionResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_connections(&auth.0)?;
+    checks::can_read_connections(&auth.0)?;
 
     let conn = state
         .connection_repo
@@ -283,11 +279,11 @@ pub async fn update_connection(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<UpdateConnectionRequest>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_connections(&auth.0)?;
+    checks::can_update_connections(&auth.0)?;
 
     let application_code = match req.application_code.as_deref().map(str::trim) {
         Some(code) if !code.is_empty() => Some(
@@ -324,7 +320,7 @@ pub async fn update_connection(
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete connection by ID
@@ -346,11 +342,11 @@ pub async fn delete_connection(
     State(state): State<ConnectionsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::connection::operations::DeleteConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_connections(&auth.0)?;
+    checks::can_delete_connections(&auth.0)?;
 
     // The use case answers 404 for a missing connection, then checks the
     // caller's scope on it (Go's order).
@@ -358,7 +354,7 @@ pub async fn delete_connection(
     let cmd = DeleteConnectionCommand { connection_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Pause a connection
@@ -384,7 +380,7 @@ pub async fn pause_connection(
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_connections(&auth.0)?;
+    checks::can_update_connections(&auth.0)?;
 
     // Unconditional (a repeat is a no-op write), with Go's per-row scope.
     let cmd = UpdateConnectionCommand {
@@ -430,7 +426,7 @@ pub async fn activate_connection(
     use crate::connection::operations::UpdateConnectionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_connections(&auth.0)?;
+    checks::can_update_connections(&auth.0)?;
 
     // Unconditional (a repeat is a no-op write), with Go's per-row scope.
     let cmd = UpdateConnectionCommand {

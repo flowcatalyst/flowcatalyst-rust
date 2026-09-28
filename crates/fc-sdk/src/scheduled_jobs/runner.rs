@@ -30,7 +30,9 @@ use crate::client::scheduled_jobs::{
     CompletionStatus, InstanceCompleteRequest, InstanceLogRequest, LogLevel,
 };
 use crate::client::{ClientError, FlowCatalystClient};
+use crate::lock::LockHandle;
 use crate::lock::LockProvider;
+use std::error;
 
 const DEFAULT_LOCK_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_RESULT_BYTES: usize = 10_000;
@@ -136,8 +138,7 @@ pub type HandlerFuture =
 
 /// Boxed handler. Closures `Fn(HandlerContext) -> HandlerFuture` are accepted;
 /// see [`ScheduledJobRunner::handler`].
-pub type BoxedHandler =
-    Arc<dyn Fn(HandlerContext) -> HandlerFuture + Send + Sync + 'static>;
+pub type BoxedHandler = Arc<dyn Fn(HandlerContext) -> HandlerFuture + Send + Sync + 'static>;
 
 /// Error wrapper returned from handlers. Use [`HandlerError::msg`] for
 /// ad-hoc string errors, or `?` to bubble any error that implements
@@ -153,7 +154,7 @@ impl HandlerError {
     }
 }
 
-impl<E: std::error::Error> From<E> for HandlerError {
+impl<E: error::Error> From<E> for HandlerError {
     fn from(e: E) -> Self {
         Self {
             message: e.to_string(),
@@ -361,7 +362,7 @@ async fn run_in_background(
     lock_key: String,
     on_error: Option<OnErrorHook>,
 ) {
-    let mut lock_handle: Option<crate::lock::LockHandle> = None;
+    let mut lock_handle: Option<LockHandle> = None;
 
     if enforce_lock {
         match lock_provider.acquire(&lock_key, lock_ttl).await {
@@ -444,11 +445,7 @@ async fn run_in_background(
     }
 }
 
-fn invoke_on_error(
-    hook: &Option<OnErrorHook>,
-    err: RunnerError,
-    envelope: &ScheduledJobEnvelope,
-) {
+fn invoke_on_error(hook: &Option<OnErrorHook>, err: RunnerError, envelope: &ScheduledJobEnvelope) {
     if let Some(h) = hook {
         h(err, envelope);
     }

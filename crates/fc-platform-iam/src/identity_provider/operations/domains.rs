@@ -14,6 +14,7 @@ use serde::Serialize;
 use std::sync::Arc;
 
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+use crate::email_domain_mapping::operations;
 use crate::email_domain_mapping::operations::move_provider::plan_move;
 use crate::email_domain_mapping::operations::{
     EmailDomainMappingCreated, EmailDomainMappingUpdated,
@@ -160,10 +161,7 @@ where
         if scope == ScopeType::Client {
             mapping.primary_client_id = client.map(str::to_string);
         }
-        crate::email_domain_mapping::operations::require_tenant_pin(
-            idp.oidc_multi_tenant,
-            &mapping,
-        )?;
+        operations::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
         let event = EmailDomainMappingCreated::new(ctx, &mapping.id, &mapping.email_domain);
         return uow
             .commit(&mapping, &*deps.edm_repo, event, command)

@@ -29,14 +29,17 @@ use tracing::warn;
 
 use super::entity::MethodType;
 use super::login_api::{coded, decode, email_of, unauthorized, TwoFactorLogin};
+use crate::auth::refresh_token_repository::RefreshTokenRepository;
 use fc_platform_core::shared::middleware::OptionalAuth;
+use fc_platform_iam::auth::password_service::PasswordService;
+use fc_platform_iam::portal::policy;
 use fc_platform_iam::principal::entity::Principal;
 
 /// What the account routes need beyond the 2FA state.
 pub struct AccountState {
     pub two_factor: Arc<TwoFactorLogin>,
-    pub password_service: Arc<fc_platform_iam::auth::password_service::PasswordService>,
-    pub refresh_token_repo: Arc<crate::auth::refresh_token_repository::RefreshTokenRepository>,
+    pub password_service: Arc<PasswordService>,
+    pub refresh_token_repo: Arc<RefreshTokenRepository>,
 }
 
 async fn principal_from_session(
@@ -140,7 +143,7 @@ pub async fn change_password(
     // Go's policy (auth/passwordpolicy: length, not common, not the
     // account's own email or name), with its codes and messages.
     let email = p.email().unwrap_or_default().to_string();
-    if let Some(v) = fc_platform_iam::portal::policy::validate(&req.new_password, &email, &p.name) {
+    if let Some(v) = policy::validate(&req.new_password, &email, &p.name) {
         return coded(StatusCode::BAD_REQUEST, v.code, &v.message);
     }
 

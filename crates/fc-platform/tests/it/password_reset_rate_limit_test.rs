@@ -12,8 +12,10 @@ use axum::http::{Request, StatusCode};
 use serde_json::json;
 use tower::ServiceExt;
 
+use axum::body;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::shared::rate_limit_store::PostgresRateLimitStore;
+use std::env;
 use support::TestApp;
 
 async fn request_reset(app: &TestApp, email: &str) -> (StatusCode, String) {
@@ -23,9 +25,7 @@ async fn request_reset(app: &TestApp, email: &str) -> (StatusCode, String) {
         .unwrap();
     let res = app.router.clone().oneshot(req).await.unwrap();
     let status = res.status();
-    let body = axum::body::to_bytes(res.into_body(), 64 * 1024)
-        .await
-        .unwrap();
+    let body = body::to_bytes(res.into_body(), 64 * 1024).await.unwrap();
     (status, String::from_utf8(body.to_vec()).unwrap())
 }
 
@@ -33,7 +33,7 @@ async fn request_reset(app: &TestApp, email: &str) -> (StatusCode, String) {
 #[ignore = "requires Docker"]
 async fn password_reset_email_budget_is_silent() {
     // The default budget: 5 requests per address per hour.
-    std::env::remove_var("FC_RL_PASSWORD_RESET_EMAIL_PER_HOUR");
+    env::remove_var("FC_RL_PASSWORD_RESET_EMAIL_PER_HOUR");
     let app = TestApp::setup_with_rate_limit_store(|pool| {
         Arc::new(PostgresRateLimitStore::new(pool.clone()))
     })

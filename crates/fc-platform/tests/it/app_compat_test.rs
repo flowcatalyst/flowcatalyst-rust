@@ -8,22 +8,25 @@ use crate::support;
 #[allow(unused_imports)]
 use serde_json::{json, Value};
 
+use axum::body::Body;
+use axum::http::Request;
+use axum::http::Response;
+use fc_platform::application::entity::Application;
+use fc_platform::auth::config_entity::AnchorDomain;
+use fc_platform::auth::oauth_entity::OAuthClient;
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::role::entity::permissions;
 use support::{read_json, TestApp};
 
 /// An unauthenticated JSON POST (login, logout).
-async fn post_unauth(
-    app: &TestApp,
-    path: &str,
-    body: Value,
-) -> axum::http::Response<axum::body::Body> {
+async fn post_unauth(app: &TestApp, path: &str, body: Value) -> Response<Body> {
     use tower::ServiceExt;
-    let req = axum::http::Request::builder()
+    let req = Request::builder()
         .method("POST")
         .uri(path)
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(body.to_string()))
+        .body(Body::from(body.to_string()))
         .unwrap();
     app.router.clone().oneshot(req).await.unwrap()
 }
@@ -93,8 +96,7 @@ async fn hr_and_rfp_list_every_active_principal() {
 async fn applications_and_oauth_clients_list_every_row_by_default() {
     let app = TestApp::setup().await;
     let token = app.anchor_admin_token().await;
-    let mut retired =
-        fc_platform::application::entity::Application::new("retired-app", "Retired App");
+    let mut retired = Application::new("retired-app", "Retired App");
     retired.active = false;
     app.repos
         .application_repo
@@ -345,9 +347,7 @@ async fn integral_creates_users_by_client_code_and_anchor_scope() {
     let client_id = create_client(&app, "inhance").await;
     app.repos
         .anchor_domain_repo
-        .insert(&fc_platform::auth::config_entity::AnchorDomain::new(
-            "inhanceapps.com",
-        ))
+        .insert(&AnchorDomain::new("inhanceapps.com"))
         .await
         .expect("insert anchor domain");
 
@@ -512,8 +512,7 @@ async fn hr_outbox_events_are_linked_to_their_client_by_code() {
 #[ignore = "requires Docker"]
 async fn logout_with_client_id_and_no_id_token_hint() {
     let app = TestApp::setup().await;
-    let mut client =
-        fc_platform::auth::oauth_entity::OAuthClient::new("agent-planner", "Agent Planner");
+    let mut client = OAuthClient::new("agent-planner", "Agent Planner");
     client.post_logout_redirect_uris = vec!["https://planner.example.test/auth/logged-out".into()];
     app.repos
         .oauth_client_repo
@@ -626,8 +625,8 @@ async fn auth_me_lists_the_effective_permissions() {
     assert_eq!(body["ssoManaged"], false);
 
     // The super-admin wildcard adds the "*" sentinel.
-    let super_admin = AuthRole::new("platform", "test-super", "Super")
-        .with_permission(fc_platform::role::entity::permissions::ADMIN_ALL);
+    let super_admin =
+        AuthRole::new("platform", "test-super", "Super").with_permission(permissions::ADMIN_ALL);
     app.repos.role_repo.insert(&super_admin).await.unwrap();
     let mut admin = Principal::new_user("root@flowcatalyst.test", UserScope::Anchor);
     admin.assign_role("platform:test-super");
@@ -781,7 +780,7 @@ async fn a_sync_never_replaces_an_existing_users_password_hash() {
 async fn the_application_sync_carries_the_hash_for_new_users() {
     use fc_platform::role::entity::permissions;
     let app = TestApp::setup().await;
-    let hr = fc_platform::application::entity::Application::new("hr", "HR");
+    let hr = Application::new("hr", "HR");
     app.repos.application_repo.insert(&hr).await.unwrap();
     // The app's sync principal: reaches every application, may sync users.
     let syncer = Principal::new_user("hr-sync@inhance.test", UserScope::Anchor);

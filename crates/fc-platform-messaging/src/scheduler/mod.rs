@@ -24,6 +24,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use destination::{
+    DispatchQueueKind, DispatchQueueSettings, PoolCodeResolver, SubscriptionPriorityCache,
+};
+use fc_queue::sqs_publisher::QueueAddressing;
+use fc_queue::sqs_publisher::SqsFifoPublisher;
+pub use publisher::{
+    DispatchPublisher, PostgresDispatchPublisher, PublishItem, PublishOutcome,
+    SingleQueuePublisher, SqsDispatchPublisher,
+};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -36,15 +45,8 @@ pub mod publisher;
 pub mod stale_recovery;
 
 pub use auth::DispatchAuthService;
-pub use destination::{
-    DispatchQueueKind, DispatchQueueSettings, PoolCodeResolver, SubscriptionPriorityCache,
-};
 pub use dispatcher::MessageGroupDispatcher;
 pub use poller::{PausedConnectionCache, PendingJobPoller, GROUP_HOLDING_STATUS_SQL};
-pub use publisher::{
-    DispatchPublisher, PostgresDispatchPublisher, PublishItem, PublishOutcome,
-    SingleQueuePublisher, SqsDispatchPublisher,
-};
 pub use stale_recovery::StaleQueuedJobPoller;
 
 pub use fc_common::DispatchMode;
@@ -148,9 +150,9 @@ impl DispatchScheduler {
         ));
         let publisher: Arc<dyn DispatchPublisher> = match &settings.kind {
             DispatchQueueKind::Sqs { region, account_id } => {
-                let fifo = fc_queue::sqs_publisher::SqsFifoPublisher::from_default_chain(
+                let fifo = SqsFifoPublisher::from_default_chain(
                     Some(region.clone()),
-                    fc_queue::sqs_publisher::QueueAddressing::Composed {
+                    QueueAddressing::Composed {
                         region: region.clone(),
                         account_id: account_id.clone(),
                     },

@@ -8,13 +8,17 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::email_domain_mapping::entity::EmailDomainMapping;
 use crate::email_domain_mapping::provider_move_repository::{ProviderMove, ProviderMoveRepository};
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+use crate::identity_provider::entity::IdentityProvider;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::identity_provider::repository::IdentityProviderRepository;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -48,7 +52,7 @@ pub struct MoveMappingToProviderCommand {
     pub identity_provider_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for MoveMappingToProviderCommand {}
+impl AuditMasked for MoveMappingToProviderCommand {}
 
 pub struct MoveMappingToProviderUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
@@ -120,8 +124,8 @@ impl<U: UnitOfWork> MoveMappingToProviderUseCase<U> {
 /// mapping pinned to a tenant.
 pub(crate) async fn plan_move(
     principal_repo: &PrincipalRepository,
-    mapping: &crate::email_domain_mapping::entity::EmailDomainMapping,
-    target: &crate::identity_provider::entity::IdentityProvider,
+    mapping: &EmailDomainMapping,
+    target: &IdentityProvider,
     link_client: Option<String>,
     ctx: &ExecutionContext,
 ) -> Result<(ProviderMove, EmailDomainMappingProviderChanged), UseCaseError> {
@@ -187,11 +191,7 @@ impl<U: UnitOfWork> UseCase for MoveMappingToProviderUseCase<U> {
         _command: &MoveMappingToProviderCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

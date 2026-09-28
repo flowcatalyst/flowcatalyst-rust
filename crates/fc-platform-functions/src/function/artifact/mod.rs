@@ -38,14 +38,19 @@ pub use platform_ref::PlatformArtifactRef;
 pub use s3::S3ArtifactBlobStore;
 
 use super::Digest;
+use axum::http::StatusCode;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::UseCaseError;
+use std::env;
+use std::path::PathBuf;
+use tokio::io::AsyncRead;
 
 /// The upload cap: 256 MiB, the same constant the fetch side uses (Java
 /// `ArtifactStoreSupport.defaultMaxBytes`).
 pub const MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// A blob's bytes, as [`ArtifactBlobStore::open`] streams them.
-pub type ArtifactStream = Pin<Box<dyn tokio::io::AsyncRead + Send>>;
+pub type ArtifactStream = Pin<Box<dyn AsyncRead + Send>>;
 
 /// Why a store call failed (the reasons of Java's `ArtifactException` a
 /// blob store raises).
@@ -119,7 +124,7 @@ pub fn configure(spec: &str) -> Result<Option<Arc<dyn ArtifactBlobStore>>, Strin
 /// The store `FC_FN_ARTIFACT_STORE` names (Java `Env.java:609`, no default;
 /// fc-dev sets its own).
 pub fn store_from_env() -> Result<Option<Arc<dyn ArtifactBlobStore>>, String> {
-    configure(&std::env::var("FC_FN_ARTIFACT_STORE").unwrap_or_default())
+    configure(&env::var("FC_FN_ARTIFACT_STORE").unwrap_or_default())
 }
 
 /// The publish-time signature policy (Java `Env.java:550,606-607` and
@@ -127,7 +132,7 @@ pub fn store_from_env() -> Result<Option<Arc<dyn ArtifactBlobStore>>, String> {
 /// `off`), which is refused outside `FLOWCATALYST_DEV_MODE`, and
 /// `FC_FN_TRUST_ROOT` (blank: the committed Sigstore public-good root).
 pub fn signatures_from_env() -> Result<fc_function_signing::Signatures, String> {
-    let var = |key: &str| std::env::var(key).unwrap_or_default();
+    let var = |key: &str| env::var(key).unwrap_or_default();
     fc_function_signing::Signatures::resolve(
         fc_function_signing::SignaturesMode::parse(&var("FC_FN_SIGNATURES")),
         java_env_bool(&var("FLOWCATALYST_DEV_MODE")).unwrap_or(false),
@@ -148,7 +153,7 @@ fn java_env_bool(raw: &str) -> Option<bool> {
 /// `file:///abs/dir`, read as an operator writes it: a literal space
 /// (macOS's `Application Support`) and its percent-encoded form both name
 /// the same directory. No host, and an absolute path.
-fn file_dir(spec: &str, rest: &str) -> Result<std::path::PathBuf, String> {
+fn file_dir(spec: &str, rest: &str) -> Result<PathBuf, String> {
     let (host, path) = match rest.find('/') {
         Some(slash) => (&rest[..slash], &rest[slash..]),
         None => (rest, ""),
@@ -170,7 +175,7 @@ fn file_dir(spec: &str, rest: &str) -> Result<std::path::PathBuf, String> {
     if path.as_bytes().get(2) == Some(&b':') {
         return Ok(std::path::PathBuf::from(&path[1..]));
     }
-    Ok(std::path::PathBuf::from(path.into_owned()))
+    Ok(PathBuf::from(path.into_owned()))
 }
 
 /// `s3://bucket[/prefix]`: the bucket is the URI's host (Java reads
@@ -206,9 +211,9 @@ pub fn store_not_configured() -> UseCaseError {
 
 /// `413 ARTIFACT_TOO_LARGE`: a declared `Content-Length` over the cap, or
 /// the running count passing it mid-stream.
-pub fn too_large() -> fc_platform_core::shared::error::PlatformError {
-    fc_platform_core::shared::error::PlatformError::Coded {
-        status: axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+pub fn too_large() -> PlatformError {
+    PlatformError::Coded {
+        status: StatusCode::PAYLOAD_TOO_LARGE,
         code: "ARTIFACT_TOO_LARGE".to_string(),
         message: format!("artifact exceeds the {MAX_BYTES}-byte limit"),
         details: Default::default(),
@@ -292,6 +297,10 @@ pub fn not_uploaded() -> UseCaseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::error::PlatformError;
+    use fc_platform_core::shared::tsid;
+    use std::env;
+    use std::fs;
 
     #[test]
     fn unset_or_blank_is_no_store() {
@@ -301,10 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_file_path_with_a_space_is_accepted_literally_and_percent_encoded() {
-        let base = std::env::temp_dir().join(format!(
-            "fc-blob-cfg-{}",
-            fc_platform_core::shared::tsid::generate_untyped()
-        ));
+        let base = env::temp_dir().join(format!("fc-blob-cfg-{}", tsid::generate_untyped()));
         let dir = base.join("Application Support").join("fn-artifacts");
         assert_eq!(
             file_dir("", &format!("{}", dir.display())).unwrap(),
@@ -317,7 +323,7 @@ mod tests {
             .unwrap()
             .is_some());
         assert!(dir.is_dir(), "the store creates its directory");
-        std::fs::remove_dir_all(&base).unwrap();
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
@@ -381,7 +387,7 @@ mod tests {
             format!("digest mismatch: expected {d} but got {e}")
         );
         let err = too_large();
-        let fc_platform_core::shared::error::PlatformError::Coded {
+        let PlatformError::Coded {
             status,
             code,
             message,

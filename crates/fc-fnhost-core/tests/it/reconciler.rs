@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use fc_fnhost_core::artifact::ArtifactError;
+use fc_fnhost_core::clock::Clock;
 use fc_fnhost_core::clock::{ManualClock, SharedClock};
 use fc_fnhost_core::heartbeat::HostState;
 use fc_fnhost_core::loader::Loaders;
@@ -87,7 +88,7 @@ trait NowValue {
 }
 impl NowValue for ManualClock {
     fn now_value(&self) -> chrono::DateTime<Utc> {
-        fc_fnhost_core::clock::Clock::now(self)
+        Clock::now(self)
     }
 }
 

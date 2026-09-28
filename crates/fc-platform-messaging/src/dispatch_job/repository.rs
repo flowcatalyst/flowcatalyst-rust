@@ -5,9 +5,12 @@ use crate::dispatch_job::entity::{
 };
 use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
 use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus};
+use crate::scheduler;
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::api_common::DecodedCursor;
 use fc_platform_core::shared::enum_str::{corrupt_value, decode};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::tsid;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 // ─── Row structs ─────────────────────────────────────────────────────────────
@@ -1029,7 +1032,7 @@ impl DispatchJobRepository {
         aggregates: &[String],
         codes: &[String],
         search: Option<&str>,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<DispatchJobRead>> {
         let search_pattern = search
@@ -1344,7 +1347,7 @@ impl DispatchJobRepository {
     /// Cursor-paginated raw dispatch jobs. Keyset on `(created_at, id) DESC`.
     pub async fn find_recent_with_cursor(
         &self,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<DispatchJob>> {
         let rows = if let Some(c) = cursor {
@@ -1404,7 +1407,7 @@ impl DispatchJobRepository {
             completed_at,
             request_info,
         } = *attempt;
-        let id = fc_platform_core::shared::tsid::generate_untyped();
+        let id = tsid::generate_untyped();
 
         sqlx::query(
             r#"INSERT INTO msg_dispatch_job_attempts
@@ -1587,7 +1590,7 @@ impl DispatchJobRepository {
             "SELECT EXISTS (SELECT 1 FROM msg_dispatch_jobs \
               WHERE message_group = $1 AND ({}) \
                 AND (sequence, created_at, id) < ($2, $3, $4))",
-            crate::scheduler::GROUP_HOLDING_STATUS_SQL
+            scheduler::GROUP_HOLDING_STATUS_SQL
         );
         let (held,): (bool,) = sqlx::query_as(&sql)
             .bind(group)

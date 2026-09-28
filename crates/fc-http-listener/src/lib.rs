@@ -46,15 +46,27 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
+use http::header;
 use http::{HeaderValue, Method, Request, Response, StatusCode, Uri, Version};
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::{Either, Full};
 use hyper::body::Incoming;
+use hyper::service::Service;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use hyper_util::service::TowerToHyperService;
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::net::SocketAddr;
+use std::sync::MutexGuard;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
+use tokio::time;
 use tokio::time::{Instant, Sleep};
 
 /// A keep-alive connection with no request in flight closes this long after
@@ -70,10 +82,10 @@ pub const REQUEST_READ: Duration = Duration::from_secs(30);
 /// `X-Forwarded-For` is present, as Go's `ratelimit.ClientIP` falls back to
 /// `RemoteAddr`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PeerAddr(pub std::net::SocketAddr);
+pub struct PeerAddr(pub SocketAddr);
 
 /// Boxed error, as hyper and tower use.
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub type BoxError = Box<dyn error::Error + Send + Sync>;
 
 /// The body a wrapped service sees: the connection's, read against the
 /// request's deadline.
@@ -131,8 +143,8 @@ pub async fn serve<S, B>(
     B::Error: Into<BoxError>,
 {
     let timeouts = Arc::new(timeouts);
-    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let mut connections = tokio::task::JoinSet::new();
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let mut connections = JoinSet::new();
     let mut shutdown = std::pin::pin!(shutdown);
     loop {
         tokio::select! {
@@ -142,12 +154,12 @@ pub async fn serve<S, B>(
                     Err(e) => {
                         // EMFILE and friends: back off, keep serving.
                         tracing::warn!(error = %e, "accepting a connection failed");
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
                 };
                 let _ = stream.set_nodelay(true);
-                let service = hyper_util::service::TowerToHyperService::new(service.clone());
+                let service = TowerToHyperService::new(service.clone());
                 let timeouts = timeouts.clone();
                 let mut stop = stop_rx.clone();
                 connections.spawn(async move {
@@ -179,10 +191,7 @@ pub async fn serve_connection<S, B>(
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), BoxError>
 where
-    S: hyper::service::Service<Request<RequestBody>, Response = Response<B>>
-        + Send
-        + Sync
-        + 'static,
+    S: Service<Request<RequestBody>, Response = Response<B>> + Send + Sync + 'static,
     S::Future: Send + 'static,
     S::Error: Into<BoxError>,
     B: Body<Data = Bytes> + Send + 'static,
@@ -275,7 +284,7 @@ impl ConnState {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Phase> {
+    fn lock(&self) -> MutexGuard<'_, Phase> {
         self.phase.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -343,7 +352,7 @@ impl ConnState {
                 Some(at) if at <= Instant::now() => return,
                 Some(at) => {
                     tokio::select! {
-                        _ = tokio::time::sleep_until(at) => {}
+                        _ = time::sleep_until(at) => {}
                         _ = changed => {}
                     }
                 }
@@ -362,7 +371,7 @@ impl ConnState {
                 Some((at, action)) if at <= Instant::now() => return action,
                 Some((at, _)) => {
                     tokio::select! {
-                        _ = tokio::time::sleep_until(at) => {}
+                        _ = time::sleep_until(at) => {}
                         _ = changed => {}
                     }
                 }
@@ -447,12 +456,9 @@ struct Timed<S> {
     peer: Option<PeerAddr>,
 }
 
-impl<S, B> hyper::service::Service<Request<Incoming>> for Timed<S>
+impl<S, B> Service<Request<Incoming>> for Timed<S>
 where
-    S: hyper::service::Service<Request<RequestBody>, Response = Response<B>>
-        + Send
-        + Sync
-        + 'static,
+    S: Service<Request<RequestBody>, Response = Response<B>> + Send + Sync + 'static,
     S::Future: Send + 'static,
     B: Body<Data = Bytes> + Send + 'static,
 {
@@ -502,11 +508,11 @@ fn request_timeout<B>(body: &'static str, http1: bool) -> Response<ResponseBody<
     *response.status_mut() = StatusCode::REQUEST_TIMEOUT;
     let headers = response.headers_mut();
     headers.insert(
-        http::header::CONTENT_TYPE,
+        header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
     if http1 {
-        headers.insert(http::header::CONNECTION, HeaderValue::from_static("close"));
+        headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     }
     response
 }
@@ -554,8 +560,8 @@ pub enum BodyReadError {
     Connection(BoxError),
 }
 
-impl std::fmt::Display for BodyReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for BodyReadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::TimedOut => f.write_str("the request body was not received in time"),
             Self::Connection(e) => write!(f, "{e}"),
@@ -563,8 +569,8 @@ impl std::fmt::Display for BodyReadError {
     }
 }
 
-impl std::error::Error for BodyReadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl error::Error for BodyReadError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::TimedOut => None,
             Self::Connection(e) => Some(e.as_ref()),
@@ -603,7 +609,7 @@ impl<B> DeadlineBody<B> {
     fn new(inner: B, at: Instant, deadline: Deadline) -> Self {
         Self {
             inner,
-            sleep: Box::pin(tokio::time::sleep_until(at)),
+            sleep: Box::pin(time::sleep_until(at)),
             deadline,
             timed_out: Arc::new(AtomicBool::new(false)),
             done: false,

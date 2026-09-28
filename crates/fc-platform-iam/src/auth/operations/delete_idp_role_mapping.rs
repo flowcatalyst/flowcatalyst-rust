@@ -6,9 +6,14 @@ use std::sync::Arc;
 
 use super::events::IdpRoleMappingDeleted;
 use crate::auth::config_repository::IdpRoleMappingRepository;
+use crate::role::ceiling;
+use crate::role::repository::RoleRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
+use std::slice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,19 +21,19 @@ pub struct DeleteIdpRoleMappingCommand {
     pub mapping_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteIdpRoleMappingCommand {}
+impl AuditMasked for DeleteIdpRoleMappingCommand {}
 
 pub struct DeleteIdpRoleMappingUseCase<U: UnitOfWork> {
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
     /// The mapped role's ceiling (owner ruling 14).
-    role_repo: Arc<crate::role::repository::RoleRepository>,
+    role_repo: Arc<RoleRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> DeleteIdpRoleMappingUseCase<U> {
     pub fn new(
         idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
-        role_repo: Arc<crate::role::repository::RoleRepository>,
+        role_repo: Arc<RoleRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
@@ -62,18 +67,16 @@ impl<U: UnitOfWork> UseCase for DeleteIdpRoleMappingUseCase<U> {
         command: &DeleteIdpRoleMappingCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-            ctx.caller(),
-        )?;
+        checks::require_anchor_scope(ctx.caller())?;
         if let Some(mapping) = self
             .idp_role_mapping_repo
             .find_by_id(&command.mapping_id)
             .await?
         {
-            crate::role::ceiling::require_role_change(
+            ceiling::require_role_change(
                 ctx.caller(),
                 &self.role_repo,
-                std::slice::from_ref(&mapping.platform_role_name),
+                slice::from_ref(&mapping.platform_role_name),
                 &[],
             )
             .await?;

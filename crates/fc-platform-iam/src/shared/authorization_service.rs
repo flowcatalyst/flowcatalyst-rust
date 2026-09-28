@@ -8,12 +8,17 @@
 pub use fc_platform_core::shared::authorization_service::*;
 
 use crate::application::entity::Application;
+use crate::application::repository;
+use crate::auth::auth_service;
 use crate::auth::auth_service::AccessTokenClaims;
+use crate::principal::entity::Principal;
 use crate::role::repository::RoleRepository;
 use crate::{
     application::repository::ApplicationRepository, principal::repository::PrincipalRepository,
 };
 use dashmap::DashMap;
+use fc_platform_core::directory::ApplicationAccess;
+use fc_platform_core::directory::ApplicationRef;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use std::collections::HashSet;
@@ -52,7 +57,7 @@ pub fn auth_context_from_claims(
 /// Clients are the home client and the assigned ones as bare ids, `*`
 /// for an anchor.
 pub fn auth_context_for_session(
-    principal: &crate::principal::entity::Principal,
+    principal: &Principal,
     permissions: HashSet<String>,
 ) -> AuthContext {
     let accessible_clients = if principal.scope.is_anchor() {
@@ -74,7 +79,7 @@ pub fn auth_context_for_session(
         name: principal.name.clone(),
         accessible_clients,
         permissions,
-        roles: crate::auth::auth_service::role_names(principal),
+        roles: auth_service::role_names(principal),
         credential: Credential::SessionCookie,
     }
 }
@@ -139,7 +144,7 @@ impl AuthorizationService {
             return Ok(None);
         }
         let permissions = self
-            .resolve_permissions(&crate::auth::auth_service::role_names(&principal))
+            .resolve_permissions(&auth_service::role_names(&principal))
             .await?;
         Ok(Some(auth_context_for_session(&principal, permissions)))
     }
@@ -336,15 +341,15 @@ impl ApplicationAccessService {
 }
 
 #[async_trait::async_trait]
-impl fc_platform_core::directory::ApplicationAccess for ApplicationAccessService {
+impl ApplicationAccess for ApplicationAccessService {
     async fn require_application_access(
         &self,
         context: &AuthContext,
         app_code: &str,
-    ) -> Result<fc_platform_core::directory::ApplicationRef> {
+    ) -> Result<ApplicationRef> {
         ApplicationAccessService::require_application_access(self, context, app_code)
             .await
-            .map(crate::application::repository::application_ref)
+            .map(repository::application_ref)
     }
 }
 

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ProcessDeleted;
 use crate::process::entity::ProcessStatus;
 use crate::process::repository::ProcessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -17,7 +19,7 @@ pub struct DeleteProcessCommand {
     pub process_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteProcessCommand {}
+impl AuditMasked for DeleteProcessCommand {}
 
 pub struct DeleteProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
@@ -56,11 +58,7 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
         _command: &DeleteProcessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_delete_processes(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_delete_processes(ctx.caller())?)
     }
 
     async fn execute(

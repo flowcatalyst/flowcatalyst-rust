@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PlatformConfigPropertySet;
+use crate::platform_config::access;
+use crate::platform_config::access_repository::PlatformConfigAccessRepository;
 use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
 use crate::platform_config::repository::PlatformConfigRepository;
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
@@ -60,7 +62,7 @@ pub struct SetPlatformConfigPropertyUseCase<U: UnitOfWork> {
     /// configured; setting a SECRET then fails rather than store plaintext.
     encryption: Option<Arc<EncryptionService>>,
     /// Role-based access grants, for a non-anchor caller's write access.
-    access_repo: Arc<crate::platform_config::access_repository::PlatformConfigAccessRepository>,
+    access_repo: Arc<PlatformConfigAccessRepository>,
 }
 
 impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
@@ -68,7 +70,7 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         config_repo: Arc<PlatformConfigRepository>,
         unit_of_work: Arc<U>,
         encryption: Option<Arc<EncryptionService>>,
-        access_repo: Arc<crate::platform_config::access_repository::PlatformConfigAccessRepository>,
+        access_repo: Arc<PlatformConfigAccessRepository>,
     ) -> Self {
         Self {
             config_repo,
@@ -120,7 +122,7 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         let roles: &[String] = ctx.caller().auth().map_or(&[], |a| a.roles.as_slice());
-        Ok(crate::platform_config::access::require_config_access(
+        Ok(access::require_config_access(
             &self.access_repo,
             ctx.caller().is_anchor(),
             roles,

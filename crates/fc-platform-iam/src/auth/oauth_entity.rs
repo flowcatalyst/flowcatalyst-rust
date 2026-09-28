@@ -3,6 +3,8 @@
 //! Represents OAuth 2.0 client registrations for external applications.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 /// OAuth client type
@@ -161,8 +163,7 @@ impl OAuthClient {
     fn from_parts(
         #[builder(into)] client_id: String,
         #[builder(into)] client_name: String,
-        #[builder(default = fc_platform_core::shared::tsid::generate(fc_platform_core::shared::tsid::EntityType::OAuthClient))]
-        id: String,
+        #[builder(default = tsid::generate(EntityType::OAuthClient))] id: String,
         #[builder(default = OAuthClientType::Public)] client_type: OAuthClientType,
         client_secret_ref: Option<String>,
         #[builder(default)] redirect_uris: Vec<String>,

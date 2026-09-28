@@ -1,6 +1,8 @@
 //! PasswordResetToken Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 
 /// What a token is for (Go `passwordreset.Purpose`): a reset (forgot
 /// password, admin reset; 15 minutes) or a first-time invite ("set your
@@ -41,9 +43,7 @@ impl PasswordResetToken {
         expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::PasswordResetToken,
-            ),
+            id: tsid::generate(EntityType::PasswordResetToken),
             principal_id: principal_id.into(),
             token_hash: token_hash.into(),
             purpose: TokenPurpose::Reset,

@@ -29,6 +29,7 @@ use sqlx::PgPool;
 use tracing::{debug, warn};
 
 use super::destination::{DestinationInput, DestinationResolver};
+use fc_queue::postgres::PostgresQueue;
 
 /// One claimed job on its way to a queue: the rendered message plus the ids
 /// its destination is resolved from.
@@ -198,7 +199,7 @@ impl PostgresDispatchPublisher {
         pool: PgPool,
         destinations: Arc<DestinationResolver>,
     ) -> Result<Self, fc_queue::QueueError> {
-        fc_queue::postgres::PostgresQueue::new(pool.clone(), String::new(), 30)
+        PostgresQueue::new(pool.clone(), String::new(), 30)
             .init_schema()
             .await?;
         Ok(Self { pool, destinations })
@@ -226,11 +227,11 @@ impl DispatchPublisher for PostgresDispatchPublisher {
                 }
             }
         }
-        let mut queues: HashMap<String, fc_queue::postgres::PostgresQueue> = HashMap::new();
+        let mut queues: HashMap<String, PostgresQueue> = HashMap::new();
         for (i, (item, name)) in items.iter().zip(named).enumerate() {
-            let queue = queues.entry(name.clone()).or_insert_with(|| {
-                fc_queue::postgres::PostgresQueue::new(self.pool.clone(), name.clone(), 30)
-            });
+            let queue = queues
+                .entry(name.clone())
+                .or_insert_with(|| PostgresQueue::new(self.pool.clone(), name.clone(), 30));
             if let Err(e) = queue.publish(item.message.clone()).await {
                 // Everything from here on is unpublished; everything before
                 // it is durably queued and must not be reverted.

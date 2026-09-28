@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{AttemptType, LoginAttempt, LoginOutcome};
+use fc_platform_core::shared::api_common::DecodedCursor;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
@@ -87,7 +88,7 @@ impl LoginAttemptRepository {
     pub async fn find_with_cursor(
         &self,
         filter: &LoginAttemptFilter<'_>,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<LoginAttempt>> {
         // Unparseable dates silently drop that condition.

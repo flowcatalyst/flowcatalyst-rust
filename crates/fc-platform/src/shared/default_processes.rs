@@ -19,6 +19,7 @@ use tracing::info;
 
 use crate::process::entity::{Process, ProcessSource};
 use crate::process::repository::ProcessRepository;
+use crate::process::ProcessCode;
 use crate::shared::error::{PlatformError, Result};
 
 const EXAMPLE_CODE: &str = "platform:fulfilment:on-demand-flow";
@@ -91,7 +92,7 @@ pub async fn seed_default_processes(pool: &PgPool) -> Result<()> {
         return Ok(());
     }
 
-    let code = crate::process::ProcessCode::parse(EXAMPLE_CODE)
+    let code = ProcessCode::parse(EXAMPLE_CODE)
         .map_err(|e| PlatformError::internal(format!("example process code: {}", e)))?;
     let mut process = Process::new(code, EXAMPLE_NAME);
     process.description = Some(EXAMPLE_DESCRIPTION.to_string());

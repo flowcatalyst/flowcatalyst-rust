@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use fc_platform::application::entity::Application;
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::role::entity::roles;
 use fc_platform::role::entity::AuthRole;
 use support::{read_json, TestApp};
 
@@ -62,7 +63,7 @@ async fn setup() -> Fixture {
 
     // The client administrator: CLIENT tier in my client, holding exactly
     // the platform:client-admin role's permissions.
-    let role = fc_platform::role::entity::roles::client_admin();
+    let role = roles::client_admin();
     let caller = Principal::new_user("ca@ca.test", UserScope::Client).with_client_id(&mine.id);
     let granted: Vec<String> = role.permissions.iter().cloned().collect();
     let admin = app

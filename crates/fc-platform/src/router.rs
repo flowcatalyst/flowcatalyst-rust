@@ -11,6 +11,11 @@
 //!
 //! The binaries add their own layers on top (`AuthLayer`, tracing, CORS).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "the module list: the route-wiring scanner reads each `crate::<module>::routes(ctx)`"
+)]
+
 use axum::{
     response::{IntoResponse, Json},
     routing::get,

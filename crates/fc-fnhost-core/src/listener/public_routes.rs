@@ -19,6 +19,8 @@ use http::HeaderMap;
 
 use crate::desired::PublicRouteRef;
 use crate::env::TrustedProxies;
+use crate::java;
+use std::cmp::Reverse;
 
 /// The alias an exact hostname match resolves to.
 pub const LIVE: &str = LIVE_ALIAS;
@@ -58,7 +60,7 @@ impl PublicRouteTable {
                 });
         }
         for routes in by_host.values_mut() {
-            routes.sort_by_key(|r| std::cmp::Reverse(r.segments.len())); // stable
+            routes.sort_by_key(|r| Reverse(r.segments.len())); // stable
         }
         Self { by_host }
     }
@@ -146,7 +148,7 @@ pub(crate) fn remote_address(
     let Some(xff) = headers
         .get("x-forwarded-for")
         .map(|v| super::latin1(v.as_bytes()))
-        .filter(|v| !crate::java::is_blank(v))
+        .filter(|v| !java::is_blank(v))
     else {
         return peer_text;
     };

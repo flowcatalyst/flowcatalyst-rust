@@ -6,7 +6,9 @@ use sqlx::PgPool;
 
 use super::entity::CorsAllowedOrigin;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct CorsOriginRow {
@@ -84,12 +86,8 @@ impl HasId for CorsAllowedOrigin {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<CorsAllowedOrigin> for CorsOriginRepository {
-    async fn persist(
-        &self,
-        o: &CorsAllowedOrigin,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<CorsAllowedOrigin> for CorsOriginRepository {
+    async fn persist(&self, o: &CorsAllowedOrigin, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO tnt_cors_allowed_origins
@@ -111,11 +109,7 @@ impl fc_platform_core::usecase::Persist<CorsAllowedOrigin> for CorsOriginReposit
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        o: &CorsAllowedOrigin,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, o: &CorsAllowedOrigin, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM tnt_cors_allowed_origins WHERE id = $1")
             .bind(&o.id)
             .execute(&mut **tx.inner)

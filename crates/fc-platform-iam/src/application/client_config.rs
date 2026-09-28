@@ -1,6 +1,8 @@
 //! ApplicationClientConfig Entity — matches TypeScript ApplicationClientConfig
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,9 +28,7 @@ impl ApplicationClientConfig {
     pub fn new(application_id: impl Into<String>, client_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::AppClientConfig,
-            ),
+            id: tsid::generate(EntityType::AppClientConfig),
             application_id: application_id.into(),
             client_id: client_id.into(),
             enabled: true,

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ConnectionDeleted;
 use crate::connection::repository::ConnectionRepository;
 use crate::subscription::repository::SubscriptionRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct DeleteConnectionCommand {
     pub connection_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteConnectionCommand {}
+impl AuditMasked for DeleteConnectionCommand {}
 
 pub struct DeleteConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
@@ -68,10 +70,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
             .find_by_id(&command.connection_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

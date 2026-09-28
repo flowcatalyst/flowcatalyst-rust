@@ -8,6 +8,8 @@ use sqlx::PgPool;
 
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 /// The facts an action decides on.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -67,12 +69,8 @@ impl DispatchJobActionsRepository {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<JobsRequeue> for DispatchJobActionsRepository {
-    async fn persist(
-        &self,
-        r: &JobsRequeue,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<JobsRequeue> for DispatchJobActionsRepository {
+    async fn persist(&self, r: &JobsRequeue, tx: &mut DbTx<'_>) -> Result<()> {
         if r.jobs.is_empty() {
             return Ok(());
         }
@@ -92,22 +90,14 @@ impl fc_platform_core::usecase::Persist<JobsRequeue> for DispatchJobActionsRepos
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        _r: &JobsRequeue,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, _r: &JobsRequeue, _tx: &mut DbTx<'_>) -> Result<()> {
         Err(PlatformError::internal("a requeue is not deleted"))
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<JobStatusFlip> for DispatchJobActionsRepository {
-    async fn persist(
-        &self,
-        f: &JobStatusFlip,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<JobStatusFlip> for DispatchJobActionsRepository {
+    async fn persist(&self, f: &JobStatusFlip, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "UPDATE msg_dispatch_jobs SET status = $3, completed_at = NOW(), updated_at = NOW() \
              WHERE id = $1 AND created_at = $2",
@@ -120,11 +110,7 @@ impl fc_platform_core::usecase::Persist<JobStatusFlip> for DispatchJobActionsRep
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        _f: &JobStatusFlip,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, _f: &JobStatusFlip, _tx: &mut DbTx<'_>) -> Result<()> {
         Err(PlatformError::internal("a status change is not deleted"))
     }
 }

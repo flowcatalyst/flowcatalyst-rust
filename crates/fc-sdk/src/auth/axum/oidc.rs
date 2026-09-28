@@ -13,12 +13,12 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Query, State},
-    http::{HeaderMap, StatusCode, header::SET_COOKIE},
+    http::{header::SET_COOKIE, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::PkceChallenge;
@@ -27,6 +27,8 @@ use super::crypto::SessionCrypto;
 use super::principal::AuthMechanism;
 use super::session::{PrincipalSnapshot, SessionPayload, SessionTokens};
 use super::state::AuthState;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 const STATE_COOKIE: &str = "fc_oauth_state";
 
@@ -174,7 +176,11 @@ pub async fn callback_handler(
         .write(&session, &mut out_headers)
         .await
     {
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("session write: {e}")).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("session write: {e}"),
+        )
+            .into_response();
     }
 
     let mut resp = Redirect::to(&bag.return_to).into_response();
@@ -213,7 +219,9 @@ fn sanitize_return_to(raw: Option<&str>) -> String {
     let Some(v) = raw else {
         return "/".to_string();
     };
-    let decoded = urlencoding::decode(v).map(|c| c.into_owned()).unwrap_or_default();
+    let decoded = urlencoding::decode(v)
+        .map(|c| c.into_owned())
+        .unwrap_or_default();
     if decoded.starts_with('/') && !decoded.starts_with("//") {
         decoded
     } else {
@@ -263,8 +271,12 @@ fn override_state(url: &str, state_value: &str, code_challenge: &str) -> String 
         for pair in query.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
                 params.insert(
-                    urlencoding::decode(k).map(|c| c.into_owned()).unwrap_or_default(),
-                    urlencoding::decode(v).map(|c| c.into_owned()).unwrap_or_default(),
+                    urlencoding::decode(k)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_default(),
+                    urlencoding::decode(v)
+                        .map(|c| c.into_owned())
+                        .unwrap_or_default(),
                 );
             }
         }
@@ -287,9 +299,8 @@ fn override_state(url: &str, state_value: &str, code_challenge: &str) -> String 
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
-

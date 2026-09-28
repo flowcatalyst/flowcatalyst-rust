@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 
 use super::entity::LoginAttempt;
 use super::repository::{LoginAttemptFilter, LoginAttemptRepository};
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::enum_str::parse_opt;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
@@ -108,7 +109,7 @@ pub async fn list_login_attempts(
     auth: Authenticated,
     Query(query): Query<LoginAttemptsQuery>,
 ) -> Result<Json<LoginAttemptsListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_login_attempts(&auth.0)?;
+    checks::can_read_login_attempts(&auth.0)?;
 
     use fc_platform_core::shared::api_common::{decode_cursor, encode_cursor};
 

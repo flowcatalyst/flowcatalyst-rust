@@ -8,10 +8,13 @@ use std::sync::Arc;
 use super::events::CorsOriginAdded;
 use crate::cors::entity::CorsAllowedOrigin;
 use crate::cors::repository::CorsOriginRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use std::sync::OnceLock;
 
 fn origin_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
         Regex::new(r"^https?://[a-zA-Z0-9*]([a-zA-Z0-9*.-]*[a-zA-Z0-9*])?(:\d+)?$").unwrap()
     })
@@ -26,7 +29,7 @@ pub struct AddCorsOriginCommand {
     pub description: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AddCorsOriginCommand {}
+impl AuditMasked for AddCorsOriginCommand {}
 
 pub struct AddCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
@@ -75,11 +78,7 @@ impl<U: UnitOfWork> UseCase for AddCorsOriginUseCase<U> {
         _command: &AddCorsOriginCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -618,14 +618,14 @@ mod tests {
         for i in 0..8 {
             service.set_consumer_running(&format!("c{i}"), true);
         }
-        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
         let mut writers = Vec::new();
         for w in 0..3 {
             let service = service.clone();
             let stop = stop.clone();
-            writers.push(std::thread::spawn(move || {
+            writers.push(thread::spawn(move || {
                 let mut flip = false;
-                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                while !stop.load(Ordering::Relaxed) {
                     flip = !flip;
                     service.set_consumer_running(&format!("w{w}"), flip);
                 }
@@ -633,7 +633,7 @@ mod tests {
         }
         let reporter = {
             let service = service.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 for _ in 0..20_000 {
                     let _ = service.get_health_report(&[]);
                 }
@@ -645,9 +645,9 @@ mod tests {
                 Instant::now() < deadline,
                 "get_health_report deadlocked against concurrent writers"
             );
-            std::thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(10));
         }
-        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        stop.store(true, Ordering::Relaxed);
         for w in writers {
             w.join().unwrap();
         }
@@ -798,7 +798,7 @@ mod tests {
         service.record_consumer_poll("consumer-1");
         // With a 0s threshold, `elapsed() < threshold` is false as soon as
         // any time passes — force it deterministically either way.
-        std::thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
 
         assert!(!service.is_consumer_healthy("consumer-1"));
         assert!(service
@@ -821,7 +821,10 @@ mod tests {
     use async_trait::async_trait;
     use fc_common::QueuedMessage;
     use fc_queue::Result as QueueResult;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::sync::Mutex as StdMutex;
+    use std::thread;
 
     /// A consumer whose `last_broker_activity()` is entirely test-driven —
     /// `poll()` itself is never actually called in these tests, which are
@@ -921,7 +924,7 @@ mod tests {
         let service = HealthService::new(cfg, Arc::new(WarningService::default()));
 
         service.set_consumer_running("consumer-1", true);
-        std::thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
 
         assert!(
             service

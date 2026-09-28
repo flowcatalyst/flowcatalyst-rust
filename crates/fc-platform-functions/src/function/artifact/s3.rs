@@ -21,6 +21,9 @@ use tokio::sync::OnceCell;
 
 use super::{keys, ArtifactBlobStore, ArtifactError, ArtifactStream};
 use crate::function::Digest;
+use aws_sdk_s3::config::Builder;
+use std::fmt;
+use std::fmt::Formatter;
 
 pub struct S3ArtifactBlobStore {
     client: OnceCell<Client>,
@@ -30,8 +33,8 @@ pub struct S3ArtifactBlobStore {
     prefix: String,
 }
 
-impl std::fmt::Debug for S3ArtifactBlobStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for S3ArtifactBlobStore {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("S3ArtifactBlobStore")
             .field("bucket", &self.bucket)
             .field("prefix", &self.prefix)
@@ -44,7 +47,7 @@ fn status_of<E>(e: &SdkError<E, HttpResponse>) -> Option<u16> {
     e.raw_response().map(|r| r.status().as_u16())
 }
 
-fn transport<E: std::fmt::Debug, R: std::fmt::Debug>(e: SdkError<E, R>) -> ArtifactError {
+fn transport<E: fmt::Debug, R: fmt::Debug>(e: SdkError<E, R>) -> ArtifactError {
     ArtifactError::Transport(format!("{e:?}"))
 }
 
@@ -72,7 +75,7 @@ impl S3ArtifactBlobStore {
         self.client
             .get_or_init(|| async {
                 let shared = aws_config::load_defaults(BehaviorVersion::latest()).await;
-                let config = aws_sdk_s3::config::Builder::from(&shared)
+                let config = Builder::from(&shared)
                     .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
                     .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
                     .build();
@@ -219,6 +222,14 @@ mod tests {
     use tokio::io::AsyncReadExt;
 
     use super::*;
+    use aws_sdk_s3::config::Credentials;
+    use aws_sdk_s3::config::Region;
+    use axum::body;
+    use fc_platform_core::shared::tsid;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use tokio::net::TcpListener;
 
     type Objects = Arc<Mutex<BTreeMap<String, Vec<u8>>>>;
 
@@ -235,7 +246,7 @@ mod tests {
             let app = axum::Router::new()
                 .fallback(handle)
                 .with_state(objects.clone());
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             FakeS3 { port, objects }
@@ -246,10 +257,8 @@ mod tests {
                 .behavior_version(BehaviorVersion::latest())
                 .endpoint_url(format!("http://127.0.0.1:{}", self.port))
                 .force_path_style(true)
-                .region(aws_sdk_s3::config::Region::new("us-east-1"))
-                .credentials_provider(aws_sdk_s3::config::Credentials::new(
-                    "test", "test", None, None, "test",
-                ))
+                .region(Region::new("us-east-1"))
+                .credentials_provider(Credentials::new("test", "test", None, None, "test"))
                 .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
                 .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
                 .build();
@@ -274,9 +283,7 @@ mod tests {
         let bucket_only = !path.trim_matches('/').contains('/');
         match method {
             Method::PUT => {
-                let body: Bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
-                    .await
-                    .unwrap();
+                let body: Bytes = body::to_bytes(req.into_body(), usize::MAX).await.unwrap();
                 objects.lock().unwrap().insert(path, body.to_vec());
                 (StatusCode::OK, [("ETag", "\"fake\"")]).into_response()
             }
@@ -350,12 +357,9 @@ mod tests {
         Digest::from_sha256(&Sha256::digest(bytes).into())
     }
 
-    fn source(text: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "fc-s3-src-{}.bin",
-            fc_platform_core::shared::tsid::generate_untyped()
-        ));
-        std::fs::write(&p, text).unwrap();
+    fn source(text: &str) -> PathBuf {
+        let p = env::temp_dir().join(format!("fc-s3-src-{}.bin", tsid::generate_untyped()));
+        fs::write(&p, text).unwrap();
         p
     }
 

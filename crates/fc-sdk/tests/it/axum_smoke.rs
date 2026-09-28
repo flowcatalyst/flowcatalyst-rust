@@ -17,11 +17,13 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::middleware;
+use axum::Router;
+use fc_sdk::auth::axum::generate_session_secret;
 use fc_sdk::auth::axum::{
-    AuthMechanism, AuthRoutes, FlowcatalystAuthBuilder, RbacBuilder, fc_auth_middleware,
+    fc_auth_middleware, AuthMechanism, AuthRoutes, FlowcatalystAuthBuilder, RbacBuilder,
 };
 use fc_sdk::auth::oauth::{OAuthClient, OAuthConfig};
 use fc_sdk::auth::{TokenValidator, TokenValidatorConfig};
@@ -46,7 +48,7 @@ fn build_app() -> Router {
         .build();
 
     let (state, auth_router) = FlowcatalystAuthBuilder::new(validator, oauth)
-        .cookie_secret([fc_sdk::auth::axum::generate_session_secret()])
+        .cookie_secret([generate_session_secret()])
         .rbac(rbac)
         .routes(AuthRoutes::default())
         .build()
@@ -54,7 +56,7 @@ fn build_app() -> Router {
 
     Router::new()
         .merge(auth_router)
-        .layer(axum::middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
             state.clone(),
             fc_auth_middleware,
         ))

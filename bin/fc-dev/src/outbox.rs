@@ -27,11 +27,22 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
+use crate::init;
+use fc_common::config;
 use fc_outbox::enhanced_processor::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
 use fc_outbox::http_dispatcher::HttpDispatcherConfig;
+use fc_outbox::mysql::MySqlOutboxRepository;
 use fc_outbox::postgres::PostgresOutboxRepository;
 use fc_outbox::repository::OutboxRepository;
+use fc_outbox::setup;
 use fc_outbox::{ClientCredentialsTokenSource, TokenSource};
+use fc_platform::shared::server_setup;
+use sqlx::mysql::MySqlPoolOptions;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
+use std::fs;
+use std::str::FromStr;
+use tokio::time;
 
 #[derive(clap::Args, Debug)]
 pub struct OutboxArgs {
@@ -212,11 +223,11 @@ pub async fn run(args: OutboxArgs) -> Result<()> {
 /// The flag if given, else the first non-empty of `envs`.
 fn flag_or_env(flag: Option<String>, envs: &[&str]) -> Option<String> {
     flag.filter(|v| !v.is_empty())
-        .or_else(|| fc_common::config::env_first_opt(envs))
+        .or_else(|| config::env_first_opt(envs))
 }
 
-fn number_or_env<T: std::str::FromStr>(flag: Option<T>, env: &str) -> Option<T> {
-    flag.or_else(|| std::env::var(env).ok().and_then(|v| v.trim().parse().ok()))
+fn number_or_env<T: FromStr>(flag: Option<T>, env: &str) -> Option<T> {
+    flag.or_else(|| env::var(env).ok().and_then(|v| v.trim().parse().ok()))
 }
 
 /// The poller both forms run.
@@ -330,7 +341,7 @@ async fn run_poller(p: Poller) -> Result<()> {
         );
     }
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(p.max_connections)
         .connect(&p.source_url)
         .await
@@ -383,11 +394,11 @@ async fn run_poller(p: Poller) -> Result<()> {
     });
 
     info!("Outbox poller running. Ctrl+C to stop.");
-    fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
+    server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received, stopping outbox poller…");
 
     let _ = shutdown_tx.send(());
-    let _ = tokio::time::timeout(Duration::from_secs(30), handle).await;
+    let _ = time::timeout(Duration::from_secs(30), handle).await;
 
     info!("Outbox poller stopped");
     Ok(())
@@ -441,7 +452,7 @@ async fn run_create_table(args: CreateTableArgs) -> Result<()> {
     })?;
     match outbox_store(&db_type) {
         Some("postgres") => {
-            let pool = sqlx::postgres::PgPoolOptions::new()
+            let pool = PgPoolOptions::new()
                 .max_connections(1)
                 .connect(&db_url)
                 .await
@@ -453,12 +464,12 @@ async fn run_create_table(args: CreateTableArgs) -> Result<()> {
             println!("Created outbox_messages table + indexes (postgres).");
         }
         Some("mysql") => {
-            let pool = sqlx::mysql::MySqlPoolOptions::new()
+            let pool = MySqlPoolOptions::new()
                 .max_connections(1)
                 .connect(&mysql_url(&db_url)?)
                 .await
                 .context("connect mysql")?;
-            fc_outbox::mysql::MySqlOutboxRepository::new(pool)
+            MySqlOutboxRepository::new(pool)
                 .init_schema()
                 .await
                 .context("create outbox table")?;
@@ -467,8 +478,8 @@ async fn run_create_table(args: CreateTableArgs) -> Result<()> {
         Some(_) => {
             let db_name = flag_or_env(args.db_name, &["FC_OUTBOX_MONGO_DB"])
                 .unwrap_or_else(|| "flowcatalyst".to_string());
-            std::env::set_var("FC_OUTBOX_MONGO_DB", &db_name);
-            fc_outbox::setup::connect(
+            env::set_var("FC_OUTBOX_MONGO_DB", &db_name);
+            setup::connect(
                 fc_outbox::OutboxBackend::Mongo,
                 &db_url,
                 fc_outbox::OutboxTableConfig::default(),
@@ -509,7 +520,7 @@ async fn run_init(args: InitArgs) -> Result<()> {
 
     println!();
     println!("Writing outbox config to {} …", env_path.display());
-    crate::init::write_env_updates(&env_path, &updates).context("write .env")?;
+    init::write_env_updates(&env_path, &updates).context("write .env")?;
 
     // Tighten permissions on Unix — this file holds the platform bearer
     // token, which is enough to publish events on behalf of the service
@@ -519,9 +530,9 @@ async fn run_init(args: InitArgs) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         if env_path.exists() {
-            let mut perms = std::fs::metadata(&env_path)?.permissions();
+            let mut perms = fs::metadata(&env_path)?.permissions();
             perms.set_mode(0o600);
-            std::fs::set_permissions(&env_path, perms).ok();
+            fs::set_permissions(&env_path, perms).ok();
         }
     }
 

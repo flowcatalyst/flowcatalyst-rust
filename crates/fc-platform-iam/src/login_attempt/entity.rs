@@ -1,6 +1,8 @@
 //! LoginAttempt Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,9 +50,7 @@ pub struct LoginAttempt {
 impl LoginAttempt {
     pub fn new(attempt_type: AttemptType, outcome: LoginOutcome) -> Self {
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::LoginAttempt,
-            ),
+            id: tsid::generate(EntityType::LoginAttempt),
             attempt_type,
             outcome,
             failure_reason: None,

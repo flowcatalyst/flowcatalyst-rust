@@ -34,9 +34,13 @@
 //!
 //! Requests never carry more than [`MAX_PLATFORM_BATCH`] items.
 
+use crate::token::TokenSource;
 use async_trait::async_trait;
 use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::fmt::Formatter;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -56,7 +60,7 @@ pub struct HttpDispatcherConfig {
     pub api_token: Option<String>,
     /// Mints the bearer per request (e.g. OAuth `client_credentials`);
     /// takes precedence over `api_token`. A 401 invalidates it.
-    pub token_source: Option<std::sync::Arc<dyn crate::token::TokenSource>>,
+    pub token_source: Option<Arc<dyn TokenSource>>,
     /// Connect timeout
     pub connect_timeout: Duration,
     /// Request timeout (Go: 30s)
@@ -75,8 +79,8 @@ impl Default for HttpDispatcherConfig {
     }
 }
 
-impl std::fmt::Debug for HttpDispatcherConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for HttpDispatcherConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpDispatcherConfig")
             .field("api_base_url", &self.api_base_url)
             .field("api_token", &self.api_token.as_ref().map(|_| "<redacted>"))
@@ -439,11 +443,17 @@ fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token::TokenSource;
     use axum::extract::State;
+    use axum::http::HeaderMap;
     use axum::http::StatusCode;
+    use axum::http::Uri;
     use axum::routing::post;
     use axum::{Json, Router};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
 
     fn item(id: &str, item_type: OutboxItemType, payload: serde_json::Value) -> OutboxItem {
         OutboxItem {
@@ -490,7 +500,7 @@ mod tests {
 
     async fn answer(
         State(p): State<Platform>,
-        uri: axum::http::Uri,
+        uri: Uri,
         Json(body): Json<serde_json::Value>,
     ) -> (StatusCode, Json<serde_json::Value>) {
         let ids = body["items"]
@@ -519,7 +529,7 @@ mod tests {
             .route("/api/dispatch-jobs/batch", post(answer))
             .route("/api/audit-logs/batch", post(answer))
             .with_state(platform.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let dispatcher = HttpDispatcher::new(HttpDispatcherConfig {
@@ -811,32 +821,32 @@ mod tests {
     }
 
     /// A token that goes stale until invalidated.
-    struct Rotating(std::sync::atomic::AtomicBool);
+    struct Rotating(AtomicBool);
 
     #[async_trait]
-    impl crate::token::TokenSource for Rotating {
+    impl TokenSource for Rotating {
         async fn token(&self) -> anyhow::Result<String> {
-            Ok(if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(if self.0.load(Ordering::SeqCst) {
                 "good".into()
             } else {
                 "stale".into()
             })
         }
         fn invalidate(&self) {
-            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.0.store(true, Ordering::SeqCst);
         }
     }
 
     struct Failing;
 
     #[async_trait]
-    impl crate::token::TokenSource for Failing {
+    impl TokenSource for Failing {
         async fn token(&self) -> anyhow::Result<String> {
             anyhow::bail!("token endpoint 503")
         }
     }
 
-    async fn bearer_only(headers: axum::http::HeaderMap) -> (StatusCode, Json<serde_json::Value>) {
+    async fn bearer_only(headers: HeaderMap) -> (StatusCode, Json<serde_json::Value>) {
         if headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer good") {
             (
                 StatusCode::OK,
@@ -850,7 +860,7 @@ mod tests {
     #[tokio::test]
     async fn a_token_source_supplies_the_bearer_and_a_401_invalidates_it() {
         let app = Router::new().route("/api/dispatch-jobs/batch", post(bearer_only));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let d = HttpDispatcher::new(HttpDispatcherConfig {

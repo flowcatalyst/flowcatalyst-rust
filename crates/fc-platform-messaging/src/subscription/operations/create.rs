@@ -14,19 +14,21 @@ use crate::{
 };
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use std::sync::OnceLock;
 
 /// Subscription code pattern (Go `validate.CodePattern`): a lowercase
 /// letter, then lowercase alphanumerics and hyphens.
 fn code_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").unwrap())
 }
 
 /// Go's delivery-target rule (`subscription/operations/create.go`):
 /// `^https?://.+`, on the endpoint as sent.
 pub(crate) fn is_http_url(endpoint: &str) -> bool {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN
         .get_or_init(|| Regex::new(r"^https?://.+").unwrap())
         .is_match(endpoint)
@@ -153,7 +155,7 @@ pub struct CreateSubscriptionCommand {
     pub custom_config: Option<Vec<ConfigEntry>>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateSubscriptionCommand {}
+impl AuditMasked for CreateSubscriptionCommand {}
 
 /// Use case for creating a new subscription.
 pub struct CreateSubscriptionUseCase<U: UnitOfWork> {

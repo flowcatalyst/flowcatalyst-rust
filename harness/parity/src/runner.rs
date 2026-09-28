@@ -31,6 +31,8 @@ use crate::normaliser::{java_len, MIN_SUBSTRING_CAPTURE};
 use crate::record::StepRecord;
 use crate::substitution::{resolve_json, resolve_map, resolve_str};
 use crate::vars::Vars;
+use reqwest::redirect::Policy;
+use url::form_urlencoded;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -93,7 +95,7 @@ fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
 impl Runner {
     pub fn new(base_url: &str) -> Result<Self> {
         let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             .connect_timeout(REQUEST_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .http1_only()
@@ -318,8 +320,8 @@ fn encode_pairs(pairs: &IndexMap<String, String>) -> String {
         .map(|(k, v)| {
             format!(
                 "{}={}",
-                url::form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
-                url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
+                form_urlencoded::byte_serialize(k.as_bytes()).collect::<String>(),
+                form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>()
             )
         })
         .collect::<Vec<_>>()
@@ -418,7 +420,7 @@ pub fn query_param(url: &str, param: &str) -> Option<String> {
     if let Some(hash) = query.find('#') {
         query = &query[..hash];
     }
-    url::form_urlencoded::parse(query.as_bytes())
+    form_urlencoded::parse(query.as_bytes())
         .find(|(k, _)| k == param)
         .map(|(_, v)| v.into_owned())
 }

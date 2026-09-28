@@ -16,6 +16,8 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::localstack::LocalStack;
 
+use aws_sdk_sqs::config::Credentials;
+use aws_sdk_sqs::types::QueueAttributeName;
 use fc_queue::sqs_publisher::{AwsSqsBatchApi, FifoPublishItem, QueueAddressing, SqsFifoPublisher};
 
 const ACCOUNT: &str = "000000000000";
@@ -34,9 +36,7 @@ async fn start() -> (ContainerAsync<LocalStack>, Client) {
     let config = aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(REGION))
         .endpoint_url(&endpoint)
-        .credentials_provider(aws_sdk_sqs::config::Credentials::new(
-            "test", "test", None, None, "test",
-        ))
+        .credentials_provider(Credentials::new("test", "test", None, None, "test"))
         .load()
         .await;
     (container, Client::new(&config))
@@ -60,7 +60,7 @@ async fn receive_all(client: &Client, url: &str, want: usize) -> Vec<(String, St
             .max_number_of_messages(10)
             .message_system_attribute_names(MessageSystemAttributeName::MessageGroupId)
             // LocalStack 3.0 answers the older attribute selector only.
-            .attribute_names(aws_sdk_sqs::types::QueueAttributeName::All)
+            .attribute_names(QueueAttributeName::All)
             .wait_time_seconds(1)
             .send()
             .await
@@ -122,20 +122,20 @@ async fn creates_the_fifo_queue_lazily_and_republishes_the_same_id() {
     let attrs = client
         .get_queue_attributes()
         .queue_url(&url)
-        .attribute_names(aws_sdk_sqs::types::QueueAttributeName::All)
+        .attribute_names(QueueAttributeName::All)
         .send()
         .await
         .unwrap();
     let attrs = attrs.attributes().unwrap();
     assert_eq!(
         attrs
-            .get(&aws_sdk_sqs::types::QueueAttributeName::FifoQueue)
+            .get(&QueueAttributeName::FifoQueue)
             .map(String::as_str),
         Some("true")
     );
     assert_eq!(
         attrs
-            .get(&aws_sdk_sqs::types::QueueAttributeName::ContentBasedDeduplication)
+            .get(&QueueAttributeName::ContentBasedDeduplication)
             .map(String::as_str),
         Some("false")
     );

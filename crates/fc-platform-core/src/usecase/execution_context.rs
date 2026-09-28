@@ -134,6 +134,9 @@ impl ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::principal_kind::PrincipalType;
+    use crate::principal_kind::UserScope;
+    use crate::shared::authorization_service::Credential;
 
     #[test]
     fn test_system_context() {
@@ -151,14 +154,14 @@ mod tests {
     fn from_auth_records_the_principal_and_carries_its_authority() {
         let auth = AuthContext {
             principal_id: "prn_1".into(),
-            principal_type: crate::principal_kind::PrincipalType::User,
-            scope: crate::principal_kind::UserScope::Client,
+            principal_type: PrincipalType::User,
+            scope: UserScope::Client,
             email: None,
             name: "Test".into(),
             accessible_clients: vec!["clt_a".into()],
             permissions: Default::default(),
             roles: vec![],
-            credential: crate::shared::authorization_service::Credential::BearerToken,
+            credential: Credential::BearerToken,
         };
         let ctx = ExecutionContext::from_auth(&auth);
         assert_eq!(ctx.principal_id, "prn_1");

@@ -55,6 +55,7 @@ impl LogThrottle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn one_line_per_interval_carrying_what_was_held_back() {
@@ -62,7 +63,7 @@ mod tests {
         assert_eq!(throttle.admit(), Some(0));
         assert_eq!(throttle.admit(), None);
         assert_eq!(throttle.admit(), None);
-        std::thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(60));
         assert_eq!(throttle.admit(), Some(2));
     }
 }

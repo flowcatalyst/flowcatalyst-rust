@@ -69,10 +69,29 @@ pub use inspect::{
     WASM_INVALID, WASM_MEMORY_OVER_CAP,
 };
 
+use crate::db;
+use crate::db::dsn;
+use crate::db::DbBindings;
+use crate::db::DbPools;
+use crate::db::DbSettings;
+use crate::db::JoinFailure;
+use crate::db::SecretResolver;
+use crate::desired::Entry;
+use crate::env::HostEnv;
+use crate::exec::ExecBudget;
+use crate::loader::Loaders;
 use crate::loader::{FunctionLoader, LoadOutcome, LoadRequest};
 use guest::{Emitter, FunctionShared, GuestState};
 use inspect::Refusal;
 use output::GuestLogger;
+use std::collections::BTreeMap;
+use std::fs;
+use std::time::Duration;
+use tokio::runtime::Builder;
+use tokio::runtime::Handle;
+use tokio::runtime::Runtime;
+use tokio::task;
+use tokio::task::JoinHandle;
 
 /// Everything the runtime is configured with.
 #[derive(Debug, Clone)]
@@ -82,14 +101,14 @@ pub struct WasmSettings {
     /// alone can use the whole budget).
     pub threads: usize,
     /// The executing permits every runtime on the host shares.
-    pub budget: crate::exec::ExecBudget,
+    pub budget: ExecBudget,
     /// The artifact cache root (`FC_FN_CACHE_DIR`); `.cwasm` files go in
     /// its `cwasm/` directory.
     pub cache_dir: PathBuf,
     /// The function database pools (`FC_FN_MAX_DB_POOLS`,
     /// `FC_FN_DB_MAX_CONNECTIONS_PER_INVOCATION`,
     /// `FC_FN_DB_SECRET_REFRESH_SECONDS`).
-    pub db: crate::db::DbSettings,
+    pub db: DbSettings,
 }
 
 impl WasmSettings {
@@ -97,7 +116,7 @@ impl WasmSettings {
     /// in-flight invocation the listener can admit (`FC_FN_MAX_CONCURRENCY`),
     /// plus headroom. `budget` is the host's one executing budget, shared
     /// with its other runtimes.
-    pub fn from_env(env: &crate::env::HostEnv, budget: &crate::exec::ExecBudget) -> Self {
+    pub fn from_env(env: &HostEnv, budget: &ExecBudget) -> Self {
         Self {
             engine: EngineSettings {
                 max_instances: u32::try_from(env.max_concurrency.max(1))
@@ -108,10 +127,10 @@ impl WasmSettings {
             threads: env.max_executing.max(1),
             budget: budget.clone(),
             cache_dir: env.cache_dir.clone(),
-            db: crate::db::DbSettings {
+            db: DbSettings {
                 max_pools: env.max_db_pools.max(1) as usize,
                 max_connections_per_invocation: env.db_max_connections_per_invocation,
-                secret_refresh: std::time::Duration::from_secs(env.db_secret_refresh_seconds),
+                secret_refresh: Duration::from_secs(env.db_secret_refresh_seconds),
             },
         }
     }
@@ -124,14 +143,14 @@ pub struct WasmRuntime {
     cwasm: cwasm::CwasmCache,
     guests: GuestRuntime,
     /// The executing permits a guest holds while it runs.
-    budget: crate::exec::ExecBudget,
+    budget: ExecBudget,
     /// The runtime the host itself runs on, for control-plane calls made on
     /// a guest's behalf.
-    host_runtime: Option<tokio::runtime::Handle>,
+    host_runtime: Option<Handle>,
     /// Whether the engine meters fuel (`EngineSettings::consume_fuel`).
     consume_fuel: bool,
     /// The function database pools every loaded version shares.
-    db_pools: Arc<crate::db::DbPools>,
+    db_pools: Arc<DbPools>,
     _ticker: engine::EpochTicker,
 }
 
@@ -140,20 +159,20 @@ impl WasmRuntime {
     /// epoch ticker. Call it inside the host's tokio runtime. Database
     /// secret references are resolved by [`crate::db::default_resolver`].
     pub fn new(settings: WasmSettings) -> Result<Arc<Self>, String> {
-        Self::with_resolver(settings, crate::db::default_resolver())
+        Self::with_resolver(settings, db::default_resolver())
     }
 
     /// [`WasmRuntime::new`] with the given database secret resolver.
     pub fn with_resolver(
         settings: WasmSettings,
-        resolver: Arc<dyn crate::db::SecretResolver>,
+        resolver: Arc<dyn SecretResolver>,
     ) -> Result<Arc<Self>, String> {
         let engine = engine::engine(&settings.engine)
             .map_err(|e| format!("the wasm engine did not start: {e:#}"))?;
         let linker =
             guest::linker(&engine).map_err(|e| format!("the wasm linker did not build: {e:#}"))?;
         let fingerprint = engine::fingerprint(&engine);
-        let guests = tokio::runtime::Builder::new_multi_thread()
+        let guests = Builder::new_multi_thread()
             .worker_threads(settings.threads.max(1))
             .thread_name("fn-guest")
             .enable_all()
@@ -174,9 +193,9 @@ impl WasmRuntime {
             linker,
             guests: GuestRuntime(Some(guests)),
             budget: settings.budget.clone(),
-            host_runtime: tokio::runtime::Handle::try_current().ok(),
+            host_runtime: Handle::try_current().ok(),
             consume_fuel: settings.engine.consume_fuel,
-            db_pools: crate::db::DbPools::new(settings.db.clone(), resolver),
+            db_pools: DbPools::new(settings.db.clone(), resolver),
             _ticker: ticker,
         }))
     }
@@ -186,12 +205,12 @@ impl WasmRuntime {
     }
 
     /// The executing permits guests hold while they run.
-    pub fn budget(&self) -> &crate::exec::ExecBudget {
+    pub fn budget(&self) -> &ExecBudget {
         &self.budget
     }
 
     /// The function database pools.
-    pub fn db_pools(&self) -> &Arc<crate::db::DbPools> {
+    pub fn db_pools(&self) -> &Arc<DbPools> {
         &self.db_pools
     }
 
@@ -199,29 +218,26 @@ impl WasmRuntime {
     /// connection being the value of the secret its `secretRef` names. A
     /// failure is the load failure: `DB_UNSUPPORTED` (no value, or not a
     /// PostgreSQL connection), `DB_SECRET_UNRESOLVED` or `DB_POOL_LIMIT`.
-    async fn join_databases(
-        &self,
-        entry: &crate::desired::Entry,
-    ) -> Result<Option<Arc<crate::db::DbBindings>>, crate::db::JoinFailure> {
+    async fn join_databases(&self, entry: &Entry) -> Result<Option<Arc<DbBindings>>, JoinFailure> {
         if entry.manifest.db.is_empty() {
             return Ok(None);
         }
-        let mut bindings = crate::db::DbBindings::new();
+        let mut bindings = DbBindings::new();
         for db in &entry.manifest.db {
             let name = db.name.value().to_owned();
             let secret = entry
                 .secrets
                 .get(&db.secret_ref)
                 .filter(|v| !v.trim().is_empty())
-                .ok_or_else(|| crate::db::JoinFailure {
-                    code: crate::db::dsn::DB_UNSUPPORTED,
+                .ok_or_else(|| JoinFailure {
+                    code: dsn::DB_UNSUPPORTED,
                     detail: format!("db '{name}': the secret '{}' has no value", db.secret_ref),
                 })?;
             let lease = self
                 .db_pools
                 .join(&entry.address, secret, db.pool_size.max(1) as u32)
                 .await
-                .map_err(|failure| crate::db::JoinFailure {
+                .map_err(|failure| JoinFailure {
                     code: failure.code,
                     detail: format!("db '{name}': {}", failure.detail),
                 })?;
@@ -235,7 +251,7 @@ impl WasmRuntime {
         self.cwasm.dir()
     }
 
-    fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
@@ -253,7 +269,7 @@ impl WasmRuntime {
         entrypoint: &str,
         cap_bytes: u64,
     ) -> Result<(ProxyPre<GuestState>, CompileSource, Option<u64>), Refusal> {
-        let bytes = std::fs::read(artifact).map_err(|e| {
+        let bytes = fs::read(artifact).map_err(|e| {
             Refusal::new(
                 WASM_INVALID,
                 format!("unreadable: {}: {e}", artifact.display()),
@@ -277,10 +293,10 @@ impl WasmRuntime {
 /// The guests' own tokio runtime, shut down in the background when the
 /// last function lets go of it (dropping a runtime inside another one
 /// would panic).
-struct GuestRuntime(Option<tokio::runtime::Runtime>);
+struct GuestRuntime(Option<Runtime>);
 
 impl GuestRuntime {
-    fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    fn spawn<F>(&self, future: F) -> JoinHandle<F::Output>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
@@ -316,10 +332,7 @@ impl WasmLoader {
     }
 
     /// `loaders` plus this loader for each of [`WasmLoader::RUNTIMES`].
-    pub fn register(
-        self: Arc<Self>,
-        mut loaders: crate::loader::Loaders,
-    ) -> crate::loader::Loaders {
+    pub fn register(self: Arc<Self>, mut loaders: Loaders) -> Loaders {
         for runtime in Self::RUNTIMES {
             loaders = loaders.with(runtime, self.clone());
         }
@@ -347,7 +360,7 @@ impl FunctionLoader for WasmLoader {
             let artifact = request.artifact.to_owned();
             let digest = entry.digest.hex().to_owned();
             let entrypoint = entry.manifest.entrypoint.clone();
-            tokio::task::spawn_blocking(move || {
+            task::spawn_blocking(move || {
                 runtime.prepare(&artifact, &digest, &entrypoint, cap_bytes)
             })
             .await
@@ -379,7 +392,7 @@ impl FunctionLoader for WasmLoader {
         // (`config` / `secrets` entries that are setting keys, `httpAllow`
         // entries that are non-blank).
         let manifest = &entry.manifest;
-        let pick = |values: &std::collections::BTreeMap<String, String>, keys: &[String]| {
+        let pick = |values: &BTreeMap<String, String>, keys: &[String]| {
             keys.iter()
                 .filter_map(|k| values.get(k).map(|v| (k.clone(), v.clone())))
                 .collect::<HashMap<_, _>>()

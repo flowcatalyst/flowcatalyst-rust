@@ -1,5 +1,6 @@
 //! Scheduler configuration.
 
+use std::env;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -35,22 +36,22 @@ impl ScheduledJobSchedulerConfig {
     ///   FC_SCHEDULED_JOB_HTTP_TIMEOUT_SECONDS
     pub fn from_env() -> Self {
         let mut c = Self::default();
-        if let Ok(v) = std::env::var("FC_SCHEDULED_JOB_POLL_SECONDS") {
+        if let Ok(v) = env::var("FC_SCHEDULED_JOB_POLL_SECONDS") {
             if let Ok(n) = v.parse::<u64>() {
                 c.poll_interval = Duration::from_secs(n);
             }
         }
-        if let Ok(v) = std::env::var("FC_SCHEDULED_JOB_DISPATCH_SECONDS") {
+        if let Ok(v) = env::var("FC_SCHEDULED_JOB_DISPATCH_SECONDS") {
             if let Ok(n) = v.parse::<u64>() {
                 c.dispatch_interval = Duration::from_secs(n);
             }
         }
-        if let Ok(v) = std::env::var("FC_SCHEDULED_JOB_DISPATCH_BATCH") {
+        if let Ok(v) = env::var("FC_SCHEDULED_JOB_DISPATCH_BATCH") {
             if let Ok(n) = v.parse::<i64>() {
                 c.dispatch_batch_size = n;
             }
         }
-        if let Ok(v) = std::env::var("FC_SCHEDULED_JOB_HTTP_TIMEOUT_SECONDS") {
+        if let Ok(v) = env::var("FC_SCHEDULED_JOB_HTTP_TIMEOUT_SECONDS") {
             if let Ok(n) = v.parse::<u64>() {
                 c.http_timeout = Duration::from_secs(n);
             }

@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use fc_platform::role::entity::{permissions, roles, AuthRole};
+use std::fs;
 
 /// Java's nine `platform:function:*` permissions, in declaration order.
 const JAVA_FUNCTION_PERMISSIONS: [&str; 9] = [
@@ -126,7 +127,7 @@ fn function_permissions_match_the_java_source_when_present() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(
         "../../../flowcatalyst-javalin/server/src/main/java/io/flowcatalyst/platform/seed/Permissions.java",
     );
-    let Ok(source) = std::fs::read_to_string(&path) else {
+    let Ok(source) = fs::read_to_string(&path) else {
         eprintln!("skipped: {} not found", path.display());
         return;
     };

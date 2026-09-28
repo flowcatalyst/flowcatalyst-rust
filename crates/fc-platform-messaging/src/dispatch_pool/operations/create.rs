@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::DispatchPoolCreated;
 use crate::dispatch_pool::entity::DispatchPool;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new dispatch pool.
@@ -64,7 +66,7 @@ pub(crate) fn validate_counts(
     Ok(())
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateDispatchPoolCommand {}
+impl AuditMasked for CreateDispatchPoolCommand {}
 
 /// Use case for creating a new dispatch pool.
 pub struct CreateDispatchPoolUseCase<U: UnitOfWork> {
@@ -117,10 +119,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         command: &CreateDispatchPoolCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::caller_reach::check_scope_access(
-            ctx.caller(),
-            command.client_id.as_deref(),
-        )
+        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     async fn execute(

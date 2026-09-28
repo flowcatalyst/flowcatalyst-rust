@@ -42,6 +42,8 @@ use fc_platform_core::usecase::UseCaseError;
 /// The account facts the check reads (fc-platform-iam: its repository
 /// loads them).
 pub use fc_platform_core::directory::{AccountReach, SigningAccount};
+use fc_platform_core::usecase::Caller;
+use std::result;
 
 /// Why a caller may not use a signing identity. [`fmt::Display`] is the text
 /// the 403 carries (Java's `Refusal.message()`).
@@ -124,7 +126,7 @@ impl SigningReach {
 
     /// Whether the caller may send deliveries signed by `account` (Java
     /// `SigningReach.mayUse`).
-    pub fn may_use(&self, account: &SigningAccount) -> std::result::Result<(), ReachRefusal> {
+    pub fn may_use(&self, account: &SigningAccount) -> result::Result<(), ReachRefusal> {
         if self.is_super_admin() {
             return Ok(());
         }
@@ -166,7 +168,7 @@ impl SigningReach {
         &self,
         application_id: &str,
         application_code: &str,
-    ) -> std::result::Result<(), ReachRefusal> {
+    ) -> result::Result<(), ReachRefusal> {
         if self.is_super_admin() || self.caller_application_id.as_deref() == Some(application_id) {
             Ok(())
         } else {
@@ -197,14 +199,14 @@ pub fn is_super_admin(caller: &AuthContext) -> bool {
 /// `SERVICE_ACCOUNT_OUT_OF_REACH`. The system caller (a platform-authored
 /// write) signs with anything.
 pub async fn require_usable_signers(
-    caller: &fc_platform_core::usecase::Caller,
+    caller: &Caller,
     accounts: &dyn ServiceAccountDirectory,
     connections: &ConnectionRepository,
     service_account_id: Option<&str>,
     account_must_exist: bool,
     connection_id: Option<&str>,
     connection_must_exist: bool,
-) -> std::result::Result<(), UseCaseError> {
+) -> result::Result<(), UseCaseError> {
     let service_account_id = service_account_id.filter(|v| !v.trim().is_empty());
     let connection_id = connection_id.filter(|v| !v.trim().is_empty());
     if service_account_id.is_none() && connection_id.is_none() {
@@ -273,6 +275,7 @@ pub async fn require_usable_signers(
 pub(crate) mod tests {
     use super::*;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use fc_platform_core::shared::authorization_service::Credential;
     use std::collections::HashSet;
 
     pub(crate) fn caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
@@ -285,7 +288,7 @@ pub(crate) mod tests {
             accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
             permissions: perms.iter().map(|p| p.to_string()).collect::<HashSet<_>>(),
             roles: vec![],
-            credential: fc_platform_core::shared::authorization_service::Credential::BearerToken,
+            credential: Credential::BearerToken,
         }
     }
 

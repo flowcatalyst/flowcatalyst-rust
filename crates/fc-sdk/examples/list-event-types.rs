@@ -14,11 +14,13 @@
 //! ```
 
 use fc_sdk::client::FlowCatalystClient;
+use std::env;
+use std::error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = std::env::var("FC_BASE_URL")?;
-    let token = std::env::var("FC_TOKEN")?;
+async fn main() -> Result<(), Box<dyn error::Error>> {
+    let base_url = env::var("FC_BASE_URL")?;
+    let token = env::var("FC_TOKEN")?;
 
     let client = FlowCatalystClient::new(base_url).with_token(token);
     let event_types = client.event_types().list(None, None, None).await?;

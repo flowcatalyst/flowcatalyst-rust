@@ -12,13 +12,27 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::auth::config_entity::AuthConfigType;
 use crate::auth::config_entity::{AnchorDomain, AuthProvider, ClientAuthConfig, IdpRoleMapping};
 use crate::auth::config_repository::{
     AnchorDomainRepository, ClientAuthConfigRepository, IdpRoleMappingRepository,
 };
+use crate::auth::operations::CreateAnchorDomainUseCase;
+use crate::auth::operations::CreateAuthConfigUseCase;
+use crate::auth::operations::CreateIdpRoleMappingUseCase;
+use crate::auth::operations::DeleteAnchorDomainUseCase;
+use crate::auth::operations::DeleteAuthConfigUseCase;
+use crate::auth::operations::DeleteIdpRoleMappingUseCase;
+use crate::auth::operations::UpdateAnchorDomainUseCase;
+use crate::auth::operations::UpdateAuthConfigUseCase;
+use crate::identity_provider::api;
+use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::shared::api_common::CreatedResponse;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 // ============================================================================
 // Anchor Domains
@@ -269,9 +283,7 @@ impl From<ClientAuthConfig> for ClientAuthConfigResponse {
 }
 
 /// Go's `ParseAuthConfigType`: the exact upper-case names.
-fn parse_config_type(
-    value: &str,
-) -> Result<crate::auth::config_entity::AuthConfigType, PlatformError> {
+fn parse_config_type(value: &str) -> Result<AuthConfigType, PlatformError> {
     use crate::auth::config_entity::AuthConfigType;
     match value {
         "ANCHOR" => Ok(AuthConfigType::Anchor),
@@ -359,46 +371,25 @@ pub struct AuthConfigState {
     pub client_auth_config_repo: Arc<ClientAuthConfigRepository>,
     pub idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
     /// Used for counting users by email domain
-    pub principal_repo: Arc<crate::principal::repository::PrincipalRepository>,
-    pub unit_of_work: Arc<fc_platform_core::usecase::PgUnitOfWork>,
+    pub principal_repo: Arc<PrincipalRepository>,
+    pub unit_of_work: Arc<PgUnitOfWork>,
     /// Encrypts an auth config's OIDC client secret before it reaches the
     /// command (Go `encryptOIDCSecretRef`). `None` without an app key.
-    pub encryption_service:
-        Option<Arc<fc_platform_core::shared::encryption_service::EncryptionService>>,
+    pub encryption_service: Option<Arc<EncryptionService>>,
 
     // Anchor domain use cases
-    pub create_anchor_domain_use_case: Arc<
-        crate::auth::operations::CreateAnchorDomainUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_anchor_domain_use_case: Arc<
-        crate::auth::operations::UpdateAnchorDomainUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub delete_anchor_domain_use_case: Arc<
-        crate::auth::operations::DeleteAnchorDomainUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
+    pub create_anchor_domain_use_case: Arc<CreateAnchorDomainUseCase<PgUnitOfWork>>,
+    pub update_anchor_domain_use_case: Arc<UpdateAnchorDomainUseCase<PgUnitOfWork>>,
+    pub delete_anchor_domain_use_case: Arc<DeleteAnchorDomainUseCase<PgUnitOfWork>>,
 
     // Auth config use cases
-    pub create_auth_config_use_case: Arc<
-        crate::auth::operations::CreateAuthConfigUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_auth_config_use_case: Arc<
-        crate::auth::operations::UpdateAuthConfigUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub delete_auth_config_use_case: Arc<
-        crate::auth::operations::DeleteAuthConfigUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
+    pub create_auth_config_use_case: Arc<CreateAuthConfigUseCase<PgUnitOfWork>>,
+    pub update_auth_config_use_case: Arc<UpdateAuthConfigUseCase<PgUnitOfWork>>,
+    pub delete_auth_config_use_case: Arc<DeleteAuthConfigUseCase<PgUnitOfWork>>,
 
     // IdP role mapping use cases
-    pub create_idp_role_mapping_use_case: Arc<
-        crate::auth::operations::CreateIdpRoleMappingUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_idp_role_mapping_use_case: Arc<
-        crate::auth::operations::DeleteIdpRoleMappingUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub create_idp_role_mapping_use_case: Arc<CreateIdpRoleMappingUseCase<PgUnitOfWork>>,
+    pub delete_idp_role_mapping_use_case: Arc<DeleteIdpRoleMappingUseCase<PgUnitOfWork>>,
 }
 
 // ============================================================================
@@ -427,7 +418,7 @@ pub async fn create_anchor_domain(
     use crate::auth::operations::CreateAnchorDomainCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_anchor_domains(&auth.0)?;
+    checks::can_create_anchor_domains(&auth.0)?;
 
     let cmd = CreateAnchorDomainCommand {
         domain: req.domain.trim().to_lowercase(),
@@ -459,7 +450,7 @@ pub async fn list_anchor_domains(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
 ) -> Result<Json<AnchorDomainListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_anchor_domains(&auth.0)?;
+    checks::can_read_anchor_domains(&auth.0)?;
 
     let items = state
         .anchor_domain_repo
@@ -491,7 +482,7 @@ pub async fn get_anchor_domain(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AnchorDomainResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_anchor_domains(&auth.0)?;
+    checks::can_read_anchor_domains(&auth.0)?;
 
     let domain = state
         .anchor_domain_repo
@@ -529,7 +520,7 @@ pub async fn check_anchor_domain(
     auth: Authenticated,
     Path(domain): Path<String>,
 ) -> Result<Json<CheckAnchorDomainResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_anchor_domains(&auth.0)?;
+    checks::can_read_anchor_domains(&auth.0)?;
 
     let is_anchor = state
         .anchor_domain_repo
@@ -564,7 +555,7 @@ pub async fn delete_anchor_domain(
     use crate::auth::operations::DeleteAnchorDomainCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_anchor_domains(&auth.0)?;
+    checks::can_delete_anchor_domains(&auth.0)?;
 
     let cmd = DeleteAnchorDomainCommand {
         anchor_domain_id: id,
@@ -611,7 +602,7 @@ pub async fn update_anchor_domain(
     use crate::auth::operations::UpdateAnchorDomainCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_anchor_domains(&auth.0)?;
+    checks::can_update_anchor_domains(&auth.0)?;
 
     let cmd = UpdateAnchorDomainCommand {
         anchor_domain_id: id,
@@ -652,7 +643,7 @@ pub async fn create_client_auth_config(
     use crate::auth::operations::CreateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_auth_configs(&auth.0)?;
+    checks::can_create_auth_configs(&auth.0)?;
 
     // Go validates the domain before the enums; an invalid domain is the
     // use case's INVALID_EMAIL_DOMAIN whatever the other fields say.
@@ -668,7 +659,7 @@ pub async fn create_client_auth_config(
     } else {
         (Default::default(), AuthProvider::Internal)
     };
-    let oidc_client_secret_ref = crate::identity_provider::api::seal_client_secret(
+    let oidc_client_secret_ref = api::seal_client_secret(
         req.oidc_client_secret_ref,
         state.encryption_service.as_deref(),
     )?;
@@ -717,7 +708,7 @@ pub async fn get_client_auth_config(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAuthConfigResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_auth_configs(&auth.0)?;
+    checks::can_read_auth_configs(&auth.0)?;
 
     let config = state
         .client_auth_config_repo
@@ -743,7 +734,7 @@ pub async fn list_client_auth_configs(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
 ) -> Result<Json<AuthConfigListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_auth_configs(&auth.0)?;
+    checks::can_read_auth_configs(&auth.0)?;
 
     let items = state
         .client_auth_config_repo
@@ -780,14 +771,14 @@ pub async fn update_client_auth_config(
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     let auth_provider = req
         .auth_provider
         .as_deref()
         .map(parse_auth_provider)
         .transpose()?;
-    let oidc_client_secret_ref = crate::identity_provider::api::seal_client_secret(
+    let oidc_client_secret_ref = api::seal_client_secret(
         req.oidc_client_secret_ref,
         state.encryption_service.as_deref(),
     )?;
@@ -836,7 +827,7 @@ pub async fn delete_client_auth_config(
     use crate::auth::operations::DeleteAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_auth_configs(&auth.0)?;
+    checks::can_delete_auth_configs(&auth.0)?;
 
     let cmd = DeleteAuthConfigCommand { auth_config_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -881,7 +872,7 @@ pub async fn update_config_type(
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
@@ -925,7 +916,7 @@ pub async fn get_by_domain(
     auth: Authenticated,
     Path(domain): Path<String>,
 ) -> Result<Json<ClientAuthConfigResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_auth_configs(&auth.0)?;
+    checks::can_read_auth_configs(&auth.0)?;
 
     let config = state
         .client_auth_config_repo
@@ -955,7 +946,7 @@ pub async fn create_internal_auth_config(
     auth: Authenticated,
     Json(req): Json<CreateInternalAuthConfigRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_create_auth_configs(&auth.0)?;
+    checks::can_create_auth_configs(&auth.0)?;
 
     use crate::auth::operations::CreateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
@@ -1011,7 +1002,7 @@ pub async fn create_oidc_auth_config(
     use crate::auth::operations::CreateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_auth_configs(&auth.0)?;
+    checks::can_create_auth_configs(&auth.0)?;
 
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
@@ -1064,7 +1055,7 @@ pub async fn update_oidc_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateOidcConfigRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
@@ -1113,7 +1104,7 @@ pub async fn update_client_binding(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientBindingRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
@@ -1162,7 +1153,7 @@ pub async fn update_additional_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateAdditionalClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
@@ -1211,7 +1202,7 @@ pub async fn update_granted_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateGrantedClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_auth_configs(&auth.0)?;
+    checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
@@ -1264,9 +1255,7 @@ pub async fn create_idp_role_mapping(
     use crate::auth::operations::CreateIdpRoleMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_identity_providers(
-        &auth.0,
-    )?;
+    checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = CreateIdpRoleMappingCommand {
         idp_type: req.idp_type,
@@ -1310,7 +1299,7 @@ pub async fn list_idp_role_mappings(
     auth: Authenticated,
     Query(query): Query<IdpRoleMappingQuery>,
 ) -> Result<Json<IdpRoleMappingListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_identity_providers(&auth.0)?;
+    checks::can_read_identity_providers(&auth.0)?;
 
     let mappings = if let Some(ref idp_type) = query.idp_type {
         state
@@ -1351,9 +1340,7 @@ pub async fn delete_idp_role_mapping(
     use crate::auth::operations::DeleteIdpRoleMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_identity_providers(
-        &auth.0,
-    )?;
+    checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = DeleteIdpRoleMappingCommand { mapping_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);

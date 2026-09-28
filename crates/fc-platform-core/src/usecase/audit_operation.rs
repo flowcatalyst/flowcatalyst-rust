@@ -15,9 +15,11 @@
 //! provision-service-account route's `ProvisionServiceAccountCommand`) runs
 //! under `PgUnitOfWork::run_as` with that command instead.
 
+use std::any;
+
 /// The operation name Go records for the Rust command type `C`.
 pub fn audit_operation_name<C: ?Sized>() -> &'static str {
-    let type_name = std::any::type_name::<C>();
+    let type_name = any::type_name::<C>();
     let short = type_name
         .split('<')
         .next()

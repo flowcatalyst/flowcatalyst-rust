@@ -52,6 +52,12 @@ use tracing::{debug, trace, warn};
 use super::destination::PoolCodeResolver;
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
 use super::SchedulerError;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
+use tracing::field::Empty;
 
 /// A job that is holding its message group (Go `GroupHoldingStatusSQL`):
 /// terminally failed, or waiting out a retry backoff. QUEUED and PROCESSING
@@ -171,7 +177,7 @@ impl PendingJobPoller {
     #[tracing::instrument(
         name = "scheduler.poll",
         skip_all,
-        fields(claimed = tracing::field::Empty, published = tracing::field::Empty)
+        fields(claimed = Empty, published = Empty)
     )]
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
@@ -188,7 +194,7 @@ impl PendingJobPoller {
             return Ok(PollReport::default());
         }
 
-        let created: std::collections::HashMap<String, DateTime<Utc>> = claimed
+        let created: HashMap<String, DateTime<Utc>> = claimed
             .iter()
             .map(|c| (c.id.clone(), c.created_at))
             .collect();
@@ -215,8 +221,7 @@ impl PendingJobPoller {
         // Publish while the claim is still locked and uncommitted: see the
         // module doc. What did not publish simply stays PENDING.
         let outcome = self.dispatcher.publish_claim(&tokens).await;
-        let unpublished: std::collections::HashSet<&str> =
-            outcome.unpublished.iter().map(String::as_str).collect();
+        let unpublished: HashSet<&str> = outcome.unpublished.iter().map(String::as_str).collect();
         let (ids, created_ats): (Vec<&str>, Vec<DateTime<Utc>>) = tokens
             .iter()
             .map(|t| t.job_id.as_str())
@@ -260,10 +265,10 @@ impl PendingJobPoller {
         &self,
         interval: Duration,
         is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
-        cancel: tokio_util::sync::CancellationToken,
+        cancel: CancellationToken,
     ) {
-        let mut tick = tokio::time::interval(interval);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut tick = time::interval(interval);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,

@@ -1,6 +1,8 @@
 //! Authentication Configuration Entities — matches TypeScript domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,9 +49,7 @@ impl AnchorDomain {
     pub fn new(domain: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::AnchorDomain,
-            ),
+            id: tsid::generate(EntityType::AnchorDomain),
             domain: domain.into().to_lowercase(),
             created_at: now,
             updated_at: now,
@@ -85,9 +85,7 @@ impl ClientAuthConfig {
     pub fn new_internal(email_domain: impl Into<String>, config_type: AuthConfigType) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ClientAuthConfig,
-            ),
+            id: tsid::generate(EntityType::ClientAuthConfig),
             email_domain: email_domain.into().to_lowercase(),
             config_type,
             primary_client_id: None,
@@ -172,9 +170,7 @@ impl IdpRoleMapping {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::IdpRoleMapping,
-            ),
+            id: tsid::generate(EntityType::IdpRoleMapping),
             idp_type: idp_type.into(),
             idp_role_name: idp_role_name.into(),
             platform_role_name: platform_role_name.into(),

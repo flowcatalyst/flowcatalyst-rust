@@ -49,3 +49,8 @@ otel = [
 [lints.rust]
 # `tokio_unstable` is set by RUSTFLAGS for the task-dump build.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

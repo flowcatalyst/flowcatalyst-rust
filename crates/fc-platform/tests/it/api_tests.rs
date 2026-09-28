@@ -102,6 +102,7 @@ mod domain_tests {
 mod authorization_tests {
     use super::*;
     use fc_platform::service::AuthContext;
+    use fc_platform::shared::authorization_service::Credential;
 
     fn create_auth_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
@@ -113,7 +114,7 @@ mod authorization_tests {
             accessible_clients: clients.into_iter().map(String::from).collect(),
             permissions: permissions.into_iter().map(String::from).collect(),
             roles: vec!["admin".to_string()],
-            credential: fc_platform::shared::authorization_service::Credential::BearerToken,
+            credential: Credential::BearerToken,
         }
     }
 
@@ -218,6 +219,8 @@ mod authorization_tests {
 // TSID generation tests
 mod tsid_tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_tsid_format() {
@@ -243,7 +246,7 @@ mod tsid_tests {
     #[test]
     fn test_tsid_sortability() {
         let id1 = tsid::generate_untyped();
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         let id2 = tsid::generate_untyped();
 
         // Newer IDs should sort after older ones lexicographically
@@ -260,7 +263,7 @@ mod tsid_tests {
         let ids: Vec<String> = (0..100)
             .map(|_| {
                 let id = tsid::generate_untyped();
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                thread::sleep(Duration::from_millis(1));
                 id
             })
             .collect();

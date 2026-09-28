@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use super::events::ApplicationUpdated;
 use crate::application::repository::ApplicationRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -44,7 +46,7 @@ pub struct UpdateApplicationCommand {
     pub logo_mime_type: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateApplicationCommand {}
+impl AuditMasked for UpdateApplicationCommand {}
 
 /// Use case for updating an application.
 pub struct UpdateApplicationUseCase<U: UnitOfWork> {
@@ -89,11 +91,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationUseCase<U> {
         _command: &UpdateApplicationCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

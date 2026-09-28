@@ -5,6 +5,8 @@
 
 use tracing::warn;
 
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_iam::audit::entity::AuditLog;
 use fc_platform_iam::audit::repository::AuditLogRepository;
 
@@ -28,9 +30,7 @@ pub async fn record(
         None,
         Some(actor_id.to_string()),
     );
-    log.id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::AuditLog,
-    );
+    log.id = tsid::generate(EntityType::AuditLog);
     if let Err(e) = audit_logs.insert(&log).await {
         warn!(principal_id, operation, error = %e, "2FA audit row not written");
     }

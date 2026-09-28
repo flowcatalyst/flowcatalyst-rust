@@ -16,11 +16,16 @@ use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fc_fnhost_core::logging::SlogJsonLayer;
+use fc_fnhost_core::wasm::inspect;
 use fc_function_abi::EventEmitError;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::fs;
+use std::io;
+use std::thread;
 use support::listener::{signed, timestamp};
 use support::wasm::{enc, entry, guest, manifest, WasmHarness, ADDR};
+use tracing::subscriber;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
@@ -39,10 +44,8 @@ async fn pdk(manifest_extra: Value, entry_extra: Value) -> WasmHarness {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_pdk_guest_sees_its_request_and_invocation() {
-    let bytes = std::fs::read(guest("pdk")).unwrap();
-    let accepted =
-        fc_fnhost_core::wasm::inspect::check(&bytes, "wasi_http_incoming_handler", 16 << 20)
-            .unwrap();
+    let bytes = fs::read(guest("pdk")).unwrap();
+    let accepted = inspect::check(&bytes, "wasi_http_incoming_handler", 16 << 20).unwrap();
     for interface in ["config", "secrets", "events", "log", "invocation"] {
         assert!(
             accepted
@@ -346,10 +349,8 @@ async fn the_logger_the_log_crate_and_a_handler_error_reach_the_functions_logger
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn without_the_flowcatalyst_feature_a_pdk_guest_is_a_plain_wasi_http_component() {
-    let bytes = std::fs::read(guest("pdk-pure")).unwrap();
-    let accepted =
-        fc_fnhost_core::wasm::inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20)
-            .unwrap();
+    let bytes = fs::read(guest("pdk-pure")).unwrap();
+    let accepted = inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20).unwrap();
     assert!(
         !accepted
             .imports
@@ -391,8 +392,7 @@ fn hello_manifest() -> Value {
         env!("CARGO_MANIFEST_DIR"),
         "/../../examples/function-hello-rust/manifest.json"
     );
-    let mut manifest: Value =
-        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut manifest: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     manifest.as_object_mut().unwrap().remove("$schema");
     assert_eq!(manifest["entrypoint"], "wasi_http_incoming_handler");
     assert_eq!(manifest["httpAllow"], json!(["api.carrier.example"]));
@@ -525,11 +525,11 @@ impl Upstream {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = requests.clone();
         let answer = Arc::new(answer);
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
                 let (seen, answer) = (seen.clone(), answer.clone());
-                std::thread::spawn(move || {
+                thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let mut head = String::new();
                     let mut length = 0;
@@ -573,7 +573,7 @@ fn captured() -> &'static Arc<Mutex<Vec<u8>>> {
         };
         // Not `init()`: that would also bridge the `log` crate, and
         // Cranelift logs every compiled function at TRACE through it.
-        tracing::subscriber::set_global_default(
+        subscriber::set_global_default(
             tracing_subscriber::registry()
                 .with(EnvFilter::new("trace"))
                 .with(SlogJsonLayer::new(writer)),
@@ -592,13 +592,13 @@ fn lines() -> Vec<Value> {
 
 struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for CaptureWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for CaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().extend_from_slice(buf);
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }

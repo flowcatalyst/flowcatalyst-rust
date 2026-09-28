@@ -34,10 +34,16 @@ use fc_platform::shared::middleware::{AppState, AuthLayer};
 use fc_platform::Client;
 use support::{read_json, TestApp};
 
+use fc_platform::function::PoolUrlTemplate;
+use fc_platform::shared::tsid;
+use futures::future;
 use permissions::function::{
     FUNCTION_DOMAIN_MANAGE, FUNCTION_MANAGE, FUNCTION_POLICY_MANAGE, FUNCTION_PUBLISH,
     FUNCTION_VIEW,
 };
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
 const ALL: &[&str] = &[
     FUNCTION_VIEW,
@@ -58,20 +64,17 @@ const SUBJECT: &str =
 
 // ── Harness ─────────────────────────────────────────────────────────────────
 
-struct Tmp(std::path::PathBuf);
+struct Tmp(PathBuf);
 
 impl Tmp {
     fn new() -> Tmp {
-        Tmp(std::env::temp_dir().join(format!(
-            "fc-fn-versions-{}",
-            fc_platform::shared::tsid::generate_untyped()
-        )))
+        Tmp(env::temp_dir().join(format!("fc-fn-versions-{}", tsid::generate_untyped())))
     }
 }
 
 impl Drop for Tmp {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -110,7 +113,7 @@ fn router(
             trigger_sync: TriggerSync::from_repositories(
                 &app.repos,
                 settings.clone(),
-                fc_platform::function::PoolUrlTemplate::parse("http://fn-{pool}:8080").unwrap(),
+                PoolUrlTemplate::parse("http://fn-{pool}:8080").unwrap(),
             ),
             limits,
             signatures,
@@ -152,7 +155,7 @@ fn file_store(tmp: &Tmp) -> Arc<FileArtifactBlobStore> {
 }
 
 async fn token(app: &TestApp, scope: UserScope, clients: &[&str], perms: &[&str]) -> String {
-    let n = fc_platform::shared::tsid::generate_untyped().to_lowercase();
+    let n = tsid::generate_untyped().to_lowercase();
     let role = AuthRole::new("platform", format!("fnv-test-{n}"), "Function version test")
         .with_permissions(perms.iter().map(|p| p.to_string()));
     app.repos.role_repo.insert(&role).await.expect("role");
@@ -342,7 +345,7 @@ async fn upload_publish_list_get_and_retire() {
     );
     let again = upload(&r, "billing.svc.create", &digest, &t, bytes.clone(), None).await;
     assert_eq!(again, up, "an upload is idempotent");
-    let stored = std::fs::read(tmp.0.join("store").join(&fid).join(hex_of(&bytes))).unwrap();
+    let stored = fs::read(tmp.0.join("store").join(&fid).join(hex_of(&bytes))).unwrap();
     assert_eq!(stored, bytes, "the blob's bytes equal the upload");
     // No event and no audit row for an upload: it is infrastructure.
     assert_eq!(app.audit_count_for(&fid).await, 1, "only the create");
@@ -1207,7 +1210,7 @@ async fn concurrent_publishes_serialise_to_consecutive_versions() {
             .await
         }
     });
-    let results = futures::future::join_all(publishes).await;
+    let results = future::join_all(publishes).await;
     let mut numbers: Vec<i64> = results
         .iter()
         .map(|(status, body)| {

@@ -2,6 +2,7 @@
 //! `UseCaseException.validation(code, message)`), and a string that names no
 //! variant of a string-backed enum.
 
+use std::error;
 use std::fmt;
 
 /// A value or manifest that failed validation: Java's
@@ -56,7 +57,7 @@ impl fmt::Display for ValidationError {
     }
 }
 
-impl std::error::Error for ValidationError {}
+impl error::Error for ValidationError {}
 
 /// A string that names no variant of the enum it was parsed as.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

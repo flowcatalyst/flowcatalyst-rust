@@ -36,6 +36,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
+use std::future::Future;
 
 mod error;
 mod memory;
@@ -123,7 +124,7 @@ pub async fn get_or_set<T, F, Fut>(
 where
     T: Serialize + DeserializeOwned + Sync,
     F: FnOnce() -> Fut + Send,
-    Fut: std::future::Future<Output = Result<T, CacheError>> + Send,
+    Fut: Future<Output = Result<T, CacheError>> + Send,
 {
     if let Some(v) = get::<T>(cache, key).await? {
         return Ok(v);

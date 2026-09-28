@@ -15,10 +15,15 @@ use utoipa::{IntoParams, ToSchema};
 use crate::event_type::bff::BffEventTypesState;
 use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::entity::{EventType, SpecVersion};
+use crate::event_type::operations::CreateEventTypeUseCase;
+use crate::event_type::operations::DeleteEventTypeUseCase;
+use crate::event_type::operations::UpdateEventTypeUseCase;
 use crate::event_type::operations::{AddSchemaCommand, AddSchemaUseCase};
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -180,24 +185,10 @@ pub struct EventTypesQuery {
 #[derive(Clone)]
 pub struct EventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
-    pub create_use_case: Arc<
-        crate::event_type::operations::CreateEventTypeUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub update_use_case: Arc<
-        crate::event_type::operations::UpdateEventTypeUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::event_type::operations::DeleteEventTypeUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub add_schema_use_case: Arc<
-        crate::event_type::operations::AddSchemaUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
+    pub create_use_case: Arc<CreateEventTypeUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateEventTypeUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteEventTypeUseCase<PgUnitOfWork>>,
+    pub add_schema_use_case: Arc<AddSchemaUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new event type
@@ -208,7 +199,7 @@ pub struct EventTypesState {
     operation_id = "createEventType",
     request_body = CreateEventTypeRequest,
     responses(
-        (status = 201, description = "Event type created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Event type created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -218,17 +209,11 @@ pub async fn create_event_type(
     State(state): State<EventTypesState>,
     auth: Authenticated,
     Json(req): Json<CreateEventTypeRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::event_type::operations::CreateEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     let cmd = CreateEventTypeCommand {
         code: CreateEventTypeCommand::parse_code(&req.code, &req.name)?,
@@ -245,9 +230,7 @@ pub async fn create_event_type(
 
     Ok((
         StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.event_type_id,
-        )),
+        Json(CreatedResponse::new(event.event_type_id)),
     ))
 }
 
@@ -271,7 +254,7 @@ pub async fn get_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types(&auth.0)?;
 
     let event_type = state
         .event_type_repo
@@ -309,7 +292,7 @@ pub async fn get_event_type_by_code(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types(&auth.0)?;
 
     let event_type = state
         .event_type_repo
@@ -344,11 +327,10 @@ pub async fn list_event_types(
     auth: Authenticated,
     Query(query): Query<EventTypesQuery>,
 ) -> Result<Json<EventTypeListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types(&auth.0)?;
 
     // Default to CURRENT status when no filters are provided (matches find_active behavior)
-    let status: Option<EventTypeStatus> =
-        fc_platform_core::shared::enum_str::parse_opt(query.status.as_deref())?;
+    let status: Option<EventTypeStatus> = enum_str::parse_opt(query.status.as_deref())?;
     let default_status = if query.application.is_none()
         && query.client_id.is_none()
         && status.is_none()
@@ -413,7 +395,7 @@ pub async fn update_event_type(
     use crate::event_type::operations::UpdateEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // Go `UpdateEventType.Validate`: the name is required.
     if req.name.trim().is_empty() {
@@ -460,7 +442,7 @@ pub async fn add_schema_version(
     Path(id): Path<String>,
     Json(req): Json<AddEventTypeSchemaRequest>,
 ) -> Result<Json<EventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
     // Go registers one handler for `/versions` and `/schemas`: the version
     // is the caller's, and a repeat is 409 `VERSION_EXISTS`.
     add_schema(
@@ -496,7 +478,7 @@ pub async fn delete_event_type(
     use crate::event_type::operations::DeleteEventTypeCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // The use case loads the type (404) and checks the caller's scope on it.
     let cmd = DeleteEventTypeCommand { event_type_id: id };

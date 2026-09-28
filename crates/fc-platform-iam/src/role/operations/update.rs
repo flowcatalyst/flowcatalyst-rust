@@ -6,8 +6,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::RoleUpdated;
+use crate::role::ceiling;
 use crate::role::entity::RoleSource;
 use crate::role::repository::RoleRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -42,7 +44,7 @@ pub struct UpdateRoleCommand {
     pub cross_application: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateRoleCommand {}
+impl AuditMasked for UpdateRoleCommand {}
 
 /// Use case for updating an existing role.
 pub struct UpdateRoleUseCase<U: UnitOfWork> {
@@ -101,9 +103,9 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
             return Ok(());
         };
         let before: Vec<String> = role.permissions.iter().cloned().collect();
-        Ok(crate::role::ceiling::require_permissions(
+        Ok(ceiling::require_permissions(
             Some(ctx.caller()),
-            crate::role::ceiling::changed(&before, permissions)
+            ceiling::changed(&before, permissions)
                 .iter()
                 .map(String::as_str),
         )?)

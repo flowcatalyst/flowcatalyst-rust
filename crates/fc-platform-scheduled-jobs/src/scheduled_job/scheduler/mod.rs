@@ -25,6 +25,7 @@ use tokio::sync::broadcast;
 
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::directory::OutboundCredentialSource;
+use tokio::task::JoinHandle;
 
 /// Composes Poller + Dispatcher behind a single start/stop handle.
 pub struct ScheduledJobSchedulerService {
@@ -66,7 +67,7 @@ impl ScheduledJobSchedulerService {
 
     /// Spawn poller + dispatcher tasks. Returns join handles caller can `.abort()`
     /// or await; for graceful shutdown call [`Self::shutdown`].
-    pub fn start(&self) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>) {
+    pub fn start(&self) -> (JoinHandle<()>, JoinHandle<()>) {
         let poller = ScheduledJobPoller::new(
             self.config.clone(),
             self.repo.clone(),

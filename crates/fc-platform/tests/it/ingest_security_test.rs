@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::permissions;
+use fc_platform::shared::tsid;
 use support::{read_json, TestApp};
 
 const EVENTS_WRITE: &str = permissions::admin::BATCH_EVENTS_WRITE;
@@ -70,8 +71,8 @@ async fn seed_account(
     application_id: Option<&str>,
     clients: &[&str],
 ) -> (String, String) {
-    let sac = fc_platform::shared::tsid::generate(fc_platform::EntityType::ServiceAccount);
-    let prn = fc_platform::shared::tsid::generate(fc_platform::EntityType::Principal);
+    let sac = tsid::generate(fc_platform::EntityType::ServiceAccount);
+    let prn = tsid::generate(fc_platform::EntityType::Principal);
     sqlx::query(
         "INSERT INTO iam_service_accounts (id, code, name, application_id, active) VALUES ($1, $2, $2, $3, true)",
     )
@@ -105,7 +106,7 @@ async fn seed_account(
                 "INSERT INTO iam_client_access_grants (id, principal_id, client_id, granted_by, granted_at) \
                  VALUES ($1, $2, $3, 'test', NOW())",
             )
-            .bind(fc_platform::shared::tsid::generate_untyped())
+            .bind(tsid::generate_untyped())
             .bind(&prn)
             .bind(c)
             .execute(&app.pool)

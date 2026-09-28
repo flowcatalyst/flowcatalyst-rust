@@ -34,6 +34,16 @@ use serde_json::{json, Value};
 use tokio::sync::{Notify, Semaphore};
 
 use super::fakes::{self, Answer, FakeControlPlane, FakeStore};
+use axum::http::StatusCode;
+use axum::routing;
+use fc_fnhost_core::listener::webhook;
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderName;
+use rsa::pkcs1v15::SigningKey;
+use std::any::Any;
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
+use tokio::time;
 
 // ── desired-state entries ─────────────────────────────────────────────────
 
@@ -109,7 +119,7 @@ impl Probes {
 
     /// Waits until `n` parked calls have started.
     pub async fn await_started(&self, n: usize) {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        time::timeout(Duration::from_secs(10), async {
             loop {
                 let notified = self.started_notify.notified();
                 if self.started.load(Ordering::SeqCst) >= n {
@@ -200,7 +210,7 @@ impl FunctionInstance for ScriptedInstance {
         self.closed.store(true, Ordering::SeqCst);
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -287,7 +297,7 @@ impl FunctionLoader for ScriptedLoader {
         let label = format!("{}@{}", request.entry.address, request.entry.version);
         let delay = *self.delay.lock();
         if let Some(delay) = delay {
-            tokio::time::sleep(delay).await;
+            time::sleep(delay).await;
         }
         if self.refusals.lock().contains(&label) {
             return LoadOutcome::Refused {
@@ -344,7 +354,7 @@ pub struct Harness {
 
 pub struct Reply {
     pub status: u16,
-    pub headers: reqwest::header::HeaderMap,
+    pub headers: HeaderMap,
     pub body: Vec<u8>,
 }
 
@@ -526,9 +536,7 @@ pub async fn raw(
     body: &[u8],
 ) -> Reply {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let mut head = format!("{method} {path} HTTP/1.1\r\n");
     for (k, v) in headers {
         head.push_str(&format!("{k}: {v}\r\n"));
@@ -565,7 +573,7 @@ pub async fn raw(
             out.extend_from_slice(&chunk[..n]);
         }
     };
-    tokio::time::timeout(Duration::from_secs(10), read)
+    time::timeout(Duration::from_secs(10), read)
         .await
         .expect("a response within 10 s");
     parse_response(&out)
@@ -586,11 +594,11 @@ fn parse_response(bytes: &[u8]) -> Reply {
         .unwrap()
         .parse()
         .unwrap();
-    let mut headers = reqwest::header::HeaderMap::new();
+    let mut headers = HeaderMap::new();
     for line in lines {
         let (k, v) = line.split_once(':').unwrap();
         headers.append(
-            reqwest::header::HeaderName::from_bytes(k.trim().as_bytes()).unwrap(),
+            HeaderName::from_bytes(k.trim().as_bytes()).unwrap(),
             v.trim().parse().unwrap(),
         );
     }
@@ -609,7 +617,7 @@ pub fn timestamp(at: chrono::DateTime<Utc>) -> String {
 }
 
 pub fn signed(secret: &str, ts: &str, body: &[u8]) -> String {
-    fc_fnhost_core::listener::webhook::sign(secret, ts, body)
+    webhook::sign(secret, ts, body)
 }
 
 // ── the platform's discovery document and JWKS ───────────────────────────
@@ -721,13 +729,13 @@ impl TestJwks {
                 async move {
                     state.discovery_requests.fetch_add(1, Ordering::SeqCst);
                     if state.discovery_down.load(Ordering::SeqCst) {
-                        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, String::new());
+                        return (StatusCode::SERVICE_UNAVAILABLE, String::new());
                     }
                     let jwks_uri = state.foreign_jwks_uri.lock().clone().unwrap_or_else(|| {
                         format!("{}/.well-known/jwks.json", state.self_url.lock())
                     });
                     (
-                        axum::http::StatusCode::OK,
+                        StatusCode::OK,
                         json!({"issuer": "https://platform.example.test", "jwks_uri": jwks_uri})
                             .to_string(),
                     )
@@ -751,12 +759,9 @@ impl TestJwks {
             }
         };
         let app = axum::Router::new()
-            .route(
-                "/.well-known/openid-configuration",
-                axum::routing::get(discovery),
-            )
-            .route("/.well-known/jwks.json", axum::routing::get(jwks));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            .route("/.well-known/openid-configuration", routing::get(discovery))
+            .route("/.well-known/jwks.json", routing::get(jwks));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         *state.self_url.lock() = url.clone();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -837,7 +842,7 @@ pub fn mint(key: &RsaPrivateKey, kid: &str, issuer: &str, claims: &Claims) -> St
         URL_SAFE_NO_PAD.encode(header.to_string()),
         URL_SAFE_NO_PAD.encode(payload.to_string())
     );
-    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(key.clone());
+    let signer = SigningKey::<sha2::Sha256>::new(key.clone());
     let signature = signer.sign(input.as_bytes()).to_vec();
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }

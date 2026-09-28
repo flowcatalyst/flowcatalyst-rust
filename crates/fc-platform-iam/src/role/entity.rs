@@ -3,6 +3,8 @@
 //! Authorization model for role-based access control.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -120,9 +122,7 @@ impl AuthRole {
         let now = Utc::now();
 
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Role,
-            ),
+            id: tsid::generate(EntityType::Role),
             application_id: None,
             name: format!("{}:{}", app, rname),
             display_name: display_name.into(),

@@ -12,6 +12,11 @@ use tracing::{error, info, warn};
 use fc_common::{StallConfig, StalledMessageInfo, WarningCategory, WarningSeverity};
 
 use super::QueueManager;
+use crate::flight_recorder::EventContext;
+use crate::flight_recorder::EventKind;
+use crate::flight_recorder::Facts;
+use std::collections::HashSet;
+use std::time::Instant;
 
 /// Go's `DefaultStallConfig`, derived from the mediation timeout (one
 /// delivery attempt may legitimately run that long): warn once a message
@@ -100,7 +105,7 @@ impl QueueManager {
             return 0;
         }
         let ceiling = idle * super::tracking::ABSOLUTE_MAX_AGE_FACTOR;
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let stale: Vec<(String, u64)> = self
             .in_pipeline
             .iter()
@@ -131,12 +136,12 @@ impl QueueManager {
                     "Reaped in-flight entry — broker redelivery will retry"
                 );
                 self.flight_recorder.record(
-                    crate::flight_recorder::EventKind::Untracked,
-                    &crate::flight_recorder::EventContext::new(entry.message_id.as_str())
+                    EventKind::Untracked,
+                    &EventContext::new(entry.message_id.as_str())
                         .pool(entry.pool_code.as_str())
                         .group(entry.message_group_id.as_deref())
                         .queue(entry.queue_identifier.as_str()),
-                    crate::flight_recorder::Facts::text(format!(
+                    Facts::text(format!(
                         "reaped from the in-flight tracker (idle {}s, age {}s{})",
                         entry.last_seen.elapsed().as_secs(),
                         entry.started_at.elapsed().as_secs(),
@@ -215,7 +220,7 @@ impl QueueManager {
     /// a later stall of the same id must report again rather than being
     /// silenced for the life of the process (mirrors Go's
     /// `StallDetector.forgetResolved`).
-    fn forget_resolved_stalls(&self, live: &std::collections::HashSet<String>) {
+    fn forget_resolved_stalls(&self, live: &HashSet<String>) {
         let mut warned = self.stall_warned.lock();
         warned.retain(|id| live.contains(id));
     }
@@ -242,7 +247,7 @@ impl QueueManager {
         // same id reports again instead of being silenced forever. Run this
         // even when nothing is currently stalled, so resolved entries don't
         // linger in `stall_warned`.
-        let live: std::collections::HashSet<String> = self
+        let live: HashSet<String> = self
             .in_pipeline
             .iter()
             .map(|entry| entry.value().message_id.clone())
@@ -263,7 +268,7 @@ impl QueueManager {
         // reported as retrying and is never force-NACKed (that would hand
         // the broker a second copy while the retry still runs); the rest
         // are stalled.
-        let retrying: std::collections::HashSet<String> = self
+        let retrying: HashSet<String> = self
             .in_pipeline
             .iter()
             .filter(|e| e.value().attempts > 0)

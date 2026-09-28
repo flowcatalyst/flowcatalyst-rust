@@ -12,9 +12,12 @@ use std::sync::Arc;
 
 use super::events::{RolePermissionGranted, RolePermissionRevoked};
 use super::permission_events::{PermissionDefined, PermissionDeleted};
+use crate::role::ceiling;
 use crate::role::permission_catalog::CatalogPermission;
 use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -49,7 +52,7 @@ pub struct GrantPermissionCommand {
     pub cross_application: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for GrantPermissionCommand {}
+impl AuditMasked for GrantPermissionCommand {}
 
 pub struct GrantPermissionUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,
@@ -90,7 +93,7 @@ impl<U: UnitOfWork> UseCase for GrantPermissionUseCase<U> {
         if already {
             return Ok(());
         }
-        Ok(crate::role::ceiling::require_permissions(
+        Ok(ceiling::require_permissions(
             Some(ctx.caller()),
             [command.permission.as_str()],
         )?)
@@ -138,7 +141,7 @@ pub struct RevokePermissionCommand {
     pub permission: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokePermissionCommand {}
+impl AuditMasked for RevokePermissionCommand {}
 
 pub struct RevokePermissionUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,
@@ -179,7 +182,7 @@ impl<U: UnitOfWork> UseCase for RevokePermissionUseCase<U> {
         if !held {
             return Ok(());
         }
-        Ok(crate::role::ceiling::require_permissions(
+        Ok(ceiling::require_permissions(
             Some(ctx.caller()),
             [command.permission.as_str()],
         )?)
@@ -225,7 +228,7 @@ pub struct DefinePermissionCommand {
     pub description: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DefinePermissionCommand {}
+impl AuditMasked for DefinePermissionCommand {}
 
 impl DefinePermissionCommand {
     /// The canonical `application:context:aggregate:action`, segments trimmed.
@@ -282,11 +285,7 @@ impl<U: UnitOfWork> UseCase for DefinePermissionUseCase<U> {
         _command: &DefinePermissionCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -340,7 +339,7 @@ pub struct DeletePermissionCommand {
     pub permission: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeletePermissionCommand {}
+impl AuditMasked for DeletePermissionCommand {}
 
 pub struct DeletePermissionUseCase<U: UnitOfWork> {
     repo: Arc<PermissionCatalogRepository>,
@@ -375,11 +374,7 @@ impl<U: UnitOfWork> UseCase for DeletePermissionUseCase<U> {
         _command: &DeletePermissionCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

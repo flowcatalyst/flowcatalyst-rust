@@ -27,11 +27,17 @@
 //! binary value read as UTF-8 text, or `\x`-hex when it is not text: cast
 //! it in the SQL (`col::text`) for PostgreSQL's own text form.
 
+use base64::engine::general_purpose;
 use base64::Engine as _;
 use chrono::{Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime};
 use serde_json::{Map, Value};
+use sqlx::postgres::PgValueRef;
 use sqlx::postgres::{PgRow, PgTypeInfo, PgTypeKind};
 use sqlx::{Column, Row, TypeInfo};
+use std::fmt::Display;
+use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
+use std::str;
 
 /// The row cap (Java: 10 000).
 pub const MAX_ROWS: usize = 10_000;
@@ -167,7 +173,7 @@ pub fn row_json(row: &PgRow) -> Map<String, Value> {
     for (i, column) in row.columns().iter().enumerate() {
         let value = match row.try_get_raw(i) {
             Ok(raw) => {
-                let raw: sqlx::postgres::PgValueRef<'_> = raw;
+                let raw: PgValueRef<'_> = raw;
                 if sqlx::ValueRef::is_null(&raw) {
                     Value::Null
                 } else {
@@ -219,14 +225,14 @@ pub fn to_json(ty: &PgTypeInfo, bytes: &[u8]) -> Value {
         oid::DATE => text(date_iso(bytes)),
         oid::TIME => text(be_i64(bytes).map(time_iso)),
         oid::TIMETZ => text(timetz_iso(bytes)),
-        oid::BYTEA => Value::String(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        oid::BYTEA => Value::String(general_purpose::STANDARD.encode(bytes)),
         oid::JSON | oid::JSONB => {
             let body = if oid == oid::JSONB && bytes.first() == Some(&1) {
                 &bytes[1..]
             } else {
                 bytes
             };
-            match std::str::from_utf8(body) {
+            match str::from_utf8(body) {
                 Ok(s) => serde_json::from_str(s).unwrap_or_else(|_| Value::String(s.to_owned())),
                 Err(_) => text(None),
             }
@@ -260,7 +266,7 @@ fn f32_as_f64(v: f32) -> f64 {
 
 /// Not a type this module renders: its bytes as UTF-8 text, or `\x`-hex.
 fn fallback_text(bytes: &[u8]) -> String {
-    match std::str::from_utf8(bytes) {
+    match str::from_utf8(bytes) {
         Ok(s) if !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t') => s.to_owned(),
         _ => format!("\\x{}", hex::encode(bytes)),
     }
@@ -272,7 +278,7 @@ fn fallback_text(bytes: &[u8]) -> String {
 pub fn pg_text(ty: &PgTypeInfo, bytes: &[u8]) -> Option<String> {
     let (oid, ty) = effective(ty);
     match kind_of(ty) {
-        Some(PgTypeKind::Enum(_)) => return std::str::from_utf8(bytes).ok().map(str::to_owned),
+        Some(PgTypeKind::Enum(_)) => return str::from_utf8(bytes).ok().map(str::to_owned),
         Some(PgTypeKind::Array(element)) => return array_text(element, bytes),
         _ => {}
     }
@@ -294,11 +300,11 @@ pub fn pg_text(ty: &PgTypeInfo, bytes: &[u8]) -> Option<String> {
         | oid::NAME
         | oid::XML
         | oid::UNKNOWN
-        | oid::JSON => std::str::from_utf8(bytes).ok().map(str::to_owned),
+        | oid::JSON => str::from_utf8(bytes).ok().map(str::to_owned),
         oid::JSONB => bytes
             .split_first()
             .filter(|(version, _)| **version == 1)
-            .and_then(|(_, body)| std::str::from_utf8(body).ok())
+            .and_then(|(_, body)| str::from_utf8(body).ok())
             .map(str::to_owned),
         oid::CHAR => Some(match bytes.first() {
             None | Some(0) => String::new(),
@@ -346,7 +352,7 @@ fn be_f64(b: &[u8]) -> Option<f64> {
 }
 
 /// PostgreSQL's float output: shortest exact, `NaN`, `Infinity`.
-fn float_text<F: Into<f64> + std::fmt::Display + Copy>(v: F) -> String {
+fn float_text<F: Into<f64> + Display + Copy>(v: F) -> String {
     let wide: f64 = v.into();
     if wide.is_nan() {
         "NaN".into()
@@ -620,12 +626,12 @@ fn inet_text(bytes: &[u8]) -> Option<String> {
     }
     let (text, max) = match (family, addr.len()) {
         (2, 4) => (
-            std::net::Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]).to_string(),
+            Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]).to_string(),
             32,
         ),
         (3, 16) => {
             let octets: [u8; 16] = addr.try_into().ok()?;
-            (std::net::Ipv6Addr::from(octets).to_string(), 128)
+            (Ipv6Addr::from(octets).to_string(), 128)
         }
         _ => return None,
     };
@@ -755,6 +761,7 @@ fn push_array_element(out: &mut String, text: &str, delimiter: char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::numeric;
     use sqlx::postgres::types::Oid;
 
     fn ty(oid: u32) -> PgTypeInfo {
@@ -800,7 +807,7 @@ mod tests {
         );
         assert_eq!(json(oid::BOOL, &[1]), Value::Bool(true));
         assert_eq!(json(oid::BYTEA, b"\x00\xffhi"), Value::from("AP9oaQ=="));
-        let numeric = crate::db::numeric::encode("12.50").unwrap();
+        let numeric = numeric::encode("12.50").unwrap();
         assert_eq!(json(oid::NUMERIC, &numeric), Value::from("12.50"));
     }
 

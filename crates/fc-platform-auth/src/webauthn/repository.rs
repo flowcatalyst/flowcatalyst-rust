@@ -7,7 +7,9 @@ use webauthn_rs::prelude::Passkey;
 
 use super::entity::WebauthnCredential;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct WebauthnCredentialRow {
@@ -97,12 +99,8 @@ impl HasId for WebauthnCredential {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<WebauthnCredential> for WebauthnCredentialRepository {
-    async fn persist(
-        &self,
-        c: &WebauthnCredential,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<WebauthnCredential> for WebauthnCredentialRepository {
+    async fn persist(&self, c: &WebauthnCredential, tx: &mut DbTx<'_>) -> Result<()> {
         let passkey_data = serde_json::to_value(&c.passkey)
             .map_err(|e| PlatformError::internal(format!("serialise passkey: {}", e)))?;
         sqlx::query(
@@ -126,11 +124,7 @@ impl fc_platform_core::usecase::Persist<WebauthnCredential> for WebauthnCredenti
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &WebauthnCredential,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &WebauthnCredential, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM webauthn_credentials WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)

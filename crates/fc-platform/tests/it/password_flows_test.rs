@@ -25,10 +25,17 @@ use fc_platform::shared::rate_limit_store::PostgresRateLimitStore;
 use support::{read_json, TestApp};
 
 use crate::support::APP_KEY;
+use fc_platform::auth::config_entity::AnchorDomain;
+use fc_platform::mfa::crypto;
+use fc_platform::shared::email_service::EmailMessage;
+use fc_platform::shared::email_service::EmailService;
+use fc_platform::shared::email_service::LogEmailService;
+use std::env;
+use std::sync::Mutex;
 const NEW_PASSWORD: &str = "Brand-New-Secret-7!";
 
 fn with_app_key() {
-    crate::support::set_app_key();
+    support::set_app_key();
 }
 
 async fn post(app: &TestApp, path: &str, body: Value) -> Response<Body> {
@@ -83,7 +90,7 @@ async fn token_row(app: &TestApp, principal_id: &str) -> Option<(String, String,
 
 /// A user with a confirmed TOTP factor; its shared secret.
 async fn give_totp(app: &TestApp, principal_id: &str) -> String {
-    let secret = fc_platform::mfa::crypto::new_totp_secret();
+    let secret = crypto::new_totp_secret();
     let enc = EncryptionService::new(APP_KEY).unwrap();
     let mut m = MfaMethod::new(principal_id, MethodType::Totp);
     m.secret_encrypted = Some(enc.encrypt(&secret).unwrap());
@@ -102,7 +109,7 @@ async fn give_totp(app: &TestApp, principal_id: &str) -> String {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_passwordless_user_asks_for_a_set_password_link() {
-    std::env::remove_var("FC_RL_PASSWORD_RESET_EMAIL_PER_HOUR");
+    env::remove_var("FC_RL_PASSWORD_RESET_EMAIL_PER_HOUR");
     let app = TestApp::setup_with_rate_limit_store(|pool| {
         Arc::new(PostgresRateLimitStore::new(pool.clone()))
     })
@@ -424,7 +431,7 @@ async fn an_invite_link_is_minted_for_the_caller() {
     app.repos.principal_repo.insert(&user).await.unwrap();
     let emailer = PasswordResetEmailer {
         password_reset_repo: app.repos.password_reset_repo.clone(),
-        email_service: Arc::new(fc_platform::shared::email_service::LogEmailService),
+        email_service: Arc::new(LogEmailService),
         unit_of_work: app.unit_of_work.clone(),
         external_base_url: "https://platform.test/".to_string(),
         brand: None,
@@ -468,9 +475,7 @@ async fn create_user_honours_the_invite_flags() {
     // ANCHOR users need an anchor domain (Go deriveUserScope).
     app.repos
         .anchor_domain_repo
-        .insert(&fc_platform::auth::config_entity::AnchorDomain::new(
-            "flowcatalyst.test",
-        ))
+        .insert(&AnchorDomain::new("flowcatalyst.test"))
         .await
         .unwrap();
     let create = |email: &str, extra: Value| {
@@ -584,14 +589,11 @@ async fn create_user_honours_the_invite_flags() {
 
 /// Records what would have been sent.
 #[derive(Default)]
-struct Outbox(std::sync::Mutex<Vec<fc_platform::shared::email_service::EmailMessage>>);
+struct Outbox(Mutex<Vec<EmailMessage>>);
 
 #[async_trait::async_trait]
-impl fc_platform::shared::email_service::EmailService for Outbox {
-    async fn send(
-        &self,
-        message: &fc_platform::shared::email_service::EmailMessage,
-    ) -> Result<(), String> {
+impl EmailService for Outbox {
+    async fn send(&self, message: &EmailMessage) -> Result<(), String> {
         self.0.lock().unwrap().push(message.clone());
         Ok(())
     }

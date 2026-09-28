@@ -23,6 +23,13 @@ use tokio::net::TcpListener;
 
 use fc_common::{DispatchMode, MediationResult, MediationType, Message};
 use fc_router::{HttpMediator, HttpMediatorConfig, Mediator};
+use hyper::server::conn::http1;
+use hyper::service;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::server::conn::auto::Builder;
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::Receiver;
+use tokio::time;
 
 /// What the test server captured about the one request it received.
 #[derive(Debug, Clone)]
@@ -51,19 +58,19 @@ fn healthy_message(target: &str) -> Message {
 /// speaking h2c looks like on the wire) on an ephemeral localhost port.
 /// Returns the base URL and a receiver that yields the one request it
 /// captures.
-async fn start_h2c_server() -> (String, tokio::sync::oneshot::Receiver<CapturedRequest>) {
+async fn start_h2c_server() -> (String, Receiver<CapturedRequest>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind h2c listener");
     let addr = listener.local_addr().expect("local addr");
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
     tokio::spawn(async move {
         if let Ok((stream, _)) = listener.accept().await {
             let io = TokioIo::new(stream);
             let tx = tx.clone();
-            let service = hyper::service::service_fn(move |req: Request<Incoming>| {
+            let service = service::service_fn(move |req: Request<Incoming>| {
                 let tx = tx.clone();
                 async move {
                     let version = req.version();
@@ -80,8 +87,7 @@ async fn start_h2c_server() -> (String, tokio::sync::oneshot::Receiver<CapturedR
                     Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(r#"{"ok":true}"#))))
                 }
             });
-            let builder =
-                hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+            let builder = Builder::new(TokioExecutor::new());
             let _ = builder.serve_connection(io, service).await;
         }
     });
@@ -104,16 +110,14 @@ async fn start_http1_only_server() -> String {
             };
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
-                let service = hyper::service::service_fn(|_req: Request<Incoming>| async move {
+                let service = service::service_fn(|_req: Request<Incoming>| async move {
                     Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(r#"{"ok":true}"#))))
                 });
                 // `http1::Builder` only understands HTTP/1.1 — an h2c
                 // connection preface sent at it is not valid h1 framing,
                 // so the connection/request fails outright. That failure
                 // IS the "no silent downgrade" behaviour under test.
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(io, service)
-                    .await;
+                let _ = http1::Builder::new().serve_connection(io, service).await;
             });
         }
     });
@@ -141,11 +145,11 @@ async fn deployed_mode_negotiates_h2c_against_a_cleartext_target() {
     let mediator = HttpMediator::production();
 
     let message = healthy_message(&format!("{target}/hook"));
-    let outcome = tokio::time::timeout(Duration::from_secs(5), mediator.mediate(&message))
+    let outcome = time::timeout(Duration::from_secs(5), mediator.mediate(&message))
         .await
         .expect("mediation must not hang");
 
-    let captured = tokio::time::timeout(Duration::from_secs(5), rx)
+    let captured = time::timeout(Duration::from_secs(5), rx)
         .await
         .expect("server must receive a request within 5s")
         .expect("capture channel must not be dropped without sending");
@@ -187,7 +191,7 @@ async fn deployed_mode_fails_against_an_http1_only_target() {
     });
 
     let message = healthy_message(&format!("{target}/hook"));
-    let outcome = tokio::time::timeout(Duration::from_secs(5), mediator.mediate(&message))
+    let outcome = time::timeout(Duration::from_secs(5), mediator.mediate(&message))
         .await
         .expect("mediation must not hang");
 
@@ -215,7 +219,7 @@ async fn dev_mode_still_succeeds_against_an_http1_only_target() {
     let mediator = HttpMediator::dev();
 
     let message = healthy_message(&format!("{target}/hook"));
-    let outcome = tokio::time::timeout(Duration::from_secs(5), mediator.mediate(&message))
+    let outcome = time::timeout(Duration::from_secs(5), mediator.mediate(&message))
         .await
         .expect("mediation must not hang");
 

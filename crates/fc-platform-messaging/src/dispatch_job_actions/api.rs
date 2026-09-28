@@ -24,6 +24,7 @@ use super::operations::{
 use super::repository::DispatchJobActionsRepository;
 use crate::dispatch_job::api::DispatchJobResponse;
 use crate::dispatch_job::delivery_credentials::DeliveryCredentials;
+use crate::dispatch_job::entity::DispatchJob;
 use crate::dispatch_job::repository::DispatchJobRepository;
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::authorization_service::checks;
@@ -31,6 +32,7 @@ use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::shared::webhook_signer;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
+use std::slice;
 
 #[derive(Clone)]
 pub struct DispatchJobActionsState {
@@ -122,7 +124,7 @@ async fn settle(
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
     let head = state
         .repo
-        .heads(std::slice::from_ref(&id))
+        .heads(slice::from_ref(&id))
         .await?
         .into_iter()
         .next()
@@ -152,10 +154,7 @@ async fn settle(
 
 /// Go `buildPayload`: the raw payload for a data-only job, else the
 /// envelope with its keys in order (Go marshals a map).
-fn delivery_body(
-    job: &crate::dispatch_job::entity::DispatchJob,
-    client_code: Option<&str>,
-) -> String {
+fn delivery_body(job: &DispatchJob, client_code: Option<&str>) -> String {
     if job.data_only {
         return job.payload.clone().unwrap_or_else(|| "{}".to_string());
     }
@@ -380,10 +379,11 @@ pub async fn bff_sign_dispatch_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch_job::entity::DispatchJob;
 
     #[test]
     fn the_envelope_is_go_shaped() {
-        let mut job = crate::dispatch_job::entity::DispatchJob::for_event(
+        let mut job = DispatchJob::for_event(
             Some("evn_1"),
             "shop:orders:order:shipped",
             Some("shop"),

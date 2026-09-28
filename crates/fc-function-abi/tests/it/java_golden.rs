@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use fc_function_abi::{Response, Webhook};
+use std::fs;
 
 fn data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -16,7 +17,7 @@ fn data(name: &str) -> PathBuf {
 
 /// Rows of a generated table: `#` lines skipped, fields split on tabs.
 fn table(name: &str) -> Vec<Vec<String>> {
-    std::fs::read_to_string(data(name))
+    fs::read_to_string(data(name))
         .unwrap()
         .lines()
         .filter(|l| !l.starts_with('#'))

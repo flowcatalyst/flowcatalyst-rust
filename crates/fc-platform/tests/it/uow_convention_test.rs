@@ -14,6 +14,7 @@
 //! authorization. Together the two cover the structural write pipeline:
 //! handler gates the caller, use case gates the write.
 
+use crate::support::sources;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -38,7 +39,7 @@ const FILE_SKIPLIST: &[&str] = &[];
 const FN_SKIPLIST: &[&str] = &[];
 
 fn should_skip(path: &Path) -> bool {
-    let rel = crate::support::sources::strip_src(path)
+    let rel = sources::strip_src(path)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
@@ -177,7 +178,7 @@ fn every_use_case_terminates_through_unit_of_work() {
     let skip_keys: HashSet<&str> = FN_SKIPLIST.iter().copied().collect();
 
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
 
     let mut violations = Vec::new();
     let mut checked = 0usize;
@@ -190,7 +191,7 @@ fn every_use_case_terminates_through_unit_of_work() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = crate::support::sources::strip_src(file)
+        let rel = sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");
@@ -249,7 +250,7 @@ fn every_use_case_terminates_through_unit_of_work() {
 #[test]
 fn sync_use_cases_write_only_through_the_unit_of_work() {
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
     let writes = regex::Regex::new(
         r"(?:_repo|\brepo)\s*\.\s*(?:insert|update|delete|upsert|save|archive\w*|insert_\w+|update_\w+|delete_\w+)\s*\(",
     )

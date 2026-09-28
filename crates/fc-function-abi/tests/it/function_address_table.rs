@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use fc_function_abi::FunctionAddress;
+use std::fs;
 
 const TABLE: &str = "tests/data/function-address-table.csv";
 const JAVA_TABLE: &str =
@@ -33,7 +34,7 @@ fn rows(text: &str) -> Vec<(String, bool)> {
 
 #[test]
 fn shared_table() {
-    let text = std::fs::read_to_string(TABLE).unwrap();
+    let text = fs::read_to_string(TABLE).unwrap();
     let rows = rows(&text);
     assert_eq!(
         rows.len(),
@@ -56,11 +57,11 @@ fn shared_table() {
 #[test]
 fn copy_matches_java() {
     let java = Path::new(env!("CARGO_MANIFEST_DIR")).join(JAVA_TABLE);
-    let Ok(java) = std::fs::read(&java) else {
+    let Ok(java) = fs::read(&java) else {
         eprintln!("skipped: {} not found", java.display());
         return;
     };
-    let ours = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(TABLE)).unwrap();
+    let ours = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(TABLE)).unwrap();
     assert!(
         ours == java,
         "tests/data/function-address-table.csv differs from Java's copy"

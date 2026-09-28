@@ -14,6 +14,8 @@ use crate::application::client_config::ApplicationClientConfig;
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::application::repository::ApplicationRepository;
 use crate::client::repository::ClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -32,7 +34,7 @@ pub struct UpdateApplicationClientConfigCommand {
     pub config: Option<serde_json::Value>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateApplicationClientConfigCommand {}
+impl AuditMasked for UpdateApplicationClientConfigCommand {}
 
 pub struct UpdateApplicationClientConfigUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
@@ -90,11 +92,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         _command: &UpdateApplicationClientConfigCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

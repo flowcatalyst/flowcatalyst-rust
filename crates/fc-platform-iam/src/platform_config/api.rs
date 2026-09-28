@@ -21,6 +21,7 @@ use super::operations::{
     SetPlatformConfigPropertyCommand, SetPlatformConfigPropertyUseCase,
 };
 use super::repository::PlatformConfigRepository;
+use crate::application::repository::ApplicationRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
 use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::checks;
@@ -127,17 +128,14 @@ pub struct PlatformConfigState {
     pub access_repo: Arc<super::access_repository::PlatformConfigAccessRepository>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
-    pub set_property_use_case: Arc<
-        super::operations::SetPlatformConfigPropertyUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub set_property_use_case:
+        Arc<super::operations::SetPlatformConfigPropertyUseCase<PgUnitOfWork>>,
 }
 
 /// Go's property-route rule ([`super::access::require_config_access`]).
 async fn require_config_access(
     state: &PlatformConfigState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     app_code: &str,
     write: bool,
 ) -> Result<(), PlatformError> {
@@ -154,7 +152,7 @@ async fn require_config_access(
 /// Read a config property: anchor, or a read grant (Go).
 async fn can_read_config(
     state: &PlatformConfigState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     app_code: &str,
 ) -> Result<(), PlatformError> {
     require_config_access(state, ctx, app_code, false).await
@@ -163,7 +161,7 @@ async fn can_read_config(
 /// Write a config property: anchor, or a write grant (Go).
 async fn can_write_config(
     state: &PlatformConfigState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     app_code: &str,
 ) -> Result<(), PlatformError> {
     require_config_access(state, ctx, app_code, true).await
@@ -345,7 +343,7 @@ pub async fn set_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
     Json(req): Json<SetConfigRequest>,
-) -> Result<(axum::http::StatusCode, Json<ConfigResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<ConfigResponse>), PlatformError> {
     use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
@@ -387,10 +385,7 @@ pub async fn set_property(
 
     // 200 whether the property was created or updated, as Go
     // (platformconfig/api/api.go:36).
-    Ok((
-        axum::http::StatusCode::OK,
-        Json(ConfigResponse::from_config(config)),
-    ))
+    Ok((StatusCode::OK, Json(ConfigResponse::from_config(config))))
 }
 
 /// Delete a config property
@@ -416,7 +411,7 @@ pub async fn delete_property(
     auth: Authenticated,
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     can_write_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
@@ -435,7 +430,7 @@ pub async fn delete_property(
             query.client_id.as_deref(),
         )
         .await?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ─── Go-parity routes (formerly go_api.rs) ────────────────────────────────────
@@ -467,8 +462,8 @@ pub struct GoPlatformConfigState {
     pub set_property_use_case: Arc<SetPlatformConfigPropertyUseCase<PgUnitOfWork>>,
     pub grant_access_use_case: Arc<GrantPlatformConfigAccessUseCase<PgUnitOfWork>>,
     pub revoke_access_use_case: Arc<RevokePlatformConfigAccessUseCase<PgUnitOfWork>>,
-    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
-    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
+    pub application_repo: Arc<ApplicationRepository>,
+    pub app_access: Arc<ApplicationAccessService>,
 }
 
 /// Go `ConfigResponse`.

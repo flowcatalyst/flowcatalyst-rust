@@ -15,7 +15,13 @@ use super::domains::{
     validate_mapping_scope, DomainDeps, INTERNAL_IDP_CODE,
 };
 use super::events::IdentityProviderUpdated;
+use crate::email_domain_mapping::entity::EmailDomainMapping;
+use crate::identity_provider::entity::IdentityProvider;
 use crate::identity_provider::repository::IdentityProviderRepository;
+use crate::role::ceiling;
+use crate::role::repository::RoleRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -50,7 +56,7 @@ pub struct UpdateIdentityProviderCommand {
     pub allowed_role_ids: Option<Vec<String>>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateIdentityProviderCommand {}
+impl AuditMasked for UpdateIdentityProviderCommand {}
 
 /// Use case for updating an existing identity provider.
 pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
@@ -58,7 +64,7 @@ pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
     domains: DomainDeps,
     unit_of_work: Arc<U>,
     /// The allow-list's role ceiling (owner ruling 14).
-    role_repo: Arc<crate::role::repository::RoleRepository>,
+    role_repo: Arc<RoleRepository>,
 }
 
 impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
@@ -66,7 +72,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         idp_repo: Arc<IdentityProviderRepository>,
         domains: DomainDeps,
         unit_of_work: Arc<U>,
-        role_repo: Arc<crate::role::repository::RoleRepository>,
+        role_repo: Arc<RoleRepository>,
     ) -> Self {
         Self {
             idp_repo,
@@ -110,12 +116,10 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         command: &UpdateIdentityProviderCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-            ctx.caller(),
-        )?;
+        checks::require_anchor_scope(ctx.caller())?;
         if let Some(after) = command.allowed_role_ids.as_deref() {
             if let Some(existing) = self.idp_repo.find_by_id(&command.idp_id).await? {
-                crate::role::ceiling::require_role_ref_change(
+                ceiling::require_role_ref_change(
                     ctx.caller(),
                     &self.role_repo,
                     &existing.allowed_role_ids,
@@ -224,7 +228,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
     /// fall every other domain routed here back to the internal provider.
     async fn reconcile_domains(
         &self,
-        idp: &crate::identity_provider::entity::IdentityProvider,
+        idp: &IdentityProvider,
         command: &UpdateIdentityProviderCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
@@ -261,7 +265,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         if idp.code == INTERNAL_IDP_CODE {
             return Ok(());
         }
-        let released: Vec<&crate::email_domain_mapping::entity::EmailDomainMapping> = current
+        let released: Vec<&EmailDomainMapping> = current
             .iter()
             .filter(|m| !desired.contains(&m.email_domain))
             .collect();

@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 use crate::mfa::notify::PlatformName;
 use crate::platform_config::repository::PlatformConfigRepository;
+use base64::engine::general_purpose;
 
 /// Go `DefaultPrimaryColor` (the SPA's `loginTheme.ts` default).
 pub const DEFAULT_PRIMARY_COLOR: &str = "#102a43";
@@ -179,7 +180,7 @@ impl Theme {
         }
         format!(
             "data:image/svg+xml;base64,{}",
-            base64::engine::general_purpose::STANDARD.encode(svg)
+            general_purpose::STANDARD.encode(svg)
         )
     }
 

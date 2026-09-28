@@ -15,6 +15,7 @@ use super::events::PasskeyRegistered;
 use crate::webauthn::entity::WebauthnCredential;
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +28,7 @@ pub struct RegisterPasskeyCommand {
     pub registration_state: Option<PasskeyRegistration>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RegisterPasskeyCommand {}
+impl AuditMasked for RegisterPasskeyCommand {}
 
 pub struct RegisterPasskeyUseCase<U: UnitOfWork> {
     credential_repo: Arc<WebauthnCredentialRepository>,

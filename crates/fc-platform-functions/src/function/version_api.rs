@@ -29,11 +29,14 @@ use super::operations::promote_plan::{
 use super::operations::{PromoteCommand, PublishCommand, RemoveAliasCommand, RetireCommand};
 use super::wire::{micros_opt_ser, micros_ser, parse_body};
 use super::{ClientCeilings, Digest, JsonNode, Manifest};
+use crate::function;
 use fc_platform_core::permissions::function::{FUNCTION_PROMOTE, FUNCTION_PUBLISH, FUNCTION_VIEW};
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, UseCase, UseCaseError};
+use std::collections::HashMap;
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
@@ -197,7 +200,7 @@ pub struct ManifestErrorResponse {
     pub code: String,
     pub message: String,
     #[schema(value_type = Object)]
-    pub details: std::collections::HashMap<String, serde_json::Value>,
+    pub details: HashMap<String, serde_json::Value>,
 }
 
 impl ManifestErrorResponse {
@@ -591,7 +594,7 @@ pub async fn publish_version(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner);
+        .map(Committed::into_inner);
     match outcome {
         Ok(event) => Ok((StatusCode::CREATED, Json(PublishResponse::of(&event)))),
         Err(e) if e.is_unchanged() => {
@@ -663,8 +666,8 @@ pub async fn check_manifest(
                 let alias = req
                     .alias
                     .as_deref()
-                    .filter(|a| !crate::function::java_is_blank(a))
-                    .unwrap_or(crate::function::LIVE_ALIAS);
+                    .filter(|a| !function::java_is_blank(a))
+                    .unwrap_or(function::LIVE_ALIAS);
                 let plan = state
                     .ops
                     .trigger_sync
@@ -868,7 +871,7 @@ pub async fn promote(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner);
+        .map(Committed::into_inner);
     let event = match outcome {
         Ok(event) => event,
         // The alias already names this version: nothing written.

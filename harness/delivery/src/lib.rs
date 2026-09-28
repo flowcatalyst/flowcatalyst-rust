@@ -28,6 +28,8 @@ use crate::report::{Report, ScenarioResult};
 use crate::scenario::Scenario;
 use crate::side::{Binaries, Side};
 use crate::stack::SideKind;
+use futures::future;
+use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -99,7 +101,7 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 /// the Go repo: `-mod=readonly`, output outside the repo, and the repo's
 /// `git status --porcelain` must be identical before and after.
 pub fn build_go(go_src: &Path, out_dir: &Path) -> anyhow::Result<PathBuf> {
-    std::fs::create_dir_all(out_dir)?;
+    fs::create_dir_all(out_dir)?;
     let before = git(go_src, &["status", "--porcelain"])
         .with_context(|| format!("{} is not a git checkout", go_src.display()))?;
     let out = out_dir.join("fc-server");
@@ -193,7 +195,7 @@ pub fn select(scenarios: Vec<Scenario>, only: &Option<String>) -> Vec<Scenario> 
 /// `invalid_token` (Rust generated a key pair at the relative path under its
 /// own directory and reloaded it, so it survived).
 fn create_report_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
-    std::fs::create_dir_all(&dir)?;
+    fs::create_dir_all(&dir)?;
     dir.canonicalize()
         .with_context(|| format!("resolve {}", dir.display()))
 }
@@ -245,7 +247,7 @@ pub async fn run(opts: Options) -> anyhow::Result<Report> {
 
     let infra = Infra::start(&id, opts.keep_infra)?;
     let keys = report_dir.join("keys");
-    std::fs::create_dir_all(&keys)?;
+    fs::create_dir_all(&keys)?;
     let private = keys.join("jwt-private.pem");
     let public = keys.join("jwt-public.pem");
     openssl(&[
@@ -300,14 +302,14 @@ pub async fn run(opts: Options) -> anyhow::Result<Report> {
     // Boot both sides concurrently.
     {
         let futs = sides.iter_mut().map(|s| s.boot(&scenarios));
-        futures::future::join_all(futs).await;
+        future::join_all(futs).await;
     }
     let sides: Vec<Arc<Side>> = sides.into_iter().map(Arc::new).collect();
 
     let mut results = Vec::new();
     for sc in &scenarios {
         eprintln!("── scenario {} ──", sc.name);
-        let runs = futures::future::join_all(sides.iter().map(|s| s.run_scenario(sc))).await;
+        let runs = future::join_all(sides.iter().map(|s| s.run_scenario(sc))).await;
         for s in &sides {
             s.receiver.uninstall_scenario(&sc.name);
         }
@@ -339,19 +341,18 @@ pub async fn run(opts: Options) -> anyhow::Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process;
 
     /// A relative `--report` comes back absolute, so the key pair and log
     /// paths handed to the side processes resolve from any working
     /// directory.
     #[test]
     fn the_report_dir_is_made_absolute() {
-        let rel = PathBuf::from(format!(
-            "target/delivery-harness-test-{}",
-            std::process::id()
-        ));
+        let rel = PathBuf::from(format!("target/delivery-harness-test-{}", process::id()));
         let abs = create_report_dir(rel.clone()).unwrap();
         assert!(abs.is_absolute(), "{}", abs.display());
         assert!(abs.ends_with(&rel));
-        std::fs::remove_dir_all(&abs).unwrap();
+        fs::remove_dir_all(&abs).unwrap();
     }
 }

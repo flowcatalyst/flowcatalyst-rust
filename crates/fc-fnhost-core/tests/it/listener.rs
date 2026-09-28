@@ -8,12 +8,19 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::routing;
+use fc_fnhost_core::artifact::ArtifactError;
 use fc_fnhost_core::clock::Clock;
 use fc_fnhost_core::host::Listener;
+use futures::stream;
+use hyper::body::Frame;
 use serde_json::json;
+use std::io;
 use support::listener::{
     doc, entry, foreign_key, mint, raw, signed, timestamp, with, Claims, Harness, Options, TestJwks,
 };
+use tokio::net::TcpListener;
+use tokio::time;
 
 const ADDR: &str = "app.orders.ship";
 const ADDR_B: &str = "app.orders.bill";
@@ -558,9 +565,9 @@ async fn h4_a_foreign_jwks_uri_is_not_followed() {
     let jwks = TestJwks::start().await;
     let decoy = axum::Router::new().route(
         "/.well-known/jwks.json",
-        axum::routing::get(|| async { r#"{"keys":[]}"# }),
+        routing::get(|| async { r#"{"keys":[]}"# }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let decoy_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     tokio::spawn(async move { axum::serve(listener, decoy).await.unwrap() });
     jwks.use_foreign_jwks_uri(&format!("{decoy_url}/.well-known/jwks.json"));
@@ -927,13 +934,9 @@ async fn h9_body_cap() {
             h.client
                 .post(format!("{}{}", h.base, fpath(ADDR, "/x")))
                 .body(reqwest::Body::wrap(http_body_util::StreamBody::new(
-                    futures::stream::iter(vec![
-                        Ok::<_, std::io::Error>(hyper::body::Frame::data(
-                            bytes::Bytes::from_static(b"01234"),
-                        )),
-                        Ok(hyper::body::Frame::data(bytes::Bytes::from_static(
-                            b"56789X",
-                        ))),
+                    stream::iter(vec![
+                        Ok::<_, io::Error>(Frame::data(bytes::Bytes::from_static(b"01234"))),
+                        Ok(Frame::data(bytes::Bytes::from_static(b"56789X"))),
                     ]),
                 ))),
         )
@@ -1066,7 +1069,7 @@ async fn h11_a_pinned_version_still_preparing_is_503_until_ready() {
     h.store.hold(&format!("mem://{ADDR}/3"));
     h.store.fail(
         &format!("mem://{ADDR}/4"),
-        fc_fnhost_core::artifact::ArtifactError::DigestMismatch {
+        ArtifactError::DigestMismatch {
             expected: support::fakes::digest_for(ADDR, 4),
             actual: support::fakes::digest_for("x", 0),
         },
@@ -1091,7 +1094,7 @@ async fn h11_a_pinned_version_still_preparing_is_503_until_ready() {
             Instant::now() < deadline,
             "the reconcile never began preparing"
         );
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
 
     let preparing = h
@@ -1593,14 +1596,14 @@ async fn h14_drain_rejects_new_requests_and_lets_in_flight_finish() {
         let h = h.clone();
         tokio::spawn(async move { h.listener.close(Duration::from_secs(10)).await })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     h.probes().release_one();
     assert_eq!(
         in_flight.await.unwrap().status,
         200,
         "in flight completes during drain"
     );
-    tokio::time::timeout(Duration::from_secs(10), closing)
+    time::timeout(Duration::from_secs(10), closing)
         .await
         .expect("close returns once in-flight work is done")
         .unwrap();
@@ -1720,9 +1723,9 @@ async fn observer_outcomes_and_gauges() {
 }
 
 async fn wait_until(mut condition: impl FnMut() -> bool) {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    time::timeout(Duration::from_secs(10), async {
         while !condition() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await

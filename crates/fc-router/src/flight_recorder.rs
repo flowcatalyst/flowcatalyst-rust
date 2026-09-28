@@ -22,6 +22,11 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::hash_map::DefaultHasher;
+use std::fmt;
+use std::fmt::Formatter;
+use std::sync::OnceLock;
 
 /// Default number of events kept (about 2–3 MB).
 pub const DEFAULT_CAPACITY: usize = 16_384;
@@ -130,12 +135,12 @@ pub struct Facts {
     pub batch: Option<Arc<str>>,
     /// Free text: an error, a reason.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<std::borrow::Cow<'static, str>>,
+    pub detail: Option<Cow<'static, str>>,
 }
 
 impl Facts {
     /// Just a text.
-    pub fn text(detail: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+    pub fn text(detail: impl Into<Cow<'static, str>>) -> Self {
         Self {
             detail: Some(detail.into()),
             ..Self::default()
@@ -210,7 +215,7 @@ impl EventContext {
 
     /// A shared placeholder for when recording is off: no allocation.
     pub fn unrecorded() -> Self {
-        static NONE: std::sync::OnceLock<EventContext> = std::sync::OnceLock::new();
+        static NONE: OnceLock<EventContext> = OnceLock::new();
         NONE.get_or_init(|| Self::new("")).clone()
     }
 }
@@ -227,8 +232,8 @@ struct Shard {
     recorded: u64,
 }
 
-impl std::fmt::Debug for FlightRecorder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for FlightRecorder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("FlightRecorder")
             .field("capacity", &self.capacity())
             .finish()
@@ -266,7 +271,7 @@ impl FlightRecorder {
     }
 
     fn shard_of(message_id: &str) -> usize {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let mut h = DefaultHasher::new();
         message_id.hash(&mut h);
         (h.finish() as usize) % SHARDS
     }
@@ -366,6 +371,8 @@ impl EventFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     fn ctx(id: &str) -> EventContext {
         EventContext::new(id).pool("P").group(Some("g1")).queue("q")
@@ -438,7 +445,7 @@ mod tests {
         let r = FlightRecorder::new(1024);
         for i in 0..10 {
             // Across shards events order by time: keep them apart.
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            thread::sleep(Duration::from_millis(2));
             let group = if i % 2 == 0 { "even" } else { "odd" };
             r.record(
                 EventKind::Routed,

@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use fc_platform_core::shared::error::PlatformError;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -30,7 +31,11 @@ use crate::scheduled_job::{
     InstanceListFilters, ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
 use fc_platform_core::directory::{OutboundCredentialSource, OutboundCredentials};
+use fc_platform_core::shared::capped_body;
 use fc_platform_core::shared::webhook_signer;
+use reqwest::header;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Webhook envelope sent to the SDK. Stable shape — the `payload` field
 /// passes through whatever the job stores. Java's `JobDispatcher`
@@ -117,8 +122,8 @@ impl ScheduledJobDispatcher {
             batch = self.config.dispatch_batch_size,
             "Scheduled-job dispatcher started"
         );
-        let mut ticker = tokio::time::interval(self.config.dispatch_interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut ticker = time::interval(self.config.dispatch_interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -135,7 +140,7 @@ impl ScheduledJobDispatcher {
         }
     }
 
-    async fn tick(&self) -> fc_platform_core::shared::error::Result<()> {
+    async fn tick(&self) -> Result<(), PlatformError> {
         let instances = self
             .instance_repo
             .list(&InstanceListFilters {
@@ -256,12 +261,10 @@ impl ScheduledJobDispatcher {
                 let status = resp.status();
                 // Only as far as Go's 500-byte snippet: the rest of a slow or
                 // huge body is never read (the scheduler loop waits on it).
-                let snippet = fc_platform_core::shared::capped_body::read_capped(
-                    resp,
-                    fc_platform_core::shared::capped_body::SCHEDULED_JOB_ERROR_SNIPPET_CAP,
-                )
-                .await
-                .text();
+                let snippet =
+                    capped_body::read_capped(resp, capped_body::SCHEDULED_JOB_ERROR_SNIPPET_CAP)
+                        .await
+                        .text();
                 let err = format!("HTTP {} (expected 2xx): {}", status, snippet);
                 self.handle_failure(job, inst, attempts_after_inc, &err)
                     .await
@@ -348,10 +351,10 @@ pub fn signed_request(
     at: chrono::DateTime<chrono::Utc>,
     body: Vec<u8>,
 ) -> reqwest::RequestBuilder {
-    let mut request = request.header(reqwest::header::CONTENT_TYPE, "application/json");
+    let mut request = request.header(header::CONTENT_TYPE, "application/json");
     if let Some(creds) = credentials {
         if let Some(token) = &creds.token {
-            request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
         }
         if let Some(secret) = &creds.signing_secret {
             for (name, value) in webhook_signer::signature_headers(secret, at, &body) {

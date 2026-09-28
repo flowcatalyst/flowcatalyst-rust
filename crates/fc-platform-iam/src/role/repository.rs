@@ -12,6 +12,10 @@ use super::entity::{AuthRole, RoleSource};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
+use std::iter;
 
 /// Row mapping for iam_roles table
 #[derive(sqlx::FromRow)]
@@ -44,7 +48,7 @@ impl TryFrom<RoleRow> for AuthRole {
             display_name: r.display_name,
             description: r.description,
             application_code,
-            permissions: std::collections::HashSet::new(), // loaded from junction table
+            permissions: HashSet::new(), // loaded from junction table
             source,
             client_managed: r.client_managed,
             created_at: r.created_at,
@@ -259,7 +263,7 @@ impl RoleRepository {
     /// permission kept at its first appearance. Unknown role names
     /// contribute nothing.
     pub async fn flatten_permissions(&self, role_names: &[String]) -> Result<Vec<String>> {
-        let mut by_name: std::collections::HashMap<String, AuthRole> = self
+        let mut by_name: HashMap<String, AuthRole> = self
             .find_by_codes(role_names)
             .await?
             .into_iter()
@@ -452,7 +456,7 @@ impl RoleRepository {
     // ── Helpers ──────────────────────────────────────────────
 
     /// Load permissions for a role from the junction table
-    async fn load_permissions(&self, role_id: &str) -> Result<std::collections::HashSet<String>> {
+    async fn load_permissions(&self, role_id: &str) -> Result<HashSet<String>> {
         let perms: Vec<String> =
             sqlx::query_scalar("SELECT permission FROM iam_role_permissions WHERE role_id = $1")
                 .bind(role_id)
@@ -463,17 +467,13 @@ impl RoleRepository {
     }
 
     /// Insert permissions into the junction table using UNNEST
-    async fn insert_permissions(
-        &self,
-        role_id: &str,
-        permissions: &std::collections::HashSet<String>,
-    ) -> Result<()> {
+    async fn insert_permissions(&self, role_id: &str, permissions: &HashSet<String>) -> Result<()> {
         if permissions.is_empty() {
             return Ok(());
         }
 
         let role_ids: Vec<String> =
-            std::iter::repeat_n(role_id.to_string(), permissions.len()).collect();
+            iter::repeat_n(role_id.to_string(), permissions.len()).collect();
         let perms: Vec<String> = permissions.iter().cloned().collect();
 
         sqlx::query(
@@ -504,8 +504,7 @@ impl RoleRepository {
         .await?;
 
         // Group permissions by role_id
-        let mut perm_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
+        let mut perm_map: HashMap<String, HashSet<String>> = HashMap::new();
         for rp in all_perms {
             perm_map
                 .entry(rp.role_id)
@@ -536,12 +535,8 @@ impl HasId for AuthRole {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<AuthRole> for RoleRepository {
-    async fn persist(
-        &self,
-        r: &AuthRole,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<AuthRole> for RoleRepository {
+    async fn persist(&self, r: &AuthRole, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
 
         sqlx::query(
@@ -585,11 +580,7 @@ impl fc_platform_core::usecase::Persist<AuthRole> for RoleRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        r: &AuthRole,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, r: &AuthRole, tx: &mut DbTx<'_>) -> Result<()> {
         // iam_principal_roles has no DB-level FK on role_name (by design —
         // integrity lives in code). Cascade inline inside the same tx as the
         // role row delete so the invariant holds on every write path.

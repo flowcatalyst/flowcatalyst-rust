@@ -10,9 +10,19 @@ use utoipa::ToSchema;
 
 use super::entity::IdentityProvider;
 use super::repository::IdentityProviderRepository;
+use crate::identity_provider::entity::IdentityProviderType;
+use crate::identity_provider::operations::CreateIdentityProviderUseCase;
+use crate::identity_provider::operations::DeleteIdentityProviderUseCase;
+use crate::identity_provider::operations::DomainDeps;
+use crate::identity_provider::operations::UpdateIdentityProviderUseCase;
+use crate::role::repository::RoleRepository;
+use axum::http::StatusCode;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::Committed;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 /// Go's `mappingScope` values (documentation; the handlers carry text).
 #[derive(utoipa::ToSchema)]
@@ -124,12 +134,10 @@ impl From<IdentityProvider> for IdentityProviderResponse {
 }
 
 /// Go `ParseType`: `INTERNAL` or `OIDC`, exactly.
-fn parse_idp_type(
-    value: &str,
-) -> Result<crate::identity_provider::entity::IdentityProviderType, PlatformError> {
+fn parse_idp_type(value: &str) -> Result<IdentityProviderType, PlatformError> {
     match value {
-        "INTERNAL" => Ok(crate::identity_provider::entity::IdentityProviderType::Internal),
-        "OIDC" => Ok(crate::identity_provider::entity::IdentityProviderType::Oidc),
+        "INTERNAL" => Ok(IdentityProviderType::Internal),
+        "OIDC" => Ok(IdentityProviderType::Oidc),
         _ => Err(PlatformError::bad_request_code(
             "INVALID_TYPE",
             "type must be INTERNAL or OIDC",
@@ -150,26 +158,14 @@ pub struct IdentityProvidersListResponse {
 pub struct IdentityProvidersState {
     pub idp_repo: Arc<IdentityProviderRepository>,
     /// The mappings a create or update routes, and their move side effects.
-    pub domains: crate::identity_provider::operations::DomainDeps,
+    pub domains: DomainDeps,
     /// Role definitions, for the role ceiling on `allowedRoleIds`.
-    pub role_repo: Arc<crate::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     /// Opens the one transaction a create or update runs in.
-    pub pg_unit_of_work: Arc<fc_platform_core::usecase::PgUnitOfWork>,
-    pub create_use_case: Arc<
-        crate::identity_provider::operations::CreateIdentityProviderUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub update_use_case: Arc<
-        crate::identity_provider::operations::UpdateIdentityProviderUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::identity_provider::operations::DeleteIdentityProviderUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub pg_unit_of_work: Arc<PgUnitOfWork>,
+    pub create_use_case: Arc<CreateIdentityProviderUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateIdentityProviderUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteIdentityProviderUseCase<PgUnitOfWork>>,
     /// Encrypts the OIDC client secret before it reaches the command. `None`
     /// when no key is configured; a request that carries a secret then fails.
     pub encryption_service: Option<Arc<EncryptionService>>,
@@ -224,15 +220,13 @@ pub async fn create_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Json(req): Json<CreateIdentityProviderRequest>,
-) -> Result<(axum::http::StatusCode, Json<IdentityProviderResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<IdentityProviderResponse>), PlatformError> {
     use crate::identity_provider::operations::{
         CreateIdentityProviderCommand, CreateIdentityProviderUseCase,
     };
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_identity_providers(
-        &auth.0,
-    )?;
+    checks::can_create_identity_providers(&auth.0)?;
     let allowed_role_ids = req.allowed_role_ids.unwrap_or_default();
 
     let cmd = CreateIdentityProviderCommand {
@@ -268,7 +262,7 @@ pub async fn create_identity_provider(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)?;
+        .map(Committed::into_inner)?;
 
     // Go answers with the provider (the SPA's toast reads its name).
     let idp = state
@@ -276,7 +270,7 @@ pub async fn create_identity_provider(
         .find_by_id(&event.identity_provider_id)
         .await?
         .ok_or_else(|| PlatformError::not_found("IdentityProvider", &event.identity_provider_id))?;
-    Ok((axum::http::StatusCode::CREATED, Json(idp.into())))
+    Ok((StatusCode::CREATED, Json(idp.into())))
 }
 
 #[utoipa::path(
@@ -293,7 +287,7 @@ pub async fn list_identity_providers(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
 ) -> Result<Json<IdentityProvidersListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_identity_providers(&auth.0)?;
+    checks::can_read_identity_providers(&auth.0)?;
 
     let idps = state.idp_repo.find_all().await?;
     let total = idps.len();
@@ -322,7 +316,7 @@ pub async fn get_identity_provider(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<IdentityProviderResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_identity_providers(&auth.0)?;
+    checks::can_read_identity_providers(&auth.0)?;
 
     let idp = state
         .idp_repo
@@ -358,9 +352,7 @@ pub async fn update_identity_provider(
     };
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_identity_providers(
-        &auth.0,
-    )?;
+    checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = UpdateIdentityProviderCommand {
         idp_id: id.clone(),
@@ -394,7 +386,7 @@ pub async fn update_identity_provider(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)?;
+        .map(Committed::into_inner)?;
 
     // Go answers 200 with the updated provider (the SPA's detail page sets
     // it as the view's model).
@@ -424,16 +416,14 @@ pub async fn delete_identity_provider(
     State(state): State<IdentityProvidersState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::identity_provider::operations::DeleteIdentityProviderCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_identity_providers(
-        &auth.0,
-    )?;
+    checks::can_delete_identity_providers(&auth.0)?;
 
     let cmd = DeleteIdentityProviderCommand { idp_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }

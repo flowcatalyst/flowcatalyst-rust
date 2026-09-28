@@ -1,6 +1,9 @@
 //! EmailDomainMapping Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::usecase::UseCaseError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,21 +52,18 @@ pub const TWO_FACTOR_METHODS: [&str; 2] = ["TOTP", "EMAIL_PIN"];
 
 /// Go `validate2FA` (emaildomainmapping/operations/create.go:28-42): every
 /// method is known, and a domain requiring 2FA allows at least one.
-pub fn validate_two_factor(
-    require_2fa: bool,
-    methods: &[String],
-) -> Result<(), fc_platform_core::usecase::UseCaseError> {
+pub fn validate_two_factor(require_2fa: bool, methods: &[String]) -> Result<(), UseCaseError> {
     if methods
         .iter()
         .any(|m| !TWO_FACTOR_METHODS.contains(&m.as_str()))
     {
-        return Err(fc_platform_core::usecase::UseCaseError::validation(
+        return Err(UseCaseError::validation(
             "INVALID_2FA_METHOD",
             "allowed2faMethods entries must be TOTP or EMAIL_PIN",
         ));
     }
     if require_2fa && methods.is_empty() {
-        return Err(fc_platform_core::usecase::UseCaseError::validation(
+        return Err(UseCaseError::validation(
             "2FA_METHOD_REQUIRED",
             "at least one 2FA method must be allowed when require2fa is set",
         ));
@@ -79,9 +79,7 @@ impl EmailDomainMapping {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::EmailDomainMapping,
-            ),
+            id: tsid::generate(EntityType::EmailDomainMapping),
             email_domain: email_domain.into(),
             identity_provider_id: identity_provider_id.into(),
             scope_type,

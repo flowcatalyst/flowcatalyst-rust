@@ -18,6 +18,12 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde_json::json;
+use std::env;
+use std::fs;
+use std::net::TcpListener;
+use std::path::Path;
+use tokio::task;
+use tokio::time;
 
 /// `fc-server` with only the function host enabled (the platform is on by
 /// default, so it is turned off).
@@ -25,7 +31,7 @@ fn host() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_fc-server"));
     command
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("PATH", env::var("PATH").unwrap_or_default())
         .env("FC_PLATFORM_ENABLED", "false")
         .env("FC_FUNCTION_HOST_ENABLED", "true");
     command
@@ -66,7 +72,7 @@ fn signatures_off_outside_dev_mode_exits_2() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("FLOWCATALYST_DEV_MODE"));
 }
 
-fn base_env(command: &mut Command, url: &str, cache: &std::path::Path) {
+fn base_env(command: &mut Command, url: &str, cache: &Path) {
     command
         .env("FC_FN_PLATFORM_URL", url)
         .env("FC_FN_CLIENT_ID", "id")
@@ -86,7 +92,7 @@ async fn exit_after_start_runs_a_real_reconcile_then_exits_0() {
     let (platform, url) = support::start().await;
     // A real component (fc-fnhost-core's committed test guest) for `wasm`,
     // and a `jvm` entry, which this host has no runtime for.
-    let component = std::fs::read(concat!(
+    let component = fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../crates/fc-fnhost-core/tests/fixtures/wasm/pure.wasm"
     ))
@@ -115,7 +121,7 @@ async fn exit_after_start_runs_a_real_reconcile_then_exits_0() {
     let mut command = host();
     base_env(&mut command, &url, cache.path());
     command.env("FC_EXIT_AFTER_START", "true");
-    let status = tokio::task::spawn_blocking(move || command.output().unwrap())
+    let status = task::spawn_blocking(move || command.output().unwrap())
         .await
         .unwrap();
     assert_eq!(
@@ -166,7 +172,7 @@ async fn sigterm_drains_and_exits_0() {
     base_env(&mut command, &url, cache.path());
     let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let (port, function_port) = tokio::task::spawn_blocking(move || {
+    let (port, function_port) = task::spawn_blocking(move || {
         for line in BufReader::new(stderr).lines() {
             let line: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
             if line["msg"] == "function host started" {
@@ -200,7 +206,7 @@ async fn sigterm_drains_and_exits_0() {
         .arg(child.id().to_string())
         .status()
         .unwrap();
-    let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
+    let status = task::spawn_blocking(move || child.wait().unwrap())
         .await
         .unwrap();
     assert_eq!(status.code(), Some(0));
@@ -210,11 +216,11 @@ async fn sigterm_drains_and_exits_0() {
             .is_some_and(|b| b["state"] == "DRAINING")
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    time::sleep(Duration::from_millis(10)).await;
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -270,7 +276,7 @@ async fn beside_another_role_the_host_runs_on_its_own_ports_and_drains_first() {
         .arg(child.id().to_string())
         .status()
         .unwrap();
-    let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
+    let status = task::spawn_blocking(move || child.wait().unwrap())
         .await
         .unwrap();
     assert_eq!(status.code(), Some(0));

@@ -15,9 +15,24 @@ use crate::dispatch_job::entity::{
     DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, RetryStrategy,
 };
 use crate::dispatch_job::repository::DispatchJobRepository;
+use crate::dispatch_job::repository::RecordedAttempt;
+use crate::dispatch_job::signing_guard::SigningGuard;
+use crate::dispatch_job_actions::api::RequestSummary;
+use crate::shared::batch_api;
+use crate::shared::batch_api::SuppliedJobIds;
+use crate::subscription::operations::create;
+use axum::http::StatusCode;
+use fc_platform_core::directory::ClientDirectory;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::slice;
 
 /// Go `MetadataDTO`: one key/value tag of a dispatch job (documentation of
 /// [`DispatchMetadata`]).
@@ -352,9 +367,9 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 pub struct DispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     /// Resolves each list row's `clientIdentifier`.
-    pub client_repo: Arc<dyn fc_platform_core::directory::ClientDirectory>,
+    pub client_repo: Arc<dyn ClientDirectory>,
     /// Refuses a job signed by an identity the caller may not use (S5).
-    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
+    pub signing: Arc<SigningGuard>,
 }
 
 // ============================================================================
@@ -476,7 +491,7 @@ where
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Metadata {
-        Map(std::collections::BTreeMap<String, String>),
+        Map(BTreeMap<String, String>),
         List(Vec<DispatchMetadata>),
     }
     Ok(match Option::<Metadata>::deserialize(deserializer)? {
@@ -495,9 +510,7 @@ where
 pub(crate) fn job_queue(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
     match raw {
         None => Ok(None),
-        Some(raw) => {
-            crate::subscription::operations::create::parse_queue(raw).map_err(PlatformError::from)
-        }
+        Some(raw) => create::parse_queue(raw).map_err(PlatformError::from),
     }
 }
 
@@ -565,7 +578,7 @@ pub struct DispatchAttemptResponse {
     pub error_type: Option<String>,
     /// What the platform sent on this attempt (Go's `RequestSummary`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<crate::dispatch_job_actions::api::RequestSummary>)]
+    #[schema(value_type = Option<RequestSummary>)]
     pub request: Option<serde_json::Value>,
 }
 
@@ -586,8 +599,8 @@ impl From<DispatchAttempt> for DispatchAttemptResponse {
     }
 }
 
-impl From<crate::dispatch_job::repository::RecordedAttempt> for DispatchAttemptResponse {
-    fn from(r: crate::dispatch_job::repository::RecordedAttempt) -> Self {
+impl From<RecordedAttempt> for DispatchAttemptResponse {
+    fn from(r: RecordedAttempt) -> Self {
         let mut out = Self::from(r.attempt);
         out.request = r.request_info.filter(|v| !v.is_null());
         out
@@ -596,7 +609,7 @@ impl From<crate::dispatch_job::repository::RecordedAttempt> for DispatchAttemptR
 
 /// Go's `CheckScopeAccess` on a job read by id: 403 `SCOPE_FORBIDDEN`.
 fn check_job_scope(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::check_scope_access(&auth.0, client_id)
+    checks::check_scope_access(&auth.0, client_id)
 }
 
 /// Get dispatch job by ID
@@ -619,7 +632,7 @@ pub async fn get_dispatch_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs(&auth.0)?;
 
     let job = state
         .dispatch_job_repo
@@ -649,7 +662,7 @@ pub async fn list_dispatch_jobs(
     auth: Authenticated,
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs(&auth.0)?;
     list_dispatch_jobs_unchecked(&state, &auth, query).await
 }
 
@@ -670,7 +683,7 @@ pub async fn list_dispatch_jobs_unchecked(
     let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
         None
     } else {
-        Some(fc_platform_core::shared::caller_reach::client_ids(&auth.0))
+        Some(caller_reach::client_ids(&auth.0))
     };
     let ts = |v: Option<&str>| {
         v.filter(|v| !v.is_empty())
@@ -726,7 +739,7 @@ async fn with_client_identifiers(
     if ids.is_empty() {
         return Ok(rows);
     }
-    let identifiers: std::collections::HashMap<String, String> = state
+    let identifiers: HashMap<String, String> = state
         .client_repo
         .find_by_ids(&ids)
         .await?
@@ -761,7 +774,7 @@ pub async fn get_jobs_for_event(
     auth: Authenticated,
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs(&auth.0)?;
 
     // Go `byEvent`: the read projection, newest first, keeping only the jobs
     // the caller may reach (`CanAccessScope`: a platform job is an anchor's
@@ -772,13 +785,7 @@ pub async fn get_jobs_for_event(
         .await?;
     let filtered: Vec<DispatchJobReadResponse> = jobs
         .into_iter()
-        .filter(|j| {
-            fc_platform_core::shared::authorization_service::checks::check_scope_access(
-                &auth.0,
-                j.client_id.as_deref(),
-            )
-            .is_ok()
-        })
+        .filter(|j| checks::check_scope_access(&auth.0, j.client_id.as_deref()).is_ok())
         .map(Into::into)
         .collect();
 
@@ -799,7 +806,7 @@ pub async fn get_jobs_for_event(
     operation_id = "postApiDispatchJobs",
     request_body = CreateDispatchJobRequest,
     responses(
-        (status = 201, description = "Dispatch job created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Dispatch job created", body = CreatedResponse),
         (status = 400, description = "Invalid request"),
         (status = 403, description = "No access to client")
     ),
@@ -809,24 +816,13 @@ pub async fn create_dispatch_job(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
     Json(req): Json<CreateDispatchJobRequest>,
-) -> Result<
-    (
-        axum::http::StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, with
     // Go's body.
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
 
     // Go's single create requires the account (dispatch_job_create.go:92-94).
-    let Some(service_account_id) =
-        fc_platform_core::shared::caller_reach::non_blank(req.service_account_id)
-    else {
+    let Some(service_account_id) = caller_reach::non_blank(req.service_account_id) else {
         return Err(PlatformError::bad_request_code(
             "VALIDATION",
             "serviceAccountId is required",
@@ -834,8 +830,7 @@ pub async fn create_dispatch_job(
     };
 
     // The client the job is written under (owner decision #24).
-    let client_id =
-        fc_platform_core::shared::caller_reach::require_writable_client(&auth.0, req.client_id)?;
+    let client_id = caller_reach::require_writable_client(&auth.0, req.client_id)?;
 
     // Determine kind
     // Absent/empty means EVENT; anything else must be an exact kind (400).
@@ -919,19 +914,14 @@ pub async fn create_dispatch_job(
     // The identity that would sign it must be the caller's to use.
     state
         .signing
-        .check_jobs(&auth.0, std::slice::from_ref(&job))
+        .check_jobs(&auth.0, slice::from_ref(&job))
         .await?;
 
     // Insert into database
     let id = job.id.clone();
     state.dispatch_job_repo.insert(&job).await?;
 
-    Ok((
-        axum::http::StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            id,
-        )),
-    ))
+    Ok((StatusCode::CREATED, Json(CreatedResponse::new(id))))
 }
 
 /// Create multiple dispatch jobs in batch
@@ -956,10 +946,7 @@ pub async fn batch_create_dispatch_jobs(
 ) -> Result<Json<BatchCreateDispatchJobsResponse>, PlatformError> {
     // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, with
     // Go's body.
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
 
     // Validate batch size
     if req.jobs.is_empty() {
@@ -974,14 +961,11 @@ pub async fn batch_create_dispatch_jobs(
     }
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
-    let mut supplied = crate::shared::batch_api::SuppliedJobIds::default();
+    let mut supplied = SuppliedJobIds::default();
 
     for job_req in req.jobs {
         // The client the job is written under (owner decision #24).
-        let client_id = fc_platform_core::shared::caller_reach::require_writable_client(
-            &auth.0,
-            job_req.client_id,
-        )?;
+        let client_id = caller_reach::require_writable_client(&auth.0, job_req.client_id)?;
 
         // Determine kind
         // Absent/empty means EVENT; anything else must be an exact kind (400).
@@ -1037,8 +1021,7 @@ pub async fn batch_create_dispatch_jobs(
             job.max_retries = max_retries;
         }
 
-        job.service_account_id =
-            fc_platform_core::shared::caller_reach::non_blank(job_req.service_account_id);
+        job.service_account_id = caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.data_only = job_req.data_only;
         job.metadata = job_req.metadata;
@@ -1061,7 +1044,7 @@ pub async fn batch_create_dispatch_jobs(
         .insert_new(&created_jobs, supplied.ids())
         .await?;
     if !taken.is_empty() {
-        return Err(crate::shared::batch_api::job_ids_taken(&taken));
+        return Err(batch_api::job_ids_taken(&taken));
     }
 
     let count = created_jobs.len();
@@ -1096,7 +1079,7 @@ pub async fn get_dispatch_job_attempts(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<DispatchAttemptResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs(&auth.0)?;
 
     let job = state
         .dispatch_job_repo
@@ -1150,7 +1133,7 @@ pub async fn get_filter_options(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
 ) -> Result<Json<DispatchJobFilterOptionsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+    checks::can_read_dispatch_jobs(&auth.0)?;
 
     let repo = &state.dispatch_job_repo;
     let (statuses, codes, client_ids, dispatch_pool_ids, subscription_ids, kinds) = tokio::try_join!(
@@ -1198,7 +1181,7 @@ pub async fn get_dispatch_job_raw(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchJobResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
+    checks::can_read_dispatch_jobs_raw(&auth.0)?;
 
     let job = state
         .dispatch_job_repo
@@ -1238,7 +1221,7 @@ pub async fn list_dispatch_jobs_raw(
     auth: Authenticated,
     Query(query): Query<DispatchJobsQuery>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
+    checks::can_read_dispatch_jobs_raw(&auth.0)?;
     list_dispatch_jobs_unchecked(&state, &auth, query).await
 }
 

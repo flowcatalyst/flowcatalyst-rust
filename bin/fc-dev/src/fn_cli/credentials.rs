@@ -18,6 +18,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::CliError;
+use std::fmt;
+use std::fmt::Formatter;
+use std::fs;
 
 /// `fn-cli.json` (Java `StartCommand.FnCliCredentialsFile`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,7 +42,7 @@ impl CliFile {
     /// The file, or `None` when it is absent, unreadable or corrupt (then
     /// the caller falls through to its other sources).
     pub fn read(path: &Path) -> Option<CliFile> {
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = fs::read(path).ok()?;
         let mut file: CliFile = serde_json::from_slice(&bytes).ok()?;
         for field in [
             &mut file.platform_url,
@@ -64,8 +67,8 @@ pub struct Credentials {
     pub client_secret: String,
 }
 
-impl std::fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials")
             .field("platform_url", &self.platform_url)
             .field("client_id", &self.client_id)
@@ -151,6 +154,8 @@ pub fn trim_slash(url: String) -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
 
     fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
@@ -160,9 +165,9 @@ mod tests {
         move |k| map.get(k).cloned()
     }
 
-    fn write(dir: &Path, file: &CliFile) -> std::path::PathBuf {
+    fn write(dir: &Path, file: &CliFile) -> PathBuf {
         let path = dir.join("fn-cli.json");
-        std::fs::write(&path, serde_json::to_vec(file).unwrap()).unwrap();
+        fs::write(&path, serde_json::to_vec(file).unwrap()).unwrap();
         path
     }
 
@@ -234,7 +239,7 @@ mod tests {
     fn a_corrupt_file_is_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fn-cli.json");
-        std::fs::write(&path, "{not json").unwrap();
+        fs::write(&path, "{not json").unwrap();
         assert!(CliFile::read(&path).is_none());
         assert_eq!(
             platform_url_or_default(None, &env_of(&[]), &path),

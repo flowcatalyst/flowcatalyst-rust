@@ -162,7 +162,7 @@ pub fn parse_java_cron(text: &str) -> Result<JavaCron, (&'static str, String)> {
     }
     Ok(JavaCron {
         expression,
-        fields: std::array::from_fn(|i| fields[i].to_string()),
+        fields: array::from_fn(|i| fields[i].to_string()),
         bits,
     })
 }
@@ -268,6 +268,7 @@ fn non_negative_int(token: &str) -> Result<i64, String> {
 pub use fc_platform_scheduled_jobs::scheduled_job::java_zone::{
     java_fixed_offset_seconds, zone_id_valid,
 };
+use std::array;
 
 #[cfg(test)]
 mod tests {

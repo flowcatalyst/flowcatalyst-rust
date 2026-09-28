@@ -5,10 +5,14 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{Client, ClientNote, ClientStatus};
+use crate::client::entity;
 use fc_platform_core::directory::{ClientDirectory, ClientRef};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
 
 /// Row mapping for tnt_clients table
 #[derive(sqlx::FromRow)]
@@ -99,9 +103,9 @@ impl ClientRepository {
     pub async fn find_ids_by_identifiers(
         &self,
         identifiers: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    ) -> Result<HashMap<String, String>> {
         if identifiers.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows = sqlx::query_as::<_, (String, String)>(
             "SELECT identifier, id FROM tnt_clients WHERE identifier = ANY($1)",
@@ -271,12 +275,8 @@ impl HasId for Client {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Client> for ClientRepository {
-    async fn persist(
-        &self,
-        c: &Client,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Client> for ClientRepository {
+    async fn persist(&self, c: &Client, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         let notes_json = serde_json::to_value(&c.notes).unwrap_or_default();
         sqlx::query(
@@ -305,7 +305,7 @@ impl fc_platform_core::usecase::Persist<Client> for ClientRepository {
         Ok(())
     }
 
-    async fn delete(&self, c: &Client, tx: &mut fc_platform_core::usecase::DbTx<'_>) -> Result<()> {
+    async fn delete(&self, c: &Client, tx: &mut DbTx<'_>) -> Result<()> {
         // iam_client_access_grants has no DB-level FK on client_id
         // (integrity lives in code). Cascade in the same tx as the client
         // delete so this path holds the invariant even if someone bypasses
@@ -343,7 +343,7 @@ impl ClientRepository {
 
 fn client_ref(c: Client) -> ClientRef {
     ClientRef {
-        active: c.status == crate::client::entity::ClientStatus::Active,
+        active: c.status == entity::ClientStatus::Active,
         id: c.id,
         name: c.name,
         identifier: c.identifier,
@@ -369,7 +369,7 @@ impl ClientDirectory for ClientRepository {
     async fn find_ids_by_identifiers(
         &self,
         identifiers: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    ) -> Result<HashMap<String, String>> {
         ClientRepository::find_ids_by_identifiers(self, identifiers).await
     }
 

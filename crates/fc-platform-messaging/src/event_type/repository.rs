@@ -5,9 +5,15 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{EventType, EventTypeStatus, SpecVersion};
+use crate::event_type::entity::EventTypeCode;
+use crate::event_type::operations::SyncEventTypeInput;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Row mapping for msg_event_types table
 #[derive(sqlx::FromRow)]
@@ -105,10 +111,7 @@ impl EventTypeRepository {
     /// changes a row's source, status or client scope. Returns how many
     /// types it inserted. Startup-only (no principal, no events), like the
     /// built-in role seeding.
-    pub async fn seed_catalogue(
-        &self,
-        defs: &[crate::event_type::operations::SyncEventTypeInput],
-    ) -> Result<usize> {
+    pub async fn seed_catalogue(&self, defs: &[SyncEventTypeInput]) -> Result<usize> {
         use crate::event_type::entity::EventType;
         use fc_platform_core::shared::tsid::{self, EntityType};
 
@@ -121,7 +124,7 @@ impl EventTypeRepository {
                 .bind(&codes)
                 .fetch_all(&self.pool)
                 .await?;
-        let mut ids: std::collections::HashMap<String, String> = existing.into_iter().collect();
+        let mut ids: HashMap<String, String> = existing.into_iter().collect();
         let versioned: Vec<(String,)> = sqlx::query_as(
             "SELECT DISTINCT et.code FROM msg_event_type_spec_versions sv \
              JOIN msg_event_types et ON et.id = sv.event_type_id \
@@ -130,8 +133,7 @@ impl EventTypeRepository {
         .bind(&codes)
         .fetch_all(&self.pool)
         .await?;
-        let versioned: std::collections::HashSet<String> =
-            versioned.into_iter().map(|(c,)| c).collect();
+        let versioned: HashSet<String> = versioned.into_iter().map(|(c,)| c).collect();
 
         let now = chrono::Utc::now();
         let mut new_ids = Vec::new();
@@ -149,10 +151,9 @@ impl EventTypeRepository {
                     renamed_names.push(d.name.clone());
                 }
                 None => {
-                    let code =
-                        crate::event_type::entity::EventTypeCode::parse(&d.code).map_err(|e| {
-                            PlatformError::internal(format!("catalogue event type {}: {e}", d.code))
-                        })?;
+                    let code = EventTypeCode::parse(&d.code).map_err(|e| {
+                        PlatformError::internal(format!("catalogue event type {}: {e}", d.code))
+                    })?;
                     let et = EventType::new(code, &d.name);
                     new_ids.push(et.id.clone());
                     new_codes.push(et.code.clone());
@@ -275,8 +276,7 @@ impl EventTypeRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut spec_map: std::collections::HashMap<String, Vec<SpecVersion>> =
-            std::collections::HashMap::new();
+        let mut spec_map: HashMap<String, Vec<SpecVersion>> = HashMap::new();
         for row in all_specs {
             let event_type_id = row.event_type_id.clone();
             spec_map
@@ -476,9 +476,9 @@ impl EventTypeRepository {
     pub async fn statuses_by_codes(
         &self,
         codes: &[String],
-    ) -> Result<std::collections::HashMap<String, EventTypeStatus>> {
+    ) -> Result<HashMap<String, EventTypeStatus>> {
         if codes.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows: Vec<(String, String, String)> =
             sqlx::query_as("SELECT id, code, status FROM msg_event_types WHERE code = ANY($1)")
@@ -499,9 +499,9 @@ impl EventTypeRepository {
     pub async fn owners_by_codes(
         &self,
         codes: &[String],
-    ) -> Result<std::collections::HashMap<String, (String, EventTypeStatus)>> {
+    ) -> Result<HashMap<String, (String, EventTypeStatus)>> {
         if codes.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
             "SELECT id, code, application, status FROM msg_event_types WHERE code = ANY($1)",
@@ -592,12 +592,8 @@ impl HasId for EventType {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<EventType> for EventTypeRepository {
-    async fn persist(
-        &self,
-        et: &EventType,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<EventType> for EventTypeRepository {
+    async fn persist(&self, et: &EventType, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
 
         sqlx::query(
@@ -651,11 +647,7 @@ impl fc_platform_core::usecase::Persist<EventType> for EventTypeRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        et: &EventType,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, et: &EventType, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM msg_event_type_spec_versions WHERE event_type_id = $1")
             .bind(&et.id)
             .execute(&mut **tx.inner)

@@ -13,7 +13,7 @@ use support::{read_json, TestApp};
 
 async fn setup() -> TestApp {
     // Secrets are stored as keyed hashes; any 32-byte key will do.
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 

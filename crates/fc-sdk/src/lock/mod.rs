@@ -46,6 +46,9 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use std::error;
+use std::fmt;
+use std::fmt::Formatter;
 use thiserror::Error;
 
 mod memory;
@@ -78,7 +81,7 @@ pub enum LockError {
     TtlTooLarge(Duration),
     /// Backend-level I/O failure (network, query, etc.).
     #[error("lock backend error: {0}")]
-    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Backend(#[source] Box<dyn error::Error + Send + Sync>),
 }
 
 #[cfg(feature = "lock-postgres")]
@@ -117,8 +120,8 @@ pub struct LockHandle {
     inner: Box<dyn LockHandleInner>,
 }
 
-impl std::fmt::Debug for LockHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for LockHandle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("LockHandle").finish_non_exhaustive()
     }
 }

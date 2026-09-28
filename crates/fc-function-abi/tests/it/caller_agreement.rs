@@ -14,6 +14,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use fc_function_abi::{permission_matches, Principal};
 use fc_platform::role::entity::matches_pattern;
+use fc_platform::shared::authorization_service::Credential;
 use fc_platform::{AuthContext, PrincipalType, UserScope};
 
 fn principal(
@@ -60,7 +61,7 @@ fn auth_context(tier: Option<&str>, clients: &[&str], permissions: &[&str]) -> A
             .map(|s| s.to_string())
             .collect::<HashSet<_>>(),
         roles: vec![],
-        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
+        credential: Credential::BearerToken,
     }
 }
 

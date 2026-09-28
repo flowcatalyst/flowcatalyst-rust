@@ -2,168 +2,91 @@
 //! the values production stores (`shared::enum_str`, fc-platform-core; the
 //! enums are the domain crates').
 
+use crate::application::entity::ApplicationType;
+use crate::application_openapi_spec::entity::OpenApiSpecStatus;
+use crate::auth::config_entity::AuthConfigType;
+use crate::auth::config_entity::AuthProvider;
+use crate::auth::oauth_entity::GrantType;
+use crate::auth::oauth_entity::OAuthClientType;
+use crate::client::entity::ClientStatus;
+use crate::connection::entity::ConnectionStatus;
+use crate::dispatch_job::entity::DispatchAttemptStatus;
+use crate::dispatch_job::entity::DispatchKind;
+use crate::dispatch_job::entity::DispatchProtocol;
+use crate::dispatch_job::entity::ErrorType;
+use crate::dispatch_job::entity::RetryStrategy;
+use crate::dispatch_pool::entity::DispatchPoolStatus;
+use crate::email_domain_mapping::entity::ScopeType;
+use crate::event_type::entity::EventTypeSource;
+use crate::event_type::entity::EventTypeStatus;
+use crate::event_type::entity::SchemaType;
+use crate::event_type::entity::SpecVersionStatus;
+use crate::identity_provider::entity::IdentityProviderType;
+use crate::login_attempt::entity::AttemptType;
+use crate::login_attempt::entity::LoginOutcome;
+use crate::platform_config::entity::ConfigScope;
+use crate::platform_config::entity::ConfigValueType;
+use crate::principal::entity::PrincipalType;
+use crate::principal::entity::UserScope;
+use crate::process::entity::ProcessSource;
+use crate::process::entity::ProcessStatus;
+use crate::role::entity::RoleSource;
+use crate::scheduled_job::entity::CompletionStatus;
+use crate::scheduled_job::entity::InstanceStatus;
+use crate::scheduled_job::entity::LogLevel;
+use crate::scheduled_job::entity::ScheduledJobStatus;
+use crate::scheduled_job::entity::TriggerKind;
+use crate::service_account::entity::AssignmentSource;
+use crate::service_account::entity::SigningAlgorithm;
+use crate::service_account::entity::WebhookAuthType;
+use crate::subscription::entity::SubscriptionSource;
+use crate::subscription::entity::SubscriptionStatus;
 use fc_platform_core::shared::enum_str::{assert_str_enum, UnknownEnumValue};
+use std::str::FromStr;
 
 /// Every domain enum's `as_str` agrees with its serde spelling, so typed
 /// fields and hand-built strings put the same value on the wire.
 #[test]
 fn every_domain_enum_agrees_with_serde() {
-    assert_str_enum(
-        crate::principal::entity::PrincipalType::ALL,
-        crate::principal::entity::PrincipalType::as_str,
-    );
-    assert_str_enum(
-        crate::principal::entity::UserScope::ALL,
-        crate::principal::entity::UserScope::as_str,
-    );
-    assert_str_enum(
-        crate::event_type::entity::EventTypeStatus::ALL,
-        crate::event_type::entity::EventTypeStatus::as_str,
-    );
-    assert_str_enum(
-        crate::event_type::entity::EventTypeSource::ALL,
-        crate::event_type::entity::EventTypeSource::as_str,
-    );
-    assert_str_enum(
-        crate::event_type::entity::SpecVersionStatus::ALL,
-        crate::event_type::entity::SpecVersionStatus::as_str,
-    );
-    assert_str_enum(
-        crate::event_type::entity::SchemaType::ALL,
-        crate::event_type::entity::SchemaType::as_str,
-    );
-    assert_str_enum(
-        crate::role::entity::RoleSource::ALL,
-        crate::role::entity::RoleSource::as_str,
-    );
-    assert_str_enum(
-        crate::connection::entity::ConnectionStatus::ALL,
-        crate::connection::entity::ConnectionStatus::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_job::entity::DispatchKind::ALL,
-        crate::dispatch_job::entity::DispatchKind::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_job::entity::DispatchProtocol::ALL,
-        crate::dispatch_job::entity::DispatchProtocol::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_job::entity::RetryStrategy::ALL,
-        crate::dispatch_job::entity::RetryStrategy::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_job::entity::ErrorType::ALL,
-        crate::dispatch_job::entity::ErrorType::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_job::entity::DispatchAttemptStatus::ALL,
-        crate::dispatch_job::entity::DispatchAttemptStatus::as_str,
-    );
-    assert_str_enum(
-        crate::auth::config_entity::AuthProvider::ALL,
-        crate::auth::config_entity::AuthProvider::as_str,
-    );
-    assert_str_enum(
-        crate::auth::config_entity::AuthConfigType::ALL,
-        crate::auth::config_entity::AuthConfigType::as_str,
-    );
-    assert_str_enum(
-        crate::auth::oauth_entity::OAuthClientType::ALL,
-        crate::auth::oauth_entity::OAuthClientType::as_str,
-    );
-    assert_str_enum(
-        crate::auth::oauth_entity::GrantType::ALL,
-        crate::auth::oauth_entity::GrantType::as_str,
-    );
-    assert_str_enum(
-        crate::identity_provider::entity::IdentityProviderType::ALL,
-        crate::identity_provider::entity::IdentityProviderType::as_str,
-    );
-    assert_str_enum(
-        crate::email_domain_mapping::entity::ScopeType::ALL,
-        crate::email_domain_mapping::entity::ScopeType::as_str,
-    );
-    assert_str_enum(
-        crate::subscription::entity::SubscriptionStatus::ALL,
-        crate::subscription::entity::SubscriptionStatus::as_str,
-    );
-    assert_str_enum(
-        crate::subscription::entity::SubscriptionSource::ALL,
-        crate::subscription::entity::SubscriptionSource::as_str,
-    );
-    assert_str_enum(
-        crate::scheduled_job::entity::ScheduledJobStatus::ALL,
-        crate::scheduled_job::entity::ScheduledJobStatus::as_str,
-    );
-    assert_str_enum(
-        crate::scheduled_job::entity::TriggerKind::ALL,
-        crate::scheduled_job::entity::TriggerKind::as_str,
-    );
-    assert_str_enum(
-        crate::scheduled_job::entity::InstanceStatus::ALL,
-        crate::scheduled_job::entity::InstanceStatus::as_str,
-    );
-    assert_str_enum(
-        crate::scheduled_job::entity::CompletionStatus::ALL,
-        crate::scheduled_job::entity::CompletionStatus::as_str,
-    );
-    assert_str_enum(
-        crate::scheduled_job::entity::LogLevel::ALL,
-        crate::scheduled_job::entity::LogLevel::as_str,
-    );
-    assert_str_enum(
-        crate::dispatch_pool::entity::DispatchPoolStatus::ALL,
-        crate::dispatch_pool::entity::DispatchPoolStatus::as_str,
-    );
-    assert_str_enum(
-        crate::platform_config::entity::ConfigScope::ALL,
-        crate::platform_config::entity::ConfigScope::as_str,
-    );
-    assert_str_enum(
-        crate::platform_config::entity::ConfigValueType::ALL,
-        crate::platform_config::entity::ConfigValueType::as_str,
-    );
-    assert_str_enum(
-        crate::service_account::entity::WebhookAuthType::ALL,
-        crate::service_account::entity::WebhookAuthType::as_str,
-    );
-    assert_str_enum(
-        crate::service_account::entity::SigningAlgorithm::ALL,
-        crate::service_account::entity::SigningAlgorithm::as_str,
-    );
-    assert_str_enum(
-        crate::service_account::entity::AssignmentSource::ALL,
-        crate::service_account::entity::AssignmentSource::as_str,
-    );
-    assert_str_enum(
-        crate::application::entity::ApplicationType::ALL,
-        crate::application::entity::ApplicationType::as_str,
-    );
-    assert_str_enum(
-        crate::application_openapi_spec::entity::OpenApiSpecStatus::ALL,
-        crate::application_openapi_spec::entity::OpenApiSpecStatus::as_str,
-    );
-    assert_str_enum(
-        crate::login_attempt::entity::AttemptType::ALL,
-        crate::login_attempt::entity::AttemptType::as_str,
-    );
-    assert_str_enum(
-        crate::login_attempt::entity::LoginOutcome::ALL,
-        crate::login_attempt::entity::LoginOutcome::as_str,
-    );
-    assert_str_enum(
-        crate::client::entity::ClientStatus::ALL,
-        crate::client::entity::ClientStatus::as_str,
-    );
-    assert_str_enum(
-        crate::process::entity::ProcessStatus::ALL,
-        crate::process::entity::ProcessStatus::as_str,
-    );
-    assert_str_enum(
-        crate::process::entity::ProcessSource::ALL,
-        crate::process::entity::ProcessSource::as_str,
-    );
+    assert_str_enum(PrincipalType::ALL, PrincipalType::as_str);
+    assert_str_enum(UserScope::ALL, UserScope::as_str);
+    assert_str_enum(EventTypeStatus::ALL, EventTypeStatus::as_str);
+    assert_str_enum(EventTypeSource::ALL, EventTypeSource::as_str);
+    assert_str_enum(SpecVersionStatus::ALL, SpecVersionStatus::as_str);
+    assert_str_enum(SchemaType::ALL, SchemaType::as_str);
+    assert_str_enum(RoleSource::ALL, RoleSource::as_str);
+    assert_str_enum(ConnectionStatus::ALL, ConnectionStatus::as_str);
+    assert_str_enum(DispatchKind::ALL, DispatchKind::as_str);
+    assert_str_enum(DispatchProtocol::ALL, DispatchProtocol::as_str);
+    assert_str_enum(RetryStrategy::ALL, RetryStrategy::as_str);
+    assert_str_enum(ErrorType::ALL, ErrorType::as_str);
+    assert_str_enum(DispatchAttemptStatus::ALL, DispatchAttemptStatus::as_str);
+    assert_str_enum(AuthProvider::ALL, AuthProvider::as_str);
+    assert_str_enum(AuthConfigType::ALL, AuthConfigType::as_str);
+    assert_str_enum(OAuthClientType::ALL, OAuthClientType::as_str);
+    assert_str_enum(GrantType::ALL, GrantType::as_str);
+    assert_str_enum(IdentityProviderType::ALL, IdentityProviderType::as_str);
+    assert_str_enum(ScopeType::ALL, ScopeType::as_str);
+    assert_str_enum(SubscriptionStatus::ALL, SubscriptionStatus::as_str);
+    assert_str_enum(SubscriptionSource::ALL, SubscriptionSource::as_str);
+    assert_str_enum(ScheduledJobStatus::ALL, ScheduledJobStatus::as_str);
+    assert_str_enum(TriggerKind::ALL, TriggerKind::as_str);
+    assert_str_enum(InstanceStatus::ALL, InstanceStatus::as_str);
+    assert_str_enum(CompletionStatus::ALL, CompletionStatus::as_str);
+    assert_str_enum(LogLevel::ALL, LogLevel::as_str);
+    assert_str_enum(DispatchPoolStatus::ALL, DispatchPoolStatus::as_str);
+    assert_str_enum(ConfigScope::ALL, ConfigScope::as_str);
+    assert_str_enum(ConfigValueType::ALL, ConfigValueType::as_str);
+    assert_str_enum(WebhookAuthType::ALL, WebhookAuthType::as_str);
+    assert_str_enum(SigningAlgorithm::ALL, SigningAlgorithm::as_str);
+    assert_str_enum(AssignmentSource::ALL, AssignmentSource::as_str);
+    assert_str_enum(ApplicationType::ALL, ApplicationType::as_str);
+    assert_str_enum(OpenApiSpecStatus::ALL, OpenApiSpecStatus::as_str);
+    assert_str_enum(AttemptType::ALL, AttemptType::as_str);
+    assert_str_enum(LoginOutcome::ALL, LoginOutcome::as_str);
+    assert_str_enum(ClientStatus::ALL, ClientStatus::as_str);
+    assert_str_enum(ProcessStatus::ALL, ProcessStatus::as_str);
+    assert_str_enum(ProcessSource::ALL, ProcessSource::as_str);
 }
 
 /// Every value the production database held at the 2026-09-24 audit
@@ -171,7 +94,7 @@ fn every_domain_enum_agrees_with_serde() {
 /// deploy would turn live rows into read errors.
 #[test]
 fn production_stored_values_all_decode() {
-    fn all<T: std::str::FromStr<Err = UnknownEnumValue>>(values: &[&str]) {
+    fn all<T: FromStr<Err = UnknownEnumValue>>(values: &[&str]) {
         for v in values {
             assert!(v.parse::<T>().is_ok(), "{v} must decode");
         }

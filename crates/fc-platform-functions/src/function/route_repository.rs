@@ -15,6 +15,7 @@ use super::{Hostname, RoutePattern};
 use fc_platform_core::shared::enum_str::corrupt_value;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::{DbTx, HasId, Persist};
+use std::collections::HashMap;
 
 /// The unique `(hostname, path_prefix)` constraint (Java
 /// `PUBLIC_ROUTE_UNIQUE_CONSTRAINT`).
@@ -57,9 +58,8 @@ impl FunctionRouteRepository {
     pub async fn list_by_functions(
         &self,
         function_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Vec<FunctionRoute>>> {
-        let mut out: std::collections::HashMap<String, Vec<FunctionRoute>> =
-            std::collections::HashMap::new();
+    ) -> Result<HashMap<String, Vec<FunctionRoute>>> {
+        let mut out: HashMap<String, Vec<FunctionRoute>> = HashMap::new();
         if function_ids.is_empty() {
             return Ok(out);
         }

@@ -34,7 +34,11 @@ use fc_platform::shared::authorization_service::AuthorizationService;
 use fc_platform::shared::middleware::{AppState, AuthLayer};
 use support::TestApp;
 
+use axum::http::HeaderMap;
+use fc_platform::shared::tsid;
+use futures::future;
 use permissions::function::{FUNCTION_HOST_CONTROL, FUNCTION_VIEW};
+use std::fs;
 
 // ── Harness ─────────────────────────────────────────────────────────────────
 
@@ -50,7 +54,7 @@ struct Harness {
 }
 
 fn run() -> String {
-    fc_platform::shared::tsid::generate_untyped().to_lowercase()
+    tsid::generate_untyped().to_lowercase()
 }
 
 async fn token(app: &TestApp, scope: UserScope, grants: &[&str]) -> String {
@@ -118,7 +122,7 @@ async fn harness() -> Harness {
 
 struct Reply {
     status: StatusCode,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     body: Vec<u8>,
 }
 
@@ -326,7 +330,7 @@ async fn event_type(h: &Harness, code: &str, archived: bool) {
          application, subdomain, aggregate, created_at, updated_at) \
          VALUES ($1, $2, 'E', $3, 'API', false, $4, $5, $6, NOW(), NOW())",
     )
-    .bind(fc_platform::shared::tsid::generate_untyped())
+    .bind(tsid::generate_untyped())
     .bind(code)
     .bind(if archived { "ARCHIVED" } else { "CURRENT" })
     .bind(parts[0])
@@ -720,7 +724,7 @@ async fn two_hosts_racing_to_mark_one_version_ready_both_get_204_and_one_event()
                     .status
             })
         });
-        for status in futures::future::join_all(beats).await {
+        for status in future::join_all(beats).await {
             assert_eq!(status.unwrap(), StatusCode::NO_CONTENT, "iteration {i}");
         }
         assert_eq!(h.version_state(&v).await, "READY");
@@ -1133,7 +1137,7 @@ async fn an_artifact_streams_from_the_store_and_anything_else_is_404() {
     let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
     let digest = Digest::from_sha256(&<sha2::Sha256 as sha2::Digest>::digest(&bytes).into());
     let file = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(file.path(), &bytes).unwrap();
+    fs::write(file.path(), &bytes).unwrap();
     h.store.put(&f.id, &digest, file.path()).await.unwrap();
     let platform_ref = format!("platform://{}/{}", f.id, digest.hex());
     let v = publish(&h, &f, 1, "arts", Some(&platform_ref)).await;

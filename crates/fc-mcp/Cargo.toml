@@ -31,3 +31,8 @@ chrono = { workspace = true }
 # Used by Config::from_env() to locate the credentials file that
 # fc-dev's mcp_bootstrap writes (`~/.cache/flowcatalyst-dev/mcp-credentials.json`).
 dirs = "5"
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

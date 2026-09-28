@@ -20,6 +20,9 @@
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::env;
+use std::time;
+use std::time::SystemTime;
 
 /// Header name for the HMAC-SHA256 signature (hex-encoded).
 pub const SIGNATURE_HEADER: &str = "X-FlowCatalyst-Signature";
@@ -83,7 +86,7 @@ impl WebhookValidator {
     ///
     /// Returns `Err(MissingSecret)` if the variable is not set or empty.
     pub fn from_env() -> Result<Self, WebhookValidationError> {
-        let secret = std::env::var("FLOWCATALYST_SIGNING_SECRET")
+        let secret = env::var("FLOWCATALYST_SIGNING_SECRET")
             .ok()
             .filter(|s| !s.is_empty())
             .ok_or(WebhookValidationError::MissingSecret)?;
@@ -140,8 +143,8 @@ impl WebhookValidator {
     }
 
     fn validate_timestamp(&self, webhook_time: u64) -> Result<(), WebhookValidationError> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
 
@@ -191,13 +194,15 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time;
+    use std::time::SystemTime;
 
     #[test]
     fn test_compute_and_validate_signature() {
         let validator = WebhookValidator::new("test-secret");
         let payload = b"{\"type\":\"order.created\"}";
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let timestamp = now.to_string();
@@ -214,8 +219,8 @@ mod tests {
     fn test_invalid_signature_rejected() {
         let validator = WebhookValidator::new("test-secret");
         let payload = b"{\"type\":\"order.created\"}";
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let timestamp = now.to_string();
@@ -231,8 +236,8 @@ mod tests {
     fn test_expired_timestamp_rejected() {
         let validator = WebhookValidator::new("test-secret").with_tolerance(60);
         let payload = b"{}";
-        let old_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let old_time = SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
             - 120; // 2 minutes ago
@@ -262,8 +267,8 @@ mod tests {
     #[test]
     fn test_tampered_payload_rejected() {
         let validator = WebhookValidator::new("test-secret");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let timestamp = now.to_string();

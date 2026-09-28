@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 
 use super::deploy::read_manifest;
 use super::{print_json, AddressOpts, CliError, Ctx, Io, OutputMode};
+use std::io;
 
 #[derive(clap::Args, Debug)]
 pub struct ValidateArgs {
@@ -76,7 +77,7 @@ fn changed_fields(action: &Value) -> String {
 
 /// Every problem, one per line (`code pointer: message`); or the plan, one
 /// line per wiring change, then conflicts and warnings (Java's text form).
-pub fn print_text(out: &mut dyn Write, response: &Value, valid: bool) -> std::io::Result<()> {
+pub fn print_text(out: &mut dyn Write, response: &Value, valid: bool) -> io::Result<()> {
     if !valid {
         for error in items(response, "errors") {
             let pointer = error

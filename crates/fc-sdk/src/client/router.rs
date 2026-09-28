@@ -139,12 +139,14 @@ impl Router<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::test_support::MockPlatform;
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     /// A router stub that records each request's `Authorization` header.
     async fn recording_router() -> (String, Arc<Mutex<Vec<String>>>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let record = seen.clone();
@@ -226,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_pipeline_reads_gos_top_level_fields() {
-        let stub = crate::client::test_support::MockPlatform::start(&[(
+        let stub = MockPlatform::start(&[(
             "GET",
             "/monitoring/in-flight-messages/check",
             200,

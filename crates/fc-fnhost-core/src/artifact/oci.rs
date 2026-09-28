@@ -19,6 +19,12 @@ use super::cache::HttpBody;
 use super::ecr::EcrTokenCache;
 use super::{ArtifactError, Source, SourceStream};
 use crate::digest::Digest;
+use base64::engine::general_purpose;
+use reqwest::redirect::Policy;
+use std::fmt;
+use std::fmt::Formatter;
+use tokio::time;
+use url::form_urlencoded;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Java's `HttpRequest.timeout`: the wait for response headers.
@@ -45,16 +51,13 @@ impl RegistryCredentials {
     fn basic_header(&self, registry: &str) -> Option<String> {
         self.by_host.get(registry).map(|(user, password)| {
             let raw = format!("{user}:{password}");
-            format!(
-                "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode(raw)
-            )
+            format!("Basic {}", general_purpose::STANDARD.encode(raw))
         })
     }
 }
 
-impl std::fmt::Debug for RegistryCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for RegistryCredentials {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "RegistryCredentials[{} registr(ies), passwords=***]",
@@ -77,7 +80,7 @@ impl OciSource {
     pub fn new(credentials: RegistryCredentials) -> Self {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             .build()
             .expect("a plain reqwest client builds");
         Self {
@@ -104,7 +107,7 @@ impl OciSource {
         if let Some(authorization) = authorization {
             request = request.header(AUTHORIZATION, authorization);
         }
-        match tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await {
+        match time::timeout(REQUEST_TIMEOUT, request.send()).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(ArtifactError::transport(e)),
             Err(_) => Err(ArtifactError::Transport(
@@ -184,7 +187,7 @@ impl OciSource {
         if let Some(basic) = self.credentials.basic_header(&reference.registry) {
             request = request.header(AUTHORIZATION, basic);
         }
-        let response = match tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await {
+        let response = match time::timeout(REQUEST_TIMEOUT, request.send()).await {
             Ok(Ok(response)) => response,
             Ok(Err(e)) => return Err(ArtifactError::transport(e)),
             Err(_) => return Err(ArtifactError::Transport("token request timed out".into())),
@@ -300,7 +303,7 @@ fn challenge_params(challenge: &str) -> HashMap<String, String> {
 
 /// `URLEncoder.encode(value, UTF_8)`.
 fn url_encode(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -379,11 +382,15 @@ mod tests {
     use axum::extract::{Query, State};
     use axum::http::{HeaderMap as AxumHeaders, StatusCode as AxumStatus};
     use axum::response::IntoResponse;
+    use axum::response::Response;
     use axum::routing::get;
     use axum::Router;
+    use base64::engine::general_purpose;
     use chrono::Utc;
     use sha2::{Digest as _, Sha256};
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::net::TcpListener;
 
     #[test]
     fn references_parse_like_java() {
@@ -425,7 +432,7 @@ mod tests {
         realm: String,
     }
 
-    async fn blob(State(r): State<Registry>, headers: AxumHeaders) -> axum::response::Response {
+    async fn blob(State(r): State<Registry>, headers: AxumHeaders) -> Response {
         match headers.get("authorization").and_then(|v| v.to_str().ok()) {
             Some("Bearer t0k3n") => (AxumStatus::OK, r.blob.clone()).into_response(),
             _ => (
@@ -439,7 +446,7 @@ mod tests {
         }
     }
 
-    async fn token(Query(q): Query<HashMap<String, String>>) -> axum::response::Response {
+    async fn token(Query(q): Query<HashMap<String, String>>) -> Response {
         if q.get("scope").map(String::as_str) == Some("repository:team/fn:pull")
             && q.get("service").map(String::as_str) == Some("reg")
         {
@@ -451,7 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn anonymous_bearer_token_dance_fetches_the_blob() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let content = b"wasm blob".to_vec();
         let digest = Digest::from_sha256(&Sha256::digest(&content).into());
@@ -477,7 +484,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(std::fs::read(fetched.file).unwrap(), content);
+        assert_eq!(fs::read(fetched.file).unwrap(), content);
 
         let missing = Digest::from_sha256(&[7; 32]);
         let err = cache
@@ -549,7 +556,7 @@ mod tests {
             header,
             format!(
                 "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode("AWS:ecr-t0k3n")
+                general_purpose::STANDARD.encode("AWS:ecr-t0k3n")
             )
         );
         assert_eq!(authorizer.calls.load(Ordering::SeqCst), 1);
@@ -608,7 +615,7 @@ mod tests {
             header,
             format!(
                 "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode("fixed-user:fixed-pass")
+                general_purpose::STANDARD.encode("fixed-user:fixed-pass")
             )
         );
         assert_eq!(authorizer.calls.load(Ordering::SeqCst), 0);

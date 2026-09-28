@@ -14,6 +14,7 @@ pub use health::{
 pub use partition_manager::PartitionManagerConfig;
 
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -82,9 +83,7 @@ pub fn start_stream_processor(
         let health = register(event_fan_out::HEALTH_NAME);
         let fan_out_config = EventFanOutConfig {
             batch_size: config.fan_out_batch_size,
-            subscription_refresh: std::time::Duration::from_secs(
-                config.fan_out_subscription_refresh_secs,
-            ),
+            subscription_refresh: Duration::from_secs(config.fan_out_subscription_refresh_secs),
         };
         tasks.spawn(event_fan_out::run(
             pool.clone(),

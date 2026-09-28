@@ -17,6 +17,8 @@ use crate::function::{FunctionAddress, FunctionOwner, Hostname};
 use fc_platform_core::shared::authorization_service::ApplicationScope;
 use fc_platform_core::usecase::UseCaseError;
 
+use fc_platform_core::shared::authorization_service::Authority;
+use fc_platform_core::shared::error;
 /// The use case's caller ([`fc_platform_core::usecase::Caller`]), with the application
 /// scope its handler resolved (Java's `AuthContext` carries both). The
 /// reach rules below are its methods.
@@ -111,8 +113,7 @@ impl FunctionReach for Caller {
     }
 
     fn owner_reach(&self) -> OwnerReach {
-        let clients =
-            fc_platform_core::shared::authorization_service::Authority::accessible_clients(self);
+        let clients = Authority::accessible_clients(self);
         if self.is_anchor() {
             OwnerReach::Everything
         } else if clients.iter().any(|c| c == "*") {
@@ -141,7 +142,7 @@ impl FunctionReach for Caller {
 /// `_NOT_FOUND` to the name as given.
 pub fn resource_not_found(resource: &str, id: &str) -> UseCaseError {
     UseCaseError::not_found(
-        fc_platform_core::shared::error::not_found_code(resource),
+        error::not_found_code(resource),
         format!("{resource} not found: {id}"),
     )
 }
@@ -178,6 +179,7 @@ pub(crate) mod tests {
     use crate::function::Runtime;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
     use fc_platform_core::shared::authorization_service::AuthContext;
+    use fc_platform_core::shared::authorization_service::Credential;
     use std::collections::HashSet;
 
     pub(crate) fn caller(scope: UserScope, clients: &[&str], apps: Option<&[&str]>) -> Caller {
@@ -190,7 +192,7 @@ pub(crate) mod tests {
             accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
             permissions: HashSet::new(),
             roles: vec![],
-            credential: fc_platform_core::shared::authorization_service::Credential::BearerToken,
+            credential: Credential::BearerToken,
         })
         .with_application_scope(match apps {
             None => ApplicationScope::All,

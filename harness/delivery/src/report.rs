@@ -9,11 +9,15 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
+use crate::api;
 use crate::compare::{self, Diff, ExpectedDiff, Summary};
 use crate::scenario::Scenario;
 use crate::side::{Side, SideRun};
 use crate::stack::SideKind;
 use crate::Options;
+use std::collections::BTreeSet;
+use std::fmt::Display;
+use std::fs;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SideResult {
@@ -225,7 +229,7 @@ pub struct StackInfo {
 /// into one line; return the `n` most frequent ERROR lines (plus fatal
 /// start-up errors printed without a level).
 pub fn top_errors(log: &Path, n: usize) -> Vec<(usize, String)> {
-    let Ok(text) = std::fs::read_to_string(log) else {
+    let Ok(text) = fs::read_to_string(log) else {
         return vec![];
     };
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -284,7 +288,7 @@ fn normalise_error(s: &str) -> String {
             }
         })
         .collect();
-    crate::api::truncate(&words.join(" "), 240)
+    api::truncate(&words.join(" "), 240)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -349,7 +353,7 @@ impl Report {
             });
         }
         stacks.sort_by_key(|s| s.side);
-        let used: std::collections::BTreeSet<String> = scenarios
+        let used: BTreeSet<String> = scenarios
             .iter()
             .flat_map(|s| {
                 s.diffs.iter().filter_map(|d| d.accepted_by.clone()).chain(
@@ -397,8 +401,8 @@ impl Report {
     }
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
-        std::fs::write(dir.join("report.json"), serde_json::to_string_pretty(self)?)?;
-        std::fs::write(dir.join("report.md"), self.markdown())?;
+        fs::write(dir.join("report.json"), serde_json::to_string_pretty(self)?)?;
+        fs::write(dir.join("report.md"), self.markdown())?;
         Ok(())
     }
 
@@ -640,7 +644,7 @@ impl Report {
     }
 }
 
-fn fmt_map<K: std::fmt::Display, V: std::fmt::Display>(m: &BTreeMap<K, V>) -> String {
+fn fmt_map<K: Display, V: Display>(m: &BTreeMap<K, V>) -> String {
     if m.is_empty() {
         return "—".into();
     }
@@ -670,5 +674,5 @@ fn compact(v: &[i64]) -> String {
 }
 
 fn clip(s: &str) -> String {
-    crate::api::truncate(s, 160).replace('|', "\\|")
+    api::truncate(s, 160).replace('|', "\\|")
 }

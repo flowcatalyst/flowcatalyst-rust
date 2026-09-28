@@ -5,7 +5,10 @@
 //! identity per (client, email) context, granted per portal app. Nothing here
 //! knows about SQL; the rows live in `portal/repository.rs`.
 
+use base64::engine::general_purpose;
 use chrono::{DateTime, Duration, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::usecase::HasId;
 use serde::{Deserialize, Serialize};
 
 /// Prefix of a portal identity id (Go `tsid.PortalUser`): `ptu_…`.
@@ -139,7 +142,7 @@ impl PortalIdentity {
     pub fn new(client_id: &str, email: &str, name: &str, source: IdentitySource) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate_with_prefix(PORTAL_USER_PREFIX),
+            id: tsid::generate_with_prefix(PORTAL_USER_PREFIX),
             client_id: client_id.to_string(),
             email: normalize_email(email),
             name: name.to_string(),
@@ -249,7 +252,7 @@ impl PortalIdentity {
     }
 }
 
-impl fc_platform_core::usecase::HasId for PortalIdentity {
+impl HasId for PortalIdentity {
     fn id(&self) -> &str {
         &self.id
     }
@@ -289,7 +292,7 @@ impl PortalApp {
     pub fn new(client_id: &str, code: &str, name: &str) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate_with_prefix(PORTAL_APP_PREFIX),
+            id: tsid::generate_with_prefix(PORTAL_APP_PREFIX),
             client_id: client_id.to_string(),
             code: normalize_app_code(code),
             name: name.trim().to_string(),
@@ -301,7 +304,7 @@ impl PortalApp {
     }
 }
 
-impl fc_platform_core::usecase::HasId for PortalApp {
+impl HasId for PortalApp {
     fn id(&self) -> &str {
         &self.id
     }
@@ -405,7 +408,7 @@ pub fn random_token(n: usize) -> String {
     use rand::RngCore;
     let mut bytes = vec![0u8; n];
     rand::rng().fill_bytes(&mut bytes);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 /// Go's `jsontime` layout: microsecond ISO-8601 in UTC.

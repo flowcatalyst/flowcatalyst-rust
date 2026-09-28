@@ -29,6 +29,8 @@ use governor::{
 };
 
 use crate::shared::api_common::ApiError;
+use crate::shared::middleware;
+use axum::http::header;
 
 type IpRateLimiter = RateLimiter<
     String,
@@ -115,7 +117,7 @@ fn extract_ip(headers: &HeaderMap) -> Option<String> {
     // Single source of truth — same trusted-hop logic as the ClientIp
     // extractor used elsewhere. Reads from the right of the X-Forwarded-For
     // chain so attacker-supplied prefix values don't shift our key.
-    crate::shared::middleware::extract_trusted_client_ip(headers)
+    middleware::extract_trusted_client_ip(headers)
 }
 
 /// Axum middleware: reject with 429 + `Retry-After` when the source IP has
@@ -143,7 +145,7 @@ pub async fn rate_limit_per_ip(
             );
             (
                 StatusCode::TOO_MANY_REQUESTS,
-                [(axum::http::header::RETRY_AFTER, secs.to_string())],
+                [(header::RETRY_AFTER, secs.to_string())],
                 Json(body),
             )
                 .into_response()

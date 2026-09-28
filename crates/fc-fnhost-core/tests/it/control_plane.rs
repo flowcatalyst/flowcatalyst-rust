@@ -25,6 +25,9 @@ use fc_function_abi::FunctionAddress;
 use parking_lot::Mutex;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
+use std::collections::HashMap;
+use std::fs;
+use tokio::net::TcpListener;
 
 #[derive(Default)]
 struct Platform {
@@ -58,7 +61,7 @@ async fn token(State(p): State<Arc<Platform>>) -> Response {
 
 async fn desired(
     State(p): State<Arc<Platform>>,
-    Query(q): Query<std::collections::HashMap<String, String>>,
+    Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
     if !authorised(&p, &headers) {
@@ -136,7 +139,7 @@ async fn rig() -> Rig {
         .route("/control/functions/events", post(events))
         .route("/control/functions/artifacts/{version_id}", get(artifact))
         .with_state(platform.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let client = HttpControlPlane::default_client();
@@ -346,7 +349,7 @@ async fn platform_artifacts_download_by_version_id_with_one_refresh() {
         .fetch(&reference, &digest, Some("fnv_1"))
         .await
         .unwrap();
-    assert_eq!(std::fs::read(fetched.file).unwrap(), content);
+    assert_eq!(fs::read(fetched.file).unwrap(), content);
     assert_eq!(
         r.platform.minted.load(Ordering::SeqCst),
         2,

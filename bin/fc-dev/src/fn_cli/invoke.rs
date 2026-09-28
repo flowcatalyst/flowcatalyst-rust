@@ -13,6 +13,8 @@ use serde_json::json;
 use super::client::{bearer_header, raw};
 use super::credentials::{trim_slash, CliFile};
 use super::{print_json, CliError, Ctx, Io, OutputMode};
+use fc_platform::shared::webhook_signer;
+use std::fs;
 
 const DEFAULT_HOST_URL: &str = "http://127.0.0.1:8090";
 
@@ -75,7 +77,7 @@ pub async fn run(ctx: &Ctx<'_>, args: &InvokeArgs, io: &mut Io<'_>) -> Result<i3
             io.stdin.read_to_end(&mut buf)?;
             buf
         }
-        Some(file) => std::fs::read(PathBuf::from(file))
+        Some(file) => fs::read(PathBuf::from(file))
             .map_err(|e| CliError::Other(format!("could not read {file}: {e}")))?,
     };
     let mut headers = Vec::new();
@@ -104,11 +106,7 @@ pub async fn run(ctx: &Ctx<'_>, args: &InvokeArgs, io: &mut Io<'_>) -> Result<i3
         headers.push(bearer_header(&token));
     }
     if let Some(secret) = signing_secret.filter(|_| args.webhook) {
-        for (name, value) in fc_platform::shared::webhook_signer::signature_headers(
-            secret,
-            chrono::Utc::now(),
-            &body,
-        ) {
+        for (name, value) in webhook_signer::signature_headers(secret, chrono::Utc::now(), &body) {
             headers.push((name.to_string(), value));
         }
     }

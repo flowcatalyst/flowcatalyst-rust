@@ -8,6 +8,7 @@
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::domain::{Principal, PrincipalType, UserScope};
+use fc_platform::shared::authorization_service::Credential;
 
 /// Create a test AuthService with HS256 (no RSA keys needed)
 fn test_auth_service() -> AuthService {
@@ -489,7 +490,7 @@ fn test_auth_context_permission_matching() {
         .map(|s| s.to_string())
         .collect(),
         roles: vec!["admin".to_string()],
-        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
+        credential: Credential::BearerToken,
     };
 
     // Direct permissions (4-level)
@@ -527,7 +528,7 @@ fn test_auth_context_multiple_permissions_check() {
         .map(|s| s.to_string())
         .collect(),
         roles: vec!["viewer".to_string()],
-        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
+        credential: Credential::BearerToken,
     };
 
     assert!(ctx.has_all_permissions(&[

@@ -13,10 +13,17 @@
 //! refresh) but takes advantage of sqlx's in-place options update so we don't
 //! need to swap pool handles or refactor every repository.
 
+use aws_sdk_secretsmanager::error::DisplayErrorContext;
+use futures::future::BoxFuture;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use std::env;
+use std::mem;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
+use tokio::sync::OnceCell;
+use tokio::time;
 use tracing::{error, info, warn};
 
 // ── Pool config ──────────────────────────────────────────────────────────────
@@ -43,7 +50,7 @@ impl PoolConfig {
 }
 
 fn env_parse<T: FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
+    env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
@@ -112,7 +119,7 @@ pub const DEFAULT_DATABASE_URL: &str = "postgresql://postgres@localhost:5432/flo
 
 /// [`database_source`] over the process environment.
 pub fn database_source_from_env() -> Result<DatabaseSource, anyhow::Error> {
-    database_source(|k| std::env::var(k).ok())
+    database_source(|k| env::var(k).ok())
 }
 
 /// Resolve the database source from `get` (an environment lookup):
@@ -169,7 +176,7 @@ pub fn database_source(
 /// 5 minutes when unset or unparseable; zero or negative disables polling
 /// (Go `NewDBSecretRefresher`).
 pub fn secret_refresh_interval_from_env() -> Duration {
-    let ms = std::env::var("DB_SECRET_REFRESH_INTERVAL_MS")
+    let ms = env::var("DB_SECRET_REFRESH_INTERVAL_MS")
         .ok()
         .and_then(|v| v.trim().parse::<i64>().ok())
         .unwrap_or(300_000);
@@ -236,7 +243,7 @@ pub struct AwsSecretProvider {
     host: String,
     db_name: String,
     fallback_port: String,
-    client: tokio::sync::OnceCell<aws_sdk_secretsmanager::Client>,
+    client: OnceCell<aws_sdk_secretsmanager::Client>,
 }
 
 impl AwsSecretProvider {
@@ -246,7 +253,7 @@ impl AwsSecretProvider {
             host,
             db_name,
             fallback_port,
-            client: tokio::sync::OnceCell::new(),
+            client: OnceCell::new(),
         }
     }
 
@@ -280,7 +287,7 @@ impl SecretProvider for AwsSecretProvider {
             .map_err(|e| {
                 anyhow::anyhow!(
                     "Failed to get DB secret from Secrets Manager: {}",
-                    aws_sdk_secretsmanager::error::DisplayErrorContext(&e)
+                    DisplayErrorContext(&e)
                 )
             })?;
 
@@ -326,7 +333,7 @@ pub fn start_secret_refresh(
     tokio::spawn(async move {
         let mut current_url = initial_url;
         loop {
-            tokio::time::sleep(interval).await;
+            time::sleep(interval).await;
             match provider.get_db_url().await {
                 Ok(new_url) => {
                     if new_url == current_url {
@@ -704,8 +711,7 @@ pub(crate) const RETIRED_MIGRATIONS: &[(&str, &str)] = &[
 
 /// A migration written in Rust: it runs on every start and tracks itself
 /// (in `_schema_migrations`), as the SQL ones are tracked.
-pub type CodeMigration =
-    for<'a> fn(&'a PgPool) -> futures::future::BoxFuture<'a, Result<(), sqlx::Error>>;
+pub type CodeMigration = for<'a> fn(&'a PgPool) -> BoxFuture<'a, Result<(), sqlx::Error>>;
 
 /// Run all SQL migrations from the migrations/ directory.
 ///
@@ -1164,7 +1170,7 @@ async fn apply_tracked(pool: &PgPool, id: &str, sql: &str) -> Result<(), sqlx::E
     }
 
     let mut tx = pool.begin().await?;
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     for statement in split_sql_statements(sql) {
         let cleaned: String = statement
             .lines()
@@ -1261,7 +1267,7 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
                     i += 2;
                     state = State::BlockComment;
                 } else if b == b';' {
-                    out.push(std::mem::take(&mut buf));
+                    out.push(mem::take(&mut buf));
                     i += 1;
                 } else {
                     buf.push(b as char);

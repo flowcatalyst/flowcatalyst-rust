@@ -19,8 +19,22 @@ use anyhow::Result;
 use fc_common::config::{env_first, env_first_opt, env_or, env_or_parse};
 use tracing::info;
 
+#[cfg(feature = "mongo")]
+use crate::mongo::MongoOutboxRepository;
+#[cfg(any(feature = "mysql", test))]
+use crate::mysql::MySqlOutboxRepository;
+#[cfg(any(feature = "postgres", test))]
+use crate::postgres::PostgresOutboxRepository;
 use crate::repository::{OutboxRepository, OutboxTableConfig};
+#[cfg(any(feature = "sqlite", test))]
+use crate::sqlite::SqliteOutboxRepository;
 use crate::{OutboxBackend, UnknownOutboxBackend};
+#[cfg(any(feature = "mysql", test))]
+use sqlx::mysql::MySqlPoolOptions;
+#[cfg(any(feature = "postgres", test))]
+use sqlx::postgres::PgPoolOptions;
+#[cfg(any(feature = "sqlite", test))]
+use sqlx::sqlite::SqlitePoolOptions;
 
 /// `FC_OUTBOX_BACKEND` (Go's name), then `FC_OUTBOX_DB_TYPE`; `postgres`
 /// when neither is set.
@@ -63,42 +77,33 @@ pub async fn connect(
     let repo: Arc<dyn OutboxRepository> = match backend {
         #[cfg(any(feature = "sqlite", test))]
         OutboxBackend::Sqlite => {
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            let pool = SqlitePoolOptions::new()
                 .max_connections(5)
                 .connect(url)
                 .await?;
-            Arc::new(crate::sqlite::SqliteOutboxRepository::with_config(
-                pool,
-                table_config,
-            ))
+            Arc::new(SqliteOutboxRepository::with_config(pool, table_config))
         }
         #[cfg(any(feature = "postgres", test))]
         OutboxBackend::Postgres => {
-            let pool = sqlx::postgres::PgPoolOptions::new()
+            let pool = PgPoolOptions::new()
                 .max_connections(10)
                 .connect(url)
                 .await?;
-            Arc::new(crate::postgres::PostgresOutboxRepository::with_config(
-                pool,
-                table_config,
-            ))
+            Arc::new(PostgresOutboxRepository::with_config(pool, table_config))
         }
         #[cfg(any(feature = "mysql", test))]
         OutboxBackend::Mysql => {
-            let pool = sqlx::mysql::MySqlPoolOptions::new()
+            let pool = MySqlPoolOptions::new()
                 .max_connections(10)
                 .connect(url)
                 .await?;
-            Arc::new(crate::mysql::MySqlOutboxRepository::with_config(
-                pool,
-                table_config,
-            ))
+            Arc::new(MySqlOutboxRepository::with_config(pool, table_config))
         }
         #[cfg(feature = "mongo")]
         OutboxBackend::Mongo => {
             let db_name = env_or("FC_OUTBOX_MONGO_DB", "flowcatalyst");
             let client = mongodb::Client::with_uri_str(url).await?;
-            Arc::new(crate::mongo::MongoOutboxRepository::with_config(
+            Arc::new(MongoOutboxRepository::with_config(
                 client,
                 &db_name,
                 table_config,
@@ -123,7 +128,7 @@ pub async fn postgres_on_pool(
     pool: sqlx::PgPool,
     table_config: OutboxTableConfig,
 ) -> Result<Arc<dyn OutboxRepository>> {
-    let repo = crate::postgres::PostgresOutboxRepository::with_config(pool, table_config);
+    let repo = PostgresOutboxRepository::with_config(pool, table_config);
     repo.init_schema().await?;
     Ok(Arc::new(repo))
 }
@@ -154,6 +159,8 @@ mod admin {
     use tracing::info;
 
     use crate::EnhancedOutboxProcessor;
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
 
     type Processor = Arc<EnhancedOutboxProcessor>;
 
@@ -175,9 +182,9 @@ mod admin {
         port: u16,
         processor: Processor,
         shutdown: impl Future<Output = ()> + Send + 'static,
-    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    ) -> anyhow::Result<JoinHandle<()>> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr).await?;
         info!("Outbox admin API listening on http://{}", addr);
         let app = admin_router(processor);
         Ok(tokio::spawn(async move {
@@ -253,9 +260,13 @@ mod admin {
         use crate::repository::{ClaimedBatch, OutboxRepository, OutboxTableConfig};
         use crate::{DispatchOutcome, EnhancedProcessorConfig, OutboxDispatcher};
         use async_trait::async_trait;
+        use axum::body;
+        use axum::body::Body;
+        use axum::http::Request;
         use fc_common::{OutboxItem, OutboxItemType, OutboxStatus};
         use std::sync::Mutex;
         use std::time::Duration;
+        use tokio::time;
 
         /// A repository with one PENDING item that fails for good.
         #[derive(Default)]
@@ -334,16 +345,16 @@ mod admin {
             let response = app
                 .clone()
                 .oneshot(
-                    axum::http::Request::builder()
+                    Request::builder()
                         .method(method)
                         .uri(uri)
-                        .body(axum::body::Body::empty())
+                        .body(Body::empty())
                         .unwrap(),
                 )
                 .await
                 .unwrap();
             let status = response.status();
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            let bytes = body::to_bytes(response.into_body(), usize::MAX)
                 .await
                 .unwrap();
             (status, serde_json::from_slice(&bytes).unwrap())
@@ -372,7 +383,7 @@ mod admin {
                 if !processor.blocked_groups().is_empty() {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
+                time::sleep(Duration::from_millis(5)).await;
             }
             assert_eq!(
                 call(&app, "GET", "/outbox/groups/blocked").await,
@@ -415,16 +426,19 @@ mod admin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
+    use std::process;
 
     #[tokio::test]
     async fn a_sqlite_outbox_is_connected_and_its_table_created() {
-        let dir = std::env::temp_dir().join(format!("fc-outbox-setup-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = env::temp_dir().join(format!("fc-outbox-setup-{}", process::id()));
+        fs::create_dir_all(&dir).unwrap();
         let url = format!("sqlite://{}?mode=rwc", dir.join("outbox.db").display());
         let repo = connect(OutboxBackend::Sqlite, &url, OutboxTableConfig::default())
             .await
             .unwrap();
         assert!(repo.claim_pending(10).await.unwrap().items.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

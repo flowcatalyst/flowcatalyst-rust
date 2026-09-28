@@ -5,6 +5,7 @@
 //! that sends real emails when SMTP is configured.
 
 use async_trait::async_trait;
+use std::env;
 use tracing::{info, warn};
 
 /// An email message to be sent.
@@ -60,7 +61,7 @@ pub struct SmtpEmailService {
 /// The first non-blank value among `names`, trimmed (Go `envFirst`).
 fn env_first(names: &[&str]) -> Option<String> {
     names.iter().find_map(|n| {
-        std::env::var(n)
+        env::var(n)
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::events::UserActivated;
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +19,7 @@ pub struct ActivateUserCommand {
     pub principal_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ActivateUserCommand {}
+impl AuditMasked for ActivateUserCommand {}
 
 /// Use case for activating a deactivated user.
 pub struct ActivateUserUseCase<U: UnitOfWork> {

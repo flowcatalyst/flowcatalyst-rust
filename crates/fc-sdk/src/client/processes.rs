@@ -6,6 +6,7 @@
 
 use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
+use crate::client::SyncResult;
 use serde::{Deserialize, Serialize};
 
 /// List of processes returned by `GET /api/processes`.
@@ -181,7 +182,7 @@ impl Processes<'_> {
         app_code: &str,
         processes: Vec<SyncProcessInput>,
         remove_unlisted: bool,
-    ) -> Result<crate::client::SyncResult, ClientError> {
+    ) -> Result<SyncResult, ClientError> {
         let query = if remove_unlisted {
             "?removeUnlisted=true"
         } else {

@@ -16,8 +16,10 @@ use aws_config::{BehaviorVersion, Region};
 use aws_sdk_sqs::Client;
 use std::time::Duration;
 
+use aws_sdk_sqs::types::SendMessageBatchRequestEntry;
 use fc_common::{MediationType, Message};
 use fc_queue::{sqs::SqsQueueConsumer, QueueConsumer};
+use tokio::time;
 
 const LOCALSTACK_ENDPOINT: &str = "http://localhost:4566";
 const TEST_QUEUE_NAME: &str = "test-queue";
@@ -44,7 +46,7 @@ async fn setup_test_queue(client: &Client) -> String {
         .await;
 
     // Wait for deletion to propagate
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(500)).await;
 
     // Create queue
     let result = client
@@ -227,7 +229,7 @@ async fn test_message_nack_immediate_retry() {
         .expect("Nack failed");
 
     // Wait a moment then poll again - message should be available
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(500)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].message.id, "msg-nack");
@@ -362,7 +364,7 @@ async fn test_batch_send_and_receive() {
         let msg = create_test_message(&format!("batch-msg-{}", i));
         let body = serde_json::to_string(&msg).unwrap();
         entries.push(
-            aws_sdk_sqs::types::SendMessageBatchRequestEntry::builder()
+            SendMessageBatchRequestEntry::builder()
                 .id(format!("{}", i))
                 .message_body(body)
                 .build()

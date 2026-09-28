@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::AuthConfigDeleted;
 use crate::auth::config_repository::ClientAuthConfigRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -16,7 +18,7 @@ pub struct DeleteAuthConfigCommand {
     pub auth_config_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteAuthConfigCommand {}
+impl AuditMasked for DeleteAuthConfigCommand {}
 
 pub struct DeleteAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
@@ -56,11 +58,7 @@ impl<U: UnitOfWork> UseCase for DeleteAuthConfigUseCase<U> {
         _command: &DeleteAuthConfigCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -30,8 +30,13 @@ use super::operations::{
 };
 use super::repository::IdentitySearch;
 use super::{can_read_portal_users, can_write_portal_users, PortalState};
+use axum::extract::FromRequest;
+use axum::extract::Request;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, UseCase, UseCaseError};
 
 type ApiResult<T> = Result<T, PlatformError>;
@@ -55,10 +60,10 @@ fn internal(code: &str, message: &str) -> PlatformError {
 /// The raw request body (read leniently by [`body`]).
 pub struct RawBody(pub Bytes);
 
-impl<S: Send + Sync> axum::extract::FromRequest<S> for RawBody {
+impl<S: Send + Sync> FromRequest<S> for RawBody {
     type Rejection = PlatformError;
 
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         Bytes::from_request(req, state)
             .await
             .map(RawBody)
@@ -112,7 +117,7 @@ fn huma_check(bytes: &Bytes, required: &[&str], enums: &[(&str, &[&str])]) -> Ap
     if errors.is_empty() {
         return Ok(());
     }
-    let mut details = std::collections::HashMap::new();
+    let mut details = HashMap::new();
     details.insert("errors".to_string(), serde_json::Value::Array(errors));
     Err(PlatformError::Coded {
         status: StatusCode::BAD_REQUEST,
@@ -1036,12 +1041,8 @@ pub async fn create_portal_app(
         description: req.description,
         redirect_uris: req.redirect_uris,
         client_type: client_type.clone(),
-        oauth_client_row_id: fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::OAuthClient,
-        ),
-        oauth_client_id: fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::OAuthClient,
-        ),
+        oauth_client_row_id: tsid::generate(EntityType::OAuthClient),
+        oauth_client_id: tsid::generate(EntityType::OAuthClient),
         client_secret_ref: secret_ref,
     };
     let oauth_client_id = cmd.oauth_client_id.clone();
@@ -1061,7 +1062,7 @@ pub async fn create_portal_app(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)?;
+        .map(Committed::into_inner)?;
     let portal_app = app_out(&state, &event.portal_app_id).await?;
     Ok((
         StatusCode::CREATED,
@@ -1162,7 +1163,7 @@ pub async fn delete_portal_app(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)?;
+        .map(Committed::into_inner)?;
     let mut msg = "Portal app deleted".to_string();
     match event.deleted_oauth_client_ids.len() {
         0 => {}
@@ -1218,7 +1219,7 @@ pub async fn assign_unassigned_portal_users(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner);
+        .map(Committed::into_inner);
     match outcome {
         Ok(done) => Ok(Json(AssignUnassignedResponse {
             portal_app_code: done.app_code,

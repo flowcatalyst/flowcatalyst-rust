@@ -42,6 +42,8 @@ mod drift_tests {
         SUBSCRIPTION_KEYS, TOP_KEYS,
     };
     use crate::function::{EndpointAuth, HttpMethod, Runtime};
+    use std::fs;
+    use std::path::Path;
 
     fn schema() -> Value {
         serde_json::from_slice(FUNCTION_MANIFEST_SCHEMA).unwrap()
@@ -166,10 +168,10 @@ mod drift_tests {
     /// of ours.
     #[test]
     fn extends_javas_file() {
-        let java = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        let java = Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../../flowcatalyst-javalin/server/src/main/resources/schemas/function-manifest.schema.json",
         );
-        let Ok(bytes) = std::fs::read(&java) else {
+        let Ok(bytes) = fs::read(&java) else {
             eprintln!("skipped: {} not found", java.display());
             return;
         };

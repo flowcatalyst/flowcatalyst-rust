@@ -225,6 +225,14 @@ pub mod repository {
     pub use crate::service_account::repository::ServiceAccountRepository;
     pub use crate::subscription::repository::SubscriptionRepository;
 
+    use crate::function::domain_repository::FunctionDomainRepository;
+    use crate::function::host_repository::FunctionHostRepository;
+    use crate::function::operations::TriggerSyncRepositories;
+    use crate::function::policy_repository::ClientPolicyRepository;
+    use crate::function::repository::FunctionRepository;
+    use crate::function::route_repository::FunctionRouteRepository;
+    use crate::function::trigger_object_repository::TriggerObjectRepository;
+    use crate::function::version_repository::FunctionVersionRepository;
     use sqlx::PgPool;
     use std::sync::Arc;
 
@@ -271,22 +279,20 @@ pub mod repository {
         pub pending_auth_repo: Arc<PendingAuthRepository>,
         // The function registry. Its settings repository needs the app key,
         // so the route setup builds that one itself.
-        pub function_repo: Arc<crate::function::repository::FunctionRepository>,
-        pub function_version_repo:
-            Arc<crate::function::version_repository::FunctionVersionRepository>,
-        pub function_host_repo: Arc<crate::function::host_repository::FunctionHostRepository>,
-        pub function_policy_repo: Arc<crate::function::policy_repository::ClientPolicyRepository>,
-        pub function_domain_repo: Arc<crate::function::domain_repository::FunctionDomainRepository>,
-        pub function_route_repo: Arc<crate::function::route_repository::FunctionRouteRepository>,
-        pub function_trigger_object_repo:
-            Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
+        pub function_repo: Arc<FunctionRepository>,
+        pub function_version_repo: Arc<FunctionVersionRepository>,
+        pub function_host_repo: Arc<FunctionHostRepository>,
+        pub function_policy_repo: Arc<ClientPolicyRepository>,
+        pub function_domain_repo: Arc<FunctionDomainRepository>,
+        pub function_route_repo: Arc<FunctionRouteRepository>,
+        pub function_trigger_object_repo: Arc<TriggerObjectRepository>,
         /// Raw pool — exposed so callers (e.g. the BFF dashboard stats
         /// endpoint) can run ad-hoc queries that don't fit a single
         /// repository. Cloning is cheap; sqlx already Arcs internally.
         pub pool: PgPool,
     }
 
-    impl From<&Repositories> for crate::function::operations::TriggerSyncRepositories {
+    impl From<&Repositories> for TriggerSyncRepositories {
         fn from(repos: &Repositories) -> Self {
             Self {
                 subscriptions: repos.subscription_repo.clone(),
@@ -338,25 +344,13 @@ pub mod repository {
                 idp_repo: Arc::new(IdentityProviderRepository::new(pool)),
                 edm_repo: Arc::new(EmailDomainMappingRepository::new(pool)),
                 pending_auth_repo: Arc::new(PendingAuthRepository::new(pool)),
-                function_repo: Arc::new(crate::function::repository::FunctionRepository::new(pool)),
-                function_version_repo: Arc::new(
-                    crate::function::version_repository::FunctionVersionRepository::new(pool),
-                ),
-                function_host_repo: Arc::new(
-                    crate::function::host_repository::FunctionHostRepository::new(pool),
-                ),
-                function_policy_repo: Arc::new(
-                    crate::function::policy_repository::ClientPolicyRepository::new(pool),
-                ),
-                function_domain_repo: Arc::new(
-                    crate::function::domain_repository::FunctionDomainRepository::new(pool),
-                ),
-                function_route_repo: Arc::new(
-                    crate::function::route_repository::FunctionRouteRepository::new(pool),
-                ),
-                function_trigger_object_repo: Arc::new(
-                    crate::function::trigger_object_repository::TriggerObjectRepository::new(pool),
-                ),
+                function_repo: Arc::new(FunctionRepository::new(pool)),
+                function_version_repo: Arc::new(FunctionVersionRepository::new(pool)),
+                function_host_repo: Arc::new(FunctionHostRepository::new(pool)),
+                function_policy_repo: Arc::new(ClientPolicyRepository::new(pool)),
+                function_domain_repo: Arc::new(FunctionDomainRepository::new(pool)),
+                function_route_repo: Arc::new(FunctionRouteRepository::new(pool)),
+                function_trigger_object_repo: Arc::new(TriggerObjectRepository::new(pool)),
                 pool: pool.clone(),
             }
         }

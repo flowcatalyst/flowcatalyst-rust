@@ -7,6 +7,10 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::json;
 
+use axum::body;
+use fc_common::tsid;
+use fc_platform::application::entity::Application;
+use fc_platform::service_account::entity::RoleAssignment;
 use support::{assert_status, TestApp};
 
 async fn event_type_count(app: &TestApp, application: &str) -> i64 {
@@ -59,7 +63,7 @@ async fn insert_event_type(app: &TestApp, code: &str, name: &str, source: &str) 
             created_at, updated_at)
          VALUES ($1, $2, $3, 'CURRENT', $4, false, $5, $6, $7, NOW(), NOW())",
     )
-    .bind(fc_common::tsid::generate_untyped())
+    .bind(tsid::generate_untyped())
     .bind(code)
     .bind(name)
     .bind(source)
@@ -95,9 +99,7 @@ async fn application_event_type_sync_follows_go() {
         fc_platform::UserScope::Anchor,
     );
     caller.all_applications = true;
-    caller.roles = vec![fc_platform::service_account::entity::RoleAssignment::new(
-        "platform:test-admin",
-    )];
+    caller.roles = vec![RoleAssignment::new("platform:test-admin")];
     app.repos
         .principal_repo
         .insert(&caller)
@@ -109,9 +111,7 @@ async fn application_event_type_sync_follows_go() {
         .expect("caller token");
     app.repos
         .application_repo
-        .insert(&fc_platform::application::entity::Application::new(
-            "ets", "ets",
-        ))
+        .insert(&Application::new("ets", "ets"))
         .await
         .expect("insert application");
     insert_event_type(&app, "ets:orders:order:created", "old ui name", "UI").await;
@@ -129,9 +129,7 @@ async fn application_event_type_sync_follows_go() {
         )
         .await;
     let status = resp.status();
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert!(
         status.is_success(),
         "{status}: {}",

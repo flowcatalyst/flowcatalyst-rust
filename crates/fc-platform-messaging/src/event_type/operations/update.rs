@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::EventTypeUpdated;
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -31,7 +33,7 @@ pub struct UpdateEventTypeCommand {
     pub client_scoped: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateEventTypeCommand {}
+impl AuditMasked for UpdateEventTypeCommand {}
 
 /// Use case for updating an existing event type.
 pub struct UpdateEventTypeUseCase<U: UnitOfWork> {
@@ -88,10 +90,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                event_type.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
         }
         Ok(())
     }

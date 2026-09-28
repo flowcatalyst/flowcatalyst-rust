@@ -23,7 +23,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+pub use middleware::{
+    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, enforce_distributed,
+    DistributedEmailLimitState, DistributedIpLimitState,
+};
 use sqlx::PgPool;
+use std::env;
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -31,10 +36,6 @@ pub mod middleware;
 pub mod postgres;
 pub mod redis;
 
-pub use middleware::{
-    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, enforce_distributed,
-    DistributedEmailLimitState, DistributedIpLimitState,
-};
 pub use postgres::PostgresRateLimitStore;
 pub use redis::RedisRateLimitStore;
 
@@ -187,7 +188,7 @@ pub async fn within_mail_budget(
 }
 
 fn parse_env_u32(name: &str, default: u32) -> u32 {
-    std::env::var(name)
+    env::var(name)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
@@ -260,12 +261,12 @@ impl RateLimitStore for NoopRateLimitStore {
 /// Postgres on any failure. The chosen backend is logged at startup so
 /// ops can confirm which one ended up active.
 pub async fn build_rate_limit_store(pool: PgPool) -> Arc<dyn RateLimitStore> {
-    if std::env::var("FC_RATE_LIMIT_DISABLE").ok().as_deref() == Some("1") {
+    if env::var("FC_RATE_LIMIT_DISABLE").ok().as_deref() == Some("1") {
         info!("Distributed rate-limit store: DISABLED (FC_RATE_LIMIT_DISABLE=1)");
         return Arc::new(NoopRateLimitStore);
     }
 
-    if let Ok(url) = std::env::var("FC_REDIS_URL") {
+    if let Ok(url) = env::var("FC_REDIS_URL") {
         match RedisRateLimitStore::connect(&url).await {
             Ok(store) => {
                 info!(

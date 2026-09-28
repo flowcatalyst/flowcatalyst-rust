@@ -15,8 +15,11 @@ use crate::audit::entity::AuditLog;
 use crate::audit::repository::AuditLogRepository;
 use crate::audit::stored_redaction::redact_stored_document;
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use std::collections::HashSet;
+use std::slice;
 
 /// One audit log, Go's `AuditLogResponse` (audit/api/dto.go): the list,
 /// the by-entity and by-principal lists and the single read all use it.
@@ -223,7 +226,7 @@ pub async fn enrich_principal_names(logs: &mut [AuditLog], principal_repo: &Prin
     let principal_ids: Vec<String> = logs
         .iter()
         .filter_map(|l| l.principal_id.clone())
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .collect();
 
@@ -246,10 +249,7 @@ pub async fn enrich_single_principal_name(
     principal_repo: &PrincipalRepository,
 ) {
     if let Some(pid) = &log.principal_id {
-        if let Ok(name_map) = principal_repo
-            .find_names_by_ids(std::slice::from_ref(pid))
-            .await
-        {
+        if let Ok(name_map) = principal_repo.find_names_by_ids(slice::from_ref(pid)).await {
             log.principal_name = name_map.get(pid).cloned();
         }
     }
@@ -277,7 +277,7 @@ pub async fn get_entity_types(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<EntityTypesResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let entity_types = state.audit_log_repo.find_distinct_entity_types().await?;
 
@@ -299,7 +299,7 @@ pub async fn get_operations(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<OperationsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let operations = state.audit_log_repo.find_distinct_operations().await?;
 
@@ -326,7 +326,7 @@ pub async fn get_audit_log(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AuditLogResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let mut log = state
         .audit_log_repo
@@ -361,7 +361,7 @@ pub async fn list_audit_logs(
 
     // Go gates every audit read on the permission alone: anchor scope is
     // reach, and the audit log is not client-scoped (audit/api/api.go).
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let size = if (1..=200).contains(&query.page_size) {
         query.page_size as usize
@@ -446,7 +446,7 @@ pub async fn get_entity_audit_logs(
     auth: Authenticated,
     Path((entity_type, entity_id)): Path<(String, String)>,
 ) -> Result<Json<AuditLogListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let logs = state
         .audit_log_repo
@@ -475,7 +475,7 @@ pub async fn get_principal_audit_logs(
     auth: Authenticated,
     Path(principal_id): Path<String>,
 ) -> Result<Json<AuditLogListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let logs = state
         .audit_log_repo
@@ -521,7 +521,7 @@ pub async fn get_application_ids(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<ApplicationIdsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let application_ids = state.audit_log_repo.find_distinct_application_ids().await?;
 
@@ -543,7 +543,7 @@ pub async fn get_client_ids(
     State(state): State<AuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<ClientIdsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let client_ids = state.audit_log_repo.find_distinct_client_ids().await?;
 

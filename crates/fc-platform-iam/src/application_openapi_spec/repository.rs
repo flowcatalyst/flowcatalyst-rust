@@ -12,6 +12,9 @@ use super::entity::{ChangeNotes, OpenApiSpec};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
 
 #[derive(sqlx::FromRow)]
 struct OpenApiSpecRow {
@@ -97,7 +100,7 @@ impl OpenApiSpecRepository {
     pub async fn find_current_refs_by_applications(
         &self,
         application_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, CurrentSpecRef>> {
+    ) -> Result<HashMap<String, CurrentSpecRef>> {
         if application_ids.is_empty() {
             return Ok(Default::default());
         }
@@ -172,12 +175,8 @@ impl HasId for OpenApiSpec {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<OpenApiSpec> for OpenApiSpecRepository {
-    async fn persist(
-        &self,
-        spec: &OpenApiSpec,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<OpenApiSpec> for OpenApiSpecRepository {
+    async fn persist(&self, spec: &OpenApiSpec, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "INSERT INTO app_application_openapi_specs \
                 (id, application_id, version, status, spec, spec_hash, \
@@ -211,11 +210,7 @@ impl fc_platform_core::usecase::Persist<OpenApiSpec> for OpenApiSpecRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        spec: &OpenApiSpec,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, spec: &OpenApiSpec, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM app_application_openapi_specs WHERE id = $1")
             .bind(&spec.id)
             .execute(&mut **tx.inner)

@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountSecretRegenerated;
 use crate::service_account::repository::ServiceAccountRepository;
+use base64::engine::general_purpose;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -16,7 +19,7 @@ use fc_platform_core::usecase::{
 /// Generate a signing secret (URL-safe base64)
 fn generate_signing_secret() -> String {
     let bytes: [u8; 32] = rand::rng().random();
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    base64::Engine::encode(&general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
 /// Command for regenerating a service account's signing secret.
@@ -27,7 +30,7 @@ pub struct RegenerateSigningSecretCommand {
     pub service_account_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RegenerateSigningSecretCommand {}
+impl AuditMasked for RegenerateSigningSecretCommand {}
 
 /// Result returned from regenerate signing secret use case.
 /// Contains the event plus one-time secret that needs to be returned to caller.
@@ -87,11 +90,7 @@ impl<U: UnitOfWork> UseCase for RegenerateSigningSecretUseCase<U> {
         _command: &RegenerateSigningSecretCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

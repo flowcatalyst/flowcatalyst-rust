@@ -11,7 +11,9 @@ use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use std::thread;
 use support::{bundle, enc, entry, manifest, wasm_guest, wasm_manifest, JsHarness, Options};
+use tokio::time;
 
 const JS: &str = "app.orders.js";
 const JS_HOG: &str = "app.orders.hog";
@@ -71,7 +73,7 @@ async fn settled(h: &JsHarness) {
             "the budget stays busy: {:?}",
             h.budget
         );
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -79,13 +81,13 @@ async fn settled(h: &JsHarness) {
 fn slow_upstream(delay: Duration) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let mut buf = [0u8; 8192];
                 let _ = stream.read(&mut buf);
-                std::thread::sleep(delay);
+                thread::sleep(delay);
                 let _ = stream.write_all(
                     b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\nslow",
                 );
@@ -165,7 +167,7 @@ async fn a_guest_waiting_on_io_holds_no_executing_permit() {
     let path = format!("/x?url={slow}");
     let waiting = h.get_at(WASM_HTTP, &path);
     let computing = async {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
         let reply = h.get_at(JS, "/busy?ms=200").await;
         (reply, started.elapsed())
     };
@@ -182,7 +184,7 @@ async fn a_guest_waiting_on_io_holds_no_executing_permit() {
     let path = format!("/http?url={slow}");
     let waiting = h.get_at(JS, &path);
     let computing = async {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
         let reply = h.get_at(WASM, "/x?n=1000000").await;
         (reply, started.elapsed())
     };
@@ -211,7 +213,7 @@ async fn the_deadline_applies_while_waiting_for_a_permit() {
     .await;
     let hog = h.get_at(JS_HOG, "/busy?ms=2000");
     let waiters = async {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
         assert_eq!(h.budget.executing(), 1, "the hog holds the one permit");
         let started = Instant::now();
         let (wasm, js) = tokio::join!(h.get_at(WASM, "/x"), h.get_at(JS, "/echo"));
@@ -240,7 +242,7 @@ async fn a_spinning_wasm_guest_does_not_starve_js() {
     let h = mixed(vec![js(JS, 10_000), wasm(WASM, "spin", 1500)], 1, None).await;
     let spinning = h.get_at(WASM, "/x");
     let served = async {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        time::sleep(Duration::from_millis(200)).await;
         let mut slowest = Duration::ZERO;
         for _ in 0..5 {
             let started = Instant::now();

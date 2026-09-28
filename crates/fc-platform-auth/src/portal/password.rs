@@ -34,9 +34,13 @@ use tracing::{info, warn};
 
 use super::entity::{is_portal_subject, random_token, IdentityStatus};
 use super::repository::{PortalIdentityRepository, PortalResetToken, PortalResetTokenRepository};
+use axum::body;
+use axum::extract::Query;
 use fc_platform_core::shared::email_service::EmailService;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_iam::auth::password_service::PasswordService;
+use fc_platform_iam::platform_config::repository::PlatformConfigRepository;
+use fc_platform_iam::shared::branding::Theme;
 
 /// The single-use reset token lifetime (Go `resetTokenTTL`).
 pub const RESET_TOKEN_TTL_MINUTES: i64 = 15;
@@ -55,7 +59,7 @@ pub struct PortalPasswords {
     pub identities: Arc<PortalIdentityRepository>,
     pub email_service: Arc<dyn EmailService>,
     /// Platform config, for the login theme's colours on the emails.
-    pub brand: Option<Arc<fc_platform_iam::platform_config::repository::PlatformConfigRepository>>,
+    pub brand: Option<Arc<PlatformConfigRepository>>,
     pub password_service: Arc<PasswordService>,
     /// Base for the links (the SPA's `/auth/set-password` and
     /// `/auth/reset-password` pages).
@@ -64,8 +68,8 @@ pub struct PortalPasswords {
 
 impl PortalPasswords {
     /// The platform's email theme (Go `branding.LoadTheme`).
-    async fn theme(&self) -> fc_platform_iam::shared::branding::Theme {
-        fc_platform_iam::shared::branding::Theme::load(self.brand.as_ref()).await
+    async fn theme(&self) -> Theme {
+        Theme::load(self.brand.as_ref()).await
     }
 
     fn link(&self, page: &str, raw: &str) -> String {
@@ -319,7 +323,7 @@ pub async fn intercept(
 ) -> Response {
     let path = req.uri().path().to_string();
     if req.method() == Method::GET && path.ends_with("/validate") {
-        let raw = axum::extract::Query::<TokenQuery>::try_from_uri(req.uri())
+        let raw = Query::<TokenQuery>::try_from_uri(req.uri())
             .ok()
             .and_then(|q| q.0.token)
             .unwrap_or_default();
@@ -330,7 +334,7 @@ pub async fn intercept(
     }
     if req.method() == Method::POST && path.ends_with("/confirm") {
         let (parts, body) = req.into_parts();
-        let bytes = match axum::body::to_bytes(body, CONFIRM_BODY_LIMIT).await {
+        let bytes = match body::to_bytes(body, CONFIRM_BODY_LIMIT).await {
             Ok(b) => b,
             Err(_) => {
                 return coded(

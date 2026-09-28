@@ -1,6 +1,7 @@
 //! Config reload, local config snapshot, and standby/traffic status.
 
 use super::AppState;
+use axum::http::header;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -9,6 +10,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::Serialize;
+use std::env;
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
@@ -50,7 +52,7 @@ pub struct ConfigReloadError {
 fn reload_error(status: StatusCode, detail: String) -> Response {
     (
         status,
-        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        [(header::CONTENT_TYPE, "application/problem+json")],
         Json(ConfigReloadError {
             title: status.canonical_reason().unwrap_or("Error").to_string(),
             status: status.as_u16(),
@@ -121,7 +123,7 @@ pub(crate) async fn reload_config(State(state): State<AppState>) -> Response {
 )]
 pub(crate) async fn get_local_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     let pool_stats = state.queue_manager.get_pool_stats();
-    let dev_mode = std::env::var("FLOWCATALYST_DEV_MODE")
+    let dev_mode = env::var("FLOWCATALYST_DEV_MODE")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
 
@@ -160,7 +162,7 @@ pub(crate) async fn get_local_config(State(state): State<AppState>) -> Json<serd
     let queues: Vec<serde_json::Value> = if dev_mode {
         // Return LocalStack queue URLs for development
         // LocalStack uses this URL format for SQS queues
-        let sqs_host = std::env::var("LOCALSTACK_SQS_HOST")
+        let sqs_host = env::var("LOCALSTACK_SQS_HOST")
             .unwrap_or_else(|_| "http://sqs.eu-west-1.localhost.localstack.cloud:4566".to_string());
 
         vec![
@@ -285,9 +287,15 @@ pub(crate) async fn get_traffic_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::health::HealthServiceConfig;
     use crate::mediator::HttpMediatorConfig;
     use crate::{CircuitBreakerRegistry, HealthService, QueueManager, WarningService};
+    use axum::body;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time;
 
     /// Publisher that never actually sends anywhere — `reload_config` never
     /// touches the publisher, but `AppState` requires one.
@@ -315,7 +323,7 @@ mod tests {
     fn test_app_state(queue_manager: Arc<QueueManager>, standby_enabled: bool) -> AppState {
         let warning_service = Arc::new(WarningService::noop());
         let health_service = Arc::new(HealthService::new(
-            crate::health::HealthServiceConfig::default(),
+            HealthServiceConfig::default(),
             warning_service.clone(),
         ));
         AppState {
@@ -337,14 +345,14 @@ mod tests {
     }
 
     struct StubReloader {
-        calls: std::sync::atomic::AtomicU32,
+        calls: AtomicU32,
         fail: bool,
     }
 
     #[async_trait::async_trait]
     impl ConfigReloader for StubReloader {
         async fn reload(&self) -> Result<(), String> {
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
             if self.fail {
                 Err("config: all 1 source(s) failed".to_string())
             } else {
@@ -355,7 +363,7 @@ mod tests {
 
     fn with_reloader(mut state: AppState, fail: bool) -> (AppState, Arc<StubReloader>) {
         let r = Arc::new(StubReloader {
-            calls: std::sync::atomic::AtomicU32::new(0),
+            calls: AtomicU32::new(0),
             fail,
         });
         state.config_reloader = Some(r.clone());
@@ -372,7 +380,7 @@ mod tests {
 
         let response = reload_config(State(state)).await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert_eq!(r.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(r.calls.load(Ordering::SeqCst), 0);
     }
 
     /// C5 (Go `Server.Reload`): the reload re-fetches from the config
@@ -385,10 +393,8 @@ mod tests {
 
         let response = reload_config(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(r.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        let body = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
+        assert_eq!(r.calls.load(Ordering::SeqCst), 1);
+        let body = body::to_bytes(response.into_body(), 1024).await.unwrap();
         assert_eq!(&body[..], br#"{"success":true}"#);
     }
 
@@ -438,7 +444,7 @@ mod tests {
                 &self.0
             }
             async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                time::sleep(Duration::from_millis(20)).await;
                 Ok(vec![])
             }
             async fn ack(&self, _: &str) -> fc_queue::Result<()> {

@@ -17,6 +17,8 @@ use super::entity::{ScheduledJob, ScheduledJobStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct ScheduledJobRow {
@@ -377,12 +379,8 @@ impl HasId for ScheduledJob {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ScheduledJob> for ScheduledJobRepository {
-    async fn persist(
-        &self,
-        sj: &ScheduledJob,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ScheduledJob> for ScheduledJobRepository {
+    async fn persist(&self, sj: &ScheduledJob, tx: &mut DbTx<'_>) -> Result<()> {
         // last_fired_at is intentionally excluded from the UPDATE clause —
         // it is owned by the poller and updated via mark_fired().
         sqlx::query(
@@ -437,11 +435,7 @@ impl fc_platform_core::usecase::Persist<ScheduledJob> for ScheduledJobRepository
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        sj: &ScheduledJob,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, sj: &ScheduledJob, tx: &mut DbTx<'_>) -> Result<()> {
         // Instances + logs remain — they're history. Retention sweeps drop
         // partitions on age, not on parent-row existence.
         sqlx::query("DELETE FROM msg_scheduled_jobs WHERE id = $1")

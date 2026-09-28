@@ -15,6 +15,7 @@ use super::entity::{
     EmailPin, EmailPinPurpose, Method, MethodType, TrustedDevice, EMAIL_PIN_ID_PREFIX,
     RECOVERY_CODE_ID_PREFIX, TRUSTED_DEVICE_ID_PREFIX,
 };
+use fc_common::tsid;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
@@ -242,7 +243,7 @@ impl MfaRepository {
     ) -> Result<()> {
         let ids: Vec<String> = hashes
             .iter()
-            .map(|_| fc_common::tsid::generate_with_prefix(RECOVERY_CODE_ID_PREFIX))
+            .map(|_| tsid::generate_with_prefix(RECOVERY_CODE_ID_PREFIX))
             .collect();
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM iam_user_mfa_recovery_codes WHERE principal_id = $1")
@@ -311,7 +312,7 @@ impl MfaRepository {
                (id, principal_id, purpose, pin_hash, attempts, expires_at, created_at) \
              VALUES ($1, $2, $3, $4, 0, $5, NOW())",
         )
-        .bind(fc_common::tsid::generate_with_prefix(EMAIL_PIN_ID_PREFIX))
+        .bind(tsid::generate_with_prefix(EMAIL_PIN_ID_PREFIX))
         .bind(principal_id)
         .bind(purpose.as_str())
         .bind(pin_hash)
@@ -375,9 +376,7 @@ impl MfaRepository {
                (id, principal_id, token_hash, label, expires_at, created_at) \
              VALUES ($1, $2, $3, $4, $5, NOW())",
         )
-        .bind(fc_common::tsid::generate_with_prefix(
-            TRUSTED_DEVICE_ID_PREFIX,
-        ))
+        .bind(tsid::generate_with_prefix(TRUSTED_DEVICE_ID_PREFIX))
         .bind(principal_id)
         .bind(token_hash)
         .bind(label)

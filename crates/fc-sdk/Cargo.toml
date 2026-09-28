@@ -104,3 +104,8 @@ required-features = ["client"]
 [[example]]
 name = "scheduled-jobs-runner"
 required-features = ["scheduled-jobs-runner", "axum"]
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

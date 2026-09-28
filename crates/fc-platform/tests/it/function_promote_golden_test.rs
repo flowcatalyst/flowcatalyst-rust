@@ -19,6 +19,7 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use fc_fnhost_core::listener::webhook;
 use fc_platform::dispatch_job::delivery_credentials::Resolved;
 use fc_platform::function::operations::promote_plan::{
     Conflict, PoolAction, PromotePlan, PublicRoutesAction, RouteKey, ScheduleAction,
@@ -33,11 +34,12 @@ use fc_platform::scheduled_job::scheduler::poller::{latest_slot_in_window, next_
 use fc_platform::service_account::outbound_credentials::OutboundCredentials;
 use fc_platform::shared::dispatch_process_api::apply_credentials;
 use fc_platform::shared::webhook_signer;
+use std::fs;
 
 fn golden() -> Value {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/function/promote-golden.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn instant(v: &Value) -> DateTime<Utc> {
@@ -299,7 +301,7 @@ fn signatures_are_javas_and_the_function_host_accepts_them() {
         let signature = webhook_signer::sign(secret, &timestamp, body);
         assert_eq!(signature, s["signature"].as_str().unwrap());
         assert_eq!(
-            fc_fnhost_core::listener::webhook::verify(
+            webhook::verify(
                 body,
                 Some(&signature),
                 Some(&timestamp),
@@ -343,7 +345,7 @@ fn both_deliveries_pass_the_function_hosts_webhook_verifier() {
         Some("Bearer tok")
     );
     assert_eq!(
-        fc_fnhost_core::listener::webhook::verify(
+        webhook::verify(
             &sent,
             header(&request, "x-flowcatalyst-signature").as_deref(),
             header(&request, "x-flowcatalyst-timestamp").as_deref(),
@@ -376,7 +378,7 @@ fn both_deliveries_pass_the_function_hosts_webhook_verifier() {
         Some("application/json")
     );
     assert_eq!(
-        fc_fnhost_core::listener::webhook::verify(
+        webhook::verify(
             &sent,
             header(&request, "x-flowcatalyst-signature").as_deref(),
             header(&request, "x-flowcatalyst-timestamp").as_deref(),
@@ -393,14 +395,7 @@ fn both_deliveries_pass_the_function_hosts_webhook_verifier() {
         .unwrap();
     assert_eq!(header(&request, "x-flowcatalyst-signature"), None);
     assert_eq!(
-        fc_fnhost_core::listener::webhook::verify(
-            b"{}",
-            None,
-            None,
-            Some(secret),
-            None,
-            now.timestamp()
-        ),
+        webhook::verify(b"{}", None, None, Some(secret), None, now.timestamp()),
         Err("MISSING_SIGNATURE")
     );
 }

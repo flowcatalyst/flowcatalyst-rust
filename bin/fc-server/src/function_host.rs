@@ -30,8 +30,11 @@
 
 use anyhow::{anyhow, Result};
 use fc_fnhost_core::env::{EnvReader, HostEnv, PublicPort};
+use fc_fnhost_core::host;
 use fc_fnhost_core::host::{function_listener, FnHost};
 use fc_fnhost_core::loader::Loaders;
+use std::env;
+use std::io;
 use tracing::info;
 
 /// The ports a host beside other roles defaults to (`fc-dev`'s).
@@ -56,13 +59,13 @@ pub fn loaders(env: &HostEnv) -> Result<Loaders, String> {
 /// Host only: the former `fc-fnhost` daemon on the process environment.
 /// Returns the exit code.
 pub async fn run_host_only() -> i32 {
-    let mut stderr = std::io::stderr();
-    fc_fnhost_core::host::run(
+    let mut stderr = io::stderr();
+    host::run(
         EnvReader::system(),
         &mut stderr,
         loaders,
         |env| Some(function_listener(env)),
-        fc_fnhost_core::host::shutdown_signal(),
+        host::shutdown_signal(),
     )
     .await
 }
@@ -106,7 +109,7 @@ impl SharedHost {
     /// one error), and refuses a port that `taken` (another listener of
     /// this process: `(variable, port)`) already holds.
     pub fn from_env(taken: &[(&str, u16)]) -> Result<Self> {
-        Self::from_process_env(std::env::vars(), taken)
+        Self::from_process_env(env::vars(), taken)
     }
 
     fn from_process_env(

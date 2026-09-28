@@ -18,6 +18,7 @@ use testcontainers_modules::postgres::Postgres;
 use fc_common::{DispatchMode, MediationType, Message};
 use fc_queue::postgres::PostgresQueue;
 use fc_queue::{EmbeddedQueue, QueueConsumer, QueuePublisher};
+use std::collections::HashSet;
 
 /// Start a PostgreSQL testcontainer and return a pool connected to it.
 async fn setup_pool() -> (PgPool, testcontainers::ContainerAsync<Postgres>) {
@@ -224,8 +225,7 @@ async fn test_batch_claim_gives_each_row_its_own_receipt_handle() {
         "all three published messages must be claimed"
     );
 
-    let handles: std::collections::HashSet<&str> =
-        messages.iter().map(|m| m.receipt_handle.as_str()).collect();
+    let handles: HashSet<&str> = messages.iter().map(|m| m.receipt_handle.as_str()).collect();
     assert_eq!(
         handles.len(),
         3,
@@ -394,7 +394,7 @@ async fn concurrent_pollers_never_claim_the_same_row() {
     for h in handles {
         all.extend(h.await.unwrap());
     }
-    let unique: std::collections::HashSet<_> = all.iter().cloned().collect();
+    let unique: HashSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "a row was claimed twice");
     assert_eq!(unique.len(), 300, "every row must be claimed exactly once");
 }

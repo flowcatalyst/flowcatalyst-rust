@@ -40,6 +40,8 @@ use crate::function::entity::{
 use crate::function::policy_repository::ClientPolicyRepository;
 use crate::function::repository::FunctionRepository;
 use crate::function::version_repository::{FunctionVersionRepository, NextVersionOf};
+use crate::function::ArtifactKind;
+use crate::function::WasmKind;
 use crate::function::{
     java_is_blank, ClientCeilings, Digest, FunctionAddress, FunctionLimits, JsonNode, Manifest,
     Runtime,
@@ -352,9 +354,9 @@ async fn check_artifact_kind(
         }
     };
     let fits = if runtime.requires_js_bundle() {
-        kind == crate::function::ArtifactKind::Text
+        kind == ArtifactKind::Text
     } else {
-        kind == crate::function::ArtifactKind::Wasm(crate::function::WasmKind::Component)
+        kind == ArtifactKind::Wasm(WasmKind::Component)
     };
     if fits {
         Ok(())
@@ -421,7 +423,10 @@ mod tests {
     use crate::function::entity::SignerRule;
     use crate::function::FunctionOwner;
     use fc_function_signing::{SignatureVerifier, TrustRoot};
+    use fc_platform_core::shared::tsid;
     use sha2::{Digest as _, Sha256};
+    use std::env;
+    use std::fs;
 
     /// Java's golden Sigstore bundle (`server/src/test/resources/function/
     /// sigstore/`), signed by the conformance beacon over `artifact.txt`.
@@ -561,14 +566,11 @@ mod tests {
     /// Java `FunctionArtifactUploadApiTest` U6/U7, the use case's half.
     #[tokio::test]
     async fn a_platform_ref_must_name_this_function_and_digest_and_exist() {
-        let dir = std::env::temp_dir().join(format!(
-            "fc-publish-ref-{}",
-            fc_platform_core::shared::tsid::generate_untyped()
-        ));
+        let dir = env::temp_dir().join(format!("fc-publish-ref-{}", tsid::generate_untyped()));
         let store = FileArtifactBlobStore::new(dir.clone()).unwrap();
         let digest = digest_of(b"bytes");
         let src = dir.join("src.bin");
-        std::fs::write(&src, b"bytes").unwrap();
+        fs::write(&src, b"bytes").unwrap();
         let reference = format!("platform://fnc_1/{}", digest.hex());
         let with: Option<&dyn ArtifactBlobStore> = Some(&store);
         let check = |store, r: &str, id: &str| {
@@ -613,7 +615,7 @@ mod tests {
             (err.http_status_code(), err.code()),
             (500, "ARTIFACT_STORE_ERROR")
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

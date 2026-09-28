@@ -2,8 +2,11 @@
 //! or dispatch job is written (owner decision #24; Java
 //! `IngestApi.requireWritableClient`, security-fixes-2026-09-24 S3.2).
 
+use crate::permissions;
 use crate::shared::authorization_service::Authority;
 use crate::shared::error::{PlatformError, Result};
+use crate::usecase::UseCaseError;
+use std::result;
 
 /// The client ids the caller holds explicitly (never `*`), in claim order.
 pub fn client_ids(ctx: &impl Authority) -> Vec<String> {
@@ -113,7 +116,7 @@ pub fn ensure_row_visible(ctx: &impl Authority, client_id: Option<&str>, what: &
 pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
     match client_id {
         Some(id) => reaches_client(ctx, id),
-        None => ctx.is_anchor() || ctx.has_permission(crate::permissions::ADMIN_ALL),
+        None => ctx.is_anchor() || ctx.has_permission(permissions::ADMIN_ALL),
     }
 }
 
@@ -123,11 +126,11 @@ pub fn can_access_scope(ctx: &impl Authority, client_id: Option<&str>) -> bool {
 pub fn check_scope_access(
     ctx: &impl Authority,
     client_id: Option<&str>,
-) -> std::result::Result<(), crate::usecase::UseCaseError> {
+) -> result::Result<(), UseCaseError> {
     if can_access_scope(ctx, client_id) {
         return Ok(());
     }
-    Err(crate::usecase::UseCaseError::forbidden(
+    Err(UseCaseError::forbidden(
         "SCOPE_FORBIDDEN",
         if client_id.is_some() {
             "no access to this resource's client"

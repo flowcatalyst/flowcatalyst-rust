@@ -23,9 +23,11 @@ use fc_router::{
 };
 use http_body_util::BodyExt;
 use serde_json::Value;
+use std::mem;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time;
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------
@@ -68,7 +70,7 @@ impl DelayMediator {
 impl Mediator for DelayMediator {
     async fn mediate(&self, _message: &Message) -> MediationOutcome {
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        tokio::time::sleep(self.delay).await;
+        time::sleep(self.delay).await;
         MediationOutcome::success(200)
     }
 }
@@ -95,7 +97,7 @@ impl QueueConsumer for MockQueueConsumer {
         &self.identifier
     }
     async fn poll(&self, _max_messages: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
-        Ok(std::mem::take(&mut *self.messages.lock()))
+        Ok(mem::take(&mut *self.messages.lock()))
     }
     async fn ack(&self, receipt_handle: &str) -> fc_queue::Result<()> {
         self.acked.lock().push(receipt_handle.to_string());
@@ -237,7 +239,7 @@ async fn get_mediating_shape_and_reflects_in_flight_delivery() {
     let polled = consumer.poll(10).await.unwrap();
     manager.route_batch(polled, consumer).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     let (status, body) = get(&app, "/monitoring/mediating").await;
     assert_eq!(status, StatusCode::OK);
     let rows = body.as_array().expect("array body");
@@ -252,7 +254,7 @@ async fn get_mediating_shape_and_reflects_in_flight_delivery() {
     assert_eq!(row["attempts"], 0);
     assert!(row["elapsedTimeMs"].as_u64().unwrap() < 150);
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     let (_, body) = get(&app, "/monitoring/mediating").await;
     assert_eq!(
         body,
@@ -318,7 +320,7 @@ async fn get_in_flight_detail_reports_mediating_status_while_in_flight() {
     let polled = consumer.poll(10).await.unwrap();
     manager.route_batch(polled, consumer).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     let (status, body) = get(
         &app,
         "/monitoring/in-flight-messages/detail?messageId=detail-msg-1",
@@ -441,7 +443,7 @@ async fn get_blocked_groups_shape_and_reflects_a_gated_group() {
     let polled = consumer.poll(10).await.unwrap();
     manager.route_batch(polled, consumer).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
     let (status, body) = get(&app, "/monitoring/blocked-groups").await;
     assert_eq!(status, StatusCode::OK);
     let rows = body.as_array().unwrap();
@@ -457,7 +459,7 @@ async fn get_blocked_groups_shape_and_reflects_a_gated_group() {
     let (_, body) = get(&app, "/monitoring/blocked-groups?poolCode=OTHER").await;
     assert_eq!(body, serde_json::json!([]));
 
-    tokio::time::sleep(Duration::from_millis(350)).await;
+    time::sleep(Duration::from_millis(350)).await;
     let (_, body) = get(&app, "/monitoring/blocked-groups").await;
     assert_eq!(
         body,

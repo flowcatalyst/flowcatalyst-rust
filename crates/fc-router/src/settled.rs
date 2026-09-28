@@ -30,6 +30,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use fc_common::Message;
 use serde::Serialize;
+use tokio::time;
 use tracing::warn;
 
 /// Appended to the platform base URL.
@@ -171,8 +172,7 @@ pub fn spawn_report(reporter: Arc<dyn SettledReporter>, report: SettledReport) {
         return;
     }
     tokio::spawn(async move {
-        let outcome =
-            tokio::time::timeout(SETTLED_REPORT_TIMEOUT, reporter.report_settled(&report)).await;
+        let outcome = time::timeout(SETTLED_REPORT_TIMEOUT, reporter.report_settled(&report)).await;
         let error = match outcome {
             Ok(Ok(())) => return,
             Ok(Err(e)) => e,

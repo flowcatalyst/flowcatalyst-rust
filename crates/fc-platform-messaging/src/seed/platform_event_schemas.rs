@@ -942,6 +942,8 @@ fn req_str_array(name: &'static str) -> Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seed::platform_event_types;
+    use std::collections::HashSet;
 
     #[test]
     fn all_schemas_are_valid_json_schema() {
@@ -1036,7 +1038,7 @@ mod tests {
     #[test]
     fn definitions_and_schemas_are_aligned() {
         let schemas = schemas();
-        let defs = crate::seed::platform_event_types::definitions();
+        let defs = platform_event_types::definitions();
         for def in &defs {
             assert!(
                 schemas.contains_key(def.code.as_str()),
@@ -1045,8 +1047,7 @@ mod tests {
             );
         }
         // Every schema key should be in definitions
-        let def_codes: std::collections::HashSet<&str> =
-            defs.iter().map(|d| d.code.as_str()).collect();
+        let def_codes: HashSet<&str> = defs.iter().map(|d| d.code.as_str()).collect();
         for code in schemas.keys() {
             assert!(
                 def_codes.contains(code),

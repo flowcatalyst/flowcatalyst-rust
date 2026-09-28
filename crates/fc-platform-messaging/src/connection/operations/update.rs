@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ConnectionUpdated;
 use crate::connection::entity::ConnectionStatus;
 use crate::connection::repository::ConnectionRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -36,7 +38,7 @@ pub struct UpdateConnectionCommand {
     pub replace_details: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateConnectionCommand {}
+impl AuditMasked for UpdateConnectionCommand {}
 
 pub struct UpdateConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
@@ -83,10 +85,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
             .find_by_id(&command.connection_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

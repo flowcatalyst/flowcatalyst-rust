@@ -2,6 +2,8 @@
 
 use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,9 +163,7 @@ impl Subscription {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Subscription,
-            ),
+            id: tsid::generate(EntityType::Subscription),
             code,
             application_code,
             name,
@@ -272,7 +272,10 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::enum_str;
     use std::str::FromStr;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_new_subscription() {
@@ -472,13 +475,9 @@ mod tests {
     /// the read (X-06).
     #[test]
     fn a_function_sourced_row_decodes() {
-        let source: SubscriptionSource = fc_platform_core::shared::enum_str::decode(
-            "FUNCTION",
-            "msg_subscriptions",
-            "source",
-            "sub_1",
-        )
-        .expect("FUNCTION decodes");
+        let source: SubscriptionSource =
+            enum_str::decode("FUNCTION", "msg_subscriptions", "source", "sub_1")
+                .expect("FUNCTION decodes");
         assert_eq!(source, SubscriptionSource::Function);
         assert_eq!(
             serde_json::to_value(source).unwrap(),
@@ -514,7 +513,7 @@ mod tests {
     fn pause_bumps_updated_at() {
         let mut s = Subscription::new("a", "A", "https://a.com");
         let before = s.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         s.pause();
         assert!(s.updated_at > before);
     }

@@ -12,8 +12,11 @@ use serde::{Deserialize, Serialize};
 use super::events::{DeveloperCredentialRevoked, DeveloperCredentialSet};
 use super::{DeveloperCredential, DEVELOPER_ROLE};
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::Caller;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -29,7 +32,7 @@ pub struct SetDeveloperCredentialCommand {
     pub secret_ref: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SetDeveloperCredentialCommand {}
+impl AuditMasked for SetDeveloperCredentialCommand {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,7 +40,7 @@ pub struct RevokeDeveloperCredentialCommand {
     pub principal_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokeDeveloperCredentialCommand {}
+impl AuditMasked for RevokeDeveloperCredentialCommand {}
 
 /// The developer-credential target's reach (Go
 /// `requireDeveloperCredentialAccess`'s post-load half): your own
@@ -46,7 +49,7 @@ impl fc_platform_core::usecase::AuditMasked for RevokeDeveloperCredentialCommand
 /// otherwise; out of reach answers `User_NOT_FOUND`, as a missing id).
 async fn require_credential_target(
     principals: &PrincipalRepository,
-    caller: &fc_platform_core::usecase::Caller,
+    caller: &Caller,
     id: &str,
 ) -> Result<(), UseCaseError> {
     let p = principals
@@ -63,9 +66,7 @@ async fn require_credential_target(
     }
     let in_scope = match p.client_id.as_deref() {
         Some(client_id) => caller.can_access_client(client_id),
-        None => {
-            caller.is_anchor() || caller.has_permission(fc_platform_core::permissions::ADMIN_ALL)
-        }
+        None => caller.is_anchor() || caller.has_permission(permissions::ADMIN_ALL),
     };
     if !in_scope {
         return Err(UseCaseError::verbatim(PlatformError::not_found("User", id)));

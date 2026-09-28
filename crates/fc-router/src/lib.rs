@@ -85,8 +85,10 @@ pub use warning::{WarningService, WarningServiceConfig};
 // Re-export QueueMetrics for API
 pub use api::CachedBrokerStats;
 pub use fc_queue::QueueMetrics;
+use std::result;
+use std::sync::OnceLock;
 
-pub type Result<T> = std::result::Result<T, RouterError>;
+pub type Result<T> = result::Result<T, RouterError>;
 
 /// Install the process's Prometheus metrics recorder (once) and return a
 /// handle for rendering it.
@@ -96,8 +98,7 @@ pub type Result<T> = std::result::Result<T, RouterError>;
 /// API, fc-server's metrics port) renders one registry: the router's, the
 /// scheduler's and the stream processor's series alike.
 pub fn init_prometheus_recorder() -> metrics_exporter_prometheus::PrometheusHandle {
-    static HANDLE: std::sync::OnceLock<metrics_exporter_prometheus::PrometheusHandle> =
-        std::sync::OnceLock::new();
+    static HANDLE: OnceLock<metrics_exporter_prometheus::PrometheusHandle> = OnceLock::new();
     HANDLE
         .get_or_init(|| {
             metrics_exporter_prometheus::PrometheusBuilder::new()

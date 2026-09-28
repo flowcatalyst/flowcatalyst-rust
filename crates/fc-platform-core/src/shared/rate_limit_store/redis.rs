@@ -20,6 +20,9 @@ use redis::AsyncCommands;
 use tracing::warn;
 
 use super::{Bucket, RateLimitDecision, RateLimitError, RateLimitPolicy, RateLimitStore};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+use tokio::time;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -34,7 +37,7 @@ impl RedisRateLimitStore {
         let client = ::redis::Client::open(url)
             .map_err(|e| RateLimitError::Backend(format!("invalid redis url: {}", e)))?;
 
-        let mgr = tokio::time::timeout(CONNECT_TIMEOUT, ConnectionManager::new(client))
+        let mgr = time::timeout(CONNECT_TIMEOUT, ConnectionManager::new(client))
             .await
             .map_err(|_| RateLimitError::Backend("redis connect timed out".into()))?
             .map_err(|e| RateLimitError::Backend(format!("redis connect: {}", e)))?;
@@ -42,10 +45,11 @@ impl RedisRateLimitStore {
         // PING — confirm the connection is actually live before we
         // declare Redis "available" and skip the Postgres fallback.
         let mut conn = mgr.clone();
-        let pong: String = tokio::time::timeout(CONNECT_TIMEOUT, ::redis::cmd("PING").query_async(&mut conn))
-            .await
-            .map_err(|_| RateLimitError::Backend("redis PING timed out".into()))?
-            .map_err(|e| RateLimitError::Backend(format!("redis PING: {}", e)))?;
+        let pong: String =
+            time::timeout(CONNECT_TIMEOUT, ::redis::cmd("PING").query_async(&mut conn))
+                .await
+                .map_err(|_| RateLimitError::Backend("redis PING timed out".into()))?
+                .map_err(|e| RateLimitError::Backend(format!("redis PING: {}", e)))?;
         if pong != "PONG" {
             return Err(RateLimitError::Backend(format!(
                 "unexpected redis PING response: {}",
@@ -70,8 +74,8 @@ impl RateLimitStore for RedisRateLimitStore {
         policy: RateLimitPolicy,
     ) -> Result<RateLimitDecision, RateLimitError> {
         let window_secs = policy.window.as_secs().max(1);
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let window_index = now_secs / window_secs;

@@ -1,9 +1,14 @@
 //! Platform Error Types
 
+use axum::http::header;
+use axum::http::HeaderValue;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::result;
 use thiserror::Error;
 use utoipa::ToSchema;
 
@@ -87,7 +92,7 @@ pub enum PlatformError {
         status: StatusCode,
         code: String,
         message: String,
-        details: std::collections::HashMap<String, serde_json::Value>,
+        details: HashMap<String, serde_json::Value>,
     },
 
     /// The session endpoints' own envelope `{code, message}` (Go
@@ -138,7 +143,7 @@ impl PlatformError {
     /// found: <id>`. The code is UPPER_SNAKE (the free function
     /// `not_found_code`), as every other code is (owner decision 5); Go and
     /// Java append `_NOT_FOUND` to the resource name as given.
-    pub fn not_found_code(resource: &str, id: impl std::fmt::Display) -> Self {
+    pub fn not_found_code(resource: &str, id: impl Display) -> Self {
         Self::Coded {
             status: StatusCode::NOT_FOUND,
             code: not_found_code(resource),
@@ -227,7 +232,7 @@ impl PlatformError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, PlatformError>;
+pub type Result<T> = result::Result<T, PlatformError>;
 
 /// The not-found code for a resource type name: `<RESOURCE>_NOT_FOUND` in
 /// UPPER_SNAKE (`FunctionVersion` → `FUNCTION_VERSION_NOT_FOUND`), the one
@@ -306,7 +311,7 @@ pub struct ErrorResponse {
     /// `details,omitempty`).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
-    pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub details: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// The function-management contract's rendering of an error (owner
@@ -320,7 +325,7 @@ pub struct FunctionContractError {
     pub status: StatusCode,
     pub code: String,
     pub message: String,
-    pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub details: Option<HashMap<String, serde_json::Value>>,
     pub retry_after_secs: Option<u32>,
 }
 
@@ -331,7 +336,7 @@ struct FunctionContractBody<'a> {
     code: &'a str,
     message: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<&'a std::collections::HashMap<String, serde_json::Value>>,
+    details: Option<&'a HashMap<String, serde_json::Value>>,
 }
 
 impl FunctionContractError {
@@ -344,10 +349,8 @@ impl FunctionContractError {
         };
         let mut response = (self.status, Json(body)).into_response();
         if let Some(secs) = self.retry_after_secs {
-            if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::RETRY_AFTER, v);
+            if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, v);
             }
         }
         response
@@ -663,13 +666,13 @@ impl IntoResponse for PlatformError {
             let headers = response.headers_mut();
             if status == StatusCode::UNAUTHORIZED {
                 headers.insert(
-                    axum::http::header::WWW_AUTHENTICATE,
-                    axum::http::HeaderValue::from_static(r#"Cookie realm="fc_session""#),
+                    header::WWW_AUTHENTICATE,
+                    HeaderValue::from_static(r#"Cookie realm="fc_session""#),
                 );
             }
             if let Some(secs) = retry_after_secs {
-                if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
-                    headers.insert(axum::http::header::RETRY_AFTER, v);
+                if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+                    headers.insert(header::RETRY_AFTER, v);
                 }
             }
             return response;
@@ -767,10 +770,8 @@ impl IntoResponse for PlatformError {
 
         let mut response = (status, Json(body)).into_response();
         if let Some(secs) = retry_after_secs {
-            if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::RETRY_AFTER, v);
+            if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+                response.headers_mut().insert(header::RETRY_AFTER, v);
             }
         }
         response.extensions_mut().insert(contract);
@@ -781,6 +782,7 @@ impl IntoResponse for PlatformError {
 #[cfg(test)]
 mod go_envelope_tests {
     use super::*;
+    use crate::usecase::UseCaseError;
     use http_body_util::BodyExt;
 
     async fn body(err: PlatformError) -> (StatusCode, serde_json::Value) {
@@ -802,11 +804,9 @@ mod go_envelope_tests {
 
     #[tokio::test]
     async fn use_case_not_found_codes_take_gos_spelling() {
-        let err: PlatformError = crate::usecase::UseCaseError::not_found(
-            "OAUTH_CLIENT_NOT_FOUND",
-            "OAuth client 'oc_1' not found",
-        )
-        .into();
+        let err: PlatformError =
+            UseCaseError::not_found("OAUTH_CLIENT_NOT_FOUND", "OAuth client 'oc_1' not found")
+                .into();
         let (_, v) = body(err).await;
         assert_eq!(v["error"], "OAuthClient_NOT_FOUND");
         assert_eq!(v["message"], "OAuthClient not found: oc_1");

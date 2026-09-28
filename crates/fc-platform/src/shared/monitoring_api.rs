@@ -9,9 +9,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
+use crate::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::DispatchJobRepository;
+use std::time::Instant;
 
 /// Standby status response
 #[derive(Debug, Serialize, ToSchema)]
@@ -227,7 +229,7 @@ pub struct MonitoringState {
     /// `msg_dispatch_jobs` / `msg_events` can be billions of rows where
     /// `COUNT(*)` is a non-starter.
     pub pool: sqlx::PgPool,
-    pub start_time: std::time::Instant,
+    pub start_time: Instant,
 }
 
 /// Get standby status
@@ -245,7 +247,7 @@ pub async fn get_standby_status(
     State(state): State<MonitoringState>,
     auth: Authenticated,
 ) -> Result<Json<StandbyStatus>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let is_leader = *state.leader_state.is_leader.read().await;
     let leader_id = state.leader_state.leader_id.read().await.clone();
@@ -280,7 +282,7 @@ pub async fn get_dashboard(
     State(state): State<MonitoringState>,
     auth: Authenticated,
 ) -> Result<Json<DashboardMetrics>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     // Approximate row counts via pg_class.reltuples. One round-trip for
     // both message tables; sub-millisecond regardless of row count.
@@ -329,7 +331,7 @@ pub async fn get_circuit_breakers(
     State(state): State<MonitoringState>,
     auth: Authenticated,
 ) -> Result<Json<CircuitBreakersResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let breakers = state.circuit_breakers.get_all().await;
 
@@ -360,7 +362,7 @@ pub async fn get_in_flight_messages(
     State(state): State<MonitoringState>,
     auth: Authenticated,
 ) -> Result<Json<InFlightMessagesResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let messages = state.in_flight.get_all().await;
     let total_in_flight = messages.len();
@@ -418,7 +420,7 @@ pub async fn get_pool_stats(
     State(_state): State<MonitoringState>,
     auth: Authenticated,
 ) -> Result<Json<PoolStatsResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     // Note: In a full implementation, the router's QueueManager would be
     // passed to the monitoring state to get real pool stats.

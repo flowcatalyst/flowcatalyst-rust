@@ -51,7 +51,7 @@ async fn developer(app: &TestApp, email: &str, with_role: bool) -> Principal {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_developer_mints_tokens_with_their_own_credential() {
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     app.repos
         .role_repo

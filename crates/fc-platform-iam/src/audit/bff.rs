@@ -15,6 +15,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::audit::operations::{RedactExistingAuditLogsCommand, RedactExistingAuditLogsUseCase};
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -51,8 +52,8 @@ pub async fn redact_existing_audit_logs(
     State(state): State<BffAuditLogsState>,
     auth: Authenticated,
 ) -> Result<Json<RedactExistingAuditLogsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::can_read_audit_logs(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
+    checks::can_read_audit_logs(&auth.0)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::events::PasskeyRevoked;
 use crate::webauthn::repository::WebauthnCredentialRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +19,7 @@ pub struct RevokePasskeyCommand {
     pub credential_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokePasskeyCommand {}
+impl AuditMasked for RevokePasskeyCommand {}
 
 pub struct RevokePasskeyUseCase<U: UnitOfWork> {
     credential_repo: Arc<WebauthnCredentialRepository>,

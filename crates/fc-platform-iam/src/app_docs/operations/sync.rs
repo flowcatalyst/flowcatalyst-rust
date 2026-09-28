@@ -15,7 +15,9 @@ use std::sync::Arc;
 use crate::app_docs::entity::{doc_title, AppDoc, AppDocsReplacement};
 use crate::app_docs::repository::AppDocsRepository;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::tsid;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 pub const MAX_DOCS: usize = 100;
@@ -58,7 +60,7 @@ pub struct SyncAppDocsCommand {
     pub slugs: Vec<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncAppDocsCommand {}
+impl AuditMasked for SyncAppDocsCommand {}
 
 /// Go `slugPattern`: `^[a-z0-9][a-z0-9-]*$`.
 fn is_slug(s: &str) -> bool {
@@ -158,7 +160,7 @@ impl<U: UnitOfWork> UseCase for SyncAppDocsUseCase<U> {
                 created += 1;
             }
             docs.push(AppDoc {
-                id: fc_platform_core::shared::tsid::generate_with_prefix("doc"),
+                id: tsid::generate_with_prefix("doc"),
                 application_id: command.application_id.clone(),
                 title: doc_title(&slug, d.title.as_deref(), &d.content),
                 content: d.content.clone(),

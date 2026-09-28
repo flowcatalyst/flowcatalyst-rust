@@ -19,6 +19,7 @@ use crate::role::entity::roles;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
 use fc_platform_core::shared::error::Result;
+use std::sync::Arc;
 
 /// Counts returned from `sync_code_defined_roles` so callers (the BFF
 /// sync-platform endpoint, dev seeding) can surface the diff back to the user.
@@ -33,11 +34,11 @@ pub struct RoleSyncCounts {
 
 /// Role Sync Service
 pub struct RoleSyncService {
-    role_repo: std::sync::Arc<RoleRepository>,
+    role_repo: Arc<RoleRepository>,
 }
 
 impl RoleSyncService {
-    pub fn new(role_repo: std::sync::Arc<RoleRepository>) -> Self {
+    pub fn new(role_repo: Arc<RoleRepository>) -> Self {
         Self { role_repo }
     }
 

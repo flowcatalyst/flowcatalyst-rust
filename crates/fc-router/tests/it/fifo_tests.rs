@@ -19,6 +19,9 @@ use fc_common::{
 };
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{Mediator, QueueManager};
+use std::cmp;
+use std::time::Instant;
+use tokio::time;
 
 /// Mediator that tracks processing order
 struct OrderTrackingMediator {
@@ -44,7 +47,7 @@ impl Mediator for OrderTrackingMediator {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
         // Simulate some processing time
         if self.delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            time::sleep(Duration::from_millis(self.delay_ms)).await;
         }
         self.processed_ids.lock().push(message.id.clone());
         MediationOutcome::success(200)
@@ -88,7 +91,7 @@ impl QueueConsumer for TestQueueConsumer {
         }
 
         let mut messages = self.messages.lock();
-        let count = std::cmp::min(max_messages as usize, messages.len());
+        let count = cmp::min(max_messages as usize, messages.len());
         let result: Vec<_> = messages.drain(0..count).collect();
         Ok(result)
     }
@@ -186,7 +189,7 @@ async fn test_fifo_single_group_ordering() {
         .unwrap();
 
     // Wait for processing
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(500)).await;
 
     // Verify all messages were processed
     let processed = mediator.processed_ids();
@@ -232,7 +235,7 @@ async fn test_fifo_different_groups_parallel() {
         ));
     }
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     let poll_result = consumer.poll(10).await.unwrap();
     manager
@@ -241,7 +244,7 @@ async fn test_fifo_different_groups_parallel() {
         .unwrap();
 
     // Wait for processing - shorter sleep since messages process in parallel
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    time::sleep(Duration::from_millis(150)).await;
 
     let elapsed = start.elapsed();
 
@@ -311,7 +314,7 @@ async fn test_fifo_mixed_groups() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    time::sleep(Duration::from_millis(400)).await;
 
     let processed = mediator.processed_ids();
     assert_eq!(processed.len(), 7);
@@ -398,7 +401,7 @@ async fn test_fifo_multiple_pools_same_group() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    time::sleep(Duration::from_millis(300)).await;
 
     let processed = mediator.processed_ids();
     assert_eq!(processed.len(), 6);
@@ -477,7 +480,7 @@ async fn test_fifo_large_group() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    time::sleep(Duration::from_millis(800)).await;
 
     let processed = mediator.processed_ids();
     assert_eq!(processed.len(), 50);
@@ -521,7 +524,7 @@ async fn test_fifo_unique_groups_parallel() {
         ));
     }
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     let poll_result = consumer.poll(10).await.unwrap();
     manager
@@ -529,7 +532,7 @@ async fn test_fifo_unique_groups_parallel() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
 
     let elapsed = start.elapsed();
 
@@ -582,7 +585,7 @@ async fn test_fifo_group_throughput() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    time::sleep(Duration::from_millis(500)).await;
 
     let processed = mediator.processed_ids();
     assert_eq!(processed.len(), 15);

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::AuthConfigCreated;
 use crate::auth::config_entity::{AuthConfigType, AuthProvider, ClientAuthConfig};
 use crate::auth::config_repository::ClientAuthConfigRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +36,7 @@ pub struct CreateAuthConfigCommand {
     pub oidc_client_secret_ref: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateAuthConfigCommand {}
+impl AuditMasked for CreateAuthConfigCommand {}
 
 pub struct CreateAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
@@ -92,11 +94,7 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         _command: &CreateAuthConfigCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

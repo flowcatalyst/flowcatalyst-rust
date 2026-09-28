@@ -2,6 +2,11 @@
 //! service-account attach and client-config read at their full paths
 //! (`application_go_router`).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::routing::{get, post, put};

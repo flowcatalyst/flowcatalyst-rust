@@ -35,6 +35,8 @@ use crate::http_pool::{HostKey, HostPoolSizing};
 use crate::pool::breaker_effect;
 use crate::warning::WarningService;
 
+use crate::http_pool::HostPoolRegistry;
+use crate::router_metrics;
 use inner::{make_client_builder, spawn_sweep_task, MediatorInner};
 use signing::{sign_webhook, MediationPayload};
 
@@ -182,7 +184,7 @@ impl HttpMediator {
             port: 443,
         };
         drop(builder(&warmup_key));
-        let host_pools = crate::http_pool::HostPoolRegistry::new(
+        let host_pools = HostPoolRegistry::new(
             config.host_pool_sizing.clone(),
             builder,
             warning_service.clone(),
@@ -328,10 +330,7 @@ impl HttpMediator {
                 // negotiated — `{:?}` on `http::Version` gives "HTTP/2.0",
                 // "HTTP/1.1", etc., same label shape as the bench rig's own
                 // `proto_counts`.
-                crate::router_metrics::record_mediation_http_version(&format!(
-                    "{:?}",
-                    response.version()
-                ));
+                router_metrics::record_mediation_http_version(&format!("{:?}", response.version()));
                 response::classify(response, message, &self.inner.warning_service).await
             }
             Err(e) => {

@@ -11,15 +11,28 @@ use axum::http::StatusCode;
 use serde_json::{json, Value};
 
 use fc_platform::application::entity::Application;
+use fc_platform::client::entity::Client;
+use fc_platform::domain::Principal;
+use fc_platform::domain::UserScope;
+use fc_platform::service_account::entity::RoleAssignment;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_stream::dispatch_job_projection;
+use fc_stream::event_projection;
+use fc_stream::health::StreamHealth;
+use std::sync::Arc;
+use std::time::Duration;
 use support::{assert_status, read_json, TestApp};
+use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
-    let c = fc_platform::client::entity::Client::new(identifier.to_uppercase(), identifier);
+    let c = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&c).await.unwrap();
     c.id
 }
@@ -66,12 +79,9 @@ async fn field_gap_migrations_rerun_as_no_ops_and_are_recognised_when_applied() 
         .execute(&app.pool)
         .await
         .unwrap();
-    fc_platform::shared::database::run_migrations(
-        &app.pool,
-        fc_platform::shared::database::MigrationProfile::Production,
-    )
-    .await
-    .expect("migrations over an already-migrated schema");
+    database::run_migrations(&app.pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over an already-migrated schema");
     for (id, _) in migrations {
         let (tracked,): (bool,) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = $1)",
@@ -254,18 +264,16 @@ async fn event_type_client_scoped_is_stored_on_create_and_update() {
 
 /// Run the event projector for a moment.
 async fn project_events(pool: &sqlx::PgPool) {
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let projector = tokio::spawn(fc_stream::event_projection::run(
+    let cancel = CancellationToken::new();
+    let projector = tokio::spawn(event_projection::run(
         pool.clone(),
         200,
-        std::sync::Arc::new(fc_stream::health::StreamHealth::new(
-            "event-projection".into(),
-        )),
+        Arc::new(StreamHealth::new("event-projection".into())),
         cancel.clone(),
     ));
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    time::sleep(Duration::from_millis(1500)).await;
     cancel.cancel();
-    tokio::time::timeout(std::time::Duration::from_secs(10), projector)
+    time::timeout(Duration::from_secs(10), projector)
         .await
         .expect("projector stops")
         .unwrap();
@@ -416,10 +424,7 @@ async fn oauth_client_create_links_the_service_principal_it_names() {
     assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"], "Principal_NOT_FOUND");
 
-    let user = fc_platform::domain::Principal::new_user(
-        "gaps-user@flowcatalyst.test",
-        fc_platform::domain::UserScope::Anchor,
-    );
+    let user = Principal::new_user("gaps-user@flowcatalyst.test", UserScope::Anchor);
     app.repos.principal_repo.insert(&user).await.unwrap();
     let (s, body) = read_json(
         app.post(
@@ -439,13 +444,8 @@ async fn oauth_client_create_links_the_service_principal_it_names() {
 /// An anchor admin (ADMIN_ALL) whose principal id the test knows.
 async fn known_admin(app: &TestApp) -> (String, String) {
     app.anchor_admin_token().await; // seeds `platform:test-admin`
-    let mut admin = fc_platform::domain::Principal::new_user(
-        "gaps-admin@flowcatalyst.test",
-        fc_platform::domain::UserScope::Anchor,
-    );
-    admin.roles = vec![fc_platform::service_account::entity::RoleAssignment::new(
-        "platform:test-admin",
-    )];
+    let mut admin = Principal::new_user("gaps-admin@flowcatalyst.test", UserScope::Anchor);
+    admin.roles = vec![RoleAssignment::new("platform:test-admin")];
     let token = app
         .auth_service
         .generate_access_token(&admin)
@@ -599,8 +599,8 @@ async fn service_account_update_replaces_the_webhook_credentials() {
 
     // Deliveries are signed with the new token and secret.
     let resolver = OutboundCredentialsResolver::new(
-        std::sync::Arc::new(fc_platform::ServiceAccountRepository::new(&app.pool)),
-        Some(std::sync::Arc::new(enc)),
+        Arc::new(fc_platform::ServiceAccountRepository::new(&app.pool)),
+        Some(Arc::new(enc)),
     );
     let resolved = resolver.by_service_account_id(&id).await.unwrap();
     let ById::Found(creds) = resolved else {
@@ -676,18 +676,16 @@ async fn service_account_update_replaces_the_webhook_credentials() {
 
 /// Run the dispatch-job projector for a moment.
 async fn project_dispatch_jobs(pool: &sqlx::PgPool) {
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let projector = tokio::spawn(fc_stream::dispatch_job_projection::run(
+    let cancel = CancellationToken::new();
+    let projector = tokio::spawn(dispatch_job_projection::run(
         pool.clone(),
         200,
-        std::sync::Arc::new(fc_stream::health::StreamHealth::new(
-            "dispatch-job-projection".into(),
-        )),
+        Arc::new(StreamHealth::new("dispatch-job-projection".into())),
         cancel.clone(),
     ));
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    time::sleep(Duration::from_millis(1500)).await;
     cancel.cancel();
-    tokio::time::timeout(std::time::Duration::from_secs(10), projector)
+    time::timeout(Duration::from_secs(10), projector)
         .await
         .expect("projector stops")
         .unwrap();

@@ -12,8 +12,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fc_fnhost_core::listener::webhook;
 use fc_function_abi::EventEmitError;
+use futures::future;
 use serde_json::{json, Value};
+use std::fs;
+use std::thread;
 use support::{bundle, enc, entry, manifest, JsHarness, Options, ADDR};
 
 async fn guest(manifest_extra: Value, entry_extra: Value) -> JsHarness {
@@ -295,7 +299,7 @@ async fn a_function_waiting_on_io_holds_no_worker() {
     .await;
     let started = Instant::now();
     let calls: Vec<_> = (0..6).map(|_| h.get("/sleep?ms=300")).collect();
-    for reply in futures::future::join_all(calls).await {
+    for reply in future::join_all(calls).await {
         assert_eq!(reply.text(), "slept");
     }
     assert!(
@@ -424,11 +428,11 @@ fn upstream() -> (u16, Arc<AtomicUsize>) {
     let port = listener.local_addr().unwrap().port();
     let served = Arc::new(AtomicUsize::new(0));
     let count = served.clone();
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let count = count.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let mut buf = [0u8; 8192];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let head = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -452,7 +456,7 @@ fn upstream() -> (u16, Arc<AtomicUsize>) {
                     }
                     "/redirect" => "HTTP/1.1 302 Found\r\nlocation: /ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
                     "/slow" => {
-                        std::thread::sleep(Duration::from_secs(5));
+                        thread::sleep(Duration::from_secs(5));
                         "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\nslow".into()
                     }
                     _ => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
@@ -530,7 +534,7 @@ async fn fetch_reaches_only_allowed_hosts_https_only_except_loopback_and_never_f
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_typescript_template_runs_on_the_host() {
     let manifest: Value = serde_json::from_str(
-        &std::fs::read_to_string(concat!(
+        &fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../templates/function-ts/manifest.json"
         ))
@@ -564,7 +568,7 @@ async fn the_typescript_template_runs_on_the_host() {
                 ))
                 .header(
                     "X-FlowCatalyst-Signature",
-                    fc_fnhost_core::listener::webhook::sign("wh-hello", &ts, body.as_bytes()),
+                    webhook::sign("wh-hello", &ts, body.as_bytes()),
                 )
                 .header("X-FlowCatalyst-Timestamp", &ts)
                 .body(body),

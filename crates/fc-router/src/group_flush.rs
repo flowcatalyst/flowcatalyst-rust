@@ -210,6 +210,7 @@ impl Default for GroupFlushRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn empty_group_is_never_suppressed() {
@@ -236,7 +237,7 @@ mod tests {
         let r = GroupFlushRegistry::new();
         assert!(r.flush("g1", Some(1)));
         assert!(r.suppressed("g1"));
-        std::thread::sleep(Duration::from_millis(1100));
+        thread::sleep(Duration::from_millis(1100));
         assert!(!r.suppressed("g1"), "suppression must lapse after its TTL");
         assert!(r.suppressed_until("g1").is_none());
     }
@@ -265,7 +266,7 @@ mod tests {
         );
 
         assert!(r.flush("g1", Some(1)));
-        std::thread::sleep(Duration::from_millis(1100));
+        thread::sleep(Duration::from_millis(1100));
         assert!(
             !r.clear("g1"),
             "an already-expired suppression has nothing active to lift"
@@ -283,7 +284,7 @@ mod tests {
         assert!(active.iter().any(|s| s.group == "g1"));
         assert!(active.iter().any(|s| s.group == "g2"));
 
-        std::thread::sleep(Duration::from_millis(1100));
+        thread::sleep(Duration::from_millis(1100));
         // Unlike `suppressed`, this must not evict — g1 is expired but the
         // eviction only happens on the next `suppressed` probe.
         let active = r.active_suppressions();
@@ -308,7 +309,7 @@ mod tests {
         // A longer one (still clamped) is accepted, but MAX_FLUSH_TTL caps
         // both at the same ceiling, so re-flushing at the ceiling again
         // extends the window forward from "now".
-        std::thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
         assert!(r.flush("g1", Some(3600)));
         assert!(r.suppressed_until("g1").unwrap() >= long_expiry);
     }

@@ -27,14 +27,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::Response;
 use axum::{http::HeaderMap, routing::post, Router};
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::auth::signing_keys;
+use fc_platform::principal::repository::PrincipalRepository;
+use reqwest::redirect::Policy;
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::pkcs8::{EncodePublicKey, LineEnding};
+use rsa::rand_core::OsRng;
 use rsa::{RsaPrivateKey, RsaPublicKey};
+use std::env;
+use std::io::Read;
+use std::net;
+use std::thread;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
+use tokio::net::TcpListener;
+use tokio::time;
 
 const SECRET_ARN: &str = "arn:aws:secretsmanager:eu-west-1:000000000000:secret:rds!db-fc-test";
 const APP_ROLE: &str = "fc_app";
@@ -52,10 +64,7 @@ struct FakeSecretsManager {
 
 /// Answers `secretsmanager.GetSecretValue` (awsJson1.1) with the current
 /// secret string; any other AWS call gets a 400.
-async fn fake_aws(
-    axum::extract::State(sm): axum::extract::State<FakeSecretsManager>,
-    headers: HeaderMap,
-) -> axum::response::Response {
+async fn fake_aws(State(sm): State<FakeSecretsManager>, headers: HeaderMap) -> Response {
     use axum::response::IntoResponse;
     let target = headers
         .get("x-amz-target")
@@ -63,7 +72,7 @@ async fn fake_aws(
         .unwrap_or("");
     if target != "secretsmanager.GetSecretValue" {
         return (
-            axum::http::StatusCode::BAD_REQUEST,
+            StatusCode::BAD_REQUEST,
             [("content-type", "application/x-amz-json-1.1")],
             r#"{"__type":"UnknownOperationException","message":"not faked"}"#,
         )
@@ -86,7 +95,7 @@ async fn fake_aws(
 }
 
 async fn start_fake_aws(sm: FakeSecretsManager) -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let app = Router::new()
         .route("/", post(fake_aws))
@@ -123,17 +132,17 @@ impl Server {
             // The task definitions leave the metrics port at its default
             // (9090); a test run can't count on that port being free.
             .env("FC_METRICS_PORT", metrics_port.to_string())
-            .current_dir(std::env::temp_dir())
+            .current_dir(env::temp_dir())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = cmd.spawn().expect("spawn fc-server");
         let logs = Arc::new(Mutex::new(Vec::new()));
         for stream in [
-            Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
             Box::new(child.stderr.take().unwrap()),
         ] {
             let logs = logs.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
                     logs.lock().unwrap().push(line);
                 }
@@ -171,13 +180,13 @@ impl Server {
                 "fc-server never became healthy:\n{}",
                 self.log_text()
             );
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            time::sleep(Duration::from_millis(250)).await;
         }
     }
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -347,7 +356,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
 
     // The current signing key (PKCS#1, as openssl writes it) and a previous
     // key pair from before a rotation.
-    let mut rng = rsa::rand_core::OsRng;
+    let mut rng = OsRng;
     let current = RsaPrivateKey::new(&mut rng, 2048).unwrap();
     let current_pem = current.to_pkcs1_pem(LineEnding::LF).unwrap().to_string();
     let previous = RsaPrivateKey::new(&mut rng, 2048).unwrap();
@@ -358,7 +367,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
 
     let shared = shared_env(fake_aws_port, &current_pem, &previous_public);
     let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(Policy::none())
         .build()
         .unwrap();
 
@@ -410,7 +419,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
     // Tokens signed with the previous key — issued before a rotation — still
     // validate: an access token on Go's own previous-key paths
     // (/oauth/userinfo) and the API, and a session cookie.
-    let principal = fc_platform::principal::repository::PrincipalRepository::new(&admin_pool)
+    let principal = PrincipalRepository::new(&admin_pool)
         .find_by_email(ADMIN_EMAIL)
         .await
         .unwrap()
@@ -479,7 +488,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
     .unwrap();
     *sm.secret.lock().unwrap() = secret_json("rotated-Pa55/word#", pg_port);
     let calls_at_rotation = sm.calls.load(Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    time::sleep(Duration::from_secs(2)).await;
     assert!(
         sm.calls.load(Ordering::SeqCst) >= calls_at_rotation + 4,
         "the secret is polled for rotation"
@@ -497,7 +506,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
         if status == 200 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        time::sleep(Duration::from_millis(250)).await;
     }
     assert_eq!(
         status,
@@ -508,7 +517,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
 
     // The stream processor polls continuously; give it time to reconnect,
     // then require live fc_app connections and no authentication failure.
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    time::sleep(Duration::from_secs(4)).await;
     let (live,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM pg_stat_activity WHERE usename = $1")
             .bind(APP_ROLE)
@@ -543,7 +552,7 @@ async fn fc_server_runs_with_the_production_task_definitions_env() {
     assert_eq!(ready["scheduled_job"], true);
     assert_eq!(ready["stream"], false);
     assert_eq!(ready["router"], false);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    time::sleep(Duration::from_secs(1)).await;
     assert!(
         worker.child.try_wait().unwrap().is_none(),
         "the worker stays up:\n{}",

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::events::UserDeleted;
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +19,7 @@ pub struct DeleteUserCommand {
     pub principal_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteUserCommand {}
+impl AuditMasked for DeleteUserCommand {}
 
 /// Use case for deleting a user (soft delete - deactivates permanently).
 pub struct DeleteUserUseCase<U: UnitOfWork> {

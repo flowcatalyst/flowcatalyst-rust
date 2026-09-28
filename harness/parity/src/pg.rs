@@ -3,10 +3,13 @@
 //! loopback port, so concurrent runs and other agents' test containers never
 //! collide. Removed on drop.
 
+use crate::keys;
 use anyhow::{bail, Context, Result};
 use sqlx::{Connection, PgConnection};
+use std::process;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use tokio::time;
 
 const PASSWORD: &str = "parity";
 const READY_BUDGET: Duration = Duration::from_secs(90);
@@ -18,11 +21,7 @@ pub struct DockerPg {
 
 impl DockerPg {
     pub async fn start(image: &str) -> Result<Self> {
-        let container = format!(
-            "fc-parity-pg-{}-{}",
-            std::process::id(),
-            crate::keys::random_token()
-        );
+        let container = format!("fc-parity-pg-{}-{}", process::id(), keys::random_token());
         let out = Command::new("docker")
             .args(["run", "-d", "--rm", "--name", &container])
             .args(["-e", &format!("POSTGRES_PASSWORD={PASSWORD}")])
@@ -77,7 +76,7 @@ impl DockerPg {
                     self.container
                 );
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            time::sleep(Duration::from_millis(250)).await;
         }
     }
 

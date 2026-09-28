@@ -25,9 +25,21 @@ use fc_platform::api::{
     clients_router, sdk_dispatch_jobs_batch_router, sdk_events_batch_router, AppState, AuthLayer,
     ClientsState, SdkDispatchJobsState, SdkEventsState,
 };
+use fc_platform::application::operations::DisableApplicationForClientUseCase;
+use fc_platform::application::operations::EnableApplicationForClientUseCase;
+use fc_platform::application::operations::UpdateClientApplicationsUseCase;
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
+use fc_platform::client::operations::ActivateClientUseCase;
+use fc_platform::client::operations::AddClientNoteUseCase;
+use fc_platform::client::operations::CreateClientUseCase;
+use fc_platform::client::operations::DeleteClientUseCase;
+use fc_platform::client::operations::SuspendClientUseCase;
+use fc_platform::client::operations::UpdateClientUseCase;
+use fc_platform::dispatch_job::signing_guard::SigningGuard;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::permissions;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use fc_platform::usecase::PgUnitOfWork;
 use fc_platform::AuthorizationService;
 use fc_platform::Client;
 use fc_platform::{
@@ -82,10 +94,8 @@ fn test_auth_service() -> AuthService {
 }
 
 /// The ingest signing guard over the test database.
-fn ingest_signing_guard(
-    pool: &sqlx::PgPool,
-) -> Arc<fc_platform::dispatch_job::signing_guard::SigningGuard> {
-    Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+fn ingest_signing_guard(pool: &sqlx::PgPool) -> Arc<SigningGuard> {
+    Arc::new(SigningGuard::new(
         Arc::new(fc_platform::SubscriptionRepository::new(pool)),
         Arc::new(fc_platform::ConnectionRepository::new(pool)),
         Arc::new(fc_platform::ServiceAccountRepository::new(pool)),
@@ -107,59 +117,53 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
     };
 
     let client_repo = Arc::new(ClientRepository::new(pool));
-    let unit_of_work = Arc::new(fc_platform::usecase::PgUnitOfWork::new(pool.clone()));
+    let unit_of_work = Arc::new(PgUnitOfWork::new(pool.clone()));
     let application_repo = Arc::new(ApplicationRepository::new(pool));
     let application_client_config_repo = Arc::new(ApplicationClientConfigRepository::new(pool));
     let clients_state = ClientsState {
         client_repo: client_repo.clone(),
         application_repo: application_repo.clone(),
         application_client_config_repo: application_client_config_repo.clone(),
-        create_use_case: Arc::new(fc_platform::client::operations::CreateClientUseCase::new(
+        create_use_case: Arc::new(CreateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        update_use_case: Arc::new(fc_platform::client::operations::UpdateClientUseCase::new(
+        update_use_case: Arc::new(UpdateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        delete_use_case: Arc::new(fc_platform::client::operations::DeleteClientUseCase::new(
+        delete_use_case: Arc::new(DeleteClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        activate_use_case: Arc::new(fc_platform::client::operations::ActivateClientUseCase::new(
+        activate_use_case: Arc::new(ActivateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        suspend_use_case: Arc::new(fc_platform::client::operations::SuspendClientUseCase::new(
+        suspend_use_case: Arc::new(SuspendClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        add_note_use_case: Arc::new(fc_platform::client::operations::AddClientNoteUseCase::new(
+        add_note_use_case: Arc::new(AddClientNoteUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        update_applications_use_case: Arc::new(
-            fc_platform::application::operations::UpdateClientApplicationsUseCase::new(
-                application_repo.clone(),
-                client_repo.clone(),
-                application_client_config_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
-        enable_application_use_case: Arc::new(
-            fc_platform::application::operations::EnableApplicationForClientUseCase::new(
-                application_repo.clone(),
-                client_repo.clone(),
-                application_client_config_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
-        disable_application_use_case: Arc::new(
-            fc_platform::application::operations::DisableApplicationForClientUseCase::new(
-                application_client_config_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
+        update_applications_use_case: Arc::new(UpdateClientApplicationsUseCase::new(
+            application_repo.clone(),
+            client_repo.clone(),
+            application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        )),
+        enable_application_use_case: Arc::new(EnableApplicationForClientUseCase::new(
+            application_repo.clone(),
+            client_repo.clone(),
+            application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        )),
+        disable_application_use_case: Arc::new(DisableApplicationForClientUseCase::new(
+            application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        )),
     };
 
     let sdk_events_state = SdkEventsState {
@@ -195,7 +199,7 @@ fn generate_anchor_token(auth_service: &AuthService) -> String {
     auth_service
         .generate_access_token_with_scope(
             &principal,
-            &[fc_platform::permissions::admin::CLIENT_READ.to_string()],
+            &[permissions::admin::CLIENT_READ.to_string()],
             None,
         )
         .expect("Failed to generate access token")
@@ -209,8 +213,8 @@ fn generate_ingest_token(auth_service: &AuthService) -> String {
         .generate_access_token_with_scope(
             &principal,
             &[
-                fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string(),
-                fc_platform::permissions::admin::BATCH_DISPATCH_JOBS_WRITE.to_string(),
+                permissions::admin::BATCH_EVENTS_WRITE.to_string(),
+                permissions::admin::BATCH_DISPATCH_JOBS_WRITE.to_string(),
             ],
             None,
         )

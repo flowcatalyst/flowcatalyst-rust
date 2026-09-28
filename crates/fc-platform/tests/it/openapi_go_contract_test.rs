@@ -21,15 +21,21 @@ use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::auth::oidc_sync_service::OidcSyncService;
 use fc_platform::auth::password_service::PasswordService;
 use fc_platform::repository::Repositories;
+use fc_platform::router;
 use fc_platform::shared::authorization_service::AuthorizationService;
+use fc_platform::shared::rate_limit_store::NoopRateLimitStore;
+use fc_platform::shared::rate_limit_store::RateLimitPolicies;
 use fc_platform::shared::server_setup::{AuthServices, PlatformContext, PlatformRoutesConfig};
 use fc_platform::usecase::PgUnitOfWork;
 use serde_json::Value;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
+use std::fs;
 
 const METHODS: &[&str] = &["get", "put", "post", "delete", "patch"];
 
 fn rust_document() -> Value {
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .expect("lazy pool");
     let repos = Repositories::new(&pool);
@@ -61,10 +67,8 @@ fn rust_document() -> Value {
         &auth,
         &unit_of_work,
         PlatformRoutesConfig {
-            rate_limit_store: Arc::new(fc_platform::shared::rate_limit_store::NoopRateLimitStore),
-            rate_limit_policies: Arc::new(
-                fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-            ),
+            rate_limit_store: Arc::new(NoopRateLimitStore),
+            rate_limit_policies: Arc::new(RateLimitPolicies::from_env()),
             session_cookie_secure: false,
             session_cookie_same_site: PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string(),
             session_token_expiry_secs: PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,
@@ -75,7 +79,7 @@ fn rust_document() -> Value {
         },
         "app_platform".to_string(),
     );
-    let (_router, openapi) = fc_platform::router::build(&ctx);
+    let (_router, openapi) = router::build(&ctx);
     serde_json::to_value(&openapi).expect("serialise document")
 }
 
@@ -84,7 +88,7 @@ fn go_document() -> Value {
         env!("CARGO_MANIFEST_DIR"),
         "/../../frontend/openapi/openapi.json"
     );
-    serde_json::from_str(&std::fs::read_to_string(path).expect("Go lockfile copy"))
+    serde_json::from_str(&fs::read_to_string(path).expect("Go lockfile copy"))
         .expect("Go lockfile parses")
 }
 
@@ -126,8 +130,8 @@ fn normalise_path(path: &str) -> String {
 #[tokio::test]
 async fn shared_operations_carry_gos_operation_ids() {
     let rust = rust_document();
-    if let Ok(path) = std::env::var("OPENAPI_DUMP") {
-        std::fs::write(&path, serde_json::to_vec_pretty(&rust).unwrap()).unwrap();
+    if let Ok(path) = env::var("OPENAPI_DUMP") {
+        fs::write(&path, serde_json::to_vec_pretty(&rust).unwrap()).unwrap();
     }
     let go = go_document();
     let rust_ops = operations(&rust);
@@ -159,7 +163,7 @@ async fn shared_operations_carry_gos_operation_ids() {
         rust_ops.len(),
         mismatched.len()
     );
-    if std::env::var("OPENAPI_REPORT").is_ok() {
+    if env::var("OPENAPI_REPORT").is_ok() {
         println!("-- mismatched\n{}", mismatched.join("\n"));
         println!("-- go only\n{}", go_only.join("\n"));
         println!("-- rust only\n{}", rust_only.join("\n"));

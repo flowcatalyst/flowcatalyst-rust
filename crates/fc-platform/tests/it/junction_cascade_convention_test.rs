@@ -19,6 +19,7 @@
 //! The same shape applies to the other non-FK junctions; add more patterns
 //! below as similar use cases emerge.
 
+use crate::support::sources;
 use std::fs;
 
 /// Patterns that should be confined to a specific file. Second element is
@@ -44,12 +45,12 @@ const CONFINED_PATTERNS: &[(&str, &str)] = &[
 #[test]
 fn cascade_sql_is_confined_to_the_owning_repository() {
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
 
     let mut violations = Vec::new();
 
     for file in &files {
-        let rel = crate::support::sources::strip_src(file)
+        let rel = sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");

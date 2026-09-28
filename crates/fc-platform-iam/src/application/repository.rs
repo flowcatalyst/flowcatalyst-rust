@@ -9,6 +9,9 @@ use fc_platform_core::directory::{ApplicationDirectory, ApplicationRef};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
 
 /// Row mapping for app_applications table
 #[derive(sqlx::FromRow)]
@@ -112,12 +115,9 @@ impl ApplicationRepository {
 
     /// `code -> id` for every application whose code is in `codes`: one
     /// shallow query for a whole batch. Codes with no row are absent.
-    pub async fn find_ids_by_codes(
-        &self,
-        codes: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, String>> {
         if codes.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows = sqlx::query_as::<_, (String, String)>(
             "SELECT code, id FROM app_applications WHERE code = ANY($1)",
@@ -130,10 +130,7 @@ impl ApplicationRepository {
 
     /// The applications with the given ids, in one query, keyed by id. An
     /// id with no row is absent.
-    pub async fn find_by_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Application>> {
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<HashMap<String, Application>> {
         if ids.is_empty() {
             return Ok(Default::default());
         }
@@ -150,10 +147,7 @@ impl ApplicationRepository {
 
     /// `id → name` for the given application ids, in one query (the
     /// OAuth-client `applications` refs).
-    pub async fn find_names_by_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
         if ids.is_empty() {
             return Ok(Default::default());
         }
@@ -277,12 +271,12 @@ impl ApplicationRepository {
         .await?;
 
         // Reload and return
-        self.find_by_id(&app.id).await?.ok_or_else(|| {
-            fc_platform_core::shared::error::PlatformError::NotFound {
+        self.find_by_id(&app.id)
+            .await?
+            .ok_or_else(|| PlatformError::NotFound {
                 entity_type: "Application".to_string(),
                 id: app.id.clone(),
-            }
-        })
+            })
     }
 
     /// Delete an application and cascade the non-FK junction —
@@ -370,12 +364,8 @@ impl HasId for Application {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Application> for ApplicationRepository {
-    async fn persist(
-        &self,
-        a: &Application,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Application> for ApplicationRepository {
+    async fn persist(&self, a: &Application, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO app_applications (id, type, code, name, description, icon_url, website, logo, logo_mime_type, default_base_url, service_account_id, active, created_at, updated_at)
@@ -413,11 +403,7 @@ impl fc_platform_core::usecase::Persist<Application> for ApplicationRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        a: &Application,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, a: &Application, tx: &mut DbTx<'_>) -> Result<()> {
         // iam_principal_application_access has no DB-level FK on application_id
         // (integrity lives in code). Cascade in the same tx as the app delete
         // so this path holds the invariant even if someone bypasses the use case.
@@ -459,10 +445,7 @@ impl ApplicationDirectory for ApplicationRepository {
             .map(application_ref))
     }
 
-    async fn find_ids_by_codes(
-        &self,
-        codes: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    async fn find_ids_by_codes(&self, codes: &[String]) -> Result<HashMap<String, String>> {
         ApplicationRepository::find_ids_by_codes(self, codes).await
     }
 

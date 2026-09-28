@@ -10,6 +10,7 @@ use fc_function_model::{Cors, Endpoint};
 use http::HeaderMap;
 
 use super::answer::HttpAnswer;
+use crate::java;
 
 const MANAGED: [&str; 3] = [
     "access-control-allow-origin",
@@ -167,7 +168,7 @@ fn effective_methods(endpoint: &Endpoint, cors: &Cors, requested: Option<&str>) 
     }
     let declared = endpoint.effective_methods();
     if declared.is_empty() {
-        if let Some(requested) = requested.filter(|r| !crate::java::is_blank(r)) {
+        if let Some(requested) = requested.filter(|r| !java::is_blank(r)) {
             add(requested.trim().to_uppercase());
         }
     } else {
@@ -180,7 +181,7 @@ fn effective_methods(endpoint: &Endpoint, cors: &Cors, requested: Option<&str>) 
 
 /// `cors.headers` ∩ requested, case-insensitive, in the manifest's spelling.
 fn allowed_headers(cors: &Cors, requested: Option<String>) -> Vec<String> {
-    let Some(requested) = requested.filter(|r| !crate::java::is_blank(r)) else {
+    let Some(requested) = requested.filter(|r| !java::is_blank(r)) else {
         return Vec::new();
     };
     let requested: Vec<&str> = requested

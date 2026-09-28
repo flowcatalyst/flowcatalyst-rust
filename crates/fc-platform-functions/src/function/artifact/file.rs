@@ -8,13 +8,24 @@ use async_trait::async_trait;
 
 use super::{keys, ArtifactBlobStore, ArtifactError, ArtifactStream};
 use crate::function::Digest;
+use fc_platform_core::shared::tsid;
+use std::fs;
+use std::io;
+use std::io::ErrorKind;
+use tokio::fs::copy;
+use tokio::fs::create_dir_all;
+use tokio::fs::metadata;
+use tokio::fs::remove_dir_all;
+use tokio::fs::remove_file;
+use tokio::fs::rename;
+use tokio::fs::File;
 
 #[derive(Debug)]
 pub struct FileArtifactBlobStore {
     dir: PathBuf,
 }
 
-fn transport(e: std::io::Error) -> ArtifactError {
+fn transport(e: io::Error) -> ArtifactError {
     ArtifactError::Transport(e.to_string())
 }
 
@@ -22,7 +33,7 @@ impl FileArtifactBlobStore {
     /// Creates `dir` when missing; a directory that cannot be created fails
     /// startup.
     pub fn new(dir: PathBuf) -> Result<FileArtifactBlobStore, String> {
-        std::fs::create_dir_all(&dir)
+        fs::create_dir_all(&dir)
             .map_err(|e| format!("cannot create artifact directory {}: {e}", dir.display()))?;
         Ok(FileArtifactBlobStore { dir })
     }
@@ -39,10 +50,7 @@ impl FileArtifactBlobStore {
 }
 
 async fn is_file(path: &Path) -> bool {
-    tokio::fs::metadata(path)
-        .await
-        .map(|m| m.is_file())
-        .unwrap_or(false)
+    metadata(path).await.map(|m| m.is_file()).unwrap_or(false)
 }
 
 #[async_trait]
@@ -59,18 +67,15 @@ impl ArtifactBlobStore for FileArtifactBlobStore {
             return Ok(());
         }
         let parent = target.parent().expect("a blob path has a parent");
-        tokio::fs::create_dir_all(parent).await.map_err(transport)?;
-        let temp = parent.join(format!(
-            "upload-{}.tmp",
-            fc_platform_core::shared::tsid::generate_untyped()
-        ));
+        create_dir_all(parent).await.map_err(transport)?;
+        let temp = parent.join(format!("upload-{}.tmp", tsid::generate_untyped()));
         let result = async {
-            tokio::fs::copy(file, &temp).await?;
-            tokio::fs::rename(&temp, &target).await
+            copy(file, &temp).await?;
+            rename(&temp, &target).await
         }
         .await;
         if result.is_err() {
-            let _ = tokio::fs::remove_file(&temp).await;
+            let _ = remove_file(&temp).await;
         }
         result.map_err(transport)
     }
@@ -88,23 +93,23 @@ impl ArtifactBlobStore for FileArtifactBlobStore {
         if !is_file(&path).await {
             return Err(ArtifactError::NotFound);
         }
-        let file = tokio::fs::File::open(&path).await.map_err(transport)?;
+        let file = File::open(&path).await.map_err(transport)?;
         Ok(Box::pin(file))
     }
 
     async fn size(&self, function_id: &str, digest: &Digest) -> Result<u64, ArtifactError> {
-        match tokio::fs::metadata(self.path_of(function_id, digest)?).await {
+        match metadata(self.path_of(function_id, digest)?).await {
             Ok(m) => Ok(m.len()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(ArtifactError::NotFound),
+            Err(e) if e.kind() == ErrorKind::NotFound => Err(ArtifactError::NotFound),
             Err(e) => Err(transport(e)),
         }
     }
 
     async fn delete_all(&self, function_id: &str) -> Result<(), ArtifactError> {
         let dir = self.dir.join(keys::validate_function_id(function_id)?);
-        match tokio::fs::remove_dir_all(&dir).await {
+        match remove_dir_all(&dir).await {
             Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(transport(e)),
         }
     }
@@ -114,24 +119,24 @@ impl ArtifactBlobStore for FileArtifactBlobStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::tsid;
+    use std::env;
+    use std::fs;
     use tokio::io::AsyncReadExt;
 
     struct TempDir(PathBuf);
 
     impl TempDir {
         fn new() -> TempDir {
-            let dir = std::env::temp_dir().join(format!(
-                "fc-blob-file-{}",
-                fc_platform_core::shared::tsid::generate_untyped()
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir = env::temp_dir().join(format!("fc-blob-file-{}", tsid::generate_untyped()));
+            fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
         }
     }
 
     impl Drop for TempDir {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.0);
         }
     }
 
@@ -141,7 +146,7 @@ mod tests {
 
     fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
         let p = dir.join(name);
-        std::fs::write(&p, text).unwrap();
+        fs::write(&p, text).unwrap();
         p
     }
 
@@ -169,7 +174,7 @@ mod tests {
         // Layout: <dir>/<functionId>/<hex>.
         assert!(store.root().join("fn1").join("a".repeat(64)).is_file());
         // No temp file left beside it.
-        let names: Vec<_> = std::fs::read_dir(store.root().join("fn1"))
+        let names: Vec<_> = fs::read_dir(store.root().join("fn1"))
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();

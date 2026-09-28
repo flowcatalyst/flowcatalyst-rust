@@ -19,6 +19,10 @@ use fc_common::{
 };
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{ConsumerFactory, HttpMediatorConfig, Mediator, QueueManager};
+use std::cmp;
+use std::collections::VecDeque;
+use std::time::Instant;
+use tokio::time;
 
 /// Mock mediator for testing
 struct MockMediator {
@@ -48,7 +52,7 @@ impl Mediator for MockMediator {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.processed_ids.lock().push(message.id.clone());
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
         MediationOutcome::success(200)
     }
 }
@@ -117,7 +121,7 @@ impl QueueConsumer for MockQueueConsumer {
         }
 
         let mut messages = self.messages.lock();
-        let count = std::cmp::min(max_messages as usize, messages.len());
+        let count = cmp::min(max_messages as usize, messages.len());
         let result: Vec<_> = messages.drain(0..count).collect();
         Ok(result)
     }
@@ -256,7 +260,7 @@ async fn test_route_single_message() {
         .unwrap();
 
     // Wait for processing
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
 
     // Should have processed the message
     assert_eq!(mediator.call_count(), 1);
@@ -292,7 +296,7 @@ async fn test_route_batch_multiple_messages() {
         .unwrap();
 
     // Wait for processing
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
 
     assert_eq!(mediator.call_count(), 5);
 }
@@ -439,7 +443,7 @@ async fn test_route_to_different_pools() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
 
     assert_eq!(mediator.call_count(), 3);
 }
@@ -470,7 +474,7 @@ async fn test_default_pool_for_empty_pool_code() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(mediator.call_count(), 1);
 }
@@ -540,7 +544,7 @@ async fn strict_routing_acks_empty_pool_code_without_delivery() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(
         mediator.call_count(),
@@ -599,7 +603,7 @@ async fn strict_routing_acks_unspecified_dispatch_mode_without_delivery() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(mediator.call_count(), 0);
     assert_eq!(consumer.acked.lock().len(), 1);
@@ -645,7 +649,7 @@ async fn strict_routing_acks_ordered_mode_without_group_id() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     assert_eq!(mediator.call_count(), 0);
     assert_eq!(consumer.acked.lock().len(), 1);
@@ -692,7 +696,7 @@ async fn strict_routing_delivers_well_formed_message() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(
         mediator.call_count(),
@@ -752,7 +756,7 @@ async fn non_strict_routing_still_delivers_malformed_shapes() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(
         mediator.call_count(),
@@ -803,7 +807,7 @@ async fn leadership_loss_pauses_polling_and_regain_resumes_it() {
     // Give the poll loop several iterations' worth of time — it must never
     // call poll() while not leader, so the message sitting in the mock
     // consumer must never be delivered.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         consumer.poll_count(),
         0,
@@ -819,7 +823,7 @@ async fn leadership_loss_pauses_polling_and_regain_resumes_it() {
     assert!(consumer.poll_count() > 0);
 
     manager.shutdown().await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), start_handle).await;
+    let _ = time::timeout(Duration::from_secs(2), start_handle).await;
 }
 
 /// A delivery already in flight when leadership is lost must run to
@@ -853,10 +857,10 @@ async fn leadership_loss_does_not_abort_in_flight_delivery() {
 
     // Let the pool worker actually start mediating (SlowMockMediator sleeps
     // 200ms) before pulling leadership out from under it.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
     manager.set_leader(false);
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    time::sleep(Duration::from_millis(300)).await;
 
     assert_eq!(
         mediator.call_count(),
@@ -1025,7 +1029,7 @@ impl SlowMockMediator {
 impl Mediator for SlowMockMediator {
     async fn mediate(&self, _message: &Message) -> MediationOutcome {
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        tokio::time::sleep(self.delay).await;
+        time::sleep(self.delay).await;
         MediationOutcome::success(200)
     }
 }
@@ -1043,7 +1047,7 @@ impl ConsumerFactory for SlowConsumerFactory {
         &self,
         config: &fc_common::QueueConfig,
     ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
-        tokio::time::sleep(self.delay).await;
+        time::sleep(self.delay).await;
         Ok(Arc::new(MockQueueConsumer::new(&config.name)) as Arc<dyn QueueConsumer>)
     }
 }
@@ -1056,7 +1060,7 @@ impl ConsumerFactory for SlowConsumerFactory {
 async fn shutdown_with_no_consumers_returns_promptly() {
     let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
 
-    tokio::time::timeout(Duration::from_secs(2), manager.shutdown())
+    time::timeout(Duration::from_secs(2), manager.shutdown())
         .await
         .expect("shutdown should complete promptly with no consumers or pools");
 }
@@ -1095,9 +1099,9 @@ async fn shutdown_waits_for_in_flight_pool_work() {
     // Give the pool worker a moment to actually pick up the message and
     // start mediating, so shutdown() races real in-flight work rather than
     // an already-idle pool.
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    time::sleep(Duration::from_millis(20)).await;
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     manager.shutdown().await;
     let elapsed = start.elapsed();
 
@@ -1161,9 +1165,9 @@ async fn removed_pool_is_cleaned_up_by_drain_watcher_without_reaper() {
 
     // The watcher spawned by reload_config should remove "REMOVE" from
     // draining_pools on its own — no cleanup_draining_pools() call here.
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    while manager.draining_pool_count() > 0 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while manager.draining_pool_count() > 0 && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
 
     assert_eq!(
@@ -1211,9 +1215,9 @@ async fn reload_config_with_consumer_factory_does_not_block_readers() {
 
     // Give reload_config a moment to enter sync_queue_consumers and start
     // the (locked-out) create_consumer call.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
-    tokio::time::timeout(Duration::from_millis(100), manager.consumer_ids())
+    time::timeout(Duration::from_millis(100), manager.consumer_ids())
         .await
         .expect(
             "consumer_ids() should not be blocked by an in-flight, lock-released \
@@ -1279,9 +1283,9 @@ async fn restart_consumer_serialises_against_in_flight_reload() {
                 .unwrap();
         })
     };
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let restarted = manager.restart_consumer("q1").await;
     let elapsed = start.elapsed();
 
@@ -1395,9 +1399,9 @@ fn queue_config(name: &str) -> fc_common::QueueConfig {
 /// throughout the restart tests instead of a single fixed sleep, since the
 /// exact timing of a hot-added poll task's first iteration isn't guaranteed.
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while !cond() && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !cond() && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -1664,7 +1668,7 @@ async fn poll_task_exits_after_consumer_stop() {
     let count_before = consumer.poll_count();
     consumer.stop().await;
 
-    tokio::time::sleep(Duration::from_millis(2500)).await;
+    time::sleep(Duration::from_millis(2500)).await;
 
     let count_after = consumer.poll_count();
     assert!(
@@ -1746,7 +1750,7 @@ async fn force_ack_in_flight_clears_entry_and_later_ack_is_harmless() {
     // finish. Its entry is gone, so — as Go's `ackTracked` does when the
     // tracker no longer knows the message — it acks with its own receipt
     // handle: a second delete of an already-deleted message, harmless.
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    time::sleep(Duration::from_millis(150)).await;
     assert_eq!(
         mediator.call_count(),
         1,
@@ -1810,13 +1814,13 @@ async fn manager_blocked_groups_reflects_a_gated_ordered_group_across_pools() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(3)).await;
+    time::sleep(Duration::from_millis(3)).await;
     let groups = manager.blocked_groups();
     assert_eq!(groups.len(), 1, "exactly one live group across all pools");
     assert_eq!(groups[0].group, "g1");
     assert_eq!(groups[0].pool_code, "ORDERED");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert!(
         manager.blocked_groups().is_empty(),
         "a fully-drained group must not show up"
@@ -1957,7 +1961,7 @@ async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutd
 
     // Give the drain task time to pop m1 and start mediating it so m2 is
     // still buffered when the pool is removed below.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
 
     // Remove REBORN from config — begins draining the predecessor.
     // `pool.drain()` only stops new admission; m1 keeps mediating and m2
@@ -2012,7 +2016,7 @@ async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutd
     ));
     let poll3 = consumer3.poll(10).await.unwrap();
     manager.route_batch(poll3, consumer3.clone()).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
     assert!(
         manager
             .mediating_snapshot()
@@ -2067,7 +2071,7 @@ async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutd
 /// `ConsumerFactory` that hands out pre-seeded consumers in order, or fails
 /// the build when a slot holds `None`.
 struct ScriptedConsumerFactory {
-    script: parking_lot::Mutex<std::collections::VecDeque<Option<Arc<MockQueueConsumer>>>>,
+    script: parking_lot::Mutex<VecDeque<Option<Arc<MockQueueConsumer>>>>,
     built: parking_lot::Mutex<Vec<Arc<MockQueueConsumer>>>,
 }
 
@@ -2214,9 +2218,9 @@ async fn ack_resolves_the_registered_consumer_for_its_queue() {
         .await
         .unwrap();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while registered.acked.lock().is_empty() && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while registered.acked.lock().is_empty() && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(registered.acked.lock().len(), 1);
     assert!(unregistered.acked.lock().is_empty());
@@ -2249,9 +2253,9 @@ async fn detached_consumer_acks_its_in_flight_message_then_retires() {
     };
     manager.reload_config(cfg(30)).await.unwrap();
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while mediator.call_count() == 0 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while mediator.call_count() == 0 && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(mediator.call_count(), 1, "the message is mid-delivery");
 
@@ -2264,9 +2268,9 @@ async fn detached_consumer_acks_its_in_flight_message_then_retires() {
         "not retired while a message it delivered is in flight"
     );
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
-    while first.acked.lock().is_empty() && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while first.acked.lock().is_empty() && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(
         first.acked.lock().len(),
@@ -2343,9 +2347,9 @@ async fn shutdown_stops_polling_drains_then_stops_consumers() {
     manager.add_consumer(consumer.clone()).await;
     let start_task = tokio::spawn(manager.clone().start());
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while mediator.call_count() == 0 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while mediator.call_count() == 0 && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(mediator.call_count(), 1);
 
@@ -2361,7 +2365,7 @@ async fn shutdown_stops_polling_drains_then_stops_consumers() {
         consumer.inner.was_stopped(),
         "consumers are stopped at the end"
     );
-    let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+    let _ = time::timeout(Duration::from_secs(2), start_task).await;
 }
 
 /// Once polling is stopped for shutdown, a config reload must not start new
@@ -2539,13 +2543,13 @@ async fn reload_wakes_consumers_parked_for_capacity() {
     ));
     manager.add_consumer(consumer.clone()).await;
     let start_task = tokio::spawn(manager.clone().start());
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while consumer.nacked.lock().len() < 2 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while consumer.nacked.lock().len() < 2 && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let parked_polls = consumer.poll_count();
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     assert_eq!(consumer.poll_count(), parked_polls, "parked: not polling");
 
     // A reload that drops FULL (the only pool this queue fed) must wake
@@ -2558,9 +2562,9 @@ async fn reload_wakes_consumers_parked_for_capacity() {
         })
         .await
         .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while consumer.poll_count() == parked_polls && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while consumer.poll_count() == parked_polls && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(10)).await;
     }
     assert!(
         consumer.poll_count() > parked_polls,
@@ -2569,5 +2573,5 @@ async fn reload_wakes_consumers_parked_for_capacity() {
     manager
         .shutdown_with_timeout(Duration::from_millis(100))
         .await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+    let _ = time::timeout(Duration::from_secs(2), start_task).await;
 }

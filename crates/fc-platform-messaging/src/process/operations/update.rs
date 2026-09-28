@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ProcessUpdated;
 use crate::process::entity::ProcessStatus;
 use crate::process::repository::ProcessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -27,7 +29,7 @@ pub struct UpdateProcessCommand {
     pub tags: Option<Vec<String>>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateProcessCommand {}
+impl AuditMasked for UpdateProcessCommand {}
 
 pub struct UpdateProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
@@ -77,11 +79,7 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         _command: &UpdateProcessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_update_processes(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_update_processes(ctx.caller())?)
     }
 
     async fn execute(

@@ -13,8 +13,11 @@ use crate::service_account::entity::{ServiceAccount, WebhookCredentials};
 use crate::{
     client::repository::ClientRepository, service_account::repository::ServiceAccountRepository,
 };
+use base64::engine::general_purpose;
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Generate a bearer token with fc_ prefix
@@ -35,7 +38,7 @@ fn generate_auth_token() -> String {
 /// Generate a signing secret (URL-safe base64)
 fn generate_signing_secret() -> String {
     let bytes: [u8; 32] = rand::rng().random();
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    base64::Engine::encode(&general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
 /// The code rule, as Go's create has it
@@ -126,7 +129,7 @@ pub struct CreateServiceAccountCommand {
     pub all_applications: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateServiceAccountCommand {}
+impl AuditMasked for CreateServiceAccountCommand {}
 
 /// Result returned from create service account use case.
 /// Contains the event plus one-time secrets that need to be returned to caller.
@@ -237,11 +240,9 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         command: &CreateServiceAccountCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-            ctx.caller(),
-        )?;
+        checks::require_anchor_scope(ctx.caller())?;
         if command.all_applications {
-            fc_platform_core::shared::authorization_service::checks::require_all_applications_grantor(ctx.caller().application_scope())?;
+            checks::require_all_applications_grantor(ctx.caller().application_scope())?;
         }
         Ok(())
     }

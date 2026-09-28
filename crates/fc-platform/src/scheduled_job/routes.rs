@@ -1,6 +1,11 @@
 //! Scheduled job routes: `/api/scheduled-jobs` (definitions and the SDK's
 //! instance callbacks) and the read-only `/bff/scheduled-jobs` (plain).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::routing::get;

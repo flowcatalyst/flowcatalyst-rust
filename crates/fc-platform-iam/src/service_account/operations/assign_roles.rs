@@ -7,8 +7,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::ServiceAccountRolesAssigned;
+use crate::role::ceiling;
+use crate::role::repository::RoleRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::service_account::repository::ServiceAccountRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -24,20 +29,20 @@ pub struct AssignRolesCommand {
     pub roles: Vec<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AssignRolesCommand {}
+impl AuditMasked for AssignRolesCommand {}
 
 /// Use case for assigning roles to a service account.
 pub struct AssignRolesUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
     /// The role ceiling's definitions (owner ruling 14).
-    role_repo: Arc<crate::role::repository::RoleRepository>,
+    role_repo: Arc<RoleRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> AssignRolesUseCase<U> {
     pub fn new(
         service_account_repo: Arc<ServiceAccountRepository>,
-        role_repo: Arc<crate::role::repository::RoleRepository>,
+        role_repo: Arc<RoleRepository>,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
@@ -68,28 +73,18 @@ impl<U: UnitOfWork> UseCase for AssignRolesUseCase<U> {
         command: &AssignRolesCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-            ctx.caller(),
-        )?;
+        checks::require_anchor_scope(ctx.caller())?;
         let account = self
             .service_account_repo
             .find_by_id(&command.service_account_id)
             .await?
             .ok_or_else(|| {
-                UseCaseError::verbatim(
-                    fc_platform_core::shared::error::PlatformError::ServiceAccountNotFound {
-                        id: command.service_account_id.clone(),
-                    },
-                )
+                UseCaseError::verbatim(PlatformError::ServiceAccountNotFound {
+                    id: command.service_account_id.clone(),
+                })
             })?;
         let before: Vec<String> = account.roles.iter().map(|r| r.role.clone()).collect();
-        crate::role::ceiling::require_role_change(
-            ctx.caller(),
-            &self.role_repo,
-            &before,
-            &command.roles,
-        )
-        .await
+        ceiling::require_role_change(ctx.caller(), &self.role_repo, &before, &command.roles).await
     }
 
     async fn execute(

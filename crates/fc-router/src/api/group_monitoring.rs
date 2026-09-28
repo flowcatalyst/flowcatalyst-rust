@@ -15,6 +15,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use utoipa::ToSchema;
 
 // ── Blocked groups (ledger R-04) ─────────────────────────────────────────
@@ -121,8 +122,8 @@ pub(crate) struct GroupFlushPoolInfo {
 /// inside `pool.rs` for `parked_at`/its own suppression lookup;
 /// `GroupSuppression::until` stays `Instant`-typed at the domain layer, so
 /// this is where its sibling conversion happens for the wire).
-fn suppression_to_wall_clock(until: std::time::Instant) -> DateTime<Utc> {
-    let now_instant = std::time::Instant::now();
+fn suppression_to_wall_clock(until: Instant) -> DateTime<Utc> {
+    let now_instant = Instant::now();
     let now_utc = Utc::now();
     if until >= now_instant {
         let delta = until - now_instant;

@@ -7,6 +7,7 @@ use crate::support;
 
 use axum::http::StatusCode;
 
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use support::{read_json, TestApp};
 
@@ -14,7 +15,7 @@ use support::{read_json, TestApp};
 #[ignore = "requires Docker"]
 async fn a_roleless_user_reaches_only_its_profile() {
     let app = TestApp::setup().await;
-    let client = fc_platform::client::entity::Client::new("Profile Only", "profile-only");
+    let client = Client::new("Profile Only", "profile-only");
     app.repos
         .client_repo
         .insert(&client)

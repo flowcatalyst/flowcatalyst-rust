@@ -3,7 +3,9 @@
 //! side), recovery codes, email PINs, trusted-device tokens, and the
 //! enrolment QR code.
 
+use base64::engine::general_purpose;
 use base64::Engine;
+use flate2::write::ZlibEncoder;
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha1::Sha1;
@@ -163,7 +165,7 @@ pub fn normalize_recovery_code(s: &str) -> String {
 pub fn random_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes[..]);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 /// `uri` as a QR code in a 240×240 grayscale PNG data URI, for an `<img
@@ -190,7 +192,7 @@ pub fn qr_data_uri(uri: &str) -> Option<String> {
     let png = grayscale_png(QR_SIZE, QR_SIZE, &pixels)?;
     Some(format!(
         "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(png)
+        general_purpose::STANDARD.encode(png)
     ))
 }
 
@@ -202,7 +204,7 @@ fn grayscale_png(width: usize, height: usize, pixels: &[u8]) -> Option<Vec<u8>> 
         raw.push(0); // filter: none
         raw.extend_from_slice(row);
     }
-    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut z = ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(&raw).ok()?;
     let idat = z.finish().ok()?;
 
@@ -231,6 +233,7 @@ fn grayscale_png(width: usize, height: usize, pixels: &[u8]) -> Option<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose;
 
     /// RFC 6238 appendix B, SHA-1 (8 digits there; the last 6 here).
     #[test]
@@ -286,7 +289,7 @@ mod tests {
              &issuer=FlowCatalyst&period=30&secret=JBSWY3DPEHPK3PXP"
         );
         let qr = qr_data_uri(&uri).unwrap();
-        let png = base64::engine::general_purpose::STANDARD
+        let png = general_purpose::STANDARD
             .decode(qr.trim_start_matches("data:image/png;base64,"))
             .unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");

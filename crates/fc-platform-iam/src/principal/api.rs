@@ -18,26 +18,51 @@ use crate::application::client_config_repository::ApplicationClientConfigReposit
 use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
 use crate::audit::service::AuditService;
+use crate::auth::config_repository::AnchorDomainRepository;
+use crate::auth::config_repository::ClientAccessGrantRepository;
 use crate::auth::password_reset_emailer::PasswordResetEmailer;
+use crate::client::repository::ClientRepository;
+use crate::email_domain_mapping::entity::EmailDomainMapping;
 use crate::identity_provider::entity::IdentityProviderType;
+use crate::mfa::notify::Notifier;
+use crate::mfa::MfaRepository;
+use crate::principal::entity::ClientAccessGrant;
 use crate::principal::entity::{Principal, UserIdentity};
+use crate::principal::operations;
 use crate::principal::operations::set_client_association::{
     SetClientAssociationCommand, SetClientAssociationUseCase,
 };
+use crate::principal::operations::ActivateUserUseCase;
+use crate::principal::operations::AssignApplicationAccessUseCase;
+use crate::principal::operations::DeactivateUserUseCase;
+use crate::principal::operations::DeleteUserUseCase;
+use crate::principal::operations::GrantClientAccessUseCase;
+use crate::principal::operations::ResetPasswordUseCase;
+use crate::principal::operations::RevokeClientAccessUseCase;
+use crate::principal::operations::SyncUserInput;
+use crate::principal::operations::UpdateUserUseCase;
 use crate::principal::operations::{
     AssignUserRolesCommand, AssignUserRolesUseCase, CreateUserCommand, CreateUserUseCase,
 };
 use crate::principal::repository::PrincipalRepository;
+use crate::role::ceiling;
+use crate::role::entity::AuthRole;
 use crate::service_account::entity::RoleAssignment;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::{
     email_domain_mapping::repository::EmailDomainMappingRepository,
     identity_provider::repository::IdentityProviderRepository, role::repository::RoleRepository,
 };
+use axum::body::Bytes;
+use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
+use std::sync::OnceLock;
 
 /// Go's user `scope` values (documentation; the handler carries text).
 #[derive(ToSchema)]
@@ -308,8 +333,8 @@ pub struct ClientAccessGrantResponse {
 
 /// A grant row answers with its own id and date (Go
 /// `clientAccessGrantFromEntity`).
-impl From<crate::principal::entity::ClientAccessGrant> for ClientAccessGrantResponse {
-    fn from(g: crate::principal::entity::ClientAccessGrant) -> Self {
+impl From<ClientAccessGrant> for ClientAccessGrantResponse {
+    fn from(g: ClientAccessGrant) -> Self {
         Self {
             id: g.id,
             client_id: g.client_id,
@@ -608,77 +633,45 @@ impl PrincipalsQuery {
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
     /// Role definitions, for the role ceiling.
-    pub role_repo: Arc<crate::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     /// Resolves a user-create `clientId` given as an id or an identifier
-    pub client_repo: Arc<crate::client::repository::ClientRepository>,
+    pub client_repo: Arc<ClientRepository>,
     /// Resolved application scopes, cached per principal; dropped when a
     /// principal's application access changes so the change applies at once.
-    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
+    pub app_access: Arc<ApplicationAccessService>,
     pub audit_service: Arc<AuditService>,
-    pub anchor_domain_repo: Arc<crate::auth::config_repository::AnchorDomainRepository>,
-    pub email_domain_mapping_repo:
-        Arc<crate::email_domain_mapping::repository::EmailDomainMappingRepository>,
-    pub identity_provider_repo:
-        Arc<crate::identity_provider::repository::IdentityProviderRepository>,
+    pub anchor_domain_repo: Arc<AnchorDomainRepository>,
+    pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
+    pub identity_provider_repo: Arc<IdentityProviderRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub app_client_config_repo: Arc<ApplicationClientConfigRepository>,
     /// The client-access grant rows, each with its own id and date.
-    pub client_access_grant_repo: Arc<crate::auth::config_repository::ClientAccessGrantRepository>,
+    pub client_access_grant_repo: Arc<ClientAccessGrantRepository>,
     /// A user's confirmed second factors, for the detail read.
-    pub mfa_repo: Arc<crate::mfa::MfaRepository>,
+    pub mfa_repo: Arc<MfaRepository>,
     /// Backs `POST /api/principals/{id}/send-password-reset`, which emails the
     /// user a single-use reset link (same flow as user-initiated
     /// `/auth/password-reset/request`), and the magic link sent on create.
-    pub password_reset_emailer: Arc<crate::auth::password_reset_emailer::PasswordResetEmailer>,
+    pub password_reset_emailer: Arc<PasswordResetEmailer>,
     /// Welcomes a user created with a password (Go `AccountCreated`).
-    pub new_user_notifier: Option<crate::mfa::notify::Notifier>,
+    pub new_user_notifier: Option<Notifier>,
     // Use cases — writes go through these so that events + audit logs are
     // emitted atomically via UnitOfWork.
-    pub create_user_use_case: Arc<
-        crate::principal::operations::CreateUserUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub grant_client_access_use_case: Arc<
-        crate::principal::operations::GrantClientAccessUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub reset_password_use_case: Arc<
-        crate::principal::operations::ResetPasswordUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub activate_use_case: Arc<
-        crate::principal::operations::ActivateUserUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub deactivate_use_case: Arc<
-        crate::principal::operations::DeactivateUserUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::principal::operations::DeleteUserUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_use_case: Arc<
-        crate::principal::operations::UpdateUserUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub assign_roles_use_case: Arc<
-        crate::principal::operations::AssignUserRolesUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub revoke_client_access_use_case: Arc<
-        crate::principal::operations::RevokeClientAccessUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub assign_app_access_use_case: Arc<
-        crate::principal::operations::AssignApplicationAccessUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub create_user_use_case: Arc<CreateUserUseCase<PgUnitOfWork>>,
+    pub grant_client_access_use_case: Arc<GrantClientAccessUseCase<PgUnitOfWork>>,
+    pub reset_password_use_case: Arc<ResetPasswordUseCase<PgUnitOfWork>>,
+    pub activate_use_case: Arc<ActivateUserUseCase<PgUnitOfWork>>,
+    pub deactivate_use_case: Arc<DeactivateUserUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteUserUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateUserUseCase<PgUnitOfWork>>,
+    pub assign_roles_use_case: Arc<AssignUserRolesUseCase<PgUnitOfWork>>,
+    pub revoke_client_access_use_case: Arc<RevokeClientAccessUseCase<PgUnitOfWork>>,
+    pub assign_app_access_use_case: Arc<AssignApplicationAccessUseCase<PgUnitOfWork>>,
     /// Direct UoW handle used by legacy handlers that mutate the principal in
     /// ways not yet captured by a dedicated use case (e.g. updating
     /// first_name/last_name or toggling client_id). Writes go via repo and
     /// then emit the event/audit through this UoW.
-    pub unit_of_work: Arc<fc_platform_core::usecase::PgUnitOfWork>,
+    pub unit_of_work: Arc<PgUnitOfWork>,
 }
 
 /// Create a new user principal
@@ -702,7 +695,7 @@ pub async fn create_user(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(super::admin::create_user(&state, &auth.0, req).await?))
 }
 
@@ -764,9 +757,9 @@ pub(super) async fn notify_new_user(
 /// reach is `Principal_NOT_FOUND`.
 pub(super) async fn load_administered_user(
     state: &PrincipalsState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     id: &str,
-) -> Result<crate::principal::entity::Principal, PlatformError> {
+) -> Result<Principal, PlatformError> {
     let target = state
         .principal_repo
         .find_by_id(id)
@@ -782,7 +775,7 @@ pub(super) async fn load_administered_user(
 pub(super) async fn load_user_to_shape(
     state: &PrincipalsState,
     id: &str,
-) -> Result<crate::principal::entity::Principal, PlatformError> {
+) -> Result<Principal, PlatformError> {
     state
         .principal_repo
         .find_by_id(id)
@@ -795,7 +788,7 @@ pub(super) async fn load_user_to_shape(
 pub(super) async fn client_application_ids(
     state: &PrincipalsState,
     client_id: Option<&str>,
-) -> Result<std::collections::HashSet<String>, PlatformError> {
+) -> Result<HashSet<String>, PlatformError> {
     let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
         return Ok(Default::default());
     };
@@ -812,7 +805,7 @@ pub(super) async fn client_application_ids(
 async fn role_definitions(
     state: &PrincipalsState,
     names: &[String],
-) -> Result<std::collections::HashMap<String, crate::role::entity::AuthRole>, PlatformError> {
+) -> Result<HashMap<String, AuthRole>, PlatformError> {
     if names.is_empty() {
         return Ok(Default::default());
     }
@@ -831,7 +824,7 @@ async fn role_definitions(
 pub(super) async fn assert_assignable_roles(
     state: &PrincipalsState,
     names: &[String],
-    allowed: &std::collections::HashSet<String>,
+    allowed: &HashSet<String>,
 ) -> Result<(), PlatformError> {
     let definitions = role_definitions(state, names).await?;
     for name in names {
@@ -868,7 +861,7 @@ pub(super) async fn assert_assignable_roles(
 async fn protected_role_names(
     state: &PrincipalsState,
     names: &[String],
-    allowed: &std::collections::HashSet<String>,
+    allowed: &HashSet<String>,
 ) -> Result<Vec<String>, PlatformError> {
     let definitions = role_definitions(state, names).await?;
     Ok(names
@@ -889,8 +882,8 @@ async fn protected_role_names(
 /// `assignRoles`, principal/api/api.go:1116-1181).
 pub(super) async fn bounded_role_set(
     state: &PrincipalsState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
-    target: &crate::principal::entity::Principal,
+    ctx: &AuthContext,
+    target: &Principal,
     requested: Vec<String>,
 ) -> Result<Vec<String>, PlatformError> {
     if ctx.is_anchor() {
@@ -1080,7 +1073,7 @@ pub async fn create_principal(
 /// Go's email check for a created principal (principal/operations/
 /// create.go `emailPattern`).
 fn go_email_pattern() -> &'static regex::Regex {
-    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
         regex::Regex::new(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
             .expect("static email pattern")
@@ -1091,7 +1084,7 @@ fn go_email_pattern() -> &'static regex::Regex {
 /// user-write permission; anyone else also needs the target client, and
 /// may not create a clientless principal.
 fn require_user_admin(
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     target_client_id: Option<&str>,
 ) -> Result<(), PlatformError> {
     if !ctx.is_anchor() {
@@ -1108,7 +1101,7 @@ fn require_user_admin(
             ));
         }
     }
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)
+    checks::can_write_principals(ctx)
 }
 
 /// Go `resolveInviteRedirect` (principal/api/api.go:756-767): absent or
@@ -1169,7 +1162,7 @@ pub(super) async fn resolve_client_ref(
 pub fn derive_user_scope(
     requested: Option<&str>,
     is_anchor_domain: bool,
-    mapping: Option<&crate::email_domain_mapping::entity::EmailDomainMapping>,
+    mapping: Option<&EmailDomainMapping>,
     client_id: Option<String>,
 ) -> Result<(UserScope, Option<String>), PlatformError> {
     use crate::email_domain_mapping::entity::ScopeType;
@@ -1252,7 +1245,7 @@ pub async fn get_principal(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // A principal reads itself with no permission (Go `getByID`).
     if auth.0.principal_id != id {
-        fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+        checks::can_read_principals(&auth.0)?;
     }
     Ok(Json(super::admin::detail(&state, &auth.0, &id).await?))
 }
@@ -1288,7 +1281,7 @@ pub async fn list_principals(
 ) -> Result<Json<PrincipalListResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+    checks::can_read_principals(&auth.0)?;
     Ok(Json(super::admin::list(&state, &auth.0, &query).await?))
 }
 
@@ -1316,7 +1309,7 @@ pub async fn update_principal(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(super::admin::update(&state, &auth.0, &id, req).await?))
 }
 
@@ -1342,7 +1335,7 @@ pub async fn get_roles(
 ) -> Result<Json<RolesListResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+    checks::can_read_principals(&auth.0)?;
     Ok(Json(
         super::admin::role_assignments(&state, &auth.0, &id).await?,
     ))
@@ -1372,7 +1365,7 @@ pub async fn assign_role(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(&auth.0)?;
+    checks::can_assign_principal_roles(&auth.0)?;
     Ok(Json(
         super::admin::assign_role(&state, &auth.0, &id, req.role).await?,
     ))
@@ -1402,7 +1395,7 @@ pub async fn batch_assign_roles(
 ) -> Result<Json<BatchAssignRolesResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(&auth.0)?;
+    checks::can_assign_principal_roles(&auth.0)?;
     Ok(Json(
         super::admin::set_roles(&state, &auth.0, &id, req.roles).await?,
     ))
@@ -1431,7 +1424,7 @@ pub async fn remove_role(
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(&auth.0)?;
+    checks::can_assign_principal_roles(&auth.0)?;
     Ok(Json(
         super::admin::remove_role(&state, &auth.0, &id, &role).await?,
     ))
@@ -1459,7 +1452,7 @@ pub async fn get_client_access(
 ) -> Result<Json<ClientAccessListResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::require_anchor_scope(&auth.0)?;
+    checks::require_anchor_scope(&auth.0)?;
     Ok(Json(
         super::admin::client_grants(&state, &auth.0, &id).await?,
     ))
@@ -1489,7 +1482,7 @@ pub async fn grant_client_access(
 ) -> Result<Json<ClientAccessGrantResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_grant_client_access(&auth.0)?;
+    checks::can_grant_client_access(&auth.0)?;
     Ok(Json(
         super::admin::grant_client_access(&state, &auth.0, &id, req.client_id).await?,
     ))
@@ -1518,7 +1511,7 @@ pub async fn revoke_client_access(
 ) -> Result<StatusCode, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_revoke_client_access(&auth.0)?;
+    checks::can_revoke_client_access(&auth.0)?;
     super::admin::revoke_client_access(&state, &auth.0, &id, &client_id).await?;
     // 204, as Go answers (principal/api/api.go:114).
     Ok(StatusCode::NO_CONTENT)
@@ -1546,7 +1539,7 @@ pub async fn delete_principal(
 ) -> Result<StatusCode, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_delete_principals(&auth.0)?;
+    checks::can_delete_principals(&auth.0)?;
     super::admin::delete(&state, &auth.0, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1562,7 +1555,7 @@ pub async fn delete_principal(
 pub struct SyncUsersRequest {
     #[serde(default)]
     #[schema(required = true, value_type = Vec<SyncUserInputDoc>)]
-    pub principals: Vec<crate::principal::operations::SyncUserInput>,
+    pub principals: Vec<SyncUserInput>,
 }
 
 /// Go `SyncUserInput`: one user of `POST /api/principals/sync`
@@ -1628,10 +1621,10 @@ pub async fn sync_users(
 
     // Anchor, as every other principal write here: the sync creates and
     // updates users with no client, which only an anchor may manage.
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::can_sync_principals(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
+    checks::can_sync_principals(&auth.0)?;
 
-    let password_hash_ignored = crate::principal::operations::password_hashes_ignored(
+    let password_hash_ignored = operations::password_hashes_ignored(
         &state.principal_repo,
         req.principals
             .iter()
@@ -1653,7 +1646,7 @@ pub async fn sync_users(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)?;
+        .map(Committed::into_inner)?;
 
     Ok(Json(SyncUsersResponse {
         created: event.created,
@@ -1689,7 +1682,7 @@ pub async fn activate_principal(
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(super::admin::activate(&state, &auth.0, &id).await?))
 }
 
@@ -1718,7 +1711,7 @@ pub async fn deactivate_principal(
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(super::admin::deactivate(&state, &auth.0, &id).await?))
 }
 
@@ -1750,7 +1743,7 @@ pub async fn reset_password(
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(
         super::admin::reset_password(&state, &auth.0, &id, req).await?,
     ))
@@ -1794,7 +1787,7 @@ pub async fn send_password_reset(
     State(state): State<PrincipalsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-    body: axum::body::Bytes,
+    body: Bytes,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     // An optional body `{"reset2fa": true}` also clears the user's 2FA when
     // they complete the reset (Go sendPasswordResetInput, the lost-device
@@ -1808,7 +1801,7 @@ pub async fn send_password_reset(
     };
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(
         super::admin::send_password_reset(&state, &auth.0, &id, reset_2fa).await?,
     ))
@@ -1835,7 +1828,7 @@ pub async fn check_email_domain(
 ) -> Result<Json<CheckEmailDomainResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+    checks::can_read_principals(&auth.0)?;
     Ok(Json(
         super::admin::check_email_domain(&state, &auth.0, &query.email).await?,
     ))
@@ -1869,7 +1862,7 @@ pub async fn get_application_access(
 ) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+    checks::can_read_principals(&auth.0)?;
     Ok(Json(
         super::admin::application_access(&state, &auth.0, &id).await?,
     ))
@@ -1901,7 +1894,7 @@ pub async fn set_application_access(
 ) -> Result<Json<SetApplicationAccessResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(&auth.0)?;
+    checks::can_write_principals(&auth.0)?;
     Ok(Json(
         super::admin::set_application_access(&state, &auth.0, &id, req).await?,
     ))
@@ -1932,7 +1925,7 @@ pub async fn get_available_applications(
 ) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
     // The coarse gate here too; the shared body checks it again
     // with the per-resource reach rules.
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(&auth.0)?;
+    checks::can_read_principals(&auth.0)?;
     Ok(Json(
         super::admin::available_applications(&state, &auth.0, &id).await?,
     ))
@@ -2117,7 +2110,7 @@ pub async fn bulk_import_principals(
         state.edm_repo.find_all(),
         state.idp_repo.find_all(),
         async {
-            crate::role::ceiling::definitions(&state.role_repo, &role_names)
+            ceiling::definitions(&state.role_repo, &role_names)
                 .await
                 .map_err(PlatformError::from)
         },
@@ -2180,13 +2173,13 @@ pub async fn bulk_import_principals(
             // Owner ruling 14: role assignment needs its own permission and
             // stays under the caller's ceiling.
             let refused = if can_assign {
-                crate::role::ceiling::require_roles(Some(&auth.0), &r.roles, &definitions)
+                ceiling::require_roles(Some(&auth.0), &r.roles, &definitions)
                     .err()
                     .map(|e| e.message().to_string())
             } else {
                 Some(format!(
                     "permission required: {}",
-                    fc_platform_core::permissions::iam::USER_ASSIGN_ROLES
+                    permissions::iam::USER_ASSIGN_ROLES
                 ))
             };
             if let Some(msg) = refused {
@@ -2308,7 +2301,7 @@ pub async fn get_principal_version(
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalVersionResponse>, PlatformError> {
     if auth.0.principal_id != id {
-        checks::require_permission(&auth.0, fc_platform_core::permissions::iam::USER_READ)?;
+        checks::require_permission(&auth.0, permissions::iam::USER_READ)?;
         let p = state
             .principal_repo
             .find_by_id(&id)
@@ -2363,7 +2356,7 @@ pub async fn set_principal_client_association(
 /// the server-rendered `fc-web` UI.
 pub async fn client_association(
     state: &PrincipalGoState,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     id: &str,
     req: ClientAssociationRequest,
 ) -> Result<PrincipalResponse, PlatformError> {
@@ -2393,15 +2386,11 @@ mod tests {
     use super::*;
 
     fn mapping(
-        scope_type: crate::email_domain_mapping::entity::ScopeType,
+        scope_type: ScopeType,
         primary: Option<&str>,
         granted: &[&str],
-    ) -> crate::email_domain_mapping::entity::EmailDomainMapping {
-        let mut m = crate::email_domain_mapping::entity::EmailDomainMapping::new(
-            "acme.test",
-            "idp_1",
-            scope_type,
-        );
+    ) -> EmailDomainMapping {
+        let mut m = EmailDomainMapping::new("acme.test", "idp_1", scope_type);
         m.primary_client_id = primary.map(String::from);
         m.granted_client_ids = granted.iter().map(|g| g.to_string()).collect();
         m
@@ -2511,8 +2500,8 @@ mod tests {
     }
 
     fn principals_query(uri: &str) -> PrincipalsQuery {
-        let uri: axum::http::Uri = uri.parse().unwrap();
-        axum::extract::Query::<PrincipalsQuery>::try_from_uri(&uri)
+        let uri: Uri = uri.parse().unwrap();
+        Query::<PrincipalsQuery>::try_from_uri(&uri)
             .unwrap_or_else(|e| panic!("{uri}: {e}"))
             .0
     }
@@ -2574,10 +2563,15 @@ mod tests {
             .paging()
             .is_err());
     }
+    use crate::email_domain_mapping::entity::EmailDomainMapping;
+    use crate::email_domain_mapping::entity::ScopeType;
     use crate::principal::entity::{Principal, UserIdentity};
     use crate::service_account::entity::RoleAssignment;
+    use axum::extract::Query;
+    use axum::http::Uri;
     use chrono::Utc;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use std::collections::HashMap;
 
     fn make_test_principal() -> Principal {
         let now = Utc::now();
@@ -2593,9 +2587,9 @@ mod tests {
             service_account_id: None,
             roles: vec![RoleAssignment::new("platform:admin")],
             assigned_clients: vec!["clt_CLIENT1234567".to_string()],
-            client_identifier_map: std::collections::HashMap::new(),
+            client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
-            application_code_map: std::collections::HashMap::new(),
+            application_code_map: HashMap::new(),
             all_applications: true,
             created_at: now,
             updated_at: now,
@@ -2651,9 +2645,9 @@ mod tests {
             service_account_id: None,
             roles: vec![],
             assigned_clients: vec![],
-            client_identifier_map: std::collections::HashMap::new(),
+            client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
-            application_code_map: std::collections::HashMap::new(),
+            application_code_map: HashMap::new(),
             all_applications: false,
             created_at: now,
             updated_at: now,

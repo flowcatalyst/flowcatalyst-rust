@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use super::events::OAuthClientPreviousSecretRevoked;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -22,7 +24,7 @@ pub struct RevokeOAuthClientPreviousSecretCommand {
     pub oauth_client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokeOAuthClientPreviousSecretCommand {}
+impl AuditMasked for RevokeOAuthClientPreviousSecretCommand {}
 
 pub struct RevokeOAuthClientPreviousSecretUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
@@ -65,11 +67,7 @@ impl<U: UnitOfWork> UseCase for RevokeOAuthClientPreviousSecretUseCase<U> {
         _command: &RevokeOAuthClientPreviousSecretCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

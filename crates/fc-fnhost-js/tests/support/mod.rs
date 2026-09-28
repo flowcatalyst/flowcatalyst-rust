@@ -30,6 +30,10 @@ use serde_json::{json, Value};
 use sha2::Digest as _;
 
 use fakes::{Answer, FakeControlPlane};
+use fc_fnhost_core::clock::SharedClock;
+use fc_fnhost_core::db::DbSettings;
+use reqwest::header::HeaderMap;
+use std::fs;
 
 pub const ADDR: &str = "app.orders.ship";
 
@@ -43,7 +47,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// `name → sha256 hex` from the committed `SHA256SUMS`.
 pub fn sums() -> Vec<(String, String)> {
-    std::fs::read_to_string(fixtures_dir().join("SHA256SUMS"))
+    fs::read_to_string(fixtures_dir().join("SHA256SUMS"))
         .expect("SHA256SUMS is committed")
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -57,7 +61,7 @@ pub fn sums() -> Vec<(String, String)> {
 /// A committed bundle, verified against `SHA256SUMS`.
 pub fn bundle(file: &str) -> PathBuf {
     let path = fixtures_dir().join(file);
-    let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{} is committed", path.display()));
+    let bytes = fs::read(&path).unwrap_or_else(|_| panic!("{} is committed", path.display()));
     let expected = sums()
         .into_iter()
         .find(|(n, _)| n == file)
@@ -111,7 +115,7 @@ pub fn manifest(extra: Value) -> Value {
 
 /// A live, warm desired-state entry for `artifact`, `extra` merged in.
 pub fn entry(address: &str, version: i32, artifact: &Path, manifest: Value, extra: Value) -> Value {
-    let bytes = std::fs::read(artifact).unwrap();
+    let bytes = fs::read(artifact).unwrap();
     let mut e = fakes::entry(address, version, "live", "warm");
     e["digest"] = json!(format!("sha256:{}", sha256_hex(&bytes)));
     e["artifactRef"] = json!(format!("file://{}", artifact.display()));
@@ -152,7 +156,7 @@ impl Default for Options {
 
 pub struct Reply {
     pub status: u16,
-    pub headers: reqwest::header::HeaderMap,
+    pub headers: HeaderMap,
     pub body: Vec<u8>,
 }
 
@@ -193,7 +197,7 @@ impl JsHarness {
 
     pub async fn start_with(functions: Vec<Value>, options: Options) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let clock: fc_fnhost_core::clock::SharedClock = Arc::new(SystemClock);
+        let clock: SharedClock = Arc::new(SystemClock);
         let control = FakeControlPlane::new();
         let budget = ExecBudget::new(options.max_executing);
         let runtime = JsRuntime::new(JsSettings {
@@ -212,7 +216,7 @@ impl JsHarness {
                 threads: options.max_executing,
                 budget: budget.clone(),
                 cache_dir: dir.path().to_owned(),
-                db: fc_fnhost_core::db::DbSettings::default(),
+                db: DbSettings::default(),
             })
             .unwrap();
             loaders = Arc::new(WasmLoader::new(wasm)).register(loaders);

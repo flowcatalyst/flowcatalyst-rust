@@ -14,7 +14,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::auth::auth_service;
 use crate::auth::auth_service::AuthService;
+use crate::auth::oauth_client_repository::OAuthClientRepository;
+use crate::auth::oauth_entity::GrantType;
+use crate::auth::oauth_entity::OAuthClientType;
+use crate::auth::operations::CreateOAuthClientCommand;
+use crate::auth::operations::CreateOAuthClientUseCase;
+use crate::service_account::entity::RoleAssignment;
 use crate::service_account::entity::ServiceAccount;
 use crate::service_account::entity::{SigningAlgorithm, WebhookAuthType, WebhookCredentials};
 use crate::service_account::operations::mint_token::{
@@ -30,11 +37,16 @@ use crate::service_account::operations::{
     DeactivateServiceAccountCommand, DeactivateServiceAccountUseCase,
 };
 use crate::service_account::repository::ServiceAccountRepository;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::{principal::repository::PrincipalRepository, role::repository::RoleRepository};
+use base64::engine::general_purpose;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::PgUnitOfWork;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
 
@@ -370,8 +382,8 @@ pub struct RoleAssignmentResponse {
     pub assigned_by: Option<String>,
 }
 
-impl From<&crate::service_account::entity::RoleAssignment> for RoleAssignmentResponse {
-    fn from(r: &crate::service_account::entity::RoleAssignment) -> Self {
+impl From<&RoleAssignment> for RoleAssignmentResponse {
+    fn from(r: &RoleAssignment) -> Self {
         Self {
             role_name: r.role.clone(),
             client_id: r.client_id.clone(),
@@ -409,18 +421,18 @@ pub struct AssignRolesResponse {
 pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub repo: Arc<ServiceAccountRepository>,
     /// Role definitions, for the role ceiling.
-    pub role_repo: Arc<crate::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     pub create_use_case: Arc<CreateServiceAccountUseCase<U>>,
     pub update_use_case: Arc<UpdateServiceAccountUseCase<U>>,
     pub delete_use_case: Arc<DeleteServiceAccountUseCase<U>>,
     pub assign_roles_use_case: Arc<AssignRolesUseCase<U>>,
     pub regenerate_token_use_case: Arc<RegenerateAuthTokenUseCase<U>>,
     pub regenerate_secret_use_case: Arc<RegenerateSigningSecretUseCase<U>>,
-    pub create_oauth_client_use_case: Arc<crate::auth::operations::CreateOAuthClientUseCase<U>>,
+    pub create_oauth_client_use_case: Arc<CreateOAuthClientUseCase<U>>,
     /// The account's OAuth client, for `oauthClientId` on the detail read.
-    pub oauth_client_repo: Arc<crate::auth::oauth_client_repository::OAuthClientRepository>,
+    pub oauth_client_repo: Arc<OAuthClientRepository>,
     /// The caller's application scope, for the `allApplications` opt-in.
-    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
+    pub app_access: Arc<ApplicationAccessService>,
 }
 
 // ============================================================================
@@ -448,7 +460,7 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     auth: Authenticated,
     Query(query): Query<ServiceAccountsQuery>,
 ) -> Result<Json<ServiceAccountListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_service_accounts(&auth.0)?;
+    checks::can_read_service_accounts(&auth.0)?;
     // Go lists every account, active or not, ordered by code; the filters
     // are Rust's own narrowing of that list.
     let mut accounts = if let Some(client_id) = query.client_id {
@@ -501,7 +513,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_service_accounts(&auth.0)?;
+    checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_id(&id)
@@ -542,7 +554,7 @@ pub async fn get_service_account_by_code<U: UnitOfWork>(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_service_accounts(&auth.0)?;
+    checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_code(&code)
@@ -571,7 +583,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_service_accounts(&auth.0)?;
+    checks::can_write_service_accounts(&auth.0)?;
     // Go `WebhookCredentialsDTO.toEntity`: an unknown type is refused, never
     // coerced (empty means none). The rest of the members are not used: the
     // account is created with generated credentials, as Go creates it.
@@ -584,9 +596,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     // it (before the body's other rules), and again by the use case.
     let application_scope = if all_applications {
         let scope = state.app_access.scope_for(&auth.0.principal_id).await?;
-        fc_platform_core::shared::authorization_service::checks::require_all_applications_grantor(
-            Some(&scope),
-        )?;
+        checks::require_all_applications_grantor(Some(&scope))?;
         Some(scope)
     } else {
         None
@@ -631,35 +641,28 @@ pub async fn create_service_account<U: UnitOfWork>(
             // crosses into the use case.
             use base64::Engine;
 
-            let oauth_client_id = fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::OAuthClient,
-            );
+            let oauth_client_id = tsid::generate(EntityType::OAuthClient);
             let mut secret_bytes = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
-            let plaintext_secret =
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+            let plaintext_secret = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-            let enc = fc_platform_core::shared::encryption_service::EncryptionService::from_env()
-                .ok_or_else(|| {
+            let enc = EncryptionService::from_env().ok_or_else(|| {
                 PlatformError::internal(
                     "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
                 )
             })?;
 
-            let oauth_cmd = crate::auth::operations::CreateOAuthClientCommand {
+            let oauth_cmd = CreateOAuthClientCommand {
                 oauth_client_id: oauth_client_id.clone(),
                 client_id: oauth_client_id.clone(),
                 // Go: "<name> Client" (create_credentials.go:132)
                 client_name: format!("{} Client", account.name),
-                client_type: crate::auth::oauth_entity::OAuthClientType::Confidential,
+                client_type: OAuthClientType::Confidential,
                 client_secret_ref: Some(enc.hash_secret(&plaintext_secret)),
                 redirect_uris: vec![],
                 post_logout_redirect_uris: vec![],
                 // create_credentials.go:135-136
-                grant_types: vec![
-                    crate::auth::oauth_entity::GrantType::ClientCredentials,
-                    crate::auth::oauth_entity::GrantType::RefreshToken,
-                ],
+                grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
                 default_scopes: vec!["openid".to_string()],
                 // Go's entity default (auth.NewOAuthClient).
                 pkce_required: true,
@@ -721,7 +724,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_service_accounts(&auth.0)?;
+    checks::can_write_service_accounts(&auth.0)?;
     let webhook_credentials = req
         .webhook_credentials
         .as_ref()
@@ -764,7 +767,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_delete_service_accounts(&auth.0)?;
+    checks::can_delete_service_accounts(&auth.0)?;
     let command = DeleteServiceAccountCommand { id };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -795,7 +798,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_service_accounts(&auth.0)?;
+    checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
     };
@@ -836,7 +839,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_service_accounts(&auth.0)?;
+    checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id.clone(),
     };
@@ -877,7 +880,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_service_accounts(&auth.0)?;
+    checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateSigningSecretCommand {
         service_account_id: id.clone(),
     };
@@ -957,7 +960,7 @@ pub async fn get_roles<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_service_accounts(&auth.0)?;
+    checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_id(&id)
@@ -995,7 +998,7 @@ pub async fn assign_roles<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_service_accounts(&auth.0)?;
+    checks::can_update_service_accounts(&auth.0)?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,
@@ -1158,7 +1161,7 @@ pub async fn mint_service_account_token(
     }
     let granted = state
         .role_repo
-        .flatten_permissions(&crate::auth::auth_service::role_names(&principal))
+        .flatten_permissions(&auth_service::role_names(&principal))
         .await?;
     let access_token = state
         .auth_service

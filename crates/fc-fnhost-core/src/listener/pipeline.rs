@@ -7,13 +7,20 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::loader::InFlight;
+use crate::tsid;
 use bytes::{Bytes, BytesMut};
 use fc_function_abi::{permission_matches, Caller, MultiMap};
 use fc_function_model::{EndpointAuth, HttpMethod, PathParams, RoutePattern};
 use futures::FutureExt;
+use http::header;
 use http::request::Parts;
 use http::HeaderMap;
 use http_body_util::BodyExt;
+use std::ops::Deref;
+use tokio::time;
+use tracing::field::Empty;
+use url::form_urlencoded;
 /// The request body, read against the listener's request deadline.
 type Incoming = fc_http_listener::RequestBody;
 use indexmap::IndexMap;
@@ -58,7 +65,7 @@ pub(crate) struct EntryRef {
     index: usize,
 }
 
-impl std::ops::Deref for EntryRef {
+impl Deref for EntryRef {
     type Target = Entry;
 
     fn deref(&self) -> &Entry {
@@ -502,7 +509,7 @@ struct Worker {
     shared: Arc<Shared>,
     address: fc_function_abi::FunctionAddress,
     _grant: super::permits::Grant,
-    _in_flight: crate::loader::InFlight,
+    _in_flight: InFlight,
 }
 
 impl Drop for Worker {
@@ -566,7 +573,7 @@ async fn invoke(
     };
 
     // Step 9: invoke, with the deadline.
-    let invocation_id = crate::tsid::generate();
+    let invocation_id = tsid::generate();
     let headers = collect_headers(&call.parts.headers, strip_auth_headers);
     let (correlation_id, causation_id) =
         invoke::emit_defaults(&invocation_id, &headers, &caller, &body);
@@ -598,7 +605,7 @@ async fn invoke(
         { keys::FUNCTION } = %entry.address,
         { keys::VERSION } = function.version(),
         { keys::EXECUTION_ID } = %invocation_id,
-        { keys::CORRELATION_ID } = tracing::field::Empty,
+        { keys::CORRELATION_ID } = Empty,
     );
     if let Some(correlation) = call.header("x-correlation-id") {
         span.record(keys::CORRELATION_ID, correlation.as_str());
@@ -630,7 +637,7 @@ async fn invoke(
         .instrument(span.clone()),
     );
 
-    let outcome = tokio::time::timeout(timeout, &mut task)
+    let outcome = time::timeout(timeout, &mut task)
         .instrument(span.clone())
         .await;
     let _entered = span.enter();
@@ -690,7 +697,7 @@ async fn load(
     shared: &Arc<Shared>,
     entry: &Entry,
     versioned: bool,
-) -> Result<(Arc<LoadedFunction>, crate::loader::InFlight), LoadMiss> {
+) -> Result<(Arc<LoadedFunction>, InFlight), LoadMiss> {
     for _ in 0..2 {
         let function = if versioned {
             match shared.pinned.get_or_load(entry).await {
@@ -775,7 +782,7 @@ fn collect_headers(headers: &HeaderMap, strip_auth_headers: bool) -> MultiMap {
 /// `+` is a space here (a query, not a path); repeated keys kept in order.
 fn collect_query(query: Option<&str>) -> MultiMap {
     let mut out = MultiMap::new();
-    for (key, value) in url::form_urlencoded::parse(query.unwrap_or("").as_bytes()) {
+    for (key, value) in form_urlencoded::parse(query.unwrap_or("").as_bytes()) {
         out.entry(key.into_owned())
             .or_default()
             .push(value.into_owned());
@@ -789,7 +796,7 @@ fn collect_query(query: Option<&str>) -> MultiMap {
 /// the caller reads the `413` rather than a connection reset.
 async fn read_body(headers: &HeaderMap, body: Incoming, cap: u64) -> Result<Bytes, HttpAnswer> {
     if let Some(declared) = headers
-        .get(http::header::CONTENT_LENGTH)
+        .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok())
     {
@@ -822,7 +829,7 @@ const DISCARD_LIMIT: Duration = Duration::from_secs(10);
 
 fn discard(mut body: Incoming) {
     tokio::spawn(async move {
-        let _ = tokio::time::timeout(DISCARD_LIMIT, async {
+        let _ = time::timeout(DISCARD_LIMIT, async {
             let mut read = 0usize;
             while let Some(Ok(frame)) = body.frame().await {
                 read += frame.data_ref().map_or(0, |d| d.len());

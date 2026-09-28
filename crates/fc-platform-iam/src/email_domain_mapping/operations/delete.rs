@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingDeleted;
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -17,7 +19,7 @@ pub struct DeleteEmailDomainMappingCommand {
     pub mapping_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteEmailDomainMappingCommand {}
+impl AuditMasked for DeleteEmailDomainMappingCommand {}
 
 pub struct DeleteEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
@@ -60,11 +62,7 @@ impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
         _command: &DeleteEmailDomainMappingCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

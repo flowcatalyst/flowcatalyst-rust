@@ -15,6 +15,10 @@ use fc_common::{
     PoolConfig,
 };
 use fc_router::{Mediator, ProcessPool, MAX_IN_PIPELINE_ATTEMPTS};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use tokio::time;
+use tokio::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Event {
@@ -29,7 +33,7 @@ struct Callback {
     id: String,
     log: Log,
     honours: bool,
-    settled: std::sync::atomic::AtomicBool,
+    settled: AtomicBool,
     /// Panic when the pool asks it for the disposition (after mediating):
     /// a panic in the worker outside the mediator.
     panics: bool,
@@ -37,8 +41,7 @@ struct Callback {
 
 impl Callback {
     fn record(&self, e: Event) {
-        self.settled
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.settled.store(true, Ordering::SeqCst);
         self.log.lock().push((self.id.clone(), e));
     }
 }
@@ -61,7 +64,7 @@ impl MessageCallback for Callback {
 
 impl Drop for Callback {
     fn drop(&mut self) {
-        if !self.settled.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.settled.load(Ordering::SeqCst) {
             self.log.lock().push((self.id.clone(), Event::Dropped));
         }
     }
@@ -71,7 +74,7 @@ impl Drop for Callback {
 /// script runs out. An id scripted with `None` panics.
 struct Scripted {
     scripts: parking_lot::Mutex<HashMap<String, VecDeque<Option<MediationOutcome>>>>,
-    seen: parking_lot::Mutex<Vec<(String, tokio::time::Instant)>>,
+    seen: parking_lot::Mutex<Vec<(String, Instant)>>,
 }
 
 impl Scripted {
@@ -91,7 +94,7 @@ impl Scripted {
         self.seen.lock().iter().map(|(id, _)| id.clone()).collect()
     }
 
-    fn times(&self, id: &str) -> Vec<tokio::time::Instant> {
+    fn times(&self, id: &str) -> Vec<Instant> {
         self.seen
             .lock()
             .iter()
@@ -104,9 +107,7 @@ impl Scripted {
 #[async_trait]
 impl Mediator for Scripted {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
-        self.seen
-            .lock()
-            .push((message.id.clone(), tokio::time::Instant::now()));
+        self.seen.lock().push((message.id.clone(), Instant::now()));
         let next = self
             .scripts
             .lock()
@@ -160,7 +161,7 @@ fn batch(
             id: id.to_string(),
             log: log.clone(),
             honours,
-            settled: std::sync::atomic::AtomicBool::new(false),
+            settled: AtomicBool::new(false),
             panics: false,
         }),
     }
@@ -174,7 +175,7 @@ fn ordered_panicking(id: &str, log: &Log) -> BatchMessage {
         id: id.to_string(),
         log: log.clone(),
         honours: true,
-        settled: std::sync::atomic::AtomicBool::new(false),
+        settled: AtomicBool::new(false),
         panics: true,
     });
     b
@@ -190,7 +191,7 @@ async fn settled(log: &Log, n: usize) -> Vec<(String, Event)> {
         if log.lock().len() >= n {
             return log.lock().clone();
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
     }
     panic!("only {:?} settled, wanted {n}", log.lock());
 }
@@ -409,13 +410,13 @@ async fn release_remainder_hands_back_a_group_waiting_to_retry() {
 
     // Let m1 fail once and start its backoff.
     while mediator.seen().is_empty() {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    time::sleep(Duration::from_millis(10)).await;
 
     pool.drain().await;
     pool.release_remainder().await;
-    tokio::time::timeout(Duration::from_secs(1), pool.wait_drained())
+    time::timeout(Duration::from_secs(1), pool.wait_drained())
         .await
         .expect("no task waits out the 240s backoff");
 

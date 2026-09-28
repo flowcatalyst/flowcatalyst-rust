@@ -16,7 +16,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use std::fs;
 use support::wasm::{entry, guest, manifest, Options, WasmHarness, ADDR};
+use tokio::time;
 
 async fn start(name: &str, manifest_extra: Value, entry_extra: Value, fuel: bool) -> WasmHarness {
     WasmHarness::start_with(
@@ -57,7 +59,7 @@ async fn eventually(h: &WasmHarness, series: &str) -> f64 {
             "{series} never appeared in:\n{}",
             h.metrics.encode().unwrap()
         );
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -94,7 +96,7 @@ async fn every_invocation_reports_its_fuel_and_peak_memory_per_function_and_clie
     let start = Instant::now();
     while scrape(&h, &format!("fc_fn_invocation_fuel_count{labels}")) != Some(2.0) {
         assert!(start.elapsed() < Duration::from_secs(5));
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
     assert!(scrape(&h, &format!("fc_fn_fuel_total{labels}")).unwrap() > fuel);
     h.close().await;
@@ -221,7 +223,7 @@ fn percentile(sorted: &[Duration], p: f64) -> Duration {
 
 fn cwasm_bytes(dir: &Path) -> u64 {
     fn walk(dir: &Path, total: &mut u64) {
-        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.is_dir() {
                 walk(&path, total);

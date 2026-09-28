@@ -7,14 +7,18 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use fc_platform::application::entity::Application;
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::permissions;
+use fc_platform::role::entity::roles;
+use fc_platform::role::entity::AuthRole;
 use support::{read_json, TestApp};
 
 /// Service-account creation encrypts the generated credentials; any 32-byte
 /// key will do.
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 
@@ -47,7 +51,7 @@ async fn stored_caller(app: &TestApp, email: &str, scope: UserScope, perms: &[&s
 }
 
 async fn create_client(app: &TestApp, identifier: &str) -> String {
-    let client = fc_platform::client::entity::Client::new(identifier.to_uppercase(), identifier);
+    let client = Client::new(identifier.to_uppercase(), identifier);
     app.repos
         .client_repo
         .insert(&client)
@@ -537,7 +541,7 @@ async fn roles_client_access_and_applications_need_anchor_and_the_permission() {
     let app = setup().await;
     let clt = create_client(&app, "d25-clt").await;
     let user = stored_user(&app, "d25@iam.test", UserScope::Partner, Some(&clt)).await;
-    let application = fc_platform::application::entity::Application::new("d25", "D25");
+    let application = Application::new("d25", "D25");
     app.repos
         .application_repo
         .insert(&application)
@@ -647,7 +651,7 @@ async fn roles_client_access_and_applications_need_anchor_and_the_permission() {
 
 /// Seed the built-in roles a test hands out (the harness runs no start-up
 /// role seeding).
-async fn seed_roles(app: &TestApp, roles: Vec<fc_platform::role::entity::AuthRole>) {
+async fn seed_roles(app: &TestApp, roles: Vec<AuthRole>) {
     for role in roles {
         if app
             .repos
@@ -665,7 +669,7 @@ async fn seed_roles(app: &TestApp, roles: Vec<fc_platform::role::entity::AuthRol
 /// An anchor caller holding the built-in `platform:iam-admin` permissions
 /// plus `extra`.
 fn iam_admin(app: &TestApp, extra: &[&str]) -> String {
-    let role = fc_platform::role::entity::roles::iam_admin();
+    let role = roles::iam_admin();
     let mut perms: Vec<&str> = role.permissions.iter().map(String::as_str).collect();
     perms.extend_from_slice(extra);
     caller(app, UserScope::Anchor, None, &perms)
@@ -964,7 +968,7 @@ async fn sync_mappings_and_role_edits_are_bounded() {
 #[ignore = "requires Docker"]
 async fn roles_hold_only_their_own_applications_permissions() {
     let app = setup().await;
-    let application = fc_platform::application::entity::Application::new("d15", "D15");
+    let application = Application::new("d15", "D15");
     app.repos
         .application_repo
         .insert(&application)
@@ -1088,7 +1092,7 @@ async fn sdk_user(app: &TestApp, email: &str, client: Option<&str>, roles: &[&st
 }
 
 async fn application(app: &TestApp, code: &str) {
-    let a = fc_platform::application::entity::Application::new(code, code);
+    let a = Application::new(code, code);
     app.repos.application_repo.insert(&a).await.unwrap();
 }
 

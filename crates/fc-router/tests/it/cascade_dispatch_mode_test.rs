@@ -28,6 +28,7 @@ use fc_common::{
     AckNack, BatchMessage, DispatchMode, MediationOutcome, Message, MessageCallback, PoolConfig,
 };
 use fc_router::{Mediator, ProcessPool};
+use tokio::time;
 
 /// Test callback that records ack/nack via a oneshot channel. Same shape
 /// as `pool_tests.rs`'s `TestCallback` — duplicated locally per this
@@ -127,7 +128,7 @@ fn batch(id: &str, group: &str, mode: DispatchMode) -> (BatchMessage, oneshot::R
 }
 
 async fn recv(rx: oneshot::Receiver<AckNack>) -> AckNack {
-    tokio::time::timeout(Duration::from_secs(5), rx)
+    time::timeout(Duration::from_secs(5), rx)
         .await
         .expect("message settled within timeout")
         .expect("callback resolved")

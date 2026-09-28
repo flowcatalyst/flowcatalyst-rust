@@ -18,14 +18,17 @@ use tokio_util::sync::CancellationToken;
 
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::permissions;
+use fc_stream::dispatch_job_projection;
+use fc_stream::event_fan_out;
 use fc_stream::health::StreamHealth;
 use fc_stream::EventFanOutConfig;
 use support::{read_json, TestApp};
+use tokio::time;
 
 /// Run the event fan-out, then the dispatch-job projector, each for a moment.
 async fn fan_out_and_project(pool: &PgPool) {
     let cancel = CancellationToken::new();
-    let fan_out = tokio::spawn(fc_stream::event_fan_out::run(
+    let fan_out = tokio::spawn(event_fan_out::run(
         pool.clone(),
         EventFanOutConfig {
             batch_size: 200,
@@ -34,9 +37,9 @@ async fn fan_out_and_project(pool: &PgPool) {
         Arc::new(StreamHealth::new("event-fan-out".into())),
         cancel.clone(),
     ));
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    time::sleep(Duration::from_millis(1500)).await;
     cancel.cancel();
-    tokio::time::timeout(Duration::from_secs(10), fan_out)
+    time::timeout(Duration::from_secs(10), fan_out)
         .await
         .expect("fan-out stops")
         .unwrap();
@@ -45,15 +48,15 @@ async fn fan_out_and_project(pool: &PgPool) {
 
 async fn project(pool: &PgPool) {
     let cancel = CancellationToken::new();
-    let projector = tokio::spawn(fc_stream::dispatch_job_projection::run(
+    let projector = tokio::spawn(dispatch_job_projection::run(
         pool.clone(),
         200,
         Arc::new(StreamHealth::new("dispatch-job-projection".into())),
         cancel.clone(),
     ));
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    time::sleep(Duration::from_millis(1500)).await;
     cancel.cancel();
-    tokio::time::timeout(Duration::from_secs(10), projector)
+    time::timeout(Duration::from_secs(10), projector)
         .await
         .expect("projector stops")
         .unwrap();

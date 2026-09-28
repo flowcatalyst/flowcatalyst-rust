@@ -24,6 +24,7 @@ use std::sync::Arc;
 use super::events::AuditLogsRedacted;
 use crate::audit::repository::AuditLogRepository;
 pub use crate::audit::stored_redaction::{redact_stored_document, SET_PROPERTY_OPERATIONS};
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
 };
@@ -112,7 +113,7 @@ impl<U: UnitOfWork> UseCase for RedactExistingAuditLogsUseCase<U> {
         _command: &RedactExistingAuditLogsCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_core::shared::authorization_service::checks::require_anchor(ctx.caller())?)
+        Ok(checks::require_anchor(ctx.caller())?)
     }
 
     async fn execute(
@@ -132,6 +133,7 @@ impl<U: UnitOfWork> UseCase for RedactExistingAuditLogsUseCase<U> {
 mod tests {
     use super::*;
     use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
+    use fc_platform_core::usecase::audit_operation;
     use serde_json::json;
 
     #[test]
@@ -162,9 +164,7 @@ mod tests {
     /// sweep knows; a rename would silently stop it masking the values.
     #[test]
     fn the_set_property_operation_is_one_the_sweep_masks() {
-        let name = fc_platform_core::usecase::audit_operation::audit_operation_name::<
-            SetPlatformConfigPropertyCommand,
-        >();
+        let name = audit_operation::audit_operation_name::<SetPlatformConfigPropertyCommand>();
         assert!(SET_PROPERTY_OPERATIONS.contains(&name), "{name}");
     }
 }

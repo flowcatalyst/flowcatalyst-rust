@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ProcessCreated;
 use crate::process::entity::{Process, ProcessCode, ProcessCodeError};
 use crate::process::repository::ProcessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +30,7 @@ pub struct CreateProcessCommand {
     pub tags: Vec<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateProcessCommand {}
+impl AuditMasked for CreateProcessCommand {}
 
 impl CreateProcessCommand {
     /// Parse a requested code for this command, with the validation errors
@@ -93,11 +95,7 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         _command: &CreateProcessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_create_processes(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_create_processes(ctx.caller())?)
     }
 
     async fn execute(

@@ -3,12 +3,22 @@
 //! Authentication and authorization middleware for Axum.
 //! Supports both Bearer token (Authorization header) and session cookie authentication.
 
+use crate::shared::error;
+use axum::http::header;
+use axum::http::HeaderMap;
+use axum::http::Request;
 use axum::{
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, header::COOKIE, request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use std::convert::Infallible;
+use std::env;
+use std::net::IpAddr;
+use std::ops::Deref;
+use std::result;
+use std::sync::OnceLock;
 
 /// Client IP address extracted from proxy headers.
 ///
@@ -34,7 +44,7 @@ pub struct ClientIp(pub Option<String>);
 /// Extract the trusted client IP from `X-Forwarded-For` per the configured
 /// trusted-proxy hop count. Public so other code paths (rate-limit
 /// middleware) can use the same logic.
-pub fn extract_trusted_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+pub fn extract_trusted_client_ip(headers: &HeaderMap) -> Option<String> {
     let hops = trusted_proxy_hops();
     if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         let chain: Vec<&str> = forwarded
@@ -58,9 +68,9 @@ pub fn extract_trusted_client_ip(headers: &axum::http::HeaderMap) -> Option<Stri
 }
 
 fn trusted_proxy_hops() -> usize {
-    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    static CACHED: OnceLock<usize> = OnceLock::new();
     *CACHED.get_or_init(|| {
-        std::env::var("FC_TRUSTED_PROXY_HOPS")
+        env::var("FC_TRUSTED_PROXY_HOPS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1)
@@ -71,7 +81,7 @@ impl<S> FromRequestParts<S> for ClientIp
 where
     S: Send + Sync,
 {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         Ok(ClientIp(extract_trusted_client_ip(&parts.headers).or_else(
@@ -80,7 +90,7 @@ where
                     .extensions
                     .get::<fc_http_listener::PeerAddr>()
                     .map(|peer| match peer.0.ip() {
-                        std::net::IpAddr::V6(v6) => v6
+                        IpAddr::V6(v6) => v6
                             .to_ipv4_mapped()
                             .map_or_else(|| v6.to_string(), |v4| v4.to_string()),
                         v4 => v4.to_string(),
@@ -105,15 +115,12 @@ pub const SESSION_COOKIE_NAME: &str = "fc_session";
 pub trait TokenAuthenticator: Send + Sync + 'static {
     /// A bearer access token: the caller's context, or why the token does
     /// not authenticate (its `error_description`).
-    async fn bearer_context(&self, token: &str) -> crate::shared::error::Result<AuthContext>;
+    async fn bearer_context(&self, token: &str) -> error::Result<AuthContext>;
 
     /// A session cookie: the signed-in principal's context, `Ok(None)` when
     /// the cookie signs no one in (invalid, expired, or its principal
     /// unknown, inactive or no USER), an error when the lookup failed.
-    async fn session_context(
-        &self,
-        token: &str,
-    ) -> crate::shared::error::Result<Option<AuthContext>>;
+    async fn session_context(&self, token: &str) -> error::Result<Option<AuthContext>>;
 }
 
 /// The authenticator [`AuthLayer`] puts in a request's extensions.
@@ -131,7 +138,7 @@ impl Authenticator {
 #[derive(Debug)]
 pub struct Authenticated(pub AuthContext);
 
-impl std::ops::Deref for Authenticated {
+impl Deref for Authenticated {
     type Target = AuthContext;
 
     fn deref(&self) -> &Self::Target {
@@ -224,10 +231,7 @@ impl IntoResponse for AuthError {
         let mut response = match self.status {
             StatusCode::UNAUTHORIZED => (
                 StatusCode::UNAUTHORIZED,
-                [(
-                    axum::http::header::WWW_AUTHENTICATE,
-                    r#"Bearer error="invalid_token""#,
-                )],
+                [(header::WWW_AUTHENTICATE, r#"Bearer error="invalid_token""#)],
                 Json(serde_json::json!({
                     "error": "invalid_token",
                     "error_description": self.message,
@@ -252,7 +256,7 @@ impl IntoResponse for AuthError {
 
 /// The value of the platform session cookie, if the request carries one
 /// (exact name match; an empty value counts as none).
-pub fn extract_session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+pub fn extract_session_cookie(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(COOKIE)
         .iter()
@@ -275,7 +279,7 @@ enum Presented {
     Nothing,
 }
 
-fn presented_credential(headers: &axum::http::HeaderMap) -> Presented {
+fn presented_credential(headers: &HeaderMap) -> Presented {
     if let Some(header) = headers.get(AUTHORIZATION) {
         const PREFIX: &str = "Bearer ";
         return match header.to_str() {
@@ -314,7 +318,7 @@ enum Authentication {
 async fn authenticate(
     app_state: &dyn TokenAuthenticator,
     parts: &Parts,
-) -> std::result::Result<Authentication, AuthError> {
+) -> result::Result<Authentication, AuthError> {
     // Resolved once already on this request (the profile-only gate).
     if let Some(ResolvedAuthContext(context)) = parts.extensions.get::<ResolvedAuthContext>() {
         return Ok(Authentication::Context(context.clone()));
@@ -326,8 +330,8 @@ async fn authenticate(
 /// cookie, with no per-request cache.
 async fn authenticate_credential(
     app_state: &dyn TokenAuthenticator,
-    headers: &axum::http::HeaderMap,
-) -> std::result::Result<Authentication, AuthError> {
+    headers: &HeaderMap,
+) -> result::Result<Authentication, AuthError> {
     match presented_credential(headers) {
         Presented::Nothing => Ok(Authentication::Anonymous {
             stale_session: false,
@@ -364,8 +368,8 @@ async fn authenticate_credential(
 /// or a failed session lookup, is an error.
 pub async fn authenticate_headers<A: TokenAuthenticator>(
     app_state: &A,
-    headers: &axum::http::HeaderMap,
-) -> std::result::Result<Option<AuthContext>, AuthError> {
+    headers: &HeaderMap,
+) -> result::Result<Option<AuthContext>, AuthError> {
     match authenticate_credential(app_state, headers).await? {
         Authentication::Context(context) => Ok(Some(context)),
         Authentication::Anonymous { .. } => Ok(None),
@@ -428,7 +432,7 @@ where
 /// Tries to validate JWT but allows unauthenticated requests
 pub struct OptionalAuth(pub Option<AuthContext>);
 
-impl std::ops::Deref for OptionalAuth {
+impl Deref for OptionalAuth {
     type Target = Option<AuthContext>;
 
     fn deref(&self) -> &Self::Target {
@@ -440,7 +444,7 @@ impl<S> FromRequestParts<S> for OptionalAuth
 where
     S: Send + Sync,
 {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let Some(app_state) = parts.extensions.get::<Authenticator>().cloned() else {
@@ -491,9 +495,9 @@ pub struct AuthMiddleware<S> {
     state: Authenticator,
 }
 
-impl<S, B> Service<axum::http::Request<B>> for AuthMiddleware<S>
+impl<S, B> Service<Request<B>> for AuthMiddleware<S>
 where
-    S: Service<axum::http::Request<B>, Response = Response> + Send + Clone + 'static,
+    S: Service<Request<B>, Response = Response> + Send + Clone + 'static,
     S::Future: Send + 'static,
     B: Send + 'static,
 {
@@ -505,7 +509,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: axum::http::Request<B>) -> Self::Future {
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
         // Insert the authenticator into request extensions
         req.extensions_mut().insert(self.state.clone());
 

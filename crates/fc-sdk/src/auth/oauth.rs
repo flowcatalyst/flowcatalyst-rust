@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::AuthError;
+use base64::engine::general_purpose;
+use tokio::sync::OnceCell;
 
 /// OAuth2 client configuration for the authorization code flow.
 ///
@@ -77,7 +79,7 @@ impl PkceChallenge {
         let mut hasher = Sha256::new();
         hasher.update(code_verifier.as_bytes());
         let hash = hasher.finalize();
-        let code_challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
+        let code_challenge = general_purpose::URL_SAFE_NO_PAD.encode(hash);
 
         Self {
             code_verifier,
@@ -141,7 +143,7 @@ const REFRESH_MEMO: Duration = Duration::from_secs(10);
 /// token while it runs and for [`REFRESH_MEMO`] after it succeeds.
 #[derive(Default)]
 struct RefreshSlot {
-    outcome: tokio::sync::OnceCell<(Result<TokenResponse, String>, Instant)>,
+    outcome: OnceCell<(Result<TokenResponse, String>, Instant)>,
 }
 
 impl RefreshSlot {
@@ -518,7 +520,7 @@ fn generate_random_string(len: usize) -> String {
     use rand::Rng;
     let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..len).map(|_| rng.random()).collect();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+    general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
 }
 
 /// Percent-encode a string for URL query parameters.
@@ -535,6 +537,10 @@ fn urlencoded(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose;
+    use std::sync::atomic::AtomicUsize;
+    use tokio::net::TcpListener;
+    use tokio::time;
 
     // ─── OAuthConfig ────────────────────────────────────────────────────
 
@@ -569,7 +575,7 @@ mod tests {
         let mut hasher = sha2::Sha256::new();
         sha2::Digest::update(&mut hasher, pkce.code_verifier.as_bytes());
         let hash = hasher.finalize();
-        let expected = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
+        let expected = general_purpose::URL_SAFE_NO_PAD.encode(hash);
 
         assert_eq!(pkce.code_challenge, expected);
     }
@@ -706,11 +712,11 @@ mod tests {
 
     /// A token endpoint that counts requests and answers each after 50 ms
     /// with tokens numbered by the request (`at-N`, `rt-N`).
-    async fn counting_token_endpoint() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    async fn counting_token_endpoint() -> (String, Arc<AtomicUsize>) {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let count = Arc::new(AtomicUsize::new(0));
         let served = count.clone();
@@ -746,7 +752,7 @@ mod tests {
                         }
                     }
                     let n = served.fetch_add(1, Ordering::SeqCst) + 1;
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    time::sleep(Duration::from_millis(50)).await;
                     let body = format!(
                         r#"{{"access_token":"at-{n}","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-{n}"}}"#
                     );

@@ -16,13 +16,17 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::http::HeaderMap;
+use axum::routing;
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
+use fc_common::diagnostics;
 use fc_common::{MediationOutcome, Message};
 use fc_platform_jwks::testing::{Claims, TestPlatform, AUTHORIZATION_ENDPOINT};
 use fc_queue::QueuePublisher;
+use fc_router::api::platform_auth;
 use fc_router::{
     api::{
         create_router_with_options, DashboardSignIn, PlatformAuth, RouterDeps, RouterOptions,
@@ -35,6 +39,7 @@ use http_body_util::BodyExt;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tower::ServiceExt;
+use url::form_urlencoded;
 
 struct NoOpPublisher;
 
@@ -92,7 +97,7 @@ fn guarded(platform: &TestPlatform) -> axum::Router {
 
 struct Answer {
     status: StatusCode,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     body: Value,
 }
 
@@ -388,7 +393,7 @@ async fn the_guard_applies_under_the_mount_prefix_too() {
 
 #[tokio::test]
 async fn transitional_none_answers_and_warns_on_the_health_output() {
-    let warning = fc_router::api::platform_auth::UNAUTHENTICATED_WARNING;
+    let warning = platform_auth::UNAUTHENTICATED_WARNING;
     // Decision #43: AUTH_MODE=NONE outside dev mode, no guard, the warning.
     let open = build_app(RouterOptions {
         auth_warning: Some(warning.to_string()),
@@ -468,7 +473,7 @@ async fn diagnostics_need_view_and_the_task_dump_needs_operate() {
     assert_eq!(a.body["message"], format!("{ROUTER_OPERATE} required"));
 
     let a = get(&app, "/diagnostics/task-dump", Some(&operate)).await;
-    if fc_common::diagnostics::TASKDUMP_AVAILABLE {
+    if diagnostics::TASKDUMP_AVAILABLE {
         assert_eq!(a.status, StatusCode::OK);
     } else {
         assert_eq!(a.status, StatusCode::NOT_IMPLEMENTED, "{:?}", a.body);
@@ -482,7 +487,7 @@ async fn diagnostics_need_view_and_the_task_dump_needs_operate() {
 #[tokio::test]
 async fn diagnostics_refuse_on_an_open_router_outside_dev_mode() {
     let open = build_app(RouterOptions {
-        auth_warning: Some(fc_router::api::platform_auth::UNAUTHENTICATED_WARNING.to_string()),
+        auth_warning: Some(platform_auth::UNAUTHENTICATED_WARNING.to_string()),
         ..RouterOptions::default()
     });
     for path in [
@@ -517,7 +522,7 @@ async fn platform_with_token_endpoint(
     let record = seen.clone();
     let token = axum::Router::new().route(
         "/oauth/token",
-        axum::routing::post(move |body: String| {
+        routing::post(move |body: String| {
             let record = record.clone();
             let answer = answer.clone();
             async move {
@@ -621,7 +626,7 @@ async fn the_code_exchange_is_proxied_as_the_public_client_and_trimmed() {
 
     let forms = seen.lock().clone();
     assert_eq!(forms.len(), 1);
-    let form: Vec<(String, String)> = url::form_urlencoded::parse(forms[0].as_bytes())
+    let form: Vec<(String, String)> = form_urlencoded::parse(forms[0].as_bytes())
         .into_owned()
         .collect();
     let field = |k: &str| {

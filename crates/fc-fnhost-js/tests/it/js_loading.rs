@@ -6,7 +6,18 @@ use crate::support;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fc_fnhost_core::control_plane::ControlPlane;
+use fc_fnhost_core::emit::Emitter;
+use fc_fnhost_core::wasm::output::GuestLogger;
+use fc_fnhost_js::engine;
+use fc_fnhost_js::isolate::Limits;
+use fc_fnhost_js::ops;
+use fc_fnhost_js::ops::VersionShared;
+use fc_fnhost_js::prepare;
+use fc_fnhost_js::prepare::Refusal;
 use serde_json::json;
+use std::fs;
+use std::thread;
 use support::{bundle, entry, manifest, JsHarness, Options, ADDR};
 
 async fn load(file: &str, manifest_extra: serde_json::Value) -> JsHarness {
@@ -35,39 +46,38 @@ fn failed_with(h: &JsHarness, code: &str) {
 
 /// `prepare` itself, for the refusal's detail (on a thread of its own, as
 /// the loader runs it).
-fn refusal(file: &str, entrypoint: &str) -> fc_fnhost_js::prepare::Refusal {
+fn refusal(file: &str, entrypoint: &str) -> Refusal {
     let (file, entrypoint) = (file.to_owned(), entrypoint.to_owned());
-    std::thread::spawn(move || refusal_on_this_thread(&file, &entrypoint))
+    thread::spawn(move || refusal_on_this_thread(&file, &entrypoint))
         .join()
         .unwrap()
 }
 
-fn refusal_on_this_thread(file: &str, entrypoint: &str) -> fc_fnhost_js::prepare::Refusal {
-    let base = fc_fnhost_js::engine::init_v8().unwrap();
-    let bytes = std::fs::read(bundle(file)).unwrap();
-    let control: Arc<dyn fc_fnhost_core::control_plane::ControlPlane> =
-        support::fakes::FakeControlPlane::new();
-    let version = Arc::new(fc_fnhost_js::ops::VersionShared {
+fn refusal_on_this_thread(file: &str, entrypoint: &str) -> Refusal {
+    let base = engine::init_v8().unwrap();
+    let bytes = fs::read(bundle(file)).unwrap();
+    let control: Arc<dyn ControlPlane> = support::fakes::FakeControlPlane::new();
+    let version = Arc::new(VersionShared {
         address: fc_function_abi::FunctionAddress::parse(ADDR).unwrap(),
         version: 1,
-        logger: fc_fnhost_core::wasm::output::GuestLogger::for_address(ADDR),
+        logger: GuestLogger::for_address(ADDR),
         config: Default::default(),
         secrets: Default::default(),
         allow: Default::default(),
-        emitter: fc_fnhost_core::emit::Emitter {
+        emitter: Emitter {
             control_plane: control,
             host_id: "host-1".into(),
             host_runtime: None,
         },
         body_cap: 1 << 20,
-        http: fc_fnhost_js::ops::http_client().unwrap(),
+        http: ops::http_client().unwrap(),
         host_runtime: None,
     });
-    let result = fc_fnhost_js::prepare::prepare(
+    let result = prepare::prepare(
         base,
         &bytes,
         entrypoint,
-        fc_fnhost_js::isolate::Limits::of(32 << 20),
+        Limits::of(32 << 20),
         version,
         Duration::from_millis(500),
     );

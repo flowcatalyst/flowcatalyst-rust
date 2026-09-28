@@ -11,8 +11,25 @@ use crate::support;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fc_fnhost_core::control_plane::ControlPlane;
+use fc_fnhost_core::emit::Emitter;
+use fc_fnhost_core::invoke::InvocationContext;
+use fc_fnhost_core::wasm::output::GuestLogger;
+use fc_fnhost_js::engine;
+use fc_fnhost_js::ops;
+use fc_fnhost_js::ops::CallerOut;
+use fc_fnhost_js::ops::ContextOut;
+use fc_fnhost_js::ops::InvocationState;
+use fc_fnhost_js::prepare;
 use serde_json::json;
+use std::fs;
+use std::mem;
+use std::path::Path;
+use std::path::PathBuf;
 use support::{bundle, entry, manifest, JsHarness, Options};
+use tokio::runtime::Builder;
+use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 const A: &str = "app.orders.a";
 
@@ -22,7 +39,7 @@ const A: &str = "app.orders.a";
 fn memory() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     unsafe {
-        let mut info: libc::rusage_info_v2 = std::mem::zeroed();
+        let mut info: libc::rusage_info_v2 = mem::zeroed();
         libc::proc_pid_rusage(
             libc::getpid(),
             libc::RUSAGE_INFO_V2,
@@ -75,8 +92,8 @@ async fn call(h: &JsHarness, address: &str, path: &str) -> u16 {
 
 /// A bundle of about `kib` KiB: the hello handler plus a table of generated
 /// functions and data, as a bundle with its npm dependencies inlined looks.
-fn big_bundle(dir: &std::path::Path, kib: usize) -> std::path::PathBuf {
-    let mut source = std::fs::read_to_string(bundle("hello.mjs")).unwrap();
+fn big_bundle(dir: &Path, kib: usize) -> PathBuf {
+    let mut source = fs::read_to_string(bundle("hello.mjs")).unwrap();
     let mut i = 0;
     while source.len() < kib * 1024 {
         source.push_str(&format!(
@@ -85,7 +102,7 @@ fn big_bundle(dir: &std::path::Path, kib: usize) -> std::path::PathBuf {
         i += 1;
     }
     let path = dir.join(format!("big-{kib}k.mjs"));
-    std::fs::write(&path, source).unwrap();
+    fs::write(&path, source).unwrap();
     path
 }
 
@@ -214,7 +231,7 @@ async fn measure_density() {
                 .filter(|(_, _, s)| s == "LOADED")
                 .count();
             assert_eq!(loaded, n);
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            time::sleep(Duration::from_millis(300)).await;
             let after = memory();
             println!(
                 "{name}: N={n} reconciled in {:.1} s | rss {:.1} MiB | fp {:.1} MiB (process before the host {:.1}/{:.1}, with the engine {:.1}/{:.1})",
@@ -249,7 +266,7 @@ async fn measure_density() {
             support::fakes::document_json(json!({ "functions": with_guest })),
         ));
         h.reconciler.reconcile_once(chrono::Utc::now()).await;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        time::sleep(Duration::from_millis(300)).await;
         let idle = memory();
         let h = Arc::new(h);
         let calls: Vec<_> = (0..64)
@@ -258,7 +275,7 @@ async fn measure_density() {
                 tokio::spawn(async move { call(&h, A, "/sleep?ms=1500").await })
             })
             .collect();
-        tokio::time::sleep(Duration::from_millis(900)).await;
+        time::sleep(Duration::from_millis(900)).await;
         let busy = memory();
         for c in calls {
             assert_eq!(c.await.unwrap(), 200);
@@ -286,27 +303,26 @@ fn measure_request_phases() {
     use fc_fnhost_js::ops::{HostState, VersionShared};
     use std::rc::Rc;
 
-    let base = fc_fnhost_js::engine::init_v8().unwrap();
-    let source = std::fs::read_to_string(bundle("hello.mjs")).unwrap();
-    let control: Arc<dyn fc_fnhost_core::control_plane::ControlPlane> =
-        support::fakes::FakeControlPlane::new();
+    let base = engine::init_v8().unwrap();
+    let source = fs::read_to_string(bundle("hello.mjs")).unwrap();
+    let control: Arc<dyn ControlPlane> = support::fakes::FakeControlPlane::new();
     let version = Arc::new(VersionShared {
         address: fc_function_abi::FunctionAddress::parse(A).unwrap(),
         version: 1,
-        logger: fc_fnhost_core::wasm::output::GuestLogger::for_address(A),
+        logger: GuestLogger::for_address(A),
         config: Default::default(),
         secrets: Default::default(),
         allow: Default::default(),
-        emitter: fc_fnhost_core::emit::Emitter {
+        emitter: Emitter {
             control_plane: control,
             host_id: "h".into(),
             host_runtime: None,
         },
         body_cap: 1 << 20,
-        http: fc_fnhost_js::ops::http_client().unwrap(),
+        http: ops::http_client().unwrap(),
         host_runtime: None,
     });
-    let prepared = fc_fnhost_js::prepare::prepare(
+    let prepared = prepare::prepare(
         base,
         source.as_bytes(),
         "default",
@@ -322,10 +338,7 @@ fn measure_request_phases() {
         code.bundle.len(),
         code.code_cache.as_ref().map_or(0, |c| c.len())
     );
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let (mut create, mut start, mut call, mut drop_) = (vec![], vec![], vec![], vec![]);
     for i in 0..2000 {
         let t = Instant::now();
@@ -344,12 +357,12 @@ fn measure_request_phases() {
         runtime.block_on(isolate.start()).unwrap();
         isolate.set_host(Rc::new(HostState {
             version: version.clone(),
-            invocation: Some(fc_fnhost_js::ops::InvocationState {
-                context: fc_fnhost_js::ops::ContextOut {
+            invocation: Some(InvocationState {
+                context: ContextOut {
                     invocation_id: "inv".into(),
                     address: A.into(),
                     version: 1,
-                    caller: fc_fnhost_js::ops::CallerOut::Anonymous,
+                    caller: CallerOut::Anonymous,
                     correlation_id: "inv".into(),
                     causation_id: None,
                     original_host: None,
@@ -357,7 +370,7 @@ fn measure_request_phases() {
                     remote_address: None,
                     path_params: vec![("name".into(), "Ada".into())],
                 },
-                deadline: std::time::Instant::now() + Duration::from_secs(5),
+                deadline: Instant::now() + Duration::from_secs(5),
                 defaults: ("inv".into(), None),
             }),
         }));
@@ -417,7 +430,7 @@ async fn measure_invoke_without_http() {
         .registry()
         .peek(&fc_function_abi::FunctionAddress::parse(A).unwrap())
         .expect("loaded");
-    let context = || fc_fnhost_core::invoke::InvocationContext {
+    let context = || InvocationContext {
         invocation_id: "inv".into(),
         address: fc_function_abi::FunctionAddress::parse(A).unwrap(),
         version: 1,
@@ -434,8 +447,8 @@ async fn measure_invoke_without_http() {
         body: Default::default(),
         remote_address: None,
         caller: fc_function_abi::Caller::Anonymous,
-        deadline: std::time::Instant::now() + Duration::from_secs(5),
-        interrupted: tokio_util::sync::CancellationToken::new(),
+        deadline: Instant::now() + Duration::from_secs(5),
+        interrupted: CancellationToken::new(),
         correlation_id: "inv".into(),
         causation_id: None,
         usage: Default::default(),

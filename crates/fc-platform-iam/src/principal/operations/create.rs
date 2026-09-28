@@ -8,15 +8,20 @@ use std::sync::Arc;
 use super::events::UserCreated;
 use crate::auth::password_service::PasswordService;
 use crate::identity_provider::entity::IdentityProviderType;
+use crate::portal::policy;
 use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::details;
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use std::sync::OnceLock;
 
 /// Email validation pattern
 fn email_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap())
 }
 
@@ -68,7 +73,7 @@ pub struct CreateUserCommand {
     pub idp_type: Option<IdentityProviderType>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateUserCommand {}
+impl AuditMasked for CreateUserCommand {}
 
 /// Use case for creating a new user.
 pub struct CreateUserUseCase<U: UnitOfWork> {
@@ -133,21 +138,15 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         command: &CreateUserCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        if !ctx.caller().is_anchor()
-            && command.scope != fc_platform_core::principal_kind::UserScope::Client
-        {
-            return Err(UseCaseError::verbatim(
-                fc_platform_core::shared::error::PlatformError::forbidden(
-                    "Client administrators can only create client-scope users",
-                ),
-            ));
+        if !ctx.caller().is_anchor() && command.scope != UserScope::Client {
+            return Err(UseCaseError::verbatim(PlatformError::forbidden(
+                "Client administrators can only create client-scope users",
+            )));
         }
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_user_admin(
-                ctx.caller(),
-                command.client_id.as_deref(),
-            )?,
-        )
+        Ok(checks::require_user_admin(
+            ctx.caller(),
+            command.client_id.as_deref(),
+        )?)
     }
 
     async fn execute(
@@ -208,7 +207,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             // the flag on create and does not apply it).
             if let Some(password) = command.password.as_deref().filter(|p| !p.is_empty()) {
                 let name = command.name.as_deref().unwrap_or_default();
-                if let Some(v) = crate::portal::policy::validate(password, &email, name) {
+                if let Some(v) = policy::validate(password, &email, name) {
                     return Err(UseCaseError::validation(v.code, v.message));
                 }
                 let hash = self.password_service.rehash_password(password)?;

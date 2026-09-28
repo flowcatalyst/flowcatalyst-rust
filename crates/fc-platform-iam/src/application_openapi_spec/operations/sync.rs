@@ -20,6 +20,7 @@ use super::diff::{compute_change_notes, spec_hash};
 use super::events::ApplicationOpenApiSpecSynced;
 use crate::application_openapi_spec::entity::{OpenApiSpec, OpenApiSpecStatus};
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for syncing an application's OpenAPI document.
@@ -34,7 +35,7 @@ pub struct SyncOpenApiSpecCommand {
     pub spec: serde_json::Value,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncOpenApiSpecCommand {}
+impl AuditMasked for SyncOpenApiSpecCommand {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

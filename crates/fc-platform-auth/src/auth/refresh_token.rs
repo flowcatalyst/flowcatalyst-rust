@@ -3,28 +3,30 @@
 //! Stores refresh tokens for session renewal.
 //! Refresh tokens are long-lived and can be used to obtain new access tokens.
 
+use base64::engine::general_purpose;
 use chrono::{DateTime, Duration, Utc};
 use fc_platform_core::shared::tsid;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering;
 
 /// The lifetime stamped on a freshly issued refresh token, in seconds, and so
 /// the family's absolute cap: rotation carries the first deadline forward.
 /// Go's `grantstore.RefreshTokenTTL` — a process-wide setting, one week by
 /// default, set once at startup from `OIDC_REFRESH_TOKEN_TTL` (see
 /// `server_setup::auth_init`).
-static REFRESH_TOKEN_TTL_SECS: std::sync::atomic::AtomicI64 =
-    std::sync::atomic::AtomicI64::new(7 * 24 * 60 * 60);
+static REFRESH_TOKEN_TTL_SECS: AtomicI64 = AtomicI64::new(7 * 24 * 60 * 60);
 
 /// Set the refresh-token lifetime; a non-positive value is ignored.
 pub fn set_refresh_token_ttl_secs(secs: i64) {
     if secs > 0 {
-        REFRESH_TOKEN_TTL_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
+        REFRESH_TOKEN_TTL_SECS.store(secs, Ordering::Relaxed);
     }
 }
 
 /// The configured refresh-token lifetime.
 pub fn refresh_token_ttl() -> Duration {
-    Duration::seconds(REFRESH_TOKEN_TTL_SECS.load(std::sync::atomic::Ordering::Relaxed))
+    Duration::seconds(REFRESH_TOKEN_TTL_SECS.load(Ordering::Relaxed))
 }
 
 /// Refresh token entity
@@ -219,7 +221,7 @@ impl RefreshToken {
 
         let mut bytes = [0u8; 32];
         rand::rng().fill(&mut bytes);
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+        general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     }
 
     /// Hash a raw token for storage
@@ -230,7 +232,7 @@ impl RefreshToken {
         let mut hasher = Sha256::new();
         hasher.update(raw_token.as_bytes());
         let hash = hasher.finalize();
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash)
+        general_purpose::URL_SAFE_NO_PAD.encode(hash)
     }
 
     /// Generate a token pair (raw token for client, entity for storage)

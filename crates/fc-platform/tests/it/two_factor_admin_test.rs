@@ -7,6 +7,9 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::mfa::entity::Method;
+use fc_platform::mfa::entity::MethodType;
+use fc_platform::mfa::MfaRepository;
 use support::{read_json, TestApp};
 
 async fn developer(app: &TestApp, email: &str, _with_role: bool) -> Principal {
@@ -20,16 +23,13 @@ async fn developer(app: &TestApp, email: &str, _with_role: bool) -> Principal {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn an_administrator_resets_a_users_two_factor() {
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let admin = app.anchor_admin_token().await;
     let user = developer(&app, "lost@flowcatalyst.test", false).await;
-    let mut method = fc_platform::mfa::entity::Method::new(
-        &user.id,
-        fc_platform::mfa::entity::MethodType::EmailPin,
-    );
+    let mut method = Method::new(&user.id, MethodType::EmailPin);
     method.confirmed_at = Some(chrono::Utc::now());
-    fc_platform::mfa::MfaRepository::new(&app.pool)
+    MfaRepository::new(&app.pool)
         .replace_pending_method(&method)
         .await
         .unwrap();
@@ -101,7 +101,7 @@ async fn an_administrator_resets_a_users_two_factor() {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn a_client_administrator_decides_lost_device_resets() {
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let admin = app.anchor_admin_token().await;
     let user = developer(&app, "stranded@flowcatalyst.test", false).await;

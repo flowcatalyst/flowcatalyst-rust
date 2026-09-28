@@ -1,6 +1,11 @@
 //! Service account routes: `/api/service-accounts` (plain), and Go's
 //! deactivate and token-mint routes at their full paths.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::routing::{get, post, put};

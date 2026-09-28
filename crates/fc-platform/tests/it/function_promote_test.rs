@@ -34,10 +34,14 @@ use fc_platform::shared::authorization_service::{ApplicationAccessService, Autho
 use fc_platform::shared::middleware::{AppState, AuthLayer};
 use support::{read_json, TestApp};
 
+use chrono_tz::Europe;
+use fc_platform::function::operations::trigger_sync;
+use fc_platform::shared::tsid;
 use permissions::function::{
     FUNCTION_DOMAIN_MANAGE, FUNCTION_MANAGE, FUNCTION_PROMOTE, FUNCTION_PUBLISH,
     FUNCTION_SECRET_MANAGE, FUNCTION_VIEW,
 };
+use std::process;
 
 const ALL: &[&str] = &[
     FUNCTION_VIEW,
@@ -53,7 +57,7 @@ const POOL_URL: &str = "http://fn-{pool}:8080";
 // ── Harness ─────────────────────────────────────────────────────────────────
 
 fn router(app: &TestApp) -> Router {
-    router_hashing(app, fc_platform::function::operations::trigger_sync::hash8)
+    router_hashing(app, trigger_sync::hash8)
 }
 
 /// With a given trigger-key hasher: Java's test seam for a collision.
@@ -115,7 +119,7 @@ fn router_hashing(app: &TestApp, hasher: fn(&str) -> String) -> Router {
 }
 
 async fn anchor(app: &TestApp) -> String {
-    let n = fc_platform::shared::tsid::generate_untyped().to_lowercase();
+    let n = tsid::generate_untyped().to_lowercase();
     let role = AuthRole::new("platform", format!("fnp-test-{n}"), "Promote test")
         .with_permissions(ALL.iter().map(|p| p.to_string()));
     app.repos.role_repo.insert(&role).await.expect("role");
@@ -169,7 +173,7 @@ async fn application(app: &TestApp, code: &str, event_types: &[&str]) -> Applica
         "INSERT INTO iam_service_accounts (id, code, name, application_id, active, \
          wh_signing_secret_ref) VALUES ($1, $2, 'SA', $3, true, 'encrypted:x')",
     )
-    .bind(fc_platform::shared::tsid::generate_untyped())
+    .bind(tsid::generate_untyped())
     .bind(format!("{code}-sa"))
     .bind(&a.id)
     .execute(&app.pool)
@@ -182,7 +186,7 @@ async fn application(app: &TestApp, code: &str, event_types: &[&str]) -> Applica
              application, subdomain, aggregate, created_at, updated_at) \
              VALUES ($1, $2, 'E', 'CURRENT', 'API', false, $3, $4, $5, NOW(), NOW())",
         )
-        .bind(fc_platform::shared::tsid::generate_untyped())
+        .bind(tsid::generate_untyped())
         .bind(et)
         .bind(parts[0])
         .bind(parts[1])
@@ -239,7 +243,7 @@ fn rand_u64() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .subsec_nanos() as u64
-        ^ std::process::id() as u64
+        ^ process::id() as u64
 }
 
 async fn promote(
@@ -434,7 +438,7 @@ async fn promoting_live_wires_the_manifest_through_each_objects_own_events() {
     let now = Utc::now();
     let slot = latest_slot_in_window(&job.1, &job.2, now - chrono::Duration::days(7), now)
         .expect("fires within a week");
-    let local = slot.with_timezone(&chrono_tz::Europe::Amsterdam);
+    let local = slot.with_timezone(&Europe::Amsterdam);
     use chrono::{Datelike, Timelike};
     assert_eq!((local.hour(), local.minute()), (9, 0));
     assert!(local.weekday().number_from_monday() <= 5, "{local}");

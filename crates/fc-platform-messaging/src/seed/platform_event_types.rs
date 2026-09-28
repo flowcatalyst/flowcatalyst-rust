@@ -423,11 +423,12 @@ fn title_case(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn codes_are_unique_and_named() {
         let defs = definitions();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         for d in &defs {
             assert!(seen.insert(d.code.clone()), "duplicate code {}", d.code);
             assert!(!d.name.is_empty(), "{} has no name", d.code);

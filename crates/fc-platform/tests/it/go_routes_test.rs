@@ -7,11 +7,14 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use fc_platform::application::entity::Application;
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::shared::tsid;
 use support::{assert_status, read_json, TestApp};
 
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 
@@ -748,7 +751,7 @@ async fn the_router_config_lists_pools_and_tenant_queues() {
     // A client with no pool or subscription still gets both its queues.
     app.repos
         .client_repo
-        .insert(&fc_platform::client::entity::Client::new("Solo", "solo"))
+        .insert(&Client::new("Solo", "solo"))
         .await
         .unwrap();
     let body = assert_status(
@@ -1006,7 +1009,7 @@ async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
 // ── Principals ───────────────────────────────────────────────────────────
 
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
-    let c = fc_platform::client::entity::Client::new(identifier.to_uppercase(), identifier);
+    let c = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&c).await.unwrap();
     c.id
 }
@@ -1658,9 +1661,7 @@ async fn connections_and_processes_sync_as_go() {
     // No service account: refused.
     app.repos
         .application_repo
-        .insert(&fc_platform::application::entity::Application::new(
-            "nosa", "No SA",
-        ))
+        .insert(&Application::new("nosa", "No SA"))
         .await
         .unwrap();
     let (s, b) = read_json(
@@ -1823,8 +1824,8 @@ async fn dispatch_jobs_are_requeued_settled_and_signed_as_go() {
         r#"{"a":1}"#,
     );
     let mut pending = failed.clone();
-    pending.id = fc_platform::shared::tsid::generate_untyped();
-    failed.id = fc_platform::shared::tsid::generate_untyped();
+    pending.id = tsid::generate_untyped();
+    failed.id = tsid::generate_untyped();
     let (fid, pid) = (failed.id.clone(), pending.id.clone());
     for j in [&failed, &pending] {
         app.repos.dispatch_job_repo.insert(j).await.unwrap();

@@ -21,6 +21,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use fc_common::{MediationOutcome, Message};
 use fc_queue::QueuePublisher;
+use fc_router::api;
 use fc_router::{
     api::{create_router_with_options, AuthConfig, AuthState, RouterDeps, RouterOptions},
     HealthService, HealthServiceConfig, Mediator, QueueManager, WarningService,
@@ -186,7 +187,7 @@ async fn blank_or_root_prefix_disables_nesting() {
 
 #[tokio::test]
 async fn prefix_with_auth_keeps_public_routes_open_at_both_mounts() {
-    let auth = fc_router::api::create_auth_state(AuthConfig::basic("u", "p"));
+    let auth = api::create_auth_state(AuthConfig::basic("u", "p"));
     let app = build_app(Some("/router"), Some(auth)).await;
 
     for path in ["/health/live", "/health/ready", "/metrics"] {
@@ -209,7 +210,7 @@ async fn prefix_with_auth_keeps_public_routes_open_at_both_mounts() {
 
 #[tokio::test]
 async fn prefix_with_auth_guards_protected_routes_at_both_mounts() {
-    let auth = fc_router::api::create_auth_state(AuthConfig::basic("u", "p"));
+    let auth = api::create_auth_state(AuthConfig::basic("u", "p"));
     let app = build_app(Some("/router"), Some(auth)).await;
 
     // No credentials: 401 at both root and nested.

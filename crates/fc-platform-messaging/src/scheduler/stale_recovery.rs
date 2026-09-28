@@ -26,6 +26,10 @@ use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::scheduler::SchedulerError;
+use tokio::time;
+use tokio::time::Instant;
+use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 
 /// Recorded on a PROCESSING row this loop reclaims.
 pub const STALE_PROCESSING_REASON: &str =
@@ -90,11 +94,11 @@ impl StaleQueuedJobPoller {
         &self,
         interval: Duration,
         is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
-        cancel: tokio_util::sync::CancellationToken,
+        cancel: CancellationToken,
     ) {
         // Go's ticker waits one interval before its first sweep.
-        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut tick = time::interval_at(Instant::now() + interval, interval);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,

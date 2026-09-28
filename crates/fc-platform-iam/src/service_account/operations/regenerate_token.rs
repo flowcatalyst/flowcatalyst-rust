@@ -9,7 +9,9 @@ use std::sync::Arc;
 use super::events::ServiceAccountTokenRegenerated;
 use crate::service_account::entity::WebhookAuthType;
 use crate::service_account::repository::ServiceAccountRepository;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -37,7 +39,7 @@ pub struct RegenerateAuthTokenCommand {
     pub service_account_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RegenerateAuthTokenCommand {}
+impl AuditMasked for RegenerateAuthTokenCommand {}
 
 /// Result returned from regenerate auth token use case.
 /// Contains the event plus one-time token that needs to be returned to caller.
@@ -94,11 +96,7 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
         _command: &RegenerateAuthTokenCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

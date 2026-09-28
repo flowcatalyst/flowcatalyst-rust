@@ -10,9 +10,12 @@ use std::sync::Arc;
 use super::events::ApplicationAccessAssigned;
 use crate::application::repository::ApplicationRepository;
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
+use std::collections::HashSet;
 
 /// Command for assigning application access to a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +28,7 @@ pub struct AssignApplicationAccessCommand {
     pub all_applications: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AssignApplicationAccessCommand {}
+impl AuditMasked for AssignApplicationAccessCommand {}
 
 pub struct AssignApplicationAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -80,7 +83,7 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         )
         .await?;
         if command.all_applications == Some(true) {
-            fc_platform_core::shared::authorization_service::checks::require_all_applications_grantor(ctx.caller().application_scope())?;
+            checks::require_all_applications_grantor(ctx.caller().application_scope())?;
         }
         Ok(())
     }
@@ -129,13 +132,12 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         }
 
         // Compute delta
-        let current: std::collections::HashSet<&str> = principal
+        let current: HashSet<&str> = principal
             .accessible_application_ids
             .iter()
             .map(|s| s.as_str())
             .collect();
-        let requested: std::collections::HashSet<&str> =
-            command.application_ids.iter().map(|s| s.as_str()).collect();
+        let requested: HashSet<&str> = command.application_ids.iter().map(|s| s.as_str()).collect();
 
         let added: Vec<String> = requested
             .difference(&current)

@@ -3,6 +3,11 @@
 //! (behind the `/auth` per-IP limit, like `/auth/login`), the session-gated
 //! self-service routes and the account routes.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::routing::{delete, get, post};

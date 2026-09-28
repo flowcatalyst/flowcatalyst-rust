@@ -10,8 +10,14 @@ use utoipa::ToSchema;
 
 use super::entity::CorsAllowedOrigin;
 use super::repository::CorsOriginRepository;
+use crate::cors::operations::AddCorsOriginUseCase;
+use crate::cors::operations::DeleteCorsOriginUseCase;
+use axum::http::StatusCode;
+use fc_platform_core::shared::api_common::CreatedResponse;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -70,11 +76,8 @@ pub struct AllowedOriginsResponse {
 #[derive(Clone)]
 pub struct CorsState {
     pub cors_repo: Arc<CorsOriginRepository>,
-    pub add_use_case:
-        Arc<crate::cors::operations::AddCorsOriginUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub delete_use_case: Arc<
-        crate::cors::operations::DeleteCorsOriginUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
+    pub add_use_case: Arc<AddCorsOriginUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteCorsOriginUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new CORS allowed origin
@@ -85,7 +88,7 @@ pub struct CorsState {
     operation_id = "addCorsOrigin",
     request_body = CreateCorsOriginRequest,
     responses(
-        (status = 201, description = "CORS origin created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "CORS origin created", body = CreatedResponse),
         (status = 409, description = "Duplicate origin")
     ),
     security(("bearer_auth" = []))
@@ -94,17 +97,11 @@ pub async fn create_cors_origin(
     State(state): State<CorsState>,
     auth: Authenticated,
     Json(req): Json<CreateCorsOriginRequest>,
-) -> Result<
-    (
-        axum::http::StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::cors::operations::AddCorsOriginCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_cors_origins(&auth.0)?;
+    checks::can_create_cors_origins(&auth.0)?;
 
     let cmd = AddCorsOriginCommand {
         origin: req.origin,
@@ -113,10 +110,8 @@ pub async fn create_cors_origin(
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.add_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
-        axum::http::StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.origin_id,
-        )),
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.origin_id)),
     ))
 }
 
@@ -135,7 +130,7 @@ pub async fn list_cors_origins(
     State(state): State<CorsState>,
     auth: Authenticated,
 ) -> Result<Json<CorsOriginsListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_cors_origins(&auth.0)?;
+    checks::can_read_cors_origins(&auth.0)?;
 
     let origins = state.cors_repo.find_all().await?;
     let total = origins.len();
@@ -184,7 +179,7 @@ pub async fn get_cors_origin(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<CorsOriginResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_cors_origins(&auth.0)?;
+    checks::can_read_cors_origins(&auth.0)?;
 
     let origin = state
         .cors_repo
@@ -213,14 +208,14 @@ pub async fn delete_cors_origin(
     State(state): State<CorsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::cors::operations::DeleteCorsOriginCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_cors_origins(&auth.0)?;
+    checks::can_delete_cors_origins(&auth.0)?;
 
     let cmd = DeleteCorsOriginCommand { origin_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }

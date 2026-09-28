@@ -6,6 +6,8 @@
 //! what [`UseCase::run`](super::UseCase::run) hands to handlers.
 
 use super::error::UseCaseError;
+use std::fmt;
+use std::fmt::Formatter;
 
 /// A value a unit of work has committed.
 ///
@@ -79,8 +81,8 @@ impl<T> AsRef<T> for Committed<T> {
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Committed<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T: fmt::Debug> fmt::Debug for Committed<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Committed").field(&self.0).finish()
     }
 }
@@ -158,8 +160,8 @@ impl<T> From<UseCaseResult<T>> for Result<T, UseCaseError> {
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for UseCaseResult<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T: fmt::Debug> fmt::Debug for UseCaseResult<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self.0 {
             Ok(v) => f.debug_tuple("Success").field(v).finish(),
             Err(e) => f.debug_tuple("Failure").field(e).finish(),

@@ -25,7 +25,13 @@
 //! This file stays the assembly point: shared [`AppState`], the cached
 //! broker-stats helper, the router builders, and the OpenAPI doc.
 
+use crate::traffic::TrafficStrategy;
 use crate::{CircuitBreakerRegistry, HealthService, QueueManager, WarningService};
+pub use auth::{
+    auth_middleware, create_auth_state, is_public_path, AuthConfig, AuthMode, AuthState,
+    OidcValidator, TokenClaims,
+};
+use axum::middleware;
 use axum::{
     routing::{delete, get, post, put},
     Router,
@@ -35,7 +41,10 @@ use fc_stream::StreamHealthService;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -58,10 +67,6 @@ pub mod platform_auth;
 pub(crate) mod test_endpoints;
 pub(crate) mod warnings;
 
-pub use auth::{
-    auth_middleware, create_auth_state, is_public_path, AuthConfig, AuthMode, AuthState,
-    OidcValidator, TokenClaims,
-};
 pub use dashboard_sign_in::DashboardSignIn;
 pub use platform_auth::{PlatformAuth, ROUTER_OPERATE, ROUTER_VIEW};
 
@@ -79,7 +84,7 @@ pub struct AppState {
     /// Stream health service (optional)
     pub stream_health_service: Option<Arc<StreamHealthService>>,
     /// Traffic strategy for ALB target group management (optional)
-    pub traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
+    pub traffic_strategy: Option<Arc<dyn TrafficStrategy>>,
     /// Prometheus metrics handle for rendering /metrics endpoint
     pub metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
     /// Cached SQS broker stats — refreshed every 60s by background task,
@@ -108,7 +113,7 @@ struct QueueCounterSnapshot {
 }
 
 struct CounterHistoryEntry {
-    ts: std::time::Instant,
+    ts: Instant,
     per_queue: HashMap<String, QueueCounterSnapshot>,
 }
 
@@ -123,7 +128,7 @@ const COUNTER_HISTORY_WINDOW: Duration = Duration::from_secs(1800);
 pub struct CachedBrokerStats {
     /// Cached SQS attributes: pending_messages and in_flight_messages per queue
     sqs_attributes: RwLock<HashMap<String, (u64, u64)>>,
-    last_updated: RwLock<Option<std::time::Instant>>,
+    last_updated: RwLock<Option<Instant>>,
     queue_manager: Arc<QueueManager>,
     /// Rolling history of cumulative counter snapshots, oldest first.
     counter_history: RwLock<VecDeque<CounterHistoryEntry>>,
@@ -152,7 +157,7 @@ impl CachedBrokerStats {
             );
         }
         drop(attrs);
-        *self.last_updated.write().await = Some(std::time::Instant::now());
+        *self.last_updated.write().await = Some(Instant::now());
 
         self.snapshot_counters().await;
     }
@@ -171,7 +176,7 @@ impl CachedBrokerStats {
                 },
             );
         }
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let cutoff = now.checked_sub(COUNTER_HISTORY_WINDOW).unwrap_or(now);
         let mut history = self.counter_history.write().await;
         history.push_back(CounterHistoryEntry { ts: now, per_queue });
@@ -201,7 +206,7 @@ impl CachedBrokerStats {
         };
 
         let history = self.counter_history.read().await;
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let target = now.checked_sub(window).unwrap_or(now);
 
         let baseline = history
@@ -362,7 +367,7 @@ pub struct RouterOptions {
     pub instance_id: String,
     pub stream_health_service: Option<Arc<StreamHealthService>>,
     /// Traffic strategy for ALB target group management.
-    pub traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
+    pub traffic_strategy: Option<Arc<dyn TrafficStrategy>>,
     /// Prometheus handle for rendering `/metrics`.
     pub metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
     /// The dev-mode guards (§9.7 Basic, the OIDC modes); `None` (or mode
@@ -489,8 +494,8 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
     {
         let weak: Weak<CachedBrokerStats> = Arc::downgrade(&cached_broker_stats);
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut ticker = time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 // First tick fires immediately, giving the initial fetch.
                 ticker.tick().await;
@@ -776,7 +781,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         );
         public_routes
             .merge(dashboard_routes)
-            .merge(protected_routes.layer(axum::middleware::from_fn_with_state(
+            .merge(protected_routes.layer(middleware::from_fn_with_state(
                 guard.clone(),
                 platform_auth::platform_auth_middleware,
             )))
@@ -784,7 +789,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         let protected_routes = protected_routes.merge(dashboard_routes);
         if auth.config.mode != AuthMode::None {
             info!(mode = ?auth.config.mode, "Authentication enabled for router API");
-            public_routes.merge(protected_routes.layer(axum::middleware::from_fn_with_state(
+            public_routes.merge(protected_routes.layer(middleware::from_fn_with_state(
                 auth.clone(),
                 auth_middleware,
             )))

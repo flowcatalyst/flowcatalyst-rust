@@ -1,7 +1,13 @@
 //! Process Entity — free-form workflow documentation (typically Mermaid diagrams)
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use serde::de;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -137,8 +143,8 @@ impl AsRef<str> for ProcessCode {
     }
 }
 
-impl std::fmt::Display for ProcessCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ProcessCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
@@ -152,7 +158,7 @@ impl Serialize for ProcessCode {
 impl<'de> Deserialize<'de> for ProcessCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let code = String::deserialize(deserializer)?;
-        Self::parse(&code).map_err(serde::de::Error::custom)
+        Self::parse(&code).map_err(de::Error::custom)
     }
 }
 
@@ -164,9 +170,7 @@ impl Process {
         let process_name = code.process_name().to_string();
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Process,
-            ),
+            id: tsid::generate(EntityType::Process),
             code: code.into_string(),
             name: name.into(),
             description: None,
@@ -194,6 +198,8 @@ impl Process {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::thread;
+    use std::time::Duration;
 
     fn code(s: &str) -> ProcessCode {
         ProcessCode::parse(s).expect("valid code")
@@ -252,7 +258,7 @@ mod tests {
     fn archive_flips_status() {
         let mut p = Process::new(code("a:b:c"), "x");
         let before = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         p.archive();
         assert_eq!(p.status, ProcessStatus::Archived);
         assert!(p.updated_at > before);

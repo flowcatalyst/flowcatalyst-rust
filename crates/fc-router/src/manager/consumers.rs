@@ -15,14 +15,24 @@ use fc_queue::QueueMetrics;
 
 use super::registry::is_stale;
 use super::{QueueManager, RestartRecord, RunningConsumer};
+use crate::flight_recorder::EventContext;
+use crate::flight_recorder::EventKind;
+use crate::flight_recorder::Facts;
 use crate::health::ConsumerStatsProvider;
+use fc_common::diagnostics;
+use fc_common::diagnostics::panic;
+use fc_common::diagnostics::supervise;
+use std::collections::HashSet;
+use std::future;
+use tokio::task::JoinHandle;
+use tokio::time;
 
 /// Sleep for `d`, but race it against `token`. Returns `true` if the token
 /// was cancelled before `d` elapsed (caller should stop looping), `false`
 /// if the sleep completed normally.
 async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     tokio::select! {
-        _ = tokio::time::sleep(d) => false,
+        _ = time::sleep(d) => false,
         _ = token.cancelled() => true,
     }
 }
@@ -55,8 +65,8 @@ async fn wait_for_capacity_or_cancel(
             _ = notified => {}
             _ = async {
                 match due {
-                    Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
-                    None => std::future::pending::<()>().await,
+                    Some(at) => time::sleep_until(time::Instant::from_std(at)).await,
+                    None => future::pending::<()>().await,
                 }
             } => {}
             _ = token.cancelled() => return true,
@@ -104,7 +114,7 @@ impl QueueManager {
     /// `router-restart`: g3 `[…,5,7,8,9,6]`).
     async fn bounded_poll(&self, rc: &RunningConsumer) -> PollOutcome {
         rc.polls_started.fetch_add(1, Ordering::SeqCst);
-        let res = tokio::time::timeout(self.poll_timeout, rc.consumer.poll(10)).await;
+        let res = time::timeout(self.poll_timeout, rc.consumer.poll(10)).await;
         if rc.stop_poll.is_cancelled() {
             // Stopped while the receive was in flight: nothing it got may
             // be routed now, and nothing may be left with a dead caller.
@@ -151,8 +161,7 @@ impl QueueManager {
             "Poll returned after the consumer was stopped; handing the messages back to the broker"
         );
         for m in messages {
-            match tokio::time::timeout(HAND_BACK_TIMEOUT, rc.consumer.nack(&m.receipt_handle, None))
-                .await
+            match time::timeout(HAND_BACK_TIMEOUT, rc.consumer.nack(&m.receipt_handle, None)).await
             {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
@@ -182,7 +191,7 @@ impl QueueManager {
     pub(super) fn spawn_consumer_poll_task(
         self: &Arc<Self>,
         rc: Arc<RunningConsumer>,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> JoinHandle<()> {
         if rc.poll_task_started.swap(true, Ordering::SeqCst) {
             debug!(consumer = %rc.identifier(), "Poll task already running for this consumer instance");
             return tokio::spawn(async {});
@@ -266,7 +275,7 @@ impl QueueManager {
                         // batch's span; messages already handed to a pool
                         // are settled by their workers, the rest return at
                         // the broker's visibility timeout.
-                        match fc_common::diagnostics::catch_panic(
+                        match diagnostics::catch_panic(
                             manager.route_batch_from(messages, &rc),
                         )
                         .await
@@ -276,13 +285,13 @@ impl QueueManager {
                                 error!(error = %e, consumer = %id, "Error routing batch")
                             }
                             Err(payload) => {
-                                fc_common::diagnostics::supervise::note_task_panic(
+                                supervise::note_task_panic(
                                     "router.route_batch",
                                 );
                                 error!(
                                     consumer = %id,
                                     batch_size = count,
-                                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                                    panic_message = %panic::payload_text(payload.as_ref()),
                                     "Routing a batch panicked; the poll loop continues"
                                 );
                             }
@@ -334,12 +343,10 @@ impl QueueManager {
             );
             self.note_rejected(super::REJECTED_MALFORMED);
             self.flight_recorder.record(
-                crate::flight_recorder::EventKind::Rejected,
-                &crate::flight_recorder::EventContext::new(
-                    rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
-                )
-                .queue(rc.identifier()),
-                crate::flight_recorder::Facts::text(format!(
+                EventKind::Rejected,
+                &EventContext::new(rejected.broker_message_id.as_deref().unwrap_or("(no id)"))
+                    .queue(rc.identifier()),
+                Facts::text(format!(
                     "malformed; removed from the queue without delivery: {reason}"
                 )),
             );
@@ -403,7 +410,7 @@ impl QueueManager {
                 "no consumer factory and/or queue config to build a replacement".to_string(),
             );
         };
-        match tokio::time::timeout(self.rebuild_timeout, factory.create_consumer(&cfg)).await {
+        match time::timeout(self.rebuild_timeout, factory.create_consumer(&cfg)).await {
             Ok(Ok(consumer)) => {
                 Ok(self.new_running_consumer(consumer, old.name.clone(), Some(cfg)))
             }
@@ -524,8 +531,7 @@ impl QueueManager {
 
         {
             let recovery_window = threshold * 3;
-            let stalled_names: std::collections::HashSet<&str> =
-                stalled.iter().map(|rc| rc.name.as_str()).collect();
+            let stalled_names: HashSet<&str> = stalled.iter().map(|rc| rc.name.as_str()).collect();
             self.restart_attempts.lock().retain(|name, rec| {
                 stalled_names.contains(name.as_str()) || rec.last.elapsed() <= recovery_window
             });
@@ -697,6 +703,9 @@ impl ConsumerStatsProvider for QueueManager {
 #[cfg(test)]
 mod consumer_liveness_tests {
     use super::*;
+    use crate::flight_recorder::EventKind;
+    use crate::health::HealthService;
+    use crate::health::HealthServiceConfig;
     use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningService;
     use crate::ConsumerFactory;
@@ -704,6 +713,8 @@ mod consumer_liveness_tests {
     use fc_common::QueuedMessage;
     use fc_queue::{QueueConsumer, Result as QueueResult};
     use std::sync::atomic::{AtomicBool, AtomicU32};
+    use tokio::sync::Notify;
+    use tokio::time;
 
     /// Never returns messages; counts polls; can be told to fail every poll
     /// or to report `Stopped`.
@@ -735,7 +746,7 @@ mod consumer_liveness_tests {
         }
         async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
             self.polls.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            time::sleep(Duration::from_millis(5)).await;
             if self.stopped.load(Ordering::SeqCst) {
                 return Err(fc_queue::QueueError::Stopped);
             }
@@ -792,13 +803,11 @@ mod consumer_liveness_tests {
         }
     }
 
-    fn manager_with(
-        factory: Option<Arc<QueueFactory>>,
-    ) -> (Arc<QueueManager>, Arc<crate::health::HealthService>) {
-        let health_service = Arc::new(crate::health::HealthService::new(
-            crate::health::HealthServiceConfig {
+    fn manager_with(factory: Option<Arc<QueueFactory>>) -> (Arc<QueueManager>, Arc<HealthService>) {
+        let health_service = Arc::new(HealthService::new(
+            HealthServiceConfig {
                 consumer_stall_threshold_secs: 60,
-                ..crate::health::HealthServiceConfig::default()
+                ..HealthServiceConfig::default()
             },
             Arc::new(WarningService::default()),
         ));
@@ -839,7 +848,7 @@ mod consumer_liveness_tests {
                     Some("m-1".to_string()),
                     "unknown variant `SMTP`, expected `HTTP`",
                 );
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                time::sleep(Duration::from_millis(20)).await;
                 Ok(vec![])
             }
             async fn ack(&self, _: &str) -> QueueResult<()> {
@@ -866,7 +875,7 @@ mod consumer_liveness_tests {
         manager.add_consumer(c).await;
         let rc = manager.consumers.get("rejecting").unwrap();
         manager.spawn_consumer_poll_task(rc);
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        time::sleep(Duration::from_millis(60)).await;
         let warnings = manager
             .warning_service
             .get_warnings_by_category(WarningCategory::Configuration);
@@ -881,7 +890,7 @@ mod consumer_liveness_tests {
             .1;
         assert!(malformed >= 1);
         let history = manager.flight_recorder().for_message("m-1");
-        assert_eq!(history[0].kind, crate::flight_recorder::EventKind::Rejected);
+        assert_eq!(history[0].kind, EventKind::Rejected);
         assert_eq!(history[0].queue(), Some("rejecting"));
         assert_eq!(warnings[0].severity, WarningSeverity::Error);
         assert!(warnings[0].message.contains("SMTP"));
@@ -898,7 +907,7 @@ mod consumer_liveness_tests {
         let rc = register_and_start(&manager, c.clone()).await;
         rc.set_last_poll(Instant::now() - Duration::from_secs(120));
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        time::sleep(Duration::from_millis(150)).await;
 
         assert_eq!(c.polls(), 0, "a non-leader must not poll");
         assert!(health_service.is_consumer_healthy("paused"));
@@ -920,7 +929,7 @@ mod consumer_liveness_tests {
         let (manager, health_service) = manager_with(None);
         let c = TestConsumer::new("lifecycle");
         register_and_start(&manager, c.clone()).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert!(health_service.is_consumer_healthy("lifecycle"));
         assert!(manager.is_consumer_healthy("lifecycle").await);
 
@@ -940,7 +949,7 @@ mod consumer_liveness_tests {
         let stale = Instant::now() - Duration::from_secs(120);
         rc.set_last_poll(stale);
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
         assert!(c.polls() > 0, "the loop must keep polling");
         assert!(
             rc.last_poll() <= stale + Duration::from_millis(1),
@@ -953,7 +962,7 @@ mod consumer_liveness_tests {
 
         // Recovery: the next successful poll stamps it.
         c.fail.store(false, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        time::sleep(Duration::from_millis(1200)).await;
         assert!(health_service.is_consumer_healthy("erroring"));
         manager.shutdown().await;
     }
@@ -967,12 +976,12 @@ mod consumer_liveness_tests {
         let a = TestConsumer::new("dup-queue");
         let b = TestConsumer::new("dup-queue");
         register_and_start(&manager, a.clone()).await;
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
         register_and_start(&manager, b.clone()).await;
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
 
         let a_polls = a.polls();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
         assert!(
             a.polls() <= a_polls + 1,
             "the replaced instance must stop polling"
@@ -982,7 +991,7 @@ mod consumer_liveness_tests {
         // Spawning the same instance twice is a no-op.
         let rc = manager.consumers.get("dup-queue").unwrap();
         let h = manager.spawn_consumer_poll_task(rc);
-        tokio::time::timeout(Duration::from_millis(200), h)
+        time::timeout(Duration::from_millis(200), h)
             .await
             .expect("second spawn for a running instance is a no-op")
             .unwrap();
@@ -1009,7 +1018,7 @@ mod consumer_liveness_tests {
 
         // The broker side of the consumer dies: poll returns Stopped.
         original.stopped.store(true, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         let polls_after_exit = original.polls();
         rc.set_last_poll(Instant::now() - Duration::from_secs(120));
 
@@ -1018,7 +1027,7 @@ mod consumer_liveness_tests {
             .restart_stalled_consumers(Duration::from_secs(60), Duration::ZERO, &token)
             .await;
         assert_eq!(n, 1);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert!(replacement.polls() > 0, "the replacement must be polling");
         assert_eq!(original.polls(), polls_after_exit);
         let current = manager.consumers.get("q1").unwrap();
@@ -1099,7 +1108,7 @@ mod consumer_liveness_tests {
     /// only then catches a message (a broker long poll handing over a
     /// message that has just become visible).
     struct LateReceive {
-        release: tokio::sync::Notify,
+        release: Notify,
         nacked: parking_lot::Mutex<Vec<(String, Option<u32>)>>,
         acked: AtomicU32,
     }
@@ -1155,24 +1164,24 @@ mod consumer_liveness_tests {
     async fn a_receive_in_flight_at_stop_is_finished_and_handed_back() {
         let (manager, _hs) = manager_with(None);
         let c = Arc::new(LateReceive {
-            release: tokio::sync::Notify::new(),
+            release: Notify::new(),
             nacked: parking_lot::Mutex::new(Vec::new()),
             acked: AtomicU32::new(0),
         });
         manager.add_consumer(c.clone()).await;
         let rc = manager.consumers.get("late").unwrap();
         manager.spawn_consumer_poll_task(rc.clone());
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
 
         manager.stop_polling();
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
         assert!(
             !rc.poll_exited.is_cancelled(),
             "the loop waits for its receive instead of dropping it"
         );
 
         c.release.notify_waiters();
-        tokio::time::timeout(Duration::from_secs(2), rc.poll_exited.cancelled())
+        time::timeout(Duration::from_secs(2), rc.poll_exited.cancelled())
             .await
             .expect("the loop exits once its receive returns");
         assert_eq!(*c.nacked.lock(), vec![("rh-late".to_string(), None)]);
@@ -1186,17 +1195,17 @@ mod consumer_liveness_tests {
     async fn shutdown_waits_for_a_stopped_loop_only_within_the_budget() {
         let (manager, _hs) = manager_with(None);
         let c = Arc::new(LateReceive {
-            release: tokio::sync::Notify::new(),
+            release: Notify::new(),
             nacked: parking_lot::Mutex::new(Vec::new()),
             acked: AtomicU32::new(0),
         });
         manager.add_consumer(c.clone()).await;
         let rc = manager.consumers.get("late").unwrap();
         manager.spawn_consumer_poll_task(rc.clone());
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
         manager.stop_polling();
 
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+        let deadline = time::Instant::now() + Duration::from_millis(100);
         assert!(
             !manager.await_poll_loops(deadline).await,
             "gives up at the deadline"
@@ -1205,11 +1214,11 @@ mod consumer_liveness_tests {
         let waiter = {
             let m = manager.clone();
             tokio::spawn(async move {
-                m.await_poll_loops(tokio::time::Instant::now() + Duration::from_secs(5))
+                m.await_poll_loops(time::Instant::now() + Duration::from_secs(5))
                     .await
             })
         };
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(30)).await;
         c.release.notify_waiters();
         assert!(
             waiter.await.unwrap(),
@@ -1228,6 +1237,8 @@ mod g12_capacity_gate_tests {
         BatchMessage, MediationOutcome, MediationType, Message, MessageCallback, PoolConfig,
     };
     use fc_queue::QueueConsumer;
+    use tokio::sync::Notify;
+    use tokio::time;
 
     /// Resolves every mediation instantly with a bare 200 — these tests
     /// care about queue-capacity crossing timing, never about mediation
@@ -1348,7 +1359,7 @@ mod g12_capacity_gate_tests {
         let rc = manager.new_running_consumer(
             Arc::new(PartialThenEmptyConsumer {
                 call_times: parking_lot::Mutex::new(vec![]),
-                second_call: Arc::new(tokio::sync::Notify::new()),
+                second_call: Arc::new(Notify::new()),
             }),
             "q".into(),
             None,
@@ -1448,7 +1459,7 @@ mod g12_capacity_gate_tests {
     /// the gap between the first and second poll.
     struct PartialThenEmptyConsumer {
         call_times: parking_lot::Mutex<Vec<Instant>>,
-        second_call: Arc<tokio::sync::Notify>,
+        second_call: Arc<Notify>,
     }
 
     #[async_trait]
@@ -1527,7 +1538,7 @@ mod g12_capacity_gate_tests {
             QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator)).build(),
         );
         let call_times = parking_lot::Mutex::new(Vec::new());
-        let second_call = Arc::new(tokio::sync::Notify::new());
+        let second_call = Arc::new(Notify::new());
         let consumer = Arc::new(PartialThenEmptyConsumer {
             call_times,
             second_call: second_call.clone(),
@@ -1538,7 +1549,7 @@ mod g12_capacity_gate_tests {
         let rc = manager.consumers.get("partial-then-empty").unwrap();
         let handle = manager.spawn_consumer_poll_task(rc);
 
-        tokio::time::timeout(Duration::from_secs(2), waiting)
+        time::timeout(Duration::from_secs(2), waiting)
             .await
             .expect("second poll() call must happen");
 
@@ -1556,6 +1567,6 @@ mod g12_capacity_gate_tests {
         );
 
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        let _ = time::timeout(Duration::from_secs(2), handle).await;
     }
 }

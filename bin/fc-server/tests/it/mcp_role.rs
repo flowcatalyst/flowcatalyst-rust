@@ -2,12 +2,17 @@
 //! server on its own listener, with no platform and no database, and a
 //! refusal to start without credentials. No Docker needed.
 
+use std::env;
+use std::fs;
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::process;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+use tokio::time;
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -17,8 +22,8 @@ fn free_port() -> u16 {
 /// A scratch HOME, so fc-dev's MCP credentials file on this machine (if
 /// any) is never read.
 fn scratch_home(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("fc-server-mcp-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = env::temp_dir().join(format!("fc-server-mcp-{name}-{}", process::id()));
+    fs::create_dir_all(&dir).unwrap();
     dir
 }
 
@@ -26,7 +31,7 @@ fn fc_server(home: &PathBuf, env: &[(&str, String)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_fc-server"));
     command
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("PATH", env::var("PATH").unwrap_or_default())
         .env("HOME", home)
         .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("FC_PLATFORM_ENABLED", "false")
@@ -81,7 +86,7 @@ async fn mcp_role_serves_with_no_platform_and_no_database() {
             }
         }
         assert!(Instant::now() < deadline, "the MCP listener never answered");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
 
     // A client's first call: initialize over the streamable HTTP transport.
@@ -122,7 +127,7 @@ async fn mcp_role_serves_with_no_platform_and_no_database() {
         .unwrap();
     assert_eq!(ready["mcp"], true);
     assert_eq!(ready["platform"], false);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fs::remove_dir_all(&home);
 }
 
 #[test]
@@ -141,5 +146,5 @@ fn mcp_role_refuses_to_start_without_credentials() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("FLOWCATALYST_CLIENT_ID"), "{stderr}");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fs::remove_dir_all(&home);
 }

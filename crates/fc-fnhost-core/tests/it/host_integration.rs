@@ -20,6 +20,8 @@ use fc_fnhost_core::loader::{FunctionInstance, FunctionLoader, LoadOutcome, Load
 use fc_function_abi::Response;
 use parking_lot::Mutex;
 use serde_json::json;
+use std::any::Any;
+use std::fs;
 
 #[derive(Default)]
 struct RecordingLoader {
@@ -44,7 +46,7 @@ impl FunctionInstance for Instance {
     async fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
     }
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -53,7 +55,7 @@ impl FunctionInstance for Instance {
 impl FunctionLoader for RecordingLoader {
     async fn load(&self, request: LoadRequest<'_>) -> LoadOutcome {
         let label = format!("{}@{}", request.entry.address, request.entry.version);
-        let bytes = std::fs::read(request.artifact).unwrap();
+        let bytes = fs::read(request.artifact).unwrap();
         self.loaded.lock().push((label.clone(), bytes));
         let instance = Arc::new(Instance {
             closed: AtomicBool::new(false),
@@ -82,7 +84,7 @@ async fn desired_state_to_heartbeat_to_unload_over_http() {
     let warm_bytes = b"\0asm warm function".to_vec();
     let lazy_bytes = b"\0asm lazy function".to_vec();
     let lazy_path = cache.path().join("lazy.wasm");
-    std::fs::write(&lazy_path, &lazy_bytes).unwrap();
+    fs::write(&lazy_path, &lazy_bytes).unwrap();
     platform.artifacts.lock().insert(
         fake_platform::version_id("app.orders.ship", 3),
         warm_bytes.clone(),

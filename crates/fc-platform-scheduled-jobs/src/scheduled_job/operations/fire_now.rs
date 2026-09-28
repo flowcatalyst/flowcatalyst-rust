@@ -20,6 +20,10 @@ use crate::scheduled_job::entity::{
     InstanceStatus, ScheduledJobInstance, ScheduledJobStatus, TriggerKind,
 };
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -34,7 +38,7 @@ pub struct FireScheduledJobCommand {
     pub correlation_id: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for FireScheduledJobCommand {}
+impl AuditMasked for FireScheduledJobCommand {}
 
 pub struct FireScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
@@ -77,10 +81,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(job) = self.repo.find_by_id(&command.scheduled_job_id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                job.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_deref())?;
         }
         Ok(())
     }
@@ -110,9 +111,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
 
         let now = Utc::now();
         let instance = ScheduledJobInstance {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ScheduledJobInstance,
-            ),
+            id: tsid::generate(EntityType::ScheduledJobInstance),
             scheduled_job_id: job.id.clone(),
             client_id: job.client_id.clone(),
             job_code: job.code.clone(),

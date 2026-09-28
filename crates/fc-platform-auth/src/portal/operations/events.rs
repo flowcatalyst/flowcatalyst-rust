@@ -7,6 +7,7 @@ use fc_platform_core::impl_domain_event;
 use fc_platform_core::usecase::domain_event::EventMetadata;
 use fc_platform_core::usecase::ExecutionContext;
 use fc_platform_iam::portal::entity::IdentityStatus;
+use fc_platform_iam::portal::PortalApp;
 
 pub const IDENTITY_ENSURED: &str = "platform:portal:identity:ensured";
 pub const IDENTITY_STATUS_SET: &str = "platform:portal:identity:status-set";
@@ -226,11 +227,7 @@ pub struct PortalAppChanged {
 impl_domain_event!(PortalAppChanged);
 
 impl PortalAppChanged {
-    pub fn new(
-        ctx: &ExecutionContext,
-        event_type: &str,
-        app: &fc_platform_iam::portal::PortalApp,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, event_type: &str, app: &PortalApp) -> Self {
         Self {
             metadata: app_metadata(ctx, event_type, &app.id),
             portal_app_id: app.id.clone(),
@@ -259,6 +256,7 @@ impl_domain_event!(AssignedToApp => granted);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_iam::portal::PortalApp;
 
     #[test]
     fn identity_events_use_gos_envelope() {
@@ -276,7 +274,7 @@ mod tests {
     #[test]
     fn app_events_use_gos_envelope() {
         let ctx = ExecutionContext::system("prn_1");
-        let app = fc_platform_iam::portal::PortalApp::new("clt_1", "Suppliers", "Suppliers Portal");
+        let app = PortalApp::new("clt_1", "Suppliers", "Suppliers Portal");
         let e = PortalAppChanged::new(&ctx, APP_CREATED, &app);
         assert_eq!(
             e.metadata.subject,

@@ -5,9 +5,12 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Connection, ConnectionStatus};
+use crate::connection::sync_plan::ConnectionSyncPlan;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 /// Row mapping for msg_connections table
 #[derive(sqlx::FromRow)]
@@ -252,12 +255,8 @@ impl HasId for Connection {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Connection> for ConnectionRepository {
-    async fn persist(
-        &self,
-        c: &Connection,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Connection> for ConnectionRepository {
+    async fn persist(&self, c: &Connection, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO msg_connections (id, code, name, description, external_id, status, service_account_id, client_id, client_identifier, created_at, updated_at, application_code, source)
@@ -293,11 +292,7 @@ impl fc_platform_core::usecase::Persist<Connection> for ConnectionRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &Connection,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &Connection, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM msg_connections WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)
@@ -379,16 +374,10 @@ impl ConnectionRepository {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<crate::connection::sync_plan::ConnectionSyncPlan>
-    for ConnectionRepository
-{
+impl Persist<ConnectionSyncPlan> for ConnectionRepository {
     /// One upsert for every saved connection (with its application and
     /// source) and one delete for the removed ones.
-    async fn persist(
-        &self,
-        plan: &crate::connection::sync_plan::ConnectionSyncPlan,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn persist(&self, plan: &ConnectionSyncPlan, tx: &mut DbTx<'_>) -> Result<()> {
         if !plan.saves.is_empty() {
             let now = Utc::now();
             let mut ids = Vec::new();
@@ -459,11 +448,7 @@ impl fc_platform_core::usecase::Persist<crate::connection::sync_plan::Connection
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        _plan: &crate::connection::sync_plan::ConnectionSyncPlan,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, _plan: &ConnectionSyncPlan, _tx: &mut DbTx<'_>) -> Result<()> {
         Err(PlatformError::internal("a connection sync is not deleted"))
     }
 }

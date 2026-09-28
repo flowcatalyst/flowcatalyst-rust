@@ -291,7 +291,7 @@ async fn new_users_have_every_application() {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn provision_service_account_records_one_command() {
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let token = app.anchor_admin_token().await;
     let application = create_app(&app, "mailer").await;
@@ -365,7 +365,7 @@ async fn provision_service_account_records_one_command() {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn service_account_events_carry_the_account_id() {
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let token = app.anchor_admin_token().await;
 

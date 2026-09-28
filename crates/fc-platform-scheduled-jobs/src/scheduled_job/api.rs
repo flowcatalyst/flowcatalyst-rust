@@ -37,8 +37,13 @@ use crate::scheduled_job::{
     ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
 use fc_platform_core::shared::api_common::{CreatedResponse, PaginatedResponse, PaginationParams};
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -434,7 +439,7 @@ impl From<ScheduledJobInstanceLog> for InstanceLogResponse {
 /// Go's by-id write rule (`auth.CheckScopeAccess` in each use case): 403
 /// `SCOPE_FORBIDDEN`.
 fn check_scope_access(auth: &Authenticated, client_id: Option<&str>) -> Result<(), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::check_scope_access(&auth.0, client_id)
+    checks::check_scope_access(&auth.0, client_id)
 }
 
 /// Go's read rule (`getByID`, `getByCode`, `getInstance`): a client's job
@@ -465,7 +470,7 @@ pub async fn create_scheduled_job(
     auth: Authenticated,
     Json(req): Json<CreateScheduledJobRequest>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_create_scheduled_jobs(&auth.0)?;
+    checks::can_create_scheduled_jobs(&auth.0)?;
 
     let cmd = CreateScheduledJobCommand {
         code: req.code,
@@ -511,22 +516,21 @@ pub async fn list_scheduled_jobs(
     auth: Authenticated,
     Query(q): Query<ListJobsQuery>,
 ) -> Result<Json<PaginatedResponse<ScheduledJobResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
 
     let client_filter: Option<Option<&str>> = match q.client_id.as_deref() {
         Some("platform") => Some(None),
         Some(c) => Some(Some(c)),
         None => None,
     };
-    let status_filter =
-        fc_platform_core::shared::enum_str::parse_opt::<ScheduledJobStatus>(q.status.as_deref())?;
+    let status_filter = enum_str::parse_opt::<ScheduledJobStatus>(q.status.as_deref())?;
 
     // Scoped in SQL, as Go: a non-anchor sees platform jobs and its own
     // clients' jobs, and COUNT agrees with the page.
     let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
         None
     } else {
-        Some(fc_platform_core::shared::caller_reach::client_ids(&auth.0))
+        Some(caller_reach::client_ids(&auth.0))
     };
     let visible: Vec<ScheduledJob> = state
         .repo
@@ -589,7 +593,7 @@ pub async fn get_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ScheduledJobResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
 
     let job = state
         .repo
@@ -625,7 +629,7 @@ pub async fn get_scheduled_job_by_code(
     Path(code): Path<String>,
     Query(q): Query<ByCodeQuery>,
 ) -> Result<Json<ScheduledJobResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
 
     let cid = q.client_id.as_deref();
     let job = state
@@ -660,7 +664,7 @@ pub async fn update_scheduled_job(
     Path(id): Path<String>,
     Json(req): Json<UpdateScheduledJobRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_write_scheduled_jobs(&auth.0)?;
 
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
@@ -695,7 +699,7 @@ pub async fn pause_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -719,7 +723,7 @@ pub async fn resume_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -743,7 +747,7 @@ pub async fn archive_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_jobs(&auth.0)?;
+    checks::can_write_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -767,7 +771,7 @@ pub async fn delete_scheduled_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_delete_scheduled_jobs(&auth.0)?;
+    checks::can_delete_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -796,7 +800,7 @@ pub async fn fire_scheduled_job(
     req: Option<Json<FireRequest>>,
 ) -> Result<(StatusCode, Json<FireNowResponse>), PlatformError> {
     let req = req.map(|Json(r)| r).unwrap_or_default();
-    fc_platform_core::shared::authorization_service::checks::can_fire_scheduled_jobs(&auth.0)?;
+    checks::can_fire_scheduled_jobs(&auth.0)?;
     // The use case answers 404 for a missing job, then checks the caller's
     // scope on it (Go `CheckScopeAccess`, post-load).
 
@@ -839,9 +843,7 @@ pub async fn list_instances_for_job(
     Path(id): Path<String>,
     Query(q): Query<ListInstancesQuery>,
 ) -> Result<Json<PaginatedResponse<ScheduledJobInstanceResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_job_instances(
-        &auth.0,
-    )?;
+    checks::can_read_scheduled_job_instances(&auth.0)?;
     // Go lists by job id without loading the job (an unknown id is an empty
     // page); a job the caller cannot read stays refused.
     if let Some(job) = state.repo.find_by_id(&id).await? {
@@ -852,10 +854,8 @@ pub async fn list_instances_for_job(
         )?;
     }
 
-    let status =
-        fc_platform_core::shared::enum_str::parse_opt::<InstanceStatus>(q.status.as_deref())?;
-    let trigger =
-        fc_platform_core::shared::enum_str::parse_opt::<TriggerKind>(q.trigger_kind.as_deref())?;
+    let status = enum_str::parse_opt::<InstanceStatus>(q.status.as_deref())?;
+    let trigger = enum_str::parse_opt::<TriggerKind>(q.trigger_kind.as_deref())?;
     let filters = InstanceListFilters {
         scheduled_job_id: Some(&id),
         client_id: None,
@@ -894,9 +894,7 @@ pub async fn get_instance(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<ScheduledJobInstanceResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_job_instances(
-        &auth.0,
-    )?;
+    checks::can_read_scheduled_job_instances(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)
@@ -922,9 +920,7 @@ pub async fn list_instance_logs(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<Vec<InstanceLogResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_job_instances(
-        &auth.0,
-    )?;
+    checks::can_read_scheduled_job_instances(&auth.0)?;
     // Go answers an unknown instance's logs with an empty array, not 404.
     let Some(inst) = state.instance_repo.find_by_id(&instance_id).await? else {
         return Ok(Json(Vec::new()));
@@ -957,9 +953,7 @@ pub async fn post_instance_log(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceLogRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_job_instance(
-        &auth.0,
-    )?;
+    checks::can_write_scheduled_job_instance(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)
@@ -968,9 +962,7 @@ pub async fn post_instance_log(
     check_scope_access(&auth, inst.client_id.as_deref())?;
 
     let log = ScheduledJobInstanceLog {
-        id: fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::ScheduledJobInstanceLog,
-        ),
+        id: tsid::generate(EntityType::ScheduledJobInstanceLog),
         instance_id: inst.id.clone(),
         scheduled_job_id: Some(inst.scheduled_job_id.clone()),
         client_id: inst.client_id.clone(),
@@ -997,9 +989,7 @@ pub async fn post_instance_complete(
     Path(instance_id): Path<String>,
     Json(req): Json<InstanceCompleteRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_scheduled_job_instance(
-        &auth.0,
-    )?;
+    checks::can_write_scheduled_job_instance(&auth.0)?;
     let inst = state
         .instance_repo
         .find_by_id(&instance_id)

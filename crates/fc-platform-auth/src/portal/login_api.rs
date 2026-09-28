@@ -26,9 +26,14 @@ use tracing::warn;
 use super::entity::{email_domain_of, normalize_email, random_token, LoginFlow};
 use super::PortalState;
 use crate::auth::authorization_code::{AuthorizationCode, Pkce};
+use crate::auth::oauth_api;
 use crate::auth::oidc_login_api::OidcLoginApiState;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::rate_limit_middleware::RateLimitConfig;
 use fc_platform_core::shared::rate_limit_store::{Bucket, RateLimitDecision};
+use std::env;
+use std::num::NonZeroU32;
+use std::sync::OnceLock;
 
 /// Go `ratelimit.BucketPortalLogin`.
 pub const BUCKET_PORTAL_LOGIN: Bucket = Bucket("portal_login");
@@ -214,7 +219,7 @@ pub async fn authorize(
             "Client is not a portal client",
         );
     };
-    if !crate::auth::oauth_api::matches_redirect_uri(redirect_uri, &client.redirect_uris) {
+    if !oauth_api::matches_redirect_uri(redirect_uri, &client.redirect_uris) {
         return oauth_error(
             StatusCode::BAD_REQUEST,
             "invalid_request",
@@ -436,7 +441,7 @@ pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Re
 /// Verify against a fixed hash so a refused unknown account costs what a
 /// wrong password costs (Go `passwordhash.EqualizeTiming`).
 fn equalize_timing(portal: &PortalState, password: &str) {
-    static DUMMY: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    static DUMMY: OnceLock<Option<String>> = OnceLock::new();
     let dummy = DUMMY.get_or_init(|| {
         portal
             .password_service
@@ -581,15 +586,15 @@ pub async fn portal_oidc_login(
 /// The per-IP quota on the portal routes: Go mounts them in the OIDC
 /// bridge's governor group, `FC_OIDC_RATE_PER_MIN` (60) and `FC_OIDC_BURST`
 /// (30) (`ratelimit.OIDCBridgeGovernorFromEnv`).
-pub fn portal_ip_rate_config() -> fc_platform_core::shared::rate_limit_middleware::RateLimitConfig {
+pub fn portal_ip_rate_config() -> RateLimitConfig {
     let read = |name: &str, default: u32| {
-        std::env::var(name)
+        env::var(name)
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
-            .and_then(std::num::NonZeroU32::new)
-            .unwrap_or(std::num::NonZeroU32::new(default).expect("non-zero default"))
+            .and_then(NonZeroU32::new)
+            .unwrap_or(NonZeroU32::new(default).expect("non-zero default"))
     };
-    fc_platform_core::shared::rate_limit_middleware::RateLimitConfig {
+    RateLimitConfig {
         per_minute: read("FC_OIDC_RATE_PER_MIN", 60),
         burst: read("FC_OIDC_BURST", 30),
     }

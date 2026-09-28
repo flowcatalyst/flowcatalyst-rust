@@ -10,10 +10,15 @@ use crate::support;
 
 use std::collections::HashSet;
 
+use axum::body;
 use axum::response::IntoResponse;
+use fc_platform::checks;
+use fc_platform::client::entity::Client;
+use fc_platform::role::entity::roles;
 use fc_platform::shared::authorization_service::{AuthContext, Credential};
 use fc_platform::usecase::{ExecutionContext, UseCase, UseCaseError};
 use fc_platform::{PlatformError, PrincipalType, UserScope};
+use std::fmt;
 use support::TestApp;
 
 /// A principal caller with the given tier, clients and permissions.
@@ -40,13 +45,11 @@ async fn rendered(err: UseCaseError) -> (u16, String) {
 async fn render(err: PlatformError) -> (u16, String) {
     let resp = err.into_response();
     let status = resp.status().as_u16();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
-fn refusal<T: std::fmt::Debug>(r: fc_platform::UseCaseResult<T>) -> UseCaseError {
+fn refusal<T: fmt::Debug>(r: fc_platform::UseCaseResult<T>) -> UseCaseError {
     match r.into_result() {
         Err(e) => e,
         Ok(v) => panic!("expected a refusal, got {v:?}"),
@@ -54,7 +57,7 @@ fn refusal<T: std::fmt::Debug>(r: fc_platform::UseCaseResult<T>) -> UseCaseError
 }
 
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
-    let client = fc_platform::client::entity::Client::new(identifier.to_uppercase(), identifier);
+    let client = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&client).await.unwrap();
     client.id
 }
@@ -74,7 +77,7 @@ async fn insert_user(
 }
 
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 
@@ -137,7 +140,7 @@ async fn role_assignment_is_bounded_by_the_callers_ceiling() {
     use fc_platform::principal::operations::{AssignUserRolesCommand, AssignUserRolesUseCase};
     let app = setup().await;
     let target = insert_user(&app, "target@authz.test", UserScope::Anchor, None).await;
-    let super_admin = fc_platform::role::entity::roles::super_admin();
+    let super_admin = roles::super_admin();
     if app
         .repos
         .role_repo
@@ -231,7 +234,7 @@ async fn platform_owner_writes_need_anchor_scope() {
     assert_eq!(
         rendered(err).await,
         render(
-            fc_platform::checks::require_anchor_scope(&AuthContext {
+            checks::require_anchor_scope(&AuthContext {
                 principal_id: "p".into(),
                 principal_type: PrincipalType::User,
                 scope: UserScope::Client,

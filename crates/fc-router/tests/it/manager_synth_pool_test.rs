@@ -23,6 +23,10 @@ use fc_common::{
 };
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{Mediator, QueueManager};
+use std::cmp;
+use std::time::Instant;
+use tokio::sync::Notify;
+use tokio::time;
 
 /// Mock mediator: records every delivered message id, always succeeds.
 struct MockMediator {
@@ -52,7 +56,7 @@ impl Mediator for MockMediator {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.processed_ids.lock().push(message.id.clone());
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
         MediationOutcome::success(200)
     }
 }
@@ -65,12 +69,12 @@ struct GatedMediator {
     call_count: AtomicU32,
     processed_ids: parking_lot::Mutex<Vec<String>>,
     hold_first: AtomicBool,
-    started: Arc<tokio::sync::Notify>,
-    release: Arc<tokio::sync::Notify>,
+    started: Arc<Notify>,
+    release: Arc<Notify>,
 }
 
 impl GatedMediator {
-    fn new(started: Arc<tokio::sync::Notify>, release: Arc<tokio::sync::Notify>) -> Self {
+    fn new(started: Arc<Notify>, release: Arc<Notify>) -> Self {
         Self {
             call_count: AtomicU32::new(0),
             processed_ids: parking_lot::Mutex::new(Vec::new()),
@@ -138,7 +142,7 @@ impl QueueConsumer for MockQueueConsumer {
             return Err(QueueError::Stopped);
         }
         let mut messages = self.messages.lock();
-        let count = std::cmp::min(max_messages as usize, messages.len());
+        let count = cmp::min(max_messages as usize, messages.len());
         Ok(messages.drain(0..count).collect())
     }
 
@@ -222,9 +226,9 @@ async fn route(
 
 /// Polls `cond` until it's true or `timeout` elapses.
 async fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + timeout;
-    while !cond() && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(5)).await;
+    let deadline = Instant::now() + timeout;
+    while !cond() && Instant::now() < deadline {
+        time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -295,7 +299,7 @@ async fn idle_past_ttl_is_evicted() {
     assert!(manager.get_pool("acme-DEFAULT-POOL").is_some());
 
     // A 1ns TTL is already exceeded by the time evict_idle_synth_pools runs.
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
     let evicted = manager
         .evict_idle_synth_pools(Duration::from_nanos(1))
         .await;
@@ -320,7 +324,7 @@ async fn evicted_pool_is_resynthesised_fresh_on_demand() {
     route(&manager, vec![queued("m1", "acme-DEFAULT-POOL", "q1")]).await;
     let first = manager.get_pool("acme-DEFAULT-POOL").expect("synthesised");
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
     assert_eq!(
         manager
             .evict_idle_synth_pools(Duration::from_nanos(1))
@@ -350,7 +354,7 @@ async fn recent_traffic_is_spared_while_idle_sibling_is_evicted() {
     let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     route(&manager, vec![queued("m1", "idle-DEFAULT-POOL", "q1")]).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
     route(&manager, vec![queued("m2", "busy-DEFAULT-POOL", "q2")]).await; // routed just now
 
     let evicted = manager
@@ -376,7 +380,7 @@ async fn touch_on_hit_path_resets_idle_clock() {
     let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     route(&manager, vec![queued("m1", "acme-DEFAULT-POOL", "q1")]).await; // creates it
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    time::sleep(Duration::from_millis(30)).await;
     route(&manager, vec![queued("m2", "acme-DEFAULT-POOL", "q2")]).await; // hit path; must touch
 
     let evicted = manager
@@ -417,7 +421,7 @@ async fn global_default_pool_and_configured_pools_are_never_evicted() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
     let evicted = manager
         .evict_idle_synth_pools(Duration::from_nanos(1))
         .await;
@@ -466,7 +470,7 @@ async fn config_defining_a_synthesised_code_takes_ownership_without_pool_replace
         "the configured settings must actually apply"
     );
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
     let evicted = manager
         .evict_idle_synth_pools(Duration::from_nanos(1))
         .await;
@@ -484,7 +488,7 @@ async fn ttl_disabled_sweep_is_a_no_op() {
     let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     route(&manager, vec![queued("m1", "acme-DEFAULT-POOL", "q")]).await;
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
 
     assert_eq!(manager.evict_idle_synth_pools(Duration::ZERO).await, 0);
     assert!(manager.get_pool("acme-DEFAULT-POOL").is_some());
@@ -525,8 +529,8 @@ async fn shutdown_clears_synth_pool_tracking() {
 /// (`begin_pool_drain`) before the drain watcher finally cleans it up.
 #[tokio::test]
 async fn evicted_synth_pool_drains_buffered_group_work_instead_of_dropping_it() {
-    let started = Arc::new(tokio::sync::Notify::new());
-    let release = Arc::new(tokio::sync::Notify::new());
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
     let mediator = Arc::new(GatedMediator::new(started.clone(), release.clone()));
     let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
         mediator.clone(),
@@ -550,7 +554,7 @@ async fn evicted_synth_pool_drains_buffered_group_work_instead_of_dropping_it() 
         "m1 hasn't returned from mediate() yet"
     );
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    time::sleep(Duration::from_millis(2)).await;
     let evicted = manager
         .evict_idle_synth_pools(Duration::from_nanos(1))
         .await;

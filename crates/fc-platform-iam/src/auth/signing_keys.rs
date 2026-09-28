@@ -13,11 +13,13 @@
 //! exactly as Go's `server.NormalizePEM` does, and the key id of a supplied
 //! PEM is computed over the normalised text, as Go computes it.
 
+use base64::engine::general_purpose;
 use base64::Engine;
 use rsa::pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePublicKey, LineEnding};
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
+use std::env;
 
 /// Repair a PEM carried in an environment variable (Go `NormalizePEM`,
 /// internal/server/signing_key.go): trim whitespace and surrounding double
@@ -29,7 +31,7 @@ pub fn normalize_pem(raw: &str) -> String {
         s = s.replace("\\r\\n", "\n").replace("\\n", "\n");
     }
     if !s.contains("-----BEGIN") {
-        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s.trim()) {
+        if let Ok(decoded) = general_purpose::STANDARD.decode(s.trim()) {
             if let Ok(text) = String::from_utf8(decoded) {
                 if text.contains("-----BEGIN") {
                     return text;
@@ -52,7 +54,7 @@ fn pem_der(pem: &str) -> Option<Vec<u8>> {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    base64::engine::general_purpose::STANDARD.decode(body).ok()
+    general_purpose::STANDARD.decode(body).ok()
 }
 
 /// Parse an RSA private key PEM, PKCS#1 or PKCS#8 (Go
@@ -89,12 +91,12 @@ pub fn public_pem_from_private_pem(private_pem: &str) -> Result<String, String> 
 pub fn key_id(public_key_pem: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(public_key_pem.as_bytes());
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16])
+    general_purpose::URL_SAFE_NO_PAD.encode(&hash[..16])
 }
 
 /// The JWKS `n` / `e` members (base64url, unpadded, big-endian).
 pub fn jwk_components(key: &RsaPublicKey) -> (String, String) {
-    let enc = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let enc = general_purpose::URL_SAFE_NO_PAD;
     (
         enc.encode(key.n().to_bytes_be()),
         enc.encode(key.e().to_bytes_be()),
@@ -105,7 +107,7 @@ pub fn jwk_components(key: &RsaPublicKey) -> (String, String) {
 fn env_first(names: &[&str]) -> Option<String> {
     names
         .iter()
-        .find_map(|n| std::env::var(n).ok().filter(|v| !v.trim().is_empty()))
+        .find_map(|n| env::var(n).ok().filter(|v| !v.trim().is_empty()))
 }
 
 /// The inline signing key from the environment, normalised: Go reads
@@ -134,19 +136,22 @@ pub fn previous_public_key_from_env() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose;
     use rsa::pkcs1::EncodeRsaPrivateKey;
     use rsa::pkcs8::EncodePrivateKey;
+    use rsa::rand_core::OsRng;
+    use std::str;
 
     fn key() -> RsaPrivateKey {
-        RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048).unwrap()
+        RsaPrivateKey::new(&mut OsRng, 2048).unwrap()
     }
 
     /// Go's `pem.EncodeToMemory` layout, built by hand.
     fn go_pem(label: &str, der: &[u8]) -> String {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+        let b64 = general_purpose::STANDARD.encode(der);
         let mut out = format!("-----BEGIN {label}-----\n");
         for chunk in b64.as_bytes().chunks(64) {
-            out.push_str(std::str::from_utf8(chunk).unwrap());
+            out.push_str(str::from_utf8(chunk).unwrap());
             out.push('\n');
         }
         out.push_str(&format!("-----END {label}-----\n"));
@@ -172,7 +177,7 @@ mod tests {
         assert_eq!(normalize_pem(&escaped), pem.trim());
         let crlf = pem.trim().replace('\n', "\\r\\n");
         assert_eq!(normalize_pem(&crlf), pem.trim());
-        let b64 = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+        let b64 = general_purpose::STANDARD.encode(pem.as_bytes());
         assert_eq!(normalize_pem(&b64), pem);
         assert_eq!(normalize_pem(&format!("  {pem}  ")), pem.trim());
         assert!(parse_private_key(&normalize_pem(&escaped)).is_ok());

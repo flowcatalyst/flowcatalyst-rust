@@ -2,6 +2,7 @@
 //! and stream-processor health.
 
 use super::AppState;
+use crate::router_metrics;
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -9,6 +10,8 @@ use axum::{
     Json,
 };
 use chrono::{Duration as ChronoDuration, Utc};
+use fc_common::diagnostics;
+use fc_common::diagnostics::Exposition;
 use fc_common::HealthStatus;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -119,13 +122,13 @@ pub(crate) async fn liveness_probe() -> Json<ProbeResponse> {
 )]
 pub(crate) async fn readiness_probe(State(state): State<AppState>) -> Response {
     // Java: check broker connectivity via consumer is_healthy() before health report
-    crate::router_metrics::record_broker_connection_attempt();
+    router_metrics::record_broker_connection_attempt();
     let broker_healthy = state.queue_manager.check_broker_connectivity().await;
-    crate::router_metrics::set_broker_available(broker_healthy);
+    router_metrics::set_broker_available(broker_healthy);
     if broker_healthy {
-        crate::router_metrics::record_broker_connection_success();
+        router_metrics::record_broker_connection_success();
     } else {
-        crate::router_metrics::record_broker_connection_failure();
+        router_metrics::record_broker_connection_failure();
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ProbeResponse {
@@ -174,11 +177,7 @@ pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
         }
     };
     // The tokio runtime and the process (CPU, RSS, fds, threads, panics).
-    fc_common::diagnostics::render_prometheus(
-        &mut output,
-        None,
-        fc_common::diagnostics::Exposition::Prometheus,
-    );
+    diagnostics::render_prometheus(&mut output, None, Exposition::Prometheus);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],

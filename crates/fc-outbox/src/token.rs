@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio::sync::Mutex;
 
 /// Supplies the bearer token for each platform request.
@@ -39,7 +41,7 @@ pub struct ClientCredentialsTokenSource {
     scope: Option<String>,
     client: reqwest::Client,
     cached: Mutex<Option<(String, Instant)>>,
-    invalidated: std::sync::atomic::AtomicBool,
+    invalidated: AtomicBool,
 }
 
 impl ClientCredentialsTokenSource {
@@ -61,7 +63,7 @@ impl ClientCredentialsTokenSource {
                 .build()
                 .expect("a plain reqwest client builds"),
             cached: Mutex::new(None),
-            invalidated: std::sync::atomic::AtomicBool::new(false),
+            invalidated: AtomicBool::new(false),
         }
     }
 
@@ -112,10 +114,7 @@ impl ClientCredentialsTokenSource {
 impl TokenSource for ClientCredentialsTokenSource {
     async fn token(&self) -> anyhow::Result<String> {
         let mut cached = self.cached.lock().await;
-        if self
-            .invalidated
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
+        if self.invalidated.swap(false, Ordering::SeqCst) {
             *cached = None;
         }
         if let Some((token, expires)) = cached.as_ref() {
@@ -129,8 +128,7 @@ impl TokenSource for ClientCredentialsTokenSource {
     }
 
     fn invalidate(&self) {
-        self.invalidated
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.invalidated.store(true, Ordering::SeqCst);
     }
 }
 
@@ -138,18 +136,20 @@ impl TokenSource for ClientCredentialsTokenSource {
 mod tests {
     use super::*;
     use axum::extract::State;
+    use axum::http::StatusCode;
     use axum::routing::post;
     use axum::{Form, Json, Router};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use tokio::net::TcpListener;
 
     async fn token_endpoint(
         State(minted): State<Arc<AtomicUsize>>,
         Form(form): Form<HashMap<String, String>>,
-    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    ) -> Result<Json<serde_json::Value>, StatusCode> {
         if form.get("client_secret").map(String::as_str) != Some("secret") {
-            return Err(axum::http::StatusCode::UNAUTHORIZED);
+            return Err(StatusCode::UNAUTHORIZED);
         }
         let n = minted.fetch_add(1, Ordering::SeqCst) + 1;
         Ok(Json(serde_json::json!({
@@ -164,7 +164,7 @@ mod tests {
         let app = Router::new()
             .route("/oauth/token", post(token_endpoint))
             .with_state(minted.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{addr}/oauth/token"), minted)

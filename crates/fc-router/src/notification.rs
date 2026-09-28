@@ -14,7 +14,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use tracing::{debug, error, info, warn};
 
+use fc_common::diagnostics;
+use fc_common::diagnostics::OnPanic;
 use fc_common::{Warning, WarningSeverity};
+#[cfg(feature = "email")]
+use lettre::message::Mailbox;
+use std::mem;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Notification service trait
 #[async_trait]
@@ -77,8 +88,8 @@ impl TeamsWebhookNotificationService {
         // Bounded: a hung webhook must not hold the batch sender (and the
         // warnings queued behind it) for ever.
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default();
         Self {
@@ -371,8 +382,8 @@ pub struct EmailConfig {
 #[cfg(feature = "email")]
 pub struct EmailNotificationService {
     transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
-    from: lettre::message::Mailbox,
-    to: Vec<lettre::message::Mailbox>,
+    from: Mailbox,
+    to: Vec<Mailbox>,
     enabled: bool,
 }
 
@@ -386,12 +397,12 @@ impl EmailNotificationService {
         use lettre::transport::smtp::authentication::Credentials;
         use lettre::AsyncSmtpTransport;
 
-        let from: lettre::message::Mailbox = config
+        let from: Mailbox = config
             .from_address
             .parse()
             .map_err(|e| format!("Invalid from_address '{}': {}", config.from_address, e))?;
 
-        let to: Vec<lettre::message::Mailbox> = config
+        let to: Vec<Mailbox> = config
             .to_addresses
             .iter()
             .map(|addr| {
@@ -657,7 +668,7 @@ pub struct BatchingNotificationService {
     min_severity: WarningSeverity,
     warning_batch: Mutex<Vec<Warning>>,
     /// Warnings past [`MAX_BATCHED_WARNINGS`] in the current period.
-    overflow: std::sync::atomic::AtomicU64,
+    overflow: AtomicU64,
     batch_start_time: Mutex<DateTime<Utc>>,
 }
 
@@ -675,7 +686,7 @@ impl BatchingNotificationService {
             delegates,
             min_severity,
             warning_batch: Mutex::new(Vec::new()),
-            overflow: std::sync::atomic::AtomicU64::new(0),
+            overflow: AtomicU64::new(0),
             batch_start_time: Mutex::new(Utc::now()),
         }
     }
@@ -702,7 +713,7 @@ impl BatchingNotificationService {
                 debug!("No warnings to send in this batch period");
                 return;
             }
-            std::mem::take(&mut *batch)
+            mem::take(&mut *batch)
         };
 
         let batch_start = {
@@ -779,7 +790,7 @@ impl BatchingNotificationService {
         }
 
         summary.push_str(&format!("Total Warnings: {}\n", warnings.len()));
-        let overflow = self.overflow.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let overflow = self.overflow.swap(0, Ordering::Relaxed);
         if overflow > 0 {
             summary.push_str(&format!(
                 "(+{overflow} more warnings in this period, past the batch limit of {MAX_BATCHED_WARNINGS})\n"
@@ -815,8 +826,7 @@ impl NotificationService for BatchingNotificationService {
             if batch.len() < MAX_BATCHED_WARNINGS {
                 batch.push(warning.clone());
             } else {
-                self.overflow
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.overflow.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -901,7 +911,7 @@ pub struct NotificationServiceWithScheduler {
     /// The notification service
     pub service: Arc<BatchingNotificationService>,
     /// Task handle for the batch scheduler (if batching is enabled)
-    pub scheduler_handle: Option<tokio::task::JoinHandle<()>>,
+    pub scheduler_handle: Option<JoinHandle<()>>,
 }
 
 /// Create notification service with batch scheduler
@@ -956,13 +966,13 @@ pub fn create_notification_service_with_scheduler(
         // handle) is dropped at shutdown, rather than looping forever with no
         // exit arm. Mirrors the router's broker-stats refresh task.
         let weak_service: Weak<BatchingNotificationService> = Arc::downgrade(&service);
-        let interval = std::time::Duration::from_secs(config.batch_interval_seconds);
+        let interval = Duration::from_secs(config.batch_interval_seconds);
 
         // Supervised: a panic while sending a batch is logged and the
         // scheduler restarted, rather than batching stopping silently.
-        Some(fc_common::diagnostics::spawn_supervised(
+        Some(diagnostics::spawn_supervised(
             "router.notification_batch",
-            fc_common::diagnostics::OnPanic::Restart,
+            OnPanic::Restart,
             move || {
                 let weak_service = weak_service.clone();
                 async move {
@@ -970,8 +980,8 @@ pub fn create_notification_service_with_scheduler(
                         interval_secs = interval.as_secs(),
                         "Starting notification batch scheduler"
                     );
-                    let mut interval_timer = tokio::time::interval(interval);
-                    interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    let mut interval_timer = time::interval(interval);
+                    interval_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
                     // The first tick fires at once: nothing is batched yet.
                     interval_timer.tick().await;
 

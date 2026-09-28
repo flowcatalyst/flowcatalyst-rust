@@ -9,9 +9,11 @@ use tracing::warn;
 
 use crate::password_reset::entity::{PasswordResetToken, TokenPurpose};
 use crate::password_reset::repository::PasswordResetTokenRepository;
+use crate::platform_config::repository::PlatformConfigRepository;
 use crate::principal::entity::Principal;
 use crate::principal::operations::events::PasswordResetRequested;
 use crate::shared::branding::{EmailContent, Theme};
+use base64::engine::general_purpose;
 use fc_platform_core::shared::email_service::{EmailMessage, EmailService};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::unit_of_work::{PgUnitOfWork, UnitOfWork};
@@ -33,7 +35,7 @@ pub struct PasswordResetEmailer {
     /// Platform config, for the login theme (logo, colours, brand name) the
     /// emails are rendered with (Go `NewEmailer(svc, brand)`); `None` renders
     /// the defaults.
-    pub brand: Option<Arc<crate::platform_config::repository::PlatformConfigRepository>>,
+    pub brand: Option<Arc<PlatformConfigRepository>>,
 }
 
 /// What a reset token carries beyond its principal.
@@ -247,5 +249,5 @@ pub fn generate_raw_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    base64::Engine::encode(&general_purpose::URL_SAFE_NO_PAD, bytes)
 }

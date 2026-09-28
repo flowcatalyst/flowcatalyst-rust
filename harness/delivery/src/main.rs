@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use fc_delivery_harness::stack::SideKind;
 use fc_delivery_harness::{Options, RustSchema};
+use std::process;
 
 #[derive(Parser, Debug)]
 #[command(about = "Drive identical delivery scenarios through the Go and Rust stacks and compare")]
@@ -79,10 +80,10 @@ async fn main() {
         _ => RustSchema::Go,
     };
     match fc_delivery_harness::run(opts).await {
-        Ok(report) => std::process::exit(if report.ok() { 0 } else { 1 }),
+        Ok(report) => process::exit(if report.ok() { 0 } else { 1 }),
         Err(e) => {
             eprintln!("harness error: {e:#}");
-            std::process::exit(2);
+            process::exit(2);
         }
     }
 }

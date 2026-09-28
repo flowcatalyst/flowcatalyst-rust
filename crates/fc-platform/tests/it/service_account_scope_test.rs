@@ -8,6 +8,7 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use fc_platform::application::entity::Application;
 use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use support::{read_json, TestApp};
@@ -15,7 +16,7 @@ use support::{read_json, TestApp};
 /// Service-account creation encrypts the generated webhook credentials and
 /// hashes the OAuth client secret; any 32-byte key will do.
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 
@@ -321,7 +322,7 @@ async fn update_moves_the_principal_reach() {
 #[ignore = "requires Docker"]
 async fn provisioned_service_account_is_anchor() {
     let app = setup().await;
-    let application = fc_platform::application::entity::Application::new("prov-scope", "Prov");
+    let application = Application::new("prov-scope", "Prov");
     app.repos
         .application_repo
         .insert(&application)

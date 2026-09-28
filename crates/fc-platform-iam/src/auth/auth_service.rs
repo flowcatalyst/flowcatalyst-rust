@@ -3,15 +3,21 @@
 //! JWT token generation and validation.
 //! Supports both RS256 (RSA) for production and HS256 (HMAC) for development.
 
+use crate::auth::signing_keys;
 use crate::principal::entity::Principal;
 use chrono::{Duration, Utc};
 use dashmap::DashMap;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::tsid;
+use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use rsa::rand_core::OsRng;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::Path;
+use std::result;
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -258,7 +264,7 @@ pub struct AccessTokenClaims {
 fn tier_or_empty<S: serde::Serializer>(
     tier: &Option<UserScope>,
     s: S,
-) -> std::result::Result<S::Ok, S::Error> {
+) -> result::Result<S::Ok, S::Error> {
     s.serialize_str(tier.map_or("", |t| t.as_str()))
 }
 
@@ -302,7 +308,7 @@ struct AccessTokenClaimsWire {
 impl TryFrom<AccessTokenClaimsWire> for AccessTokenClaims {
     type Error = String;
 
-    fn try_from(w: AccessTokenClaimsWire) -> std::result::Result<Self, Self::Error> {
+    fn try_from(w: AccessTokenClaimsWire) -> result::Result<Self, Self::Error> {
         // `tier` wins when present. Without it the token predates Go's shape
         // and its `scope` is the tier, not permissions. An empty `tier` is
         // Go's portal access token (`redeemPortalCode`, a `ptu_` identity
@@ -490,21 +496,20 @@ impl AuthConfig {
     ) -> (Option<String>, Option<String>) {
         let read = |path: Option<&str>| {
             path.filter(|p| !p.is_empty())
-                .and_then(|p| std::fs::read_to_string(p).ok())
+                .and_then(|p| fs::read_to_string(p).ok())
         };
-        let private_key =
-            read(private_key_path).or_else(crate::auth::signing_keys::private_key_from_env);
+        let private_key = read(private_key_path).or_else(signing_keys::private_key_from_env);
 
         let public_key = read(public_key_path)
             .or_else(|| {
-                std::env::var("FLOWCATALYST_JWT_PUBLIC_KEY")
+                env::var("FLOWCATALYST_JWT_PUBLIC_KEY")
                     .ok()
                     .filter(|s| !s.trim().is_empty())
-                    .map(|s| crate::auth::signing_keys::normalize_pem(&s))
+                    .map(|s| signing_keys::normalize_pem(&s))
             })
             .or_else(|| {
                 private_key.as_deref().and_then(|p| {
-                    crate::auth::signing_keys::public_pem_from_private_pem(p)
+                    signing_keys::public_pem_from_private_pem(p)
                         .map_err(|e| warn!("Cannot derive the JWT public key: {}", e))
                         .ok()
                 })
@@ -527,7 +532,7 @@ impl AuthConfig {
 
         info!("Generating RSA key pair (2048 bit)");
 
-        let mut rng = rsa::rand_core::OsRng;
+        let mut rng = OsRng;
         let private_key =
             RsaPrivateKey::new(&mut rng, 2048).map_err(|e| PlatformError::Internal {
                 message: format!("Failed to generate RSA key: {}", e),
@@ -634,7 +639,7 @@ impl AuthConfig {
             "Generating RSA key pair (2048 bit) at configured paths"
         );
 
-        let mut rng = rsa::rand_core::OsRng;
+        let mut rng = OsRng;
         let private_key =
             RsaPrivateKey::new(&mut rng, 2048).map_err(|e| PlatformError::Internal {
                 message: format!("Failed to generate RSA key: {}", e),
@@ -804,13 +809,12 @@ impl AuthService {
     /// Extract RSA public key components (n, e) for JWKS. Accepts SPKI and
     /// PKCS#1 PEMs, as Go's `parseRSAPublicKey` does.
     fn extract_rsa_components(public_key_pem: &str) -> Result<RsaPublicKeyComponents> {
-        let public_key =
-            crate::auth::signing_keys::parse_public_key(public_key_pem).map_err(|e| {
-                PlatformError::Internal {
-                    message: format!("Failed to parse RSA public key: {}", e),
-                }
-            })?;
-        let (n, e) = crate::auth::signing_keys::jwk_components(&public_key);
+        let public_key = signing_keys::parse_public_key(public_key_pem).map_err(|e| {
+            PlatformError::Internal {
+                message: format!("Failed to parse RSA public key: {}", e),
+            }
+        })?;
+        let (n, e) = signing_keys::jwk_components(&public_key);
         Ok(RsaPublicKeyComponents { n, e })
     }
 
@@ -861,7 +865,7 @@ impl AuthService {
     /// Generate key ID from public key (22 char base64url SHA-256 hash; Go
     /// `generateKeyID`).
     fn generate_key_id(public_key_pem: &str) -> String {
-        crate::auth::signing_keys::key_id(public_key_pem)
+        signing_keys::key_id(public_key_pem)
     }
 
     /// Get the key ID (for JWKS)
@@ -1052,7 +1056,7 @@ impl AuthService {
 
         let mut decoded = decode::<SessionTokenWire>(token, &self.decoding_key, &validation);
         if let Err(e) = &decoded {
-            if !matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
+            if !matches!(e.kind(), ErrorKind::ExpiredSignature) {
                 for prev in &self.previous_keys {
                     if let Ok(data) =
                         decode::<SessionTokenWire>(token, &prev.decoding_key, &validation)
@@ -1065,7 +1069,7 @@ impl AuthService {
         }
         let claims = match decoded {
             Ok(data) => data.claims,
-            Err(e) if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) => {
+            Err(e) if matches!(e.kind(), ErrorKind::ExpiredSignature) => {
                 return Err(PlatformError::TokenExpired)
             }
             Err(e) => {
@@ -1185,7 +1189,7 @@ impl AuthService {
             exp: exp.timestamp(),
             iat: now.timestamp(),
             nbf: now.timestamp(),
-            jti: fc_platform_core::shared::tsid::generate_untyped(),
+            jti: tsid::generate_untyped(),
             principal_type: principal.principal_type,
             tier: Some(principal.scope),
             scope: None,
@@ -1312,7 +1316,7 @@ impl AuthService {
             Ok(data) => return Ok(data.claims),
             Err(e) => {
                 // If expired, don't bother trying other keys
-                if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
+                if matches!(e.kind(), ErrorKind::ExpiredSignature) {
                     return Err(PlatformError::TokenExpired);
                 }
                 // If no previous keys, fail immediately
@@ -1348,7 +1352,9 @@ mod tests {
     use crate::principal::entity::Principal;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 
+    use base64::engine::general_purpose;
     use serde_json::json;
+    use std::result;
 
     fn service() -> AuthService {
         AuthService::new(AuthConfig {
@@ -1393,9 +1399,7 @@ mod tests {
     fn payload_json(token: &str) -> serde_json::Value {
         use base64::Engine;
         let payload = token.split('.').nth(1).unwrap();
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload)
-            .unwrap();
+        let bytes = general_purpose::URL_SAFE_NO_PAD.decode(payload).unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
@@ -1838,7 +1842,7 @@ mod tests {
         assert_eq!(claims.tier, Some(UserScope::Partner));
         assert_eq!(claims.granted_permissions(), vec!["ANCHOR"]);
 
-        let untiered: std::result::Result<AccessTokenClaims, _> = serde_json::from_value(json!({
+        let untiered: result::Result<AccessTokenClaims, _> = serde_json::from_value(json!({
             "sub": "prn_1", "iss": "i", "aud": "a", "exp": 2, "iat": 1,
             "type": "USER", "scope": "platform:iam:user:view"
         }));

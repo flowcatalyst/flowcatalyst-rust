@@ -1,6 +1,8 @@
 //! DispatchPool Entity — matches TypeScript DispatchPool domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,9 +42,7 @@ impl DispatchPool {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::DispatchPool,
-            ),
+            id: tsid::generate(EntityType::DispatchPool),
             code: code.into(),
             name: name.into(),
             description: None,

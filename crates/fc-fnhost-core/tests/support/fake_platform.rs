@@ -18,6 +18,8 @@ use axum::Router;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
+use tokio::net::TcpListener;
+use tokio::time;
 
 #[derive(Default)]
 pub struct FakePlatform {
@@ -137,7 +139,7 @@ pub async fn start() -> (Arc<FakePlatform>, String) {
         .route("/control/functions/heartbeat", post(heartbeat))
         .route("/control/functions/artifacts/{version_id}", get(artifact))
         .with_state(platform.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (platform, url)
@@ -183,7 +185,7 @@ pub async fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
         if condition() {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for {what}");
 }

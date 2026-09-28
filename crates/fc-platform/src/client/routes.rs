@@ -1,6 +1,11 @@
 //! Client routes: `/api/clients`, plus Go's `POST /api/clients/search`
 //! at its full path.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

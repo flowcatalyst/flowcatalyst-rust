@@ -8,6 +8,8 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use fc_platform::application::entity::Application;
+use fc_platform::service_account::entity::RoleAssignment;
 use support::{read_json, TestApp};
 
 /// An anchor admin that reaches every application (the syncs answer 404 out
@@ -21,9 +23,7 @@ async fn setup(code: &str) -> (TestApp, String) {
         fc_platform::UserScope::Anchor,
     );
     caller.all_applications = true;
-    caller.roles = vec![fc_platform::service_account::entity::RoleAssignment::new(
-        "platform:test-admin",
-    )];
+    caller.roles = vec![RoleAssignment::new("platform:test-admin")];
     app.repos
         .principal_repo
         .insert(&caller)
@@ -35,9 +35,7 @@ async fn setup(code: &str) -> (TestApp, String) {
         .expect("caller token");
     app.repos
         .application_repo
-        .insert(&fc_platform::application::entity::Application::new(
-            code, code,
-        ))
+        .insert(&Application::new(code, code))
         .await
         .expect("insert application");
     (app, token)

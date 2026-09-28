@@ -2,6 +2,7 @@
 
 use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
+use crate::client::SyncResult;
 use serde::{Deserialize, Serialize};
 
 /// List of event types returned by `GET /api/event-types`.
@@ -218,7 +219,7 @@ impl EventTypes<'_> {
         app_code: &str,
         req: &SyncEventTypesRequest,
         remove_unlisted: bool,
-    ) -> Result<crate::client::SyncResult, ClientError> {
+    ) -> Result<SyncResult, ClientError> {
         let query = if remove_unlisted {
             "?removeUnlisted=true"
         } else {

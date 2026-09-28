@@ -48,6 +48,21 @@ use fc_platform::usecase::PgUnitOfWork;
 
 use super::*;
 use crate::fn_cli::{self, Io};
+use crate::init;
+use crate::init::InitArgs;
+use fc_platform::router;
+use fc_platform::service::RoleSyncService;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_platform::shared::rate_limit_store::NoopRateLimitStore;
+use fc_platform::shared::rate_limit_store::RateLimitPolicies;
+use fc_platform::shared::tsid;
+use std::env;
+use std::fs;
+use std::io;
+use std::process;
+use tokio::net::TcpListener;
+use tokio::time;
 
 const ADDRESS: &str = "shop.fulfilment.book-shipment";
 
@@ -61,7 +76,7 @@ fn repo_path(rel: &str) -> PathBuf {
 /// from the flags and the credentials file.
 async fn fc_dev_fn(args: &[&str]) -> (i32, String, String) {
     let parsed = fn_cli::parse(args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
-    let (mut out, mut err, mut stdin) = (Vec::new(), Vec::new(), std::io::empty());
+    let (mut out, mut err, mut stdin) = (Vec::new(), Vec::new(), io::empty());
     let env = |_: &str| None;
     let code = fn_cli::run_with(
         &parsed,
@@ -87,7 +102,7 @@ async fn fc_dev_init(database_url: &str, root: &Path) {
     #[derive(Parser)]
     struct Init {
         #[command(flatten)]
-        args: crate::init::InitArgs,
+        args: InitArgs,
     }
 
     let mut init = Init::try_parse_from([
@@ -109,27 +124,22 @@ async fn fc_dev_init(database_url: &str, root: &Path) {
     .unwrap()
     .args;
     init.embedded_db = false;
-    crate::init::run(init).await.expect("fc-dev init");
+    init::run(init).await.expect("fc-dev init");
 }
 
 /// The platform as `main` builds it, on `api_port`.
 async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Repositories {
-    let pool = fc_platform::shared::database::create_pool(database_url)
+    let pool = database::create_pool(database_url).await.expect("pool");
+    database::run_migrations(&pool, MigrationProfile::Embedded)
         .await
-        .expect("pool");
-    fc_platform::shared::database::run_migrations(
-        &pool,
-        fc_platform::shared::database::MigrationProfile::Embedded,
-    )
-    .await
-    .expect("migrations");
-    fc_platform::shared::database::seed_builtin_roles(&pool)
+        .expect("migrations");
+    database::seed_builtin_roles(&pool)
         .await
         .expect("built-in roles");
-    fc_platform::shared::database::seed_platform_application(&pool)
+    database::seed_platform_application(&pool)
         .await
         .expect("platform application");
-    fc_platform::service::RoleSyncService::new(Arc::new(RoleRepository::new(&pool)))
+    RoleSyncService::new(Arc::new(RoleRepository::new(&pool)))
         .sync_code_defined_roles()
         .await
         .expect("role sync");
@@ -162,10 +172,8 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
         &auth_services,
         &unit_of_work,
         PlatformRoutesConfig {
-            rate_limit_store: Arc::new(fc_platform::shared::rate_limit_store::NoopRateLimitStore),
-            rate_limit_policies: Arc::new(
-                fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-            ),
+            rate_limit_store: Arc::new(NoopRateLimitStore),
+            rate_limit_policies: Arc::new(RateLimitPolicies::from_env()),
             session_cookie_secure: false,
             session_cookie_same_site: PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string(),
             session_token_expiry_secs: PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,
@@ -176,14 +184,14 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
         },
         platform_application_id,
     );
-    let (router, _openapi) = fc_platform::router::build(&ctx);
+    let (router, _openapi) = router::build(&ctx);
     let router = router.layer(AuthLayer::new(AppState {
         auth_service: auth_services.auth.clone(),
         authz_service: auth_services.authz.clone(),
     }));
     let router = nudge_on_function_writes(router, slot);
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", api_port))
+    let listener = TcpListener::bind(("127.0.0.1", api_port))
         .await
         .expect("the API port");
     tokio::spawn(async move {
@@ -201,18 +209,18 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
 async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     let tmp = tempfile::tempdir().unwrap();
     let data_dir = tmp.path().join("data");
-    std::env::set_var(
+    env::set_var(
         "FLOWCATALYST_APP_KEY",
         "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
     );
     // Pinned so a developer's own settings cannot leak in.
-    std::env::set_var(
+    env::set_var(
         "FC_FN_ARTIFACT_STORE",
         format!("file://{}", data_dir.join("fn-artifacts").display()),
     );
-    std::env::set_var("FC_FN_SIGNATURES", "off");
-    std::env::set_var("FLOWCATALYST_DEV_MODE", "true");
-    std::env::remove_var("FC_FN_POOL_URL");
+    env::set_var("FC_FN_SIGNATURES", "off");
+    env::set_var("FLOWCATALYST_DEV_MODE", "true");
+    env::remove_var("FC_FN_POOL_URL");
 
     let api_port = free_port();
     let args = FunctionArgs {
@@ -224,7 +232,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     };
     apply_platform_defaults(&args, &data_dir);
     assert_eq!(
-        std::env::var("FC_FN_POOL_URL").unwrap(),
+        env::var("FC_FN_POOL_URL").unwrap(),
         format!("http://127.0.0.1:{}", args.fn_port)
     );
 
@@ -260,10 +268,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&cli_file_path)
-            .unwrap()
-            .permissions()
-            .mode();
+        let mode = fs::metadata(&cli_file_path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
     let creds = cli_file_path.to_str().unwrap().to_string();
@@ -278,7 +283,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
          VALUES ($1, 'shop:orders:order:placed', 'Order placed', 'CURRENT', 'API', false, \
          'shop', 'orders', 'order', NOW(), NOW())",
     )
-    .bind(fc_platform::shared::tsid::generate_untyped())
+    .bind(tsid::generate_untyped())
     .execute(&repos.pool)
     .await
     .unwrap();
@@ -288,7 +293,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     let wasm = repo_path("crates/fc-fnhost-core/tests/fixtures/wasm/hello.wasm");
     let wasm = wasm.to_str().unwrap();
     let secret_file = tmp.path().join("carrier-key");
-    std::fs::write(&secret_file, "k-carrier-1\n").unwrap();
+    fs::write(&secret_file, "k-carrier-1\n").unwrap();
 
     // ── 1. settings; the first creates the function ──────────────────────
     let (code, out, err) = fc_dev_fn(&[
@@ -322,7 +327,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     );
     assert!(out.contains("! settings missing: CARRIER_API_KEY"), "{out}");
     let bad_manifest = tmp.path().join("bad-manifest.json");
-    std::fs::write(&bad_manifest, r#"{"runtime":"cobol","entrypoint":"x"}"#).unwrap();
+    fs::write(&bad_manifest, r#"{"runtime":"cobol","entrypoint":"x"}"#).unwrap();
     let (code, out, err) = fc_dev_fn(&[
         "--credentials-file",
         &creds,
@@ -451,7 +456,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
         if result.0 == 0 || Instant::now() > deadline {
             break result;
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        time::sleep(Duration::from_millis(250)).await;
     };
     assert_eq!(code, 0, "{out}{err}");
     let answer: Value = serde_json::from_str(out.trim()).unwrap();
@@ -481,7 +486,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     // ── 5. a function reaches its own database ───────────────────────────
     let db_address = "shop.default.orders";
     let db_manifest = tmp.path().join("db-manifest.json");
-    std::fs::write(
+    fs::write(
         &db_manifest,
         serde_json::json!({
             "runtime": "wasm",
@@ -495,7 +500,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     .unwrap();
     let db_manifest = db_manifest.to_str().unwrap();
     let dsn_file = tmp.path().join("orders-dsn");
-    std::fs::write(&dsn_file, &database_url).unwrap();
+    fs::write(&dsn_file, &database_url).unwrap();
     let (code, out, err) = fc_dev_fn(&[
         "--credentials-file",
         &creds,
@@ -546,7 +551,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
             serde_json::from_str::<Value>(answer["body"].as_str().unwrap()).unwrap()
         }
     };
-    let table = format!("fn_e2e_orders_{}", std::process::id());
+    let table = format!("fn_e2e_orders_{}", process::id());
     assert_eq!(
         call("POST", format!("/setup?table={table}")).await["updated"],
         0
@@ -623,7 +628,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
             if result.0 == 0 || Instant::now() > deadline {
                 break result;
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            time::sleep(Duration::from_millis(250)).await;
         };
         assert_eq!(code, 0, "{out}{err}");
         let answer: Value = serde_json::from_str(out.trim()).unwrap();
@@ -644,7 +649,7 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
         assert!(err.contains("ARTIFACT_RUNTIME_MISMATCH"), "{out}{err}");
     }
 
-    tokio::time::timeout(Duration::from_secs(30), slot.close())
+    time::timeout(Duration::from_secs(30), slot.close())
         .await
         .expect("the host shuts down");
     assert!(!slot.is_running());

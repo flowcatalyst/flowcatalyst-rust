@@ -30,6 +30,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
+use std::fs;
+use std::fs::DirBuilder;
+use std::fs::File;
+use std::io;
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
@@ -85,8 +89,8 @@ impl CwasmCache {
                 Ok(component) => return Ok((component, Source::Hit)),
                 Err(why) => {
                     tracing::warn!(path = %path.display(), reason = %why, "discarding a cached .cwasm; compiling the component again");
-                    let _ = std::fs::remove_file(&path);
-                    let _ = std::fs::remove_file(self.sum_path(digest_hex));
+                    let _ = fs::remove_file(&path);
+                    let _ = fs::remove_file(self.sum_path(digest_hex));
                     replaced = true;
                 }
             }
@@ -125,9 +129,9 @@ impl CwasmCache {
         digest_hex: &str,
         path: &Path,
     ) -> Result<Component, String> {
-        let expected = std::fs::read_to_string(self.sum_path(digest_hex))
+        let expected = fs::read_to_string(self.sum_path(digest_hex))
             .map_err(|_| "no checksum beside it".to_owned())?;
-        let bytes = std::fs::read(path).map_err(|e| format!("unreadable: {e}"))?;
+        let bytes = fs::read(path).map_err(|e| format!("unreadable: {e}"))?;
         let actual = hex::encode(Sha256::digest(&bytes));
         if actual != expected.trim() {
             return Err("its checksum does not match".into());
@@ -139,7 +143,7 @@ impl CwasmCache {
             .map_err(|e| format!("does not deserialize: {e:#}"))
     }
 
-    fn store(&self, digest_hex: &str, compiled: &[u8]) -> std::io::Result<()> {
+    fn store(&self, digest_hex: &str, compiled: &[u8]) -> io::Result<()> {
         create_private_dir(&self.dir)?;
         let sum = hex::encode(Sha256::digest(compiled));
         let suffix: u64 = rand::random();
@@ -150,31 +154,28 @@ impl CwasmCache {
         let result = (|| {
             write_synced(&tmp, compiled)?;
             write_synced(&tmp_sum, sum.as_bytes())?;
-            std::fs::rename(&tmp_sum, self.sum_path(digest_hex))?;
-            std::fs::rename(&tmp, self.path_for(digest_hex))
+            fs::rename(&tmp_sum, self.sum_path(digest_hex))?;
+            fs::rename(&tmp, self.path_for(digest_hex))
         })();
         if result.is_err() {
-            let _ = std::fs::remove_file(&tmp);
-            let _ = std::fs::remove_file(&tmp_sum);
+            let _ = fs::remove_file(&tmp);
+            let _ = fs::remove_file(&tmp_sum);
         }
         result
     }
 }
 
-fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut file = std::fs::File::create(path)?;
+fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = File::create(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
 
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+fn create_private_dir(dir: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)
     }
     #[cfg(not(unix))]
     {

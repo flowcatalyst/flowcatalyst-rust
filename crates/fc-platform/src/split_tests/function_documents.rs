@@ -4,7 +4,9 @@
 //! (`function::openapi`, `function::schema`, fc-platform-functions).
 
 use crate::function::openapi::{FUNCTIONS_OPENAPI, PATH_FUNCTIONS_OPENAPI};
+use crate::function::routes;
 use crate::function::schema::{FUNCTION_MANIFEST_SCHEMA, PATH_FUNCTION_MANIFEST_SCHEMA};
+use axum::body;
 use axum::body::Body;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Request, StatusCode};
@@ -12,7 +14,7 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn serves_the_document_bytes_without_a_token() {
-    let response = crate::function::routes::functions_openapi_router::<()>()
+    let response = routes::functions_openapi_router::<()>()
         .oneshot(
             Request::get(PATH_FUNCTIONS_OPENAPI)
                 .body(Body::empty())
@@ -22,7 +24,7 @@ async fn serves_the_document_bytes_without_a_token() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    let body = body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     assert_eq!(&body[..], FUNCTIONS_OPENAPI);
@@ -30,7 +32,7 @@ async fn serves_the_document_bytes_without_a_token() {
 
 #[tokio::test]
 async fn serves_the_schema_bytes_without_a_token() {
-    let response = crate::function::routes::function_manifest_schema_router::<()>()
+    let response = routes::function_manifest_schema_router::<()>()
         .oneshot(
             Request::get(PATH_FUNCTION_MANIFEST_SCHEMA)
                 .body(Body::empty())
@@ -40,7 +42,7 @@ async fn serves_the_schema_bytes_without_a_token() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CONTENT_TYPE], "application/schema+json");
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    let body = body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     assert_eq!(&body[..], FUNCTION_MANIFEST_SCHEMA);
@@ -65,7 +67,7 @@ fn rust_registers_javas_operations() {
         })
         .collect();
 
-    let (_, rust) = crate::function::routes::function_routes().split_for_parts();
+    let (_, rust) = routes::function_routes().split_for_parts();
     let rust: BTreeSet<(String, String)> = serde_json::to_value(&rust).unwrap()["paths"]
         .as_object()
         .unwrap()

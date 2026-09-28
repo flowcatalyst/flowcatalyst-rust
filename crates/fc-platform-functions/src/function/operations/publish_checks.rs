@@ -33,6 +33,7 @@ use crate::function::repository::FunctionRepository;
 use crate::function::route_repository::FunctionRouteRepository;
 use crate::function::schedule_check::parse_cron;
 use crate::function::version_repository::FunctionVersionRepository;
+use crate::function::Runtime;
 use crate::function::{FunctionLimits, Manifest, PublicRoute};
 use fc_platform_core::usecase::UseCaseError;
 use fc_platform_iam::service_account::repository::ServiceAccountRepository;
@@ -72,7 +73,7 @@ enum PoolSupport {
     Unknown,
 }
 
-fn pool_support(hosts: &[FunctionHost], runtime: crate::function::Runtime) -> PoolSupport {
+fn pool_support(hosts: &[FunctionHost], runtime: Runtime) -> PoolSupport {
     if hosts.is_empty() {
         return PoolSupport::NoLiveHosts;
     }
@@ -312,6 +313,7 @@ mod tests {
     use super::*;
     use crate::function::entity::HostState;
     use crate::function::Runtime;
+    use std::slice;
 
     fn host(runtimes: Option<&[&str]>) -> FunctionHost {
         FunctionHost::register("h", "default", chrono::Utc::now())
@@ -330,24 +332,21 @@ mod tests {
         let rust = host(Some(&["component", "wasm"]));
         let java = host(None);
         assert_eq!(support(&[], Runtime::Component), "none");
-        assert_eq!(
-            support(std::slice::from_ref(&rust), Runtime::Component),
-            "yes"
-        );
-        assert_eq!(support(std::slice::from_ref(&rust), Runtime::Jvm), "no");
+        assert_eq!(support(slice::from_ref(&rust), Runtime::Component), "yes");
+        assert_eq!(support(slice::from_ref(&rust), Runtime::Jvm), "no");
         assert_eq!(
             support(&[rust.clone(), java.clone()], Runtime::Jvm),
             "unknown"
         );
         assert_eq!(support(&[java.clone(), rust.clone()], Runtime::Wasm), "yes");
         assert_eq!(
-            support(std::slice::from_ref(&java), Runtime::Component),
+            support(slice::from_ref(&java), Runtime::Component),
             "unknown"
         );
         // `js`: a Rust host built with the JS runtime reports it; one built
         // without (fc-server's `js` feature off) does not.
         let with_js = host(Some(&["component", "js", "wasm"]));
-        assert_eq!(support(std::slice::from_ref(&rust), Runtime::Js), "no");
+        assert_eq!(support(slice::from_ref(&rust), Runtime::Js), "no");
         assert_eq!(support(&[rust, with_js], Runtime::Js), "yes");
         assert_eq!(support(&[java], Runtime::Js), "unknown");
     }

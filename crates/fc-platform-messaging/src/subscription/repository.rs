@@ -7,8 +7,12 @@ use sqlx::PgPool;
 use super::entity::{ConfigEntry, EventTypeBinding, Subscription};
 use crate::dispatch_job::entity::parse_dispatch_mode;
 use fc_platform_core::shared::enum_str::decode;
+use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
@@ -165,8 +169,7 @@ impl SubscriptionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut et_map: std::collections::HashMap<String, Vec<EventTypeBinding>> =
-            std::collections::HashMap::new();
+        let mut et_map: HashMap<String, Vec<EventTypeBinding>> = HashMap::new();
         for r in all_et {
             et_map
                 .entry(r.subscription_id.clone())
@@ -187,8 +190,7 @@ impl SubscriptionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
-        let mut cfg_map: std::collections::HashMap<String, Vec<ConfigEntry>> =
-            std::collections::HashMap::new();
+        let mut cfg_map: HashMap<String, Vec<ConfigEntry>> = HashMap::new();
         for r in all_cfg {
             cfg_map
                 .entry(r.subscription_id.clone())
@@ -647,12 +649,8 @@ impl HasId for Subscription {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Subscription> for SubscriptionRepository {
-    async fn persist(
-        &self,
-        s: &Subscription,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Subscription> for SubscriptionRepository {
+    async fn persist(&self, s: &Subscription, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
 
         // 1. Upsert main row
@@ -747,11 +745,7 @@ impl fc_platform_core::usecase::Persist<Subscription> for SubscriptionRepository
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        s: &Subscription,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, s: &Subscription, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM msg_subscription_event_types WHERE subscription_id = $1")
             .bind(&s.id)
             .execute(&mut **tx.inner)
@@ -774,7 +768,7 @@ impl SubscriptionRepository {
     pub async fn codes_by_connection_ids(
         &self,
         connection_ids: &[String],
-    ) -> fc_platform_core::shared::error::Result<Vec<(String, String)>> {
+    ) -> error::Result<Vec<(String, String)>> {
         if connection_ids.is_empty() {
             return Ok(Vec::new());
         }

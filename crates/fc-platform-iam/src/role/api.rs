@@ -14,15 +14,22 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::application::repository::ApplicationRepository;
 use crate::role::entity::{AuthRole, RoleSource};
+use crate::role::operations::CreateRoleUseCase;
+use crate::role::operations::DeleteRoleUseCase;
+use crate::role::operations::UpdateRoleUseCase;
 use crate::role::operations::{
     DefinePermissionUseCase, DeletePermissionCommand, DeletePermissionUseCase,
     GrantPermissionCommand, GrantPermissionUseCase, RevokePermissionCommand,
     RevokePermissionUseCase,
 };
+use crate::role::permission_catalog::CatalogPermission;
 use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -155,15 +162,12 @@ pub struct RolesQuery {
 pub struct RolesState {
     pub role_repo: Arc<RoleRepository>,
     pub application_repo: Arc<ApplicationRepository>,
-    pub create_use_case:
-        Arc<crate::role::operations::CreateRoleUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub update_use_case:
-        Arc<crate::role::operations::UpdateRoleUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub delete_use_case:
-        Arc<crate::role::operations::DeleteRoleUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
+    pub create_use_case: Arc<CreateRoleUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateRoleUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteRoleUseCase<PgUnitOfWork>>,
     /// The permission catalogue (`iam_permissions`), which Go's
     /// `/api/roles/permissions` lists.
-    pub permission_repo: Arc<crate::role::permission_repository::PermissionCatalogRepository>,
+    pub permission_repo: Arc<PermissionCatalogRepository>,
 }
 
 /// A permission catalogue row, Go's `PermissionResponse`
@@ -181,8 +185,8 @@ pub struct PermissionResponse {
     pub category: Option<String>,
 }
 
-impl From<crate::role::permission_catalog::CatalogPermission> for PermissionResponse {
-    fn from(p: crate::role::permission_catalog::CatalogPermission) -> Self {
+impl From<CatalogPermission> for PermissionResponse {
+    fn from(p: CatalogPermission) -> Self {
         Self {
             category: Some(format!("{}:{}:{}", p.subdomain, p.context, p.aggregate)),
             name: p.code.clone(),
@@ -229,7 +233,7 @@ async fn resolve_role(repo: &RoleRepository, id_or_name: &str) -> Result<AuthRol
     operation_id = "createRole",
     request_body = CreateRoleRequest,
     responses(
-        (status = 201, description = "Role created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Role created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate role code")
     ),
@@ -239,17 +243,11 @@ pub async fn create_role(
     State(state): State<RolesState>,
     auth: Authenticated,
     Json(req): Json<CreateRoleRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::role::operations::CreateRoleCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_roles(&auth.0)?;
+    checks::can_write_roles(&auth.0)?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -258,21 +256,17 @@ pub async fn create_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
-        source: crate::role::entity::RoleSource::Database,
+        source: RoleSource::Database,
         // Owner ruling 15: a super-admin may use another application's
         // permissions through the admin API.
-        cross_application: auth
-            .0
-            .has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        cross_application: auth.0.has_permission(permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
         StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.role_id,
-        )),
+        Json(CreatedResponse::new(event.role_id)),
     ))
 }
 
@@ -296,7 +290,7 @@ pub async fn get_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
     Ok(Json(role.into()))
@@ -322,7 +316,7 @@ pub async fn get_role_by_code(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let role = state
         .role_repo
@@ -350,10 +344,9 @@ pub async fn list_roles(
     auth: Authenticated,
     Query(query): Query<RolesQuery>,
 ) -> Result<Json<RoleListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
-    let source: Option<RoleSource> =
-        fc_platform_core::shared::enum_str::parse_opt(query.source.as_deref())?;
+    let source: Option<RoleSource> = enum_str::parse_opt(query.source.as_deref())?;
 
     let roles = state
         .role_repo
@@ -395,7 +388,7 @@ pub async fn update_role(
     use crate::role::operations::UpdateRoleCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_roles(&auth.0)?;
+    checks::can_write_roles(&auth.0)?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
 
@@ -405,9 +398,7 @@ pub async fn update_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
-        cross_application: auth
-            .0
-            .has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        cross_application: auth.0.has_permission(permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
@@ -438,10 +429,7 @@ pub async fn delete_role(
     use crate::role::operations::DeleteRoleCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_administer_roles(
-        &auth.0,
-        fc_platform_core::permissions::iam::ROLE_DELETE,
-    )?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_DELETE)?;
 
     let role = resolve_role(&state.role_repo, &role_name).await?;
 
@@ -467,7 +455,7 @@ pub async fn get_filter_applications(
     State(state): State<RolesState>,
     auth: Authenticated,
 ) -> Result<Json<ApplicationFilterListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let application_codes = state.role_repo.find_application_codes().await?;
     Ok(Json(ApplicationFilterListResponse { application_codes }))
@@ -489,7 +477,7 @@ pub async fn list_permissions(
     State(state): State<RolesState>,
     auth: Authenticated,
 ) -> Result<Json<PermissionListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let permissions: Vec<PermissionResponse> = state
         .permission_repo
@@ -522,7 +510,7 @@ pub async fn get_permission(
     auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<PermissionResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let found = state
         .permission_repo
@@ -553,7 +541,7 @@ pub async fn get_roles_by_source(
     auth: Authenticated,
     Path(source): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     // Go `role.ParseSource`: the exact upper-case names only.
     let source = match source.as_str() {
@@ -591,7 +579,7 @@ pub async fn get_roles_by_application_id(
     auth: Authenticated,
     Path(application_id): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
 
     let roles = state
         .role_repo
@@ -712,9 +700,7 @@ async fn grant(
     let cmd = GrantPermissionCommand {
         role_name: role_name.clone(),
         permission,
-        cross_application: auth
-            .0
-            .has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        cross_application: auth.0.has_permission(permissions::ADMIN_ALL),
     };
     state
         .grant_use_case
@@ -826,7 +812,7 @@ pub async fn delete_catalog_permission(
     auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    checks::can_administer_roles(&auth.0, fc_platform_core::permissions::iam::ROLE_DELETE)?;
+    checks::can_administer_roles(&auth.0, permissions::iam::ROLE_DELETE)?;
     if state
         .permission_repo
         .find_by_code(&permission)

@@ -31,6 +31,7 @@ use tracing::warn;
 
 use crate::auth::{refresh_token::RefreshToken, refresh_token_repository::RefreshTokenRepository};
 use fc_platform_core::shared::error::Result;
+use std::result;
 
 /// How long after a token is rotated out a second presentation of it is
 /// still its own client racing or retrying, not a replay.
@@ -107,7 +108,7 @@ pub async fn rotate(
     store: &dyn RefreshTokenStore,
     raw: &str,
     requesting_client_id: Option<&str>,
-) -> Result<std::result::Result<Rotated, Rejection>> {
+) -> Result<result::Result<Rotated, Rejection>> {
     let hash = RefreshToken::hash_token(raw);
     let Some(stored) = store.find_valid_by_hash(&hash).await? else {
         return not_valid(store, &hash, requesting_client_id).await;
@@ -149,7 +150,7 @@ async fn not_valid(
     store: &dyn RefreshTokenStore,
     hash: &str,
     requesting_client_id: Option<&str>,
-) -> Result<std::result::Result<Rotated, Rejection>> {
+) -> Result<result::Result<Rotated, Rejection>> {
     let Some(prior) = store.find_by_hash(hash).await?.filter(|t| t.was_replaced()) else {
         return Ok(Err(Rejection::Unknown));
     };
@@ -187,6 +188,7 @@ async fn not_valid(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem;
     use std::sync::Mutex;
 
     /// An in-memory store with the repository's semantics.
@@ -269,7 +271,7 @@ mod tests {
             replacement: &RefreshToken,
         ) -> Result<bool> {
             let mut tokens = self.tokens.lock().unwrap();
-            if std::mem::take(&mut *self.lose_next_race.lock().unwrap()) {
+            if mem::take(&mut *self.lose_next_race.lock().unwrap()) {
                 // A concurrent winner rotated it first.
                 let (_, winner) = tokens
                     .iter()

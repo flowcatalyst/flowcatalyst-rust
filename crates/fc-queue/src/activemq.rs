@@ -20,6 +20,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, Result};
 use fc_common::{Message, QueuedMessage};
+use tokio::time;
+use tokio::time::Duration;
 
 /// Configuration for ActiveMQ consumer
 #[derive(Debug, Clone)]
@@ -215,10 +217,10 @@ impl QueueConsumer for ActiveMqConsumer {
         let mut consumer_stream = consumer.clone();
 
         // Poll for messages with a timeout
-        let timeout = tokio::time::Duration::from_millis(100);
+        let timeout = Duration::from_millis(100);
 
         for _ in 0..max_messages {
-            let result = tokio::time::timeout(timeout, consumer_stream.next()).await;
+            let result = time::timeout(timeout, consumer_stream.next()).await;
 
             match result {
                 Ok(Some(Ok(delivery))) => {

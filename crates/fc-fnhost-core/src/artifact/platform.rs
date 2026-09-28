@@ -14,7 +14,9 @@ use super::cache::HttpBody;
 use super::oci::content_length;
 use super::{ArtifactError, Source, SourceStream};
 use crate::digest::Digest;
+use crate::java;
 use crate::token::TokenSource;
+use tokio::time;
 
 /// Java's `HttpRequest.timeout`: the wait for response headers. The body is
 /// bounded by the cache's idle timeout instead.
@@ -50,7 +52,7 @@ impl PlatformSource {
             .client
             .get(url)
             .header(AUTHORIZATION, format!("Bearer {token}"));
-        match tokio::time::timeout(REQUEST_TIMEOUT, request.send()).await {
+        match time::timeout(REQUEST_TIMEOUT, request.send()).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(ArtifactError::transport(e)),
             Err(_) => Err(ArtifactError::Transport(
@@ -69,7 +71,7 @@ impl Source for PlatformSource {
         version_id: Option<&str>,
     ) -> Result<SourceStream, ArtifactError> {
         let version_id = match version_id {
-            Some(id) if !crate::java::is_blank(id) => id,
+            Some(id) if !java::is_blank(id) => id,
             _ => return Err(ArtifactError::VersionRequired),
         };
         let token = self

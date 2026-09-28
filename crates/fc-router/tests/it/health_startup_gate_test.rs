@@ -30,6 +30,7 @@ use fc_router::{
     api::create_router, HealthService, HealthServiceConfig, HttpMediatorConfig, QueueManager,
     WarningService, WarningServiceConfig,
 };
+use tokio::time;
 use tower::ServiceExt;
 
 struct NoOpPublisher;
@@ -114,7 +115,7 @@ async fn health_gates_on_consumers_started() {
         if manager.consumers_started() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
 
     assert!(

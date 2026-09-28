@@ -14,10 +14,30 @@ use utoipa::ToSchema;
 
 use super::entity::{Client, ClientStatus};
 use super::repository::ClientRepository;
+use crate::application::operations::DisableApplicationForClientCommand;
+use crate::application::operations::DisableApplicationForClientUseCase;
+use crate::application::operations::EnableApplicationForClientCommand;
+use crate::application::operations::EnableApplicationForClientUseCase;
+use crate::application::operations::UpdateClientApplicationsCommand;
+use crate::application::operations::UpdateClientApplicationsUseCase;
+use crate::application::repository::ApplicationRepository;
+use crate::application::ApplicationClientConfigRepository;
+use crate::client::access;
+use crate::client::operations::ActivateClientUseCase;
+use crate::client::operations::AddClientNoteUseCase;
+use crate::client::operations::CreateClientUseCase;
+use crate::client::operations::DeleteClientUseCase;
+use crate::client::operations::SuspendClientUseCase;
+use crate::client::operations::UpdateClientUseCase;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
+use std::collections::HashSet;
 
 /// Create client request
 #[derive(Debug, Deserialize, ToSchema)]
@@ -204,41 +224,17 @@ pub struct UpdateClientApplicationsRequest {
 #[derive(Clone)]
 pub struct ClientsState {
     pub client_repo: Arc<ClientRepository>,
-    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
-    pub application_client_config_repo: Arc<crate::application::ApplicationClientConfigRepository>,
-    pub create_use_case: Arc<
-        crate::client::operations::CreateClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_use_case: Arc<
-        crate::client::operations::UpdateClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub delete_use_case: Arc<
-        crate::client::operations::DeleteClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub activate_use_case: Arc<
-        crate::client::operations::ActivateClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub suspend_use_case: Arc<
-        crate::client::operations::SuspendClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub add_note_use_case: Arc<
-        crate::client::operations::AddClientNoteUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_applications_use_case: Arc<
-        crate::application::operations::UpdateClientApplicationsUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub enable_application_use_case: Arc<
-        crate::application::operations::EnableApplicationForClientUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub disable_application_use_case: Arc<
-        crate::application::operations::DisableApplicationForClientUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub application_repo: Arc<ApplicationRepository>,
+    pub application_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    pub create_use_case: Arc<CreateClientUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateClientUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteClientUseCase<PgUnitOfWork>>,
+    pub activate_use_case: Arc<ActivateClientUseCase<PgUnitOfWork>>,
+    pub suspend_use_case: Arc<SuspendClientUseCase<PgUnitOfWork>>,
+    pub add_note_use_case: Arc<AddClientNoteUseCase<PgUnitOfWork>>,
+    pub update_applications_use_case: Arc<UpdateClientApplicationsUseCase<PgUnitOfWork>>,
+    pub enable_application_use_case: Arc<EnableApplicationForClientUseCase<PgUnitOfWork>>,
+    pub disable_application_use_case: Arc<DisableApplicationForClientUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new client
@@ -249,7 +245,7 @@ pub struct ClientsState {
     operation_id = "createClient",
     request_body = CreateClientRequest,
     responses(
-        (status = 201, description = "Client created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Client created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate identifier")
     ),
@@ -259,17 +255,11 @@ pub async fn create_client(
     State(state): State<ClientsState>,
     auth: Authenticated,
     Json(req): Json<CreateClientRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::client::operations::CreateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_clients(&auth.0)?;
+    checks::can_create_clients(&auth.0)?;
 
     let cmd = CreateClientCommand {
         name: req.name,
@@ -280,9 +270,7 @@ pub async fn create_client(
 
     Ok((
         StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.client_id,
-        )),
+        Json(CreatedResponse::new(event.client_id)),
     ))
 }
 
@@ -306,10 +294,10 @@ pub async fn get_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_clients(&auth.0)?;
+    checks::can_read_clients(&auth.0)?;
 
     // Check access
-    crate::client::access::ensure_visible(&auth.0, &id)?;
+    access::ensure_visible(&auth.0, &id)?;
 
     let client = state
         .client_repo
@@ -324,9 +312,7 @@ pub async fn get_client(
 /// every client, as Go's list returns (client/api/api.go:59-70). An unknown
 /// value is a 400 (X-06), never "no filter".
 fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, PlatformError> {
-    fc_platform_core::shared::enum_str::parse_opt(fc_platform_core::shared::enum_str::non_empty(
-        status,
-    ))
+    enum_str::parse_opt(enum_str::non_empty(status))
 }
 
 /// List clients
@@ -349,7 +335,7 @@ pub async fn list_clients(
     auth: Authenticated,
     Query(query): Query<ClientsQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_clients(&auth.0)?;
+    checks::can_read_clients(&auth.0)?;
 
     let status = list_status_filter(query.status.as_deref())?;
     let clients = state.client_repo.list(status).await?;
@@ -393,7 +379,7 @@ pub async fn update_client(
     use crate::client::operations::UpdateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_clients(&auth.0)?;
+    checks::can_update_clients(&auth.0)?;
 
     let cmd = UpdateClientCommand {
         client_id: id,
@@ -428,7 +414,7 @@ pub async fn delete_client(
     use crate::client::operations::DeleteClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_clients(&auth.0)?;
+    checks::can_delete_clients(&auth.0)?;
 
     let cmd = DeleteClientCommand { client_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -467,7 +453,7 @@ pub async fn activate_client(
     use crate::client::operations::ActivateClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_activate_clients(&auth.0)?;
+    checks::can_activate_clients(&auth.0)?;
 
     let cmd = ActivateClientCommand {
         client_id: id.clone(),
@@ -519,7 +505,7 @@ pub async fn suspend_client(
     use crate::client::operations::SuspendClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_suspend_clients(&auth.0)?;
+    checks::can_suspend_clients(&auth.0)?;
 
     let reason_for_log = req.reason.clone();
     let cmd = SuspendClientCommand {
@@ -572,7 +558,7 @@ pub async fn deactivate_client(
     use crate::client::operations::DeleteClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_deactivate_clients(&auth.0)?;
+    checks::can_deactivate_clients(&auth.0)?;
 
     let reason_for_log = req.reason.clone();
     let cmd = DeleteClientCommand {
@@ -612,7 +598,7 @@ pub async fn search_clients(
     auth: Authenticated,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_clients(&auth.0)?;
+    checks::can_read_clients(&auth.0)?;
 
     let search_term = query.q.or(query.query).unwrap_or_default();
 
@@ -661,7 +647,7 @@ pub async fn get_client_by_identifier(
     auth: Authenticated,
     Path(identifier): Path<String>,
 ) -> Result<Json<ClientResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_clients(&auth.0)?;
+    checks::can_read_clients(&auth.0)?;
 
     let client = state
         .client_repo
@@ -670,7 +656,7 @@ pub async fn get_client_by_identifier(
         .ok_or_else(|| PlatformError::not_found("Client", &identifier))?;
 
     // Check access
-    crate::client::access::ensure_visible(&auth.0, &client.id)?;
+    access::ensure_visible(&auth.0, &client.id)?;
 
     Ok(Json(client.into()))
 }
@@ -700,7 +686,7 @@ pub async fn add_note(
     use crate::client::operations::AddClientNoteCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_clients(&auth.0)?;
+    checks::can_update_clients(&auth.0)?;
 
     let cmd = AddClientNoteCommand {
         client_id: id.clone(),
@@ -742,7 +728,7 @@ pub async fn get_client_applications(
     Path(id): Path<String>,
 ) -> Result<Json<ClientApplicationsResponse>, PlatformError> {
     // Check access
-    crate::client::access::ensure_visible(&auth.0, &id)?;
+    access::ensure_visible(&auth.0, &id)?;
 
     // Verify client exists
     let _client = state
@@ -760,7 +746,7 @@ pub async fn get_client_applications(
         .application_client_config_repo
         .find_by_client(&id)
         .await?;
-    let enabled_app_ids: std::collections::HashSet<_> = configs
+    let enabled_app_ids: HashSet<_> = configs
         .iter()
         .filter(|c| c.enabled)
         .map(|c| c.application_id.as_str())
@@ -808,11 +794,11 @@ pub async fn enable_application(
 ) -> Result<StatusCode, PlatformError> {
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_clients(&auth.0)?;
+    checks::can_update_clients(&auth.0)?;
 
     let use_case = &state.enable_application_use_case;
 
-    let command = crate::application::operations::EnableApplicationForClientCommand {
+    let command = EnableApplicationForClientCommand {
         application_id,
         client_id: id,
     };
@@ -845,11 +831,11 @@ pub async fn disable_application(
 ) -> Result<StatusCode, PlatformError> {
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_clients(&auth.0)?;
+    checks::can_update_clients(&auth.0)?;
 
     let use_case = &state.disable_application_use_case;
 
-    let command = crate::application::operations::DisableApplicationForClientCommand {
+    let command = DisableApplicationForClientCommand {
         application_id,
         client_id: id,
     };
@@ -881,13 +867,13 @@ pub async fn update_client_applications(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientApplicationsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_clients(&auth.0)?;
+    checks::can_update_clients(&auth.0)?;
 
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
     let use_case = &state.update_applications_use_case;
 
-    let command = crate::application::operations::UpdateClientApplicationsCommand {
+    let command = UpdateClientApplicationsCommand {
         client_id: id,
         enabled_application_ids: req.enabled_application_ids,
     };
@@ -905,7 +891,7 @@ pub async fn update_client_applications(
 
 #[derive(Clone)]
 pub struct ClientSearchState {
-    pub client_repo: std::sync::Arc<ClientRepository>,
+    pub client_repo: Arc<ClientRepository>,
 }
 
 /// Go `SearchClientRequest`.
@@ -934,7 +920,7 @@ pub async fn search_clients_by_body(
     Json(req): Json<SearchClientRequest>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
-    checks::require_permission(&auth.0, fc_platform_core::permissions::admin::CLIENT_READ)?;
+    checks::require_permission(&auth.0, permissions::admin::CLIENT_READ)?;
     let clients: Vec<ClientResponse> = state
         .client_repo
         .search_top(&req.term)
@@ -952,6 +938,8 @@ pub async fn search_clients_by_body(
 mod tests {
     use super::*;
     use crate::client::entity::{Client, ClientStatus};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use chrono::Utc;
 
     fn make_test_client() -> Client {
@@ -1153,8 +1141,8 @@ mod tests {
         for bad in ["paused", "active", "ALL"] {
             let err = list_status_filter(Some(bad)).unwrap_err();
             assert_eq!(
-                axum::response::IntoResponse::into_response(err).status(),
-                axum::http::StatusCode::BAD_REQUEST
+                IntoResponse::into_response(err).status(),
+                StatusCode::BAD_REQUEST
             );
         }
     }

@@ -7,6 +7,8 @@
 //! as zero.
 
 use serde::Serialize;
+use std::fs;
+use std::mem;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -63,7 +65,7 @@ fn posix(s: &mut ProcessSnapshot) {
     // SAFETY: getrusage/getrlimit only write into the zeroed structs we
     // hand them.
     unsafe {
-        let mut usage: libc::rusage = std::mem::zeroed();
+        let mut usage: libc::rusage = mem::zeroed();
         if libc::getrusage(libc::RUSAGE_SELF, &mut usage) == 0 {
             let secs = |tv: libc::timeval| tv.tv_sec as f64 + tv.tv_usec as f64 / 1_000_000.0;
             s.cpu_seconds = Some(secs(usage.ru_utime) + secs(usage.ru_stime));
@@ -75,7 +77,7 @@ fn posix(s: &mut ProcessSnapshot) {
                 max_rss
             });
         }
-        let mut limit: libc::rlimit = std::mem::zeroed();
+        let mut limit: libc::rlimit = mem::zeroed();
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0
             && limit.rlim_cur != libc::RLIM_INFINITY
         {
@@ -108,7 +110,7 @@ fn linux(_: &mut ProcessSnapshot) {}
 
 #[cfg(unix)]
 fn count_dir(path: &str) -> Option<u64> {
-    std::fs::read_dir(path).ok().map(|d| d.count() as u64)
+    fs::read_dir(path).ok().map(|d| d.count() as u64)
 }
 
 /// What `/proc/self/status` says about memory and threads.

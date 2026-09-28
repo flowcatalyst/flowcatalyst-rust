@@ -27,6 +27,12 @@
 //! `%LocalAppData%`, `$XDG_CACHE_HOME` or `~/.cache`). `dirs::config_dir` and
 //! `dirs::cache_dir` resolve exactly those.
 
+use base64::engine::general_purpose;
+use std::env;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 
 /// The default embedded-Postgres port, shared with Go and Java.
@@ -34,7 +40,7 @@ pub const DEFAULT_EMBEDDED_DB_PORT: u16 = 15432;
 
 /// Go `userDataDir`.
 pub fn user_data_dir() -> PathBuf {
-    if let Some(x) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+    if let Some(x) = env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(x);
     }
     if let Some(d) = dirs::config_dir() {
@@ -82,7 +88,7 @@ pub fn embedded_pg_cache_dir() -> PathBuf {
 pub fn embedded_path(flag: Option<&PathBuf>) -> PathBuf {
     flag.cloned()
         .or_else(|| {
-            std::env::var_os("FC_EMBEDDED_DB_PATH")
+            env::var_os("FC_EMBEDDED_DB_PATH")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
         })
@@ -91,7 +97,7 @@ pub fn embedded_path(flag: Option<&PathBuf>) -> PathBuf {
 
 /// The directory beside the embedded path that holds the keys, as Go's
 /// `filepath.Dir(opts.EmbeddedDBPath)`.
-pub fn state_dir_for(embedded_path: &std::path::Path) -> PathBuf {
+pub fn state_dir_for(embedded_path: &Path) -> PathBuf {
     embedded_path
         .parent()
         .map(PathBuf::from)
@@ -105,11 +111,11 @@ pub fn legacy_rust_cluster() -> PathBuf {
 
 /// Go `ensureAppKeyFile`: the trimmed key in `path`, or a fresh 32-byte key
 /// (base64) written there with mode 0600.
-pub fn ensure_app_key_file(path: &std::path::Path) -> anyhow::Result<String> {
+pub fn ensure_app_key_file(path: &Path) -> anyhow::Result<String> {
     use base64::Engine;
     use rand::RngCore;
 
-    if let Ok(existing) = std::fs::read_to_string(path) {
+    if let Ok(existing) = fs::read_to_string(path) {
         let key = existing.trim();
         if !key.is_empty() {
             return Ok(key.to_string());
@@ -117,21 +123,21 @@ pub fn ensure_app_key_file(path: &std::path::Path) -> anyhow::Result<String> {
     }
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
-    let key = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let key = general_purpose::STANDARD.encode(bytes);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
     }
     write_private(path, key.as_bytes())?;
     Ok(key)
 }
 
 /// Write `contents` to `path`, readable by the owner only on Unix.
-pub fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
+        let mut f = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
@@ -148,6 +154,8 @@ pub fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
 
     #[test]
     fn the_cluster_and_pid_file_live_under_the_shared_flowcatalyst_dir() {
@@ -161,7 +169,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_uses_application_support_like_go() {
-        if std::env::var_os("XDG_DATA_HOME").is_some() {
+        if env::var_os("XDG_DATA_HOME").is_some() {
             return;
         }
         let home = dirs::home_dir().unwrap();
@@ -186,7 +194,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
     }
@@ -195,7 +203,7 @@ mod tests {
     fn an_existing_app_key_is_read_trimmed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("app-key");
-        std::fs::write(&path, "abc=\n").unwrap();
+        fs::write(&path, "abc=\n").unwrap();
         assert_eq!(ensure_app_key_file(&path).unwrap(), "abc=");
     }
 }

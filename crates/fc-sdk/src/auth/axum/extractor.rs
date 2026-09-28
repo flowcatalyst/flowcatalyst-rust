@@ -13,12 +13,13 @@
 
 use axum::{
     extract::FromRequestParts,
-    http::{HeaderMap, StatusCode, header::ACCEPT, request::Parts},
+    http::{header::ACCEPT, request::Parts, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
 
 use super::principal::Principal as AxumPrincipal;
 use super::state::AuthState;
+use axum::http::Method;
 
 /// Extracts the authenticated [`Principal`](super::Principal) from a request.
 /// Returns 401 JSON if the request is unauthenticated. For browser-friendly
@@ -58,8 +59,14 @@ where
             .get::<AuthState>()
             .cloned()
             .ok_or(AuthRejection::Misconfigured)?;
-        let return_to = parts.uri.path_and_query().map(|p| p.to_string()).unwrap_or_default();
-        Err(AuthRejection::Redirect(build_login_redirect(&state, &return_to)))
+        let return_to = parts
+            .uri
+            .path_and_query()
+            .map(|p| p.to_string())
+            .unwrap_or_default();
+        Err(AuthRejection::Redirect(build_login_redirect(
+            &state, &return_to,
+        )))
     }
 }
 
@@ -94,14 +101,22 @@ where
         if let Some(Some(p)) = parts.extensions.get::<Option<AxumPrincipal>>() {
             return Ok(RequireAuth(p.clone()));
         }
-        if wants_html(&parts.headers) && (parts.method == axum::http::Method::GET || parts.method == axum::http::Method::HEAD) {
+        if wants_html(&parts.headers)
+            && (parts.method == Method::GET || parts.method == Method::HEAD)
+        {
             let state = parts
                 .extensions
                 .get::<AuthState>()
                 .cloned()
                 .ok_or(AuthRejection::Misconfigured)?;
-            let return_to = parts.uri.path_and_query().map(|p| p.to_string()).unwrap_or_default();
-            return Err(AuthRejection::Redirect(build_login_redirect(&state, &return_to)));
+            let return_to = parts
+                .uri
+                .path_and_query()
+                .map(|p| p.to_string())
+                .unwrap_or_default();
+            return Err(AuthRejection::Redirect(build_login_redirect(
+                &state, &return_to,
+            )));
         }
         Err(AuthRejection::Unauthorized)
     }
@@ -137,8 +152,10 @@ impl IntoResponse for AuthRejection {
             AuthRejection::Unauthorized => {
                 let body = axum::Json(serde_json::json!({ "error": "unauthorized" }));
                 let mut resp = (StatusCode::UNAUTHORIZED, body).into_response();
-                resp.headers_mut()
-                    .insert("WWW-Authenticate", r#"Bearer realm="flowcatalyst""#.parse().unwrap());
+                resp.headers_mut().insert(
+                    "WWW-Authenticate",
+                    r#"Bearer realm="flowcatalyst""#.parse().unwrap(),
+                );
                 resp
             }
             AuthRejection::Redirect(loc) => Redirect::to(&loc).into_response(),

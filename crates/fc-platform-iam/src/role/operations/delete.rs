@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RoleDeleted;
+use crate::role::ceiling;
 use crate::role::entity::RoleSource;
 use crate::role::repository::RoleRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -19,7 +21,7 @@ pub struct DeleteRoleCommand {
     pub role_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteRoleCommand {}
+impl AuditMasked for DeleteRoleCommand {}
 
 /// Use case for deleting a role.
 pub struct DeleteRoleUseCase<U: UnitOfWork> {
@@ -62,7 +64,7 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         let Some(role) = self.role_repo.find_by_id(&command.role_id).await? else {
             return Ok(());
         };
-        Ok(crate::role::ceiling::require_permissions(
+        Ok(ceiling::require_permissions(
             Some(ctx.caller()),
             role.permissions.iter().map(String::as_str),
         )?)

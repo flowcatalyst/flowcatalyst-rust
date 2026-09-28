@@ -15,6 +15,11 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use fc_common::{MediationType, Message, PoolConfig, QueuedMessage, RouterConfig};
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{HttpMediator, HttpMediatorConfig, QueueManager};
+use std::cmp;
+use std::net::TcpListener;
+use tokio::time;
+use tokio::time::Instant;
+use wiremock::matchers;
 
 /// Mock queue consumer that provides test messages
 struct TestQueueConsumer {
@@ -61,7 +66,7 @@ impl QueueConsumer for TestQueueConsumer {
         }
 
         let mut messages = self.messages.lock();
-        let count = std::cmp::min(max_messages as usize, messages.len());
+        let count = cmp::min(max_messages as usize, messages.len());
         let result: Vec<_> = messages.drain(0..count).collect();
         Ok(result)
     }
@@ -100,13 +105,10 @@ impl QueueConsumer for TestQueueConsumer {
 /// (a parallel `cargo test --workspace`); this waits for the outcome
 /// itself.
 async fn eventually(what: &str, done: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while !done() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -508,7 +510,7 @@ async fn test_end_to_end_batch_processing() {
 async fn test_end_to_end_connection_error() {
     // A port nothing listens on: bound by the OS, then released (a fixed
     // port may be taken by another test or process).
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
+    let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -592,10 +594,7 @@ async fn test_end_to_end_auth_token() {
 
     Mock::given(method("POST"))
         .and(path("/secure-webhook"))
-        .and(wiremock::matchers::header(
-            "Authorization",
-            "Bearer test-token-123",
-        ))
+        .and(matchers::header("Authorization", "Bearer test-token-123"))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(&mock_server)

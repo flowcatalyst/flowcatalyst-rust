@@ -10,10 +10,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::event::entity::{ContextData, Event, EventRead};
+use crate::event::repository::EventReadDetail;
 use crate::event::repository::EventRepository;
+use axum::http::StatusCode;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use std::collections::HashMap;
 
 /// Context data for event filtering/searching
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -268,7 +276,7 @@ pub struct EventsState {
     pub event_repo: Arc<EventRepository>,
     /// Refuses an application's event types from a caller that may not
     /// sign as that application (S6, ruling 17a).
-    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
+    pub signing: Arc<SigningGuard>,
 }
 
 /// Create a new event
@@ -294,30 +302,23 @@ pub async fn create_event(
     State(state): State<EventsState>,
     auth: Authenticated,
     Json(req): Json<CreateEventRequest>,
-) -> Result<(axum::http::StatusCode, Json<CreateEventResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<CreateEventResponse>), PlatformError> {
     // Go event/api/api.go:90: the ingest permission, exactly.
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::BATCH_EVENTS_WRITE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::BATCH_EVENTS_WRITE)?;
 
     // The client the event is written under: an explicit one, else a
     // non-anchor's first client (Go event/api/api.go:103-108), and a
     // non-anchor never writes a platform-scoped event (owner decision #24).
     // Decided before the deduplication lookup, so a refused caller learns
     // nothing about stored events.
-    let client_id = fc_platform_core::shared::caller_reach::non_blank(req.client_id.clone())
-        .or_else(|| {
-            if auth.0.is_anchor() {
-                None
-            } else {
-                fc_platform_core::shared::caller_reach::client_ids(&auth.0)
-                    .into_iter()
-                    .next()
-            }
-        });
-    let client_id =
-        fc_platform_core::shared::caller_reach::require_writable_client(&auth.0, client_id)?;
+    let client_id = caller_reach::non_blank(req.client_id.clone()).or_else(|| {
+        if auth.0.is_anchor() {
+            None
+        } else {
+            caller_reach::client_ids(&auth.0).into_iter().next()
+        }
+    });
+    let client_id = caller_reach::require_writable_client(&auth.0, client_id)?;
 
     // An application's event type only from a caller that may sign as it
     // (owner ruling 17a).
@@ -339,7 +340,7 @@ pub async fn create_event(
         if let Some(existing) = state.event_repo.find_by_deduplication_id(dedup_id).await? {
             // Return existing event for idempotency (no new dispatch jobs)
             return Ok((
-                axum::http::StatusCode::OK,
+                StatusCode::OK,
                 Json(CreateEventResponse {
                     event: existing.into(),
                     dispatch_job_count: 0,
@@ -369,13 +370,7 @@ pub async fn create_event(
     let dedup_id = req
         .deduplication_id
         .filter(|d| !d.is_empty())
-        .unwrap_or_else(|| {
-            format!(
-                "{}-{}",
-                event.event_type,
-                fc_platform_core::shared::tsid::generate_untyped()
-            )
-        });
+        .unwrap_or_else(|| format!("{}-{}", event.event_type, tsid::generate_untyped()));
     event = event.with_deduplication_id(dedup_id);
     if let Some(cid) = client_id {
         event = event.with_client_id(cid);
@@ -390,7 +385,7 @@ pub async fn create_event(
     let dispatch_job_count = 0;
 
     Ok((
-        axum::http::StatusCode::CREATED,
+        StatusCode::CREATED,
         Json(CreateEventResponse {
             event: event.into(),
             dispatch_job_count,
@@ -419,7 +414,7 @@ pub async fn get_event(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EventDetailResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_events(&auth.0)?;
+    checks::can_read_events(&auth.0)?;
 
     // Go reads the read projection (`msg_events_read`), as the list does: an
     // event the projector has not reached yet is a 404, and the detail
@@ -486,8 +481,8 @@ pub struct EventDetailResponse {
     pub created_at: String,
 }
 
-impl From<crate::event::repository::EventReadDetail> for EventDetailResponse {
-    fn from(e: crate::event::repository::EventReadDetail) -> Self {
+impl From<EventReadDetail> for EventDetailResponse {
+    fn from(e: EventReadDetail) -> Self {
         let context_data = e.context_entries().into_iter().map(Into::into).collect();
         // `data` is stored as text; Go hands it back as raw JSON.
         let data = e
@@ -584,7 +579,7 @@ pub async fn list_events(
     auth: Authenticated,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_events(&auth.0)?;
+    checks::can_read_events(&auth.0)?;
     list_events_unchecked(&state, &auth, query).await
 }
 
@@ -604,7 +599,7 @@ pub async fn list_events_unchecked(
     let accessible: Option<Vec<String>> = if auth.0.is_anchor() {
         None
     } else {
-        Some(fc_platform_core::shared::caller_reach::client_ids(&auth.0))
+        Some(caller_reach::client_ids(&auth.0))
     };
     let ts = |v: Option<&str>| {
         v.filter(|v| !v.is_empty())
@@ -682,13 +677,10 @@ pub async fn batch_create_events(
     State(state): State<EventsState>,
     auth: Authenticated,
     Json(req): Json<BatchCreateEventsRequest>,
-) -> Result<(axum::http::StatusCode, Json<BatchCreateResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<BatchCreateResponse>), PlatformError> {
     // The same ingest permission as `/api/events/batch` (Go registers one
     // handler for both).
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::BATCH_EVENTS_WRITE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::BATCH_EVENTS_WRITE)?;
 
     // Validate batch size
     if req.events.is_empty() {
@@ -714,7 +706,7 @@ pub async fn batch_create_events(
         .iter()
         .filter_map(|e| e.deduplication_id.clone())
         .collect();
-    let mut known: std::collections::HashMap<String, Event> = state
+    let mut known: HashMap<String, Event> = state
         .event_repo
         .find_by_deduplication_ids(&dedup_ids)
         .await?
@@ -729,12 +721,7 @@ pub async fn batch_create_events(
     let client_ids = req
         .events
         .iter()
-        .map(|e| {
-            fc_platform_core::shared::caller_reach::require_writable_client(
-                &auth.0,
-                e.client_id.clone(),
-            )
-        })
+        .map(|e| caller_reach::require_writable_client(&auth.0, e.client_id.clone()))
         .collect::<Result<Vec<_>, PlatformError>>()?;
     // And every item's type from a caller that may sign as its application
     // (owner ruling 17a).
@@ -799,7 +786,7 @@ pub async fn batch_create_events(
     let event_responses: Vec<EventResponse> = all_events.into_iter().map(Into::into).collect();
 
     Ok((
-        axum::http::StatusCode::CREATED,
+        StatusCode::CREATED,
         Json(BatchCreateResponse {
             events: event_responses,
             count,
@@ -873,7 +860,7 @@ pub async fn list_events_raw(
     auth: Authenticated,
     Query(query): Query<EventsQuery>,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_events_raw(&auth.0)?;
+    checks::can_read_events_raw(&auth.0)?;
     list_events_unchecked(&state, &auth, query).await
 }
 
@@ -906,7 +893,7 @@ pub async fn event_filter_options(
     State(state): State<EventsState>,
     auth: Authenticated,
 ) -> Result<Json<EventFilterOptionsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_events(&auth.0)?;
+    checks::can_read_events(&auth.0)?;
     let repo = &state.event_repo;
     let (applications, subdomains, types) = tokio::try_join!(
         repo.distinct_read_values("application"),

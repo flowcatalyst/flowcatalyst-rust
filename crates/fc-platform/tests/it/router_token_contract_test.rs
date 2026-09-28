@@ -17,6 +17,7 @@ use fc_platform::shared::routes::well_known_router;
 use fc_platform::shared::well_known_api::WellKnownState;
 use fc_platform::{Principal, UserScope};
 use fc_platform_jwks::{clock, BearerAuthenticator, JwksKeySource};
+use tokio::net::TcpListener;
 
 const ISSUER: &str = "https://platform.example.test";
 const VIEW: &str = "platform:messaging:router:view";
@@ -39,7 +40,7 @@ async fn platform_tokens_pass_the_router_verifier() {
             external_base_url: ISSUER.to_string(),
         }),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 

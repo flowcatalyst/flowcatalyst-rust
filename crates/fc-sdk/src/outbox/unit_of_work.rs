@@ -72,9 +72,11 @@ use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use crate::tsid;
+use crate::usecase::audit;
 use crate::usecase::domain_event::DomainEvent;
 use crate::usecase::error::UseCaseError;
 use crate::usecase::result::UseCaseResult;
+use std::sync;
 
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
@@ -364,8 +366,8 @@ impl OutboxUnitOfWork {
         serde_json::json!({
             "entity_type": Self::extract_aggregate_type(&m.subject),
             "entity_id": Self::extract_entity_id(&m.subject),
-            "operation": crate::usecase::audit::command_name::<C>(),
-            "operation_json": crate::usecase::audit::audit_operation_json(command),
+            "operation": audit::command_name::<C>(),
+            "operation_json": audit::audit_operation_json(command),
             "principal_id": m.principal_id,
             "performed_at": m.time.to_rfc3339(),
         })
@@ -983,13 +985,13 @@ impl OutboxUnitOfWork {
 /// assert_eq!(uow.committed_events().len(), 1);
 /// ```
 pub struct InMemoryUnitOfWork {
-    committed_events: std::sync::Mutex<Vec<String>>,
+    committed_events: sync::Mutex<Vec<String>>,
 }
 
 impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {
-            committed_events: std::sync::Mutex::new(Vec::new()),
+            committed_events: sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1081,7 +1083,11 @@ impl UnitOfWork for InMemoryUnitOfWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::AuditMasked;
+    use crate::usecase::Audited;
     use crate::usecase::EventMetadata;
+    use serde::ser;
+    use std::collections::BTreeMap;
 
     // ─── OutboxConfig ───────────────────────────────────────────────────
 
@@ -1363,7 +1369,7 @@ mod tests {
         metadata: EventMetadata,
         amount: f64,
         tags: Vec<String>,
-        nested: std::collections::BTreeMap<String, Option<i64>>,
+        nested: BTreeMap<String, Option<i64>>,
     }
     crate::impl_domain_event!(RichEvent);
 
@@ -1406,7 +1412,7 @@ mod tests {
         }
         impl Serialize for Broken {
             fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("broken"))
+                Err(ser::Error::custom("broken"))
             }
         }
         crate::impl_domain_event!(Broken);
@@ -1446,7 +1452,7 @@ mod tests {
         value: &'static str,
     }
 
-    impl crate::usecase::AuditMasked for RotateWebhookCommand {
+    impl AuditMasked for RotateWebhookCommand {
         fn audit_masked_fields(&self) -> &'static [&'static str] {
             &["value"]
         }
@@ -1498,7 +1504,7 @@ mod tests {
         );
 
         let cmd = rotate();
-        let audited = crate::usecase::Audited(&cmd);
+        let audited = Audited(&cmd);
         let payload = OutboxUnitOfWork::audit_outbox_payload(&audit_event(), &audited);
         assert_eq!(payload["operation"], "RotateWebhookCommand");
         assert_eq!(payload["operation_json"]["value"], "***");

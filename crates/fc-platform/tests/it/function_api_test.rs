@@ -34,6 +34,10 @@ use fc_platform::shared::middleware::{AppState, AuthLayer};
 use fc_platform::Client;
 use support::{read_json, TestApp};
 
+use fc_platform::function::openapi;
+use fc_platform::function::PoolUrlTemplate;
+use fc_platform::shared::tsid;
+use fc_platform::subscription::entity::SubscriptionSource;
 use permissions::function::{
     FUNCTION_DOMAIN_MANAGE, FUNCTION_MANAGE, FUNCTION_POLICY_MANAGE, FUNCTION_SECRET_MANAGE,
     FUNCTION_VIEW,
@@ -83,7 +87,7 @@ impl<'a> As<'a> {
 /// mint its token. The principal must exist: application scope is read
 /// from its row.
 async fn token(app: &TestApp, who: As<'_>) -> String {
-    let n = fc_platform::shared::tsid::generate_untyped().to_lowercase();
+    let n = tsid::generate_untyped().to_lowercase();
     let role_code = format!("fn-test-{n}");
     let role = AuthRole::new("platform", &role_code, "Function test role")
         .with_permissions(who.permissions.iter().map(|p| p.to_string()));
@@ -219,7 +223,7 @@ async fn insert_version(
     state: &str,
     manifest: &str,
 ) -> String {
-    let id = fc_platform::shared::tsid::generate(fc_platform::EntityType::FunctionVersion);
+    let id = tsid::generate(fc_platform::EntityType::FunctionVersion);
     let digest = format!("sha256:{:064x}", version);
     sqlx::query(
         "INSERT INTO fnr_versions (id, function_id, version, artifact_ref, digest, manifest, state, \
@@ -282,7 +286,7 @@ fn function_router(app: &TestApp, encryption: Option<Arc<EncryptionService>>) ->
             trigger_sync: TriggerSync::from_repositories(
                 &app.repos,
                 settings.clone(),
-                fc_platform::function::PoolUrlTemplate::parse("http://fn-{pool}:8080").unwrap(),
+                PoolUrlTemplate::parse("http://fn-{pool}:8080").unwrap(),
             ),
             limits: FunctionLimits::defaults(),
             signatures: fc_function_signing::Signatures::Off,
@@ -1054,7 +1058,7 @@ async fn config_and_secrets() {
     .unwrap();
     assert!(value_ref.starts_with("encrypted:"), "{value_ref}");
     assert!(!value_ref.contains(MARKER));
-    let settings = fc_platform::function::settings_repository::FunctionSettingsRepository::new(
+    let settings = FunctionSettingsRepository::new(
         &app.pool,
         Some(Arc::new(EncryptionService::new(&key).unwrap())),
     );
@@ -1618,10 +1622,7 @@ async fn openapi_document_and_function_subscriptions() {
     let resp = app.get_unauth("/api/openapi-functions.json").await;
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(
-        &bytes[..],
-        fc_platform::function::openapi::FUNCTIONS_OPENAPI
-    );
+    assert_eq!(&bytes[..], openapi::FUNCTIONS_OPENAPI);
 
     // The function routes are in the platform's own document too.
     let spec = app.get_unauth("/q/openapi").await;
@@ -1645,7 +1646,7 @@ async fn openapi_document_and_function_subscriptions() {
         "Function sub",
         "https://host/functions/a.b.c/x",
     );
-    sub.source = fc_platform::subscription::entity::SubscriptionSource::Function;
+    sub.source = SubscriptionSource::Function;
     app.repos
         .subscription_repo
         .insert(&sub)
@@ -1664,8 +1665,5 @@ async fn openapi_document_and_function_subscriptions() {
         .await
         .expect("strict read")
         .expect("row");
-    assert_eq!(
-        read.source,
-        fc_platform::subscription::entity::SubscriptionSource::Function
-    );
+    assert_eq!(read.source, SubscriptionSource::Function);
 }

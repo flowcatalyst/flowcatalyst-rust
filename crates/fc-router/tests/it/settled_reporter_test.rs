@@ -16,6 +16,8 @@ use fc_common::{
     AckNack, BatchMessage, DispatchMode, MediationOutcome, Message, MessageCallback, PoolConfig,
 };
 use fc_router::{Mediator, ProcessPool, SettledJob, SettledReport, SettledReporter};
+use tokio::time;
+use tokio::time::Instant;
 
 struct TestCallback {
     tx: parking_lot::Mutex<Option<oneshot::Sender<AckNack>>>,
@@ -92,7 +94,7 @@ fn batch(id: &str, token: Option<&str>) -> (BatchMessage, oneshot::Receiver<AckN
 }
 
 async fn recv(rx: oneshot::Receiver<AckNack>) -> AckNack {
-    tokio::time::timeout(Duration::from_secs(5), rx)
+    time::timeout(Duration::from_secs(5), rx)
         .await
         .expect("message settled within timeout")
         .expect("callback resolved")
@@ -135,10 +137,10 @@ async fn block_on_error_acks_and_reports_siblings_when_a_reporter_is_wired() {
     );
 
     // The report is fired on its own task after the ACKs.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(5);
     while reporter.reports.lock().is_empty() {
-        assert!(tokio::time::Instant::now() < deadline, "no settled report");
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(Instant::now() < deadline, "no settled report");
+        time::sleep(Duration::from_millis(10)).await;
     }
     let reports = reporter.reports.lock().clone();
     assert_eq!(reports.len(), 1);

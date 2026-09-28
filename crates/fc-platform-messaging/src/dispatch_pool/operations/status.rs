@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use super::events::{DispatchPoolActivated, DispatchPoolSuspended};
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -23,7 +25,7 @@ pub struct SuspendDispatchPoolCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SuspendDispatchPoolCommand {}
+impl AuditMasked for SuspendDispatchPoolCommand {}
 
 /// Command for activating a suspended dispatch pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,7 +34,7 @@ pub struct ActivateDispatchPoolCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ActivateDispatchPoolCommand {}
+impl AuditMasked for ActivateDispatchPoolCommand {}
 
 fn require_id(id: &str) -> Result<(), UseCaseError> {
     if id.trim().is_empty() {
@@ -74,10 +76,7 @@ impl<U: UnitOfWork> UseCase for SuspendDispatchPoolUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }
@@ -139,10 +138,7 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

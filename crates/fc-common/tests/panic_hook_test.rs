@@ -2,24 +2,29 @@
 //! context and a backtrace. Its own test binary: the hook and the global
 //! subscriber are process-wide.
 
+use fc_common::diagnostics;
+use std::io;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
+use tracing_subscriber::fmt;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for Capture {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(buf);
         Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+impl<'a> MakeWriter<'a> for Capture {
     type Writer = Capture;
     fn make_writer(&'a self) -> Capture {
         self.clone()
@@ -31,7 +36,7 @@ async fn a_panic_in_a_task_is_logged_with_its_span_and_backtrace() {
     let capture = Capture::default();
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::fmt::layer()
+            fmt::layer()
                 .json()
                 .with_current_span(true)
                 .with_span_list(true)
@@ -39,8 +44,8 @@ async fn a_panic_in_a_task_is_logged_with_its_span_and_backtrace() {
                 .with_writer(capture.clone()),
         )
         .init();
-    fc_common::diagnostics::init();
-    let before = fc_common::diagnostics::panic_count();
+    diagnostics::init();
+    let before = diagnostics::panic_count();
 
     use tracing::Instrument;
     let task = tokio::spawn(
@@ -52,7 +57,7 @@ async fn a_panic_in_a_task_is_logged_with_its_span_and_backtrace() {
     );
     assert!(task.await.unwrap_err().is_panic());
 
-    assert_eq!(fc_common::diagnostics::panic_count(), before + 1);
+    assert_eq!(diagnostics::panic_count(), before + 1);
     let out = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
     let line = out
         .lines()

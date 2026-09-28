@@ -16,9 +16,11 @@ use super::events::{
     AssignedToApp, IdentityAppGranted, PortalAppChanged, APP_CREATED, APP_DELETED, APP_UPDATED,
 };
 use super::{find_client_app, load_client_app, not_found};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use fc_platform_iam::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
 use fc_platform_iam::auth::operations::events::{OAuthClientCreated, OAuthClientDeleted};
+use fc_platform_iam::portal;
 use fc_platform_iam::portal::entity::{
     normalize_app_code, trimmed_or_none, valid_app_code, IdentitySource, PortalApp,
 };
@@ -58,7 +60,7 @@ pub struct CreateAppWithOAuthClientCommand {
     pub client_secret_ref: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateAppWithOAuthClientCommand {}
+impl AuditMasked for CreateAppWithOAuthClientCommand {}
 
 /// Parse Go's `clientType` (exact `PUBLIC` / `CONFIDENTIAL`).
 pub fn parse_client_type(s: &str) -> Option<OAuthClientType> {
@@ -166,7 +168,7 @@ impl<U: UnitOfWork> UseCase for CreatePortalAppWithOAuthClientUseCase<U> {
         command: &CreateAppWithOAuthClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -255,7 +257,7 @@ pub struct UpdateAppCommand {
     pub active: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateAppCommand {}
+impl AuditMasked for UpdateAppCommand {}
 
 /// Rename/describe/(de)activate a portal app and emit the updated event. An
 /// inactive app refuses logins and new grants.
@@ -298,7 +300,7 @@ impl<U: UnitOfWork> UseCase for UpdatePortalAppUseCase<U> {
         command: &UpdateAppCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -336,7 +338,7 @@ pub struct DeleteAppCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteAppCommand {}
+impl AuditMasked for DeleteAppCommand {}
 
 /// Remove a portal app, its grants (FK cascade) AND every OAuth client
 /// linked to it, in one transaction. The OAuth clients go too rather than
@@ -387,7 +389,7 @@ impl<U: UnitOfWork> UseCase for DeletePortalAppUseCase<U> {
         command: &DeleteAppCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -436,7 +438,7 @@ pub struct AssignUnassignedCommand {
     pub portal_app_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AssignUnassignedCommand {}
+impl AuditMasked for AssignUnassignedCommand {}
 
 /// The code of the no-op (nobody to assign) — intercepted by the handler,
 /// which answers 200 with `assigned: 0` as Go does.
@@ -490,7 +492,7 @@ impl<U: UnitOfWork> UseCase for AssignUnassignedPortalIdentitiesUseCase<U> {
         command: &AssignUnassignedCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)

@@ -5,7 +5,10 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{AppDoc, AppDocsReplacement};
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct AppDocRow {
@@ -87,14 +90,10 @@ impl AppDocsRepository {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<AppDocsReplacement> for AppDocsRepository {
+impl Persist<AppDocsReplacement> for AppDocsRepository {
     /// Go `ReplaceForApplication`: every page upserted by (application,
     /// slug) with its position, then the unlisted ones deleted.
-    async fn persist(
-        &self,
-        r: &AppDocsReplacement,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn persist(&self, r: &AppDocsReplacement, tx: &mut DbTx<'_>) -> Result<()> {
         if !r.docs.is_empty() {
             let ids: Vec<&str> = r.docs.iter().map(|d| d.id.as_str()).collect();
             let slugs: Vec<&str> = r.docs.iter().map(|d| d.slug.as_str()).collect();
@@ -131,12 +130,8 @@ impl fc_platform_core::usecase::Persist<AppDocsReplacement> for AppDocsRepositor
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        _r: &AppDocsReplacement,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
-        Err(fc_platform_core::shared::error::PlatformError::internal(
+    async fn delete(&self, _r: &AppDocsReplacement, _tx: &mut DbTx<'_>) -> Result<()> {
+        Err(PlatformError::internal(
             "a documentation replacement is not deleted",
         ))
     }

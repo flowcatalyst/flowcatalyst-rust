@@ -19,8 +19,10 @@ use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
+use crate::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
+use std::collections::HashMap;
 
 /// Response shape for `GET /bff/dashboard/stats`.
 #[derive(Debug, Serialize, ToSchema)]
@@ -79,7 +81,7 @@ pub async fn get_dashboard_stats(
     State(state): State<BffDashboardState>,
     auth: Authenticated,
 ) -> Result<Json<DashboardStatsResponse>, PlatformError> {
-    crate::checks::can_view_dashboard_stats(&auth.0)?;
+    checks::can_view_dashboard_stats(&auth.0)?;
 
     // Control plane: exact counts. These tables are bounded (thousands at
     // most) so COUNT(*) is sub-millisecond — keeping these in one place
@@ -103,7 +105,7 @@ pub async fn get_dashboard_stats(
 
     // Message plane: planner estimates from pg_class. Tables are batched
     // into one query.
-    let mut by_name: std::collections::HashMap<String, u64> = fetch_reltuples(
+    let mut by_name: HashMap<String, u64> = fetch_reltuples(
         &state.pool,
         &[
             "msg_events",

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time;
+use std::time::SystemTime;
 
 /// Health tracker for a single projection service.
 ///
@@ -43,8 +45,8 @@ impl StreamHealth {
     pub fn add_processed(&self, count: u64) {
         self.processed_count.fetch_add(count, Ordering::SeqCst);
         self.last_poll_time.store(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            SystemTime::now()
+                .duration_since(time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
             Ordering::SeqCst,

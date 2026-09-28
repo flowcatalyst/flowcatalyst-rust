@@ -22,6 +22,7 @@ pub use permission_grants::{
 pub use sync::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase};
 pub use update::{UpdateRoleCommand, UpdateRoleUseCase};
 
+use crate::role::entity;
 use fc_platform_core::usecase::UseCaseError;
 
 /// Owner ruling 15 (Java a120e236): a role may hold only its own
@@ -34,8 +35,7 @@ pub(crate) fn require_confined<'a>(
     permissions: impl IntoIterator<Item = &'a str>,
     cross_application: bool,
 ) -> Result<(), UseCaseError> {
-    let outside =
-        crate::role::entity::permissions_outside_application(application_code, permissions);
+    let outside = entity::permissions_outside_application(application_code, permissions);
     if outside.is_empty() {
         return Ok(());
     }

@@ -34,12 +34,14 @@ use fc_sdk::sync::{
     DefinitionSet, DefinitionSynchronizer, EventTypeDefinition, RoleDefinition,
     SubscriptionBinding, SubscriptionDefinition, SyncOptions,
 };
+use std::env;
+use std::error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = std::env::var("FC_BASE_URL")?;
-    let token = std::env::var("FC_TOKEN")?;
-    let app = std::env::var("FC_APP_CODE").unwrap_or_else(|_| "billing".to_string());
+async fn main() -> Result<(), Box<dyn error::Error>> {
+    let base_url = env::var("FC_BASE_URL")?;
+    let token = env::var("FC_TOKEN")?;
+    let app = env::var("FC_APP_CODE").unwrap_or_else(|_| "billing".to_string());
 
     let client = FlowCatalystClient::new(base_url).with_token(token);
 

@@ -81,10 +81,15 @@ use fc_router::{
     breaker_key, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState, HttpMediator,
     HttpMediatorConfig, Mediator, ProcessPool, WarningService, WarningServiceConfig,
 };
+use futures::future;
 use serde::Deserialize;
 use serde_json::Value;
+use std::env;
+use std::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
+use tokio::time;
 
 // ---------------------------------------------------------------------
 // Corpus
@@ -136,7 +141,7 @@ fn repo_root() -> PathBuf {
 
 /// The vendored copy, unless `FC_CONFORMANCE_CORPUS` names another.
 fn corpus_path() -> PathBuf {
-    match std::env::var("FC_CONFORMANCE_CORPUS") {
+    match env::var("FC_CONFORMANCE_CORPUS") {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => repo_root().join("conformance/mediation-outcomes.json"),
     }
@@ -144,7 +149,7 @@ fn corpus_path() -> PathBuf {
 
 fn load_raw() -> String {
     let path = corpus_path();
-    std::fs::read_to_string(&path)
+    fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read conformance corpus {}: {e}", path.display()))
 }
 
@@ -256,7 +261,7 @@ fn corpus_is_well_formed() {
     // Drift notice only: the vendored copy is what this repo asserts, and a
     // newer Java corpus must be adopted deliberately (PROVENANCE.md).
     let sibling = repo_root().join("../flowcatalyst-javalin/conformance/mediation-outcomes.json");
-    if let Ok(theirs) = std::fs::read_to_string(&sibling) {
+    if let Ok(theirs) = fs::read_to_string(&sibling) {
         if theirs != raw {
             eprintln!(
                 "NOTICE: {} differs from the corpus this run used ({}). \
@@ -276,7 +281,7 @@ struct TargetServer {
     url: String,
     /// `messageId` of every request that reached the server, in order.
     requests: Arc<parking_lot::Mutex<Vec<String>>>,
-    task: tokio::task::JoinHandle<()>,
+    task: JoinHandle<()>,
 }
 
 impl Drop for TargetServer {
@@ -653,7 +658,7 @@ async fn observe(given: &Given, honours_delayed_return: bool) -> Observation {
             // show up as mismatches below.
             break Instant::now();
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     };
 
     // Then let the group settle: both messages resolved at the broker, or
@@ -663,7 +668,7 @@ async fn observe(given: &Given, honours_delayed_return: bool) -> Observation {
         if settled || first_done.elapsed() >= SETTLE_WINDOW {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
 
     let observation = Observation {
@@ -903,7 +908,7 @@ fn ruled(case_id: &str) -> Option<&'static str> {
 async fn mediation_conformance() {
     let corpus = load_corpus();
 
-    let results = futures::future::join_all(corpus.cases.iter().map(|case| async move {
+    let results = future::join_all(corpus.cases.iter().map(|case| async move {
         let mismatches = if case.given.kind == "unsupportedMediationType" {
             run_unsupported_mediation_type()
         } else {

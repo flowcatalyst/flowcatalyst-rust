@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// An administrator minted a token for a service account.
@@ -53,7 +55,7 @@ pub struct MintServiceAccountTokenCommand {
     pub code: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for MintServiceAccountTokenCommand {}
+impl AuditMasked for MintServiceAccountTokenCommand {}
 
 pub struct RecordServiceAccountTokenMintUseCase<U: UnitOfWork> {
     unit_of_work: Arc<U>,
@@ -90,11 +92,7 @@ impl<U: UnitOfWork> UseCase for RecordServiceAccountTokenMintUseCase<U> {
         _command: &MintServiceAccountTokenCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::ApplicationActivated;
 use crate::application::repository::ApplicationRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct ActivateApplicationCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ActivateApplicationCommand {}
+impl AuditMasked for ActivateApplicationCommand {}
 
 /// Use case for activating an application.
 pub struct ActivateApplicationUseCase<U: UnitOfWork> {
@@ -53,11 +55,7 @@ impl<U: UnitOfWork> UseCase for ActivateApplicationUseCase<U> {
         _command: &ActivateApplicationCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

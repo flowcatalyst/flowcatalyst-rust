@@ -17,7 +17,9 @@ use crate::connection::sync_plan::{ConnectionSyncPlan, SOURCE_API, SOURCE_CODE};
 use crate::subscription::repository::SubscriptionRepository;
 use fc_platform_core::directory::ApplicationDirectory;
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -66,7 +68,7 @@ pub struct SyncConnectionsCommand {
     pub remove_unlisted: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncConnectionsCommand {}
+impl AuditMasked for SyncConnectionsCommand {}
 
 /// Go `validate.CodePattern`: `^[a-z][a-z0-9-]*$`.
 fn is_code(s: &str) -> bool {
@@ -278,20 +280,16 @@ impl<U: UnitOfWork> UseCase for SyncConnectionsUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if !ctx.caller().allows_application(&command.application_id) {
-            return Err(UseCaseError::verbatim(
-                fc_platform_core::shared::error::PlatformError::not_found(
-                    "Application",
-                    &command.application_code,
-                ),
-            ));
+            return Err(UseCaseError::verbatim(PlatformError::not_found(
+                "Application",
+                &command.application_code,
+            )));
         }
         if let Some(client_id) = command.client_id.as_deref() {
             if !ctx.caller().can_access_client(client_id) {
-                return Err(UseCaseError::verbatim(
-                    fc_platform_core::shared::error::PlatformError::forbidden(format!(
-                        "No access to client: {client_id}"
-                    )),
-                ));
+                return Err(UseCaseError::verbatim(PlatformError::forbidden(format!(
+                    "No access to client: {client_id}"
+                ))));
             }
         }
         Ok(())

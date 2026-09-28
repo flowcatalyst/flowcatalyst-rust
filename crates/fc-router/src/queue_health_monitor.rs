@@ -12,8 +12,13 @@ use tracing::{debug, info, warn};
 
 use crate::manager::QueueManager;
 use crate::warning::WarningService;
+use fc_common::diagnostics;
+use fc_common::diagnostics::OnPanic;
 use fc_common::{WarningCategory, WarningSeverity};
 use fc_queue::QueueMetrics;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Configuration for queue health monitoring
 #[derive(Debug, Clone)]
@@ -180,37 +185,33 @@ pub fn spawn_queue_health_monitor(
     monitor: Arc<QueueHealthMonitor>,
     manager: Arc<QueueManager>,
     shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
+) -> JoinHandle<()> {
     let interval = monitor.config.check_interval;
 
     // Supervised: a panic is logged and the loop restarted.
-    fc_common::diagnostics::spawn_supervised(
-        "router.queue_health_monitor",
-        fc_common::diagnostics::OnPanic::Restart,
-        move || {
-            let monitor = monitor.clone();
-            let manager = manager.clone();
-            let shutdown = shutdown.clone();
-            async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    diagnostics::spawn_supervised("router.queue_health_monitor", OnPanic::Restart, move || {
+        let monitor = monitor.clone();
+        let manager = manager.clone();
+        let shutdown = shutdown.clone();
+        async move {
+            let mut ticker = time::interval(interval);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            debug!("Running queue health check");
-                            let metrics = manager.get_queue_metrics().await;
-                            monitor.check_queue_health(&metrics);
-                        }
-                        _ = shutdown.cancelled() => {
-                            info!("Queue health monitor shutting down");
-                            break;
-                        }
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        debug!("Running queue health check");
+                        let metrics = manager.get_queue_metrics().await;
+                        monitor.check_queue_health(&metrics);
+                    }
+                    _ = shutdown.cancelled() => {
+                        info!("Queue health monitor shutting down");
+                        break;
                     }
                 }
             }
-        },
-    )
+        }
+    })
 }
 
 #[cfg(test)]
@@ -219,6 +220,7 @@ mod tests {
     use crate::manager::QueueManager;
     use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningServiceConfig;
+    use tokio::time;
 
     #[test]
     fn test_default_config() {
@@ -287,7 +289,7 @@ mod tests {
 
         let handle = spawn_queue_health_monitor(monitor, manager, token);
 
-        tokio::time::timeout(Duration::from_secs(1), handle)
+        time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("queue health monitor should exit within 1s of an already-cancelled token")
             .expect("task should not panic");

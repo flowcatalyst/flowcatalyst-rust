@@ -11,6 +11,7 @@ use crate::event_type::entity::{
     EventType, EventTypeCode, EventTypeCodeError, EventTypeSource, SpecVersion,
 };
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -42,7 +43,7 @@ pub struct SyncEventTypesCommand {
     pub remove_unlisted: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncEventTypesCommand {}
+impl AuditMasked for SyncEventTypesCommand {}
 
 /// Result of a sync operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]

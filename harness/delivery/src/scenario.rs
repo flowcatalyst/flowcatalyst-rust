@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use std::fs;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -283,14 +284,14 @@ impl Stimulus {
 
 pub fn load_dir(dir: &Path) -> anyhow::Result<Vec<Scenario>> {
     let mut out = Vec::new();
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+    let mut entries: Vec<_> = fs::read_dir(dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
         .collect();
     entries.sort();
     for p in entries {
-        let text = std::fs::read_to_string(&p)?;
+        let text = fs::read_to_string(&p)?;
         let s: Scenario =
             serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("{}: {e}", p.display()))?;
         out.push(s);

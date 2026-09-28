@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::AuthConfigUpdated;
 use crate::auth::config_entity::{AuthConfigType, AuthProvider};
 use crate::auth::config_repository::ClientAuthConfigRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -40,7 +42,7 @@ pub struct UpdateAuthConfigCommand {
     pub config_type: Option<AuthConfigType>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateAuthConfigCommand {}
+impl AuditMasked for UpdateAuthConfigCommand {}
 
 pub struct UpdateAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
@@ -80,11 +82,7 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
         _command: &UpdateAuthConfigCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

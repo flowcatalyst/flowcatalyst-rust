@@ -14,6 +14,9 @@ use tokio::sync::RwLock;
 use crate::auth::oauth_entity::{GrantType, OAuthClient};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -760,19 +763,15 @@ impl OAuthClientRepository {
 
 // ── Persist<OAuthClient> ────────────────────────────────────────────────────
 
-impl fc_platform_core::usecase::HasId for OAuthClient {
+impl HasId for OAuthClient {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<OAuthClient> for OAuthClientRepository {
-    async fn persist(
-        &self,
-        c: &OAuthClient,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<OAuthClient> for OAuthClientRepository {
+    async fn persist(&self, c: &OAuthClient, tx: &mut DbTx<'_>) -> Result<()> {
         let scopes = if c.default_scopes.is_empty() {
             None
         } else {
@@ -887,11 +886,7 @@ impl fc_platform_core::usecase::Persist<OAuthClient> for OAuthClientRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &OAuthClient,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &OAuthClient, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)

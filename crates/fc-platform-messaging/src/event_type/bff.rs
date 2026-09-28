@@ -14,8 +14,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::event_type::access;
 use crate::event_type::api::EventTypeGoState;
+use crate::event_type::bff;
 use crate::event_type::entity::{EventType, EventTypeStatus, SpecVersion};
+use crate::event_type::operations::SyncEventTypesCommand;
 use crate::event_type::operations::{
     AddSchemaCommand, AddSchemaUseCase, ArchiveEventTypeCommand, ArchiveEventTypeUseCase,
     CreateEventTypeCommand, CreateEventTypeUseCase, DeleteEventTypeCommand, DeleteEventTypeUseCase,
@@ -23,8 +26,11 @@ use crate::event_type::operations::{
     SyncEventTypesUseCase, UpdateEventTypeCommand, UpdateEventTypeUseCase,
 };
 use crate::event_type::repository::EventTypeRepository;
+use crate::seed::platform_event_types;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::jsonb_text;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
 
@@ -54,10 +60,7 @@ impl From<SpecVersion> for BffSpecVersionResponse {
             schema_type: v.schema_type.as_str().to_string(),
             mime_type: v.mime_type,
             // The stored `jsonb` text, as Go serves it.
-            schema: v
-                .schema_content
-                .as_ref()
-                .map(fc_platform_core::shared::jsonb_text::jsonb_text),
+            schema: v.schema_content.as_ref().map(jsonb_text::jsonb_text),
             created_at: v.created_at.to_rfc3339(),
             updated_at: v.updated_at.to_rfc3339(),
         }
@@ -220,7 +223,7 @@ pub struct BffAggregateFilterQuery {
 #[derive(Clone)]
 pub struct BffEventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
-    pub sync_use_case: Arc<SyncEventTypesUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
+    pub sync_use_case: Arc<SyncEventTypesUseCase<PgUnitOfWork>>,
     pub unit_of_work: Arc<PgUnitOfWork>,
 }
 
@@ -296,7 +299,7 @@ pub async fn list_event_types(
     auth: Authenticated,
     Query(query): Query<BffEventTypesQuery>,
 ) -> Result<Json<BffEventTypeListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types(&auth.0)?;
 
     // Start with status-based or full list
     let event_types = if let Some(ref status) = query.status {
@@ -365,7 +368,7 @@ pub async fn get_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
+    checks::can_read_event_types(&auth.0)?;
 
     let event_type = state
         .event_type_repo
@@ -374,7 +377,7 @@ pub async fn get_event_type(
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
     // Check client access
-    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
+    access::ensure_visible(&auth.0, &event_type)?;
 
     Ok(Json(event_type.into()))
 }
@@ -397,11 +400,11 @@ pub async fn create_event_type(
     State(state): State<BffEventTypesState>,
     auth: Authenticated,
     Json(req): Json<BffCreateEventTypeRequest>,
-) -> Result<(axum::http::StatusCode, Json<BffEventTypeResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+) -> Result<(StatusCode, Json<BffEventTypeResponse>), PlatformError> {
+    checks::can_write_event_types(&auth.0)?;
 
     // Validate client access if specified
-    crate::event_type::access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
+    access::ensure_can_create(&auth.0, req.client_id.as_deref())?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
 
@@ -440,7 +443,7 @@ pub async fn create_event_type(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::internal("post-create reload failed"))?;
-    Ok((axum::http::StatusCode::CREATED, Json(created.into())))
+    Ok((StatusCode::CREATED, Json(created.into())))
 }
 
 /// Update event type metadata
@@ -464,8 +467,8 @@ pub async fn update_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<BffUpdateEventTypeRequest>,
-) -> Result<axum::http::StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+) -> Result<StatusCode, PlatformError> {
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -474,7 +477,7 @@ pub async fn update_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "modify")?;
+    access::ensure_modifiable(&auth.0, &event_type, "modify")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = UpdateEventTypeCommand {
@@ -489,7 +492,7 @@ pub async fn update_event_type(
         UpdateEventTypeUseCase::new(state.event_type_repo.clone(), state.unit_of_work.clone());
     use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete event type
@@ -511,8 +514,8 @@ pub async fn delete_event_type(
     State(state): State<BffEventTypesState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+) -> Result<StatusCode, PlatformError> {
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -521,7 +524,7 @@ pub async fn delete_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "delete")?;
+    access::ensure_modifiable(&auth.0, &event_type, "delete")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeleteEventTypeCommand { event_type_id: id };
@@ -530,7 +533,7 @@ pub async fn delete_event_type(
         DeleteEventTypeUseCase::new(state.event_type_repo.clone(), state.unit_of_work.clone());
     use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Archive event type
@@ -553,7 +556,7 @@ pub async fn archive_event_type(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -562,7 +565,7 @@ pub async fn archive_event_type(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_modifiable(&auth.0, &event_type, "archive")?;
+    access::ensure_modifiable(&auth.0, &event_type, "archive")?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = ArchiveEventTypeCommand {
@@ -606,7 +609,7 @@ pub async fn add_schema(
     Path(id): Path<String>,
     Json(req): Json<BffAddSchemaRequest>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -615,7 +618,7 @@ pub async fn add_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
+    access::ensure_visible(&auth.0, &event_type)?;
 
     // The version is the one the user entered (Go `addSchema`), not the
     // next number: a repeat is 409 `VERSION_EXISTS`.
@@ -633,7 +636,7 @@ pub async fn add_schema(
         version,
         mime_type: req.mime_type,
         schema_content: Some(req.schema),
-        schema_type: fc_platform_core::shared::enum_str::parse_opt(req.schema_type.as_deref())?,
+        schema_type: enum_str::parse_opt(req.schema_type.as_deref())?,
     };
 
     let use_case = AddSchemaUseCase::new(state.event_type_repo.clone(), state.unit_of_work.clone());
@@ -671,7 +674,7 @@ pub async fn finalise_schema(
     auth: Authenticated,
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -680,7 +683,7 @@ pub async fn finalise_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
+    access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = FinaliseSchemaCommand {
@@ -724,7 +727,7 @@ pub async fn deprecate_schema(
     auth: Authenticated,
     Path((id, version)): Path<(String, String)>,
 ) -> Result<Json<BffEventTypeResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     // Fetch to check client access before calling the use case
     let event_type = state
@@ -733,7 +736,7 @@ pub async fn deprecate_schema(
         .await?
         .ok_or_else(|| PlatformError::not_found("EventType", &id))?;
 
-    crate::event_type::access::ensure_visible(&auth.0, &event_type)?;
+    access::ensure_visible(&auth.0, &event_type)?;
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let cmd = DeprecateSchemaCommand {
@@ -775,7 +778,7 @@ pub async fn sync_platform(
     auth: Authenticated,
     body: Option<Json<BffSyncPlatformRequest>>,
 ) -> Result<Json<BffSyncPlatformResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+    checks::can_write_event_types(&auth.0)?;
 
     sync_platform_target(body.map(|b| b.0))?;
     let cmd = platform_sync_command();
@@ -799,9 +802,9 @@ pub async fn sync_platform(
 /// `seed::platform_event_types`), shared by `POST
 /// /bff/event-types/sync-platform` and the server-rendered `fc-web` UI.
 /// Additive: types no longer defined are kept.
-pub fn platform_sync_command() -> crate::event_type::operations::SyncEventTypesCommand {
+pub fn platform_sync_command() -> SyncEventTypesCommand {
     use crate::event_type::operations::{SyncEventTypeInput, SyncEventTypesCommand};
-    let event_types = crate::seed::platform_event_types::definitions()
+    let event_types = platform_event_types::definitions()
         .iter()
         .map(|def| SyncEventTypeInput {
             code: def.code.clone(),
@@ -950,7 +953,7 @@ pub async fn bff_put_event_type(
     Json(req): Json<BffUpdateEventTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
     checks::can_update_event_types(&auth.0)?;
-    crate::event_type::bff::update_event_type(State(state.bff), auth, Path(id), Json(req)).await
+    bff::update_event_type(State(state.bff), auth, Path(id), Json(req)).await
 }
 
 #[cfg(test)]

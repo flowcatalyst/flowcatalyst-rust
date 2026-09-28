@@ -57,6 +57,10 @@ use crate::function::trigger_object_repository::{
 };
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{Manifest, PoolUrlTemplate, ScheduleSpec, SubscriptionSpec, LIVE_ALIAS};
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::DomainEvent;
+use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCaseError};
 use fc_platform_iam::application::repository::ApplicationRepository;
 use fc_platform_messaging::dispatch_pool::operations::{
@@ -1170,10 +1174,10 @@ impl TriggerSync {
     ) -> Result<A, UseCaseError>
     where
         U: UnitOfWork,
-        A: fc_platform_core::usecase::HasId + Send + Sync,
-        R: fc_platform_core::usecase::Persist<A>,
-        E: fc_platform_core::usecase::DomainEvent + Send + 'static,
-        C: serde::Serialize + fc_platform_core::usecase::AuditMasked + Send + Sync,
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: serde::Serialize + AuditMasked + Send + Sync,
     {
         let link = TriggerObject {
             function_id: f.id.clone(),
@@ -1202,10 +1206,10 @@ impl TriggerSync {
     ) -> Result<(), UseCaseError>
     where
         U: UnitOfWork,
-        A: fc_platform_core::usecase::HasId + Send + Sync,
-        R: fc_platform_core::usecase::Persist<A>,
-        E: fc_platform_core::usecase::DomainEvent + Send + 'static,
-        C: serde::Serialize + fc_platform_core::usecase::AuditMasked + Send + Sync,
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Send + 'static,
+        C: serde::Serialize + AuditMasked + Send + Sync,
     {
         let linked = Linked {
             object,

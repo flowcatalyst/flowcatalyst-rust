@@ -17,6 +17,7 @@ use fc_function_model::{
     Hostname, HttpMethod, JsonNode, Manifest, PoolUrlTemplate, RoutePattern, Runtime, Segment,
     SettingKey,
 };
+use std::fs;
 
 fn data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -25,7 +26,7 @@ fn data(name: &str) -> PathBuf {
 }
 
 fn load(name: &str) -> Value {
-    serde_json::from_str(&std::fs::read_to_string(data(name)).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(data(name)).unwrap()).unwrap()
 }
 
 fn cases() -> Value {

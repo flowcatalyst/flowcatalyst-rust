@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountDeleted;
 use crate::service_account::repository::ServiceAccountRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct DeleteServiceAccountCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteServiceAccountCommand {}
+impl AuditMasked for DeleteServiceAccountCommand {}
 
 /// Use case for deleting a service account.
 pub struct DeleteServiceAccountUseCase<U: UnitOfWork> {
@@ -54,11 +56,7 @@ impl<U: UnitOfWork> UseCase for DeleteServiceAccountUseCase<U> {
         _command: &DeleteServiceAccountCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

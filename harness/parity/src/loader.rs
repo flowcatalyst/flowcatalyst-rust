@@ -9,6 +9,7 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 
 use crate::model::Scenario;
+use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct Loaded {
@@ -38,7 +39,7 @@ pub fn load(dir: &Path, only: Option<&str>) -> Result<Vec<Loaded>> {
                 continue;
             }
         }
-        let bytes = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
+        let bytes = fs::read(&file).with_context(|| format!("read {}", file.display()))?;
         let scenario: Scenario =
             serde_json::from_slice(&bytes).with_context(|| format!("parse {}", file.display()))?;
         scenario.validate()?;
@@ -52,7 +53,7 @@ pub fn load(dir: &Path, only: Option<&str>) -> Result<Vec<Loaded>> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in std::fs::read_dir(dir).with_context(|| format!("walk {}", dir.display()))? {
+    for entry in fs::read_dir(dir).with_context(|| format!("walk {}", dir.display()))? {
         let path = entry?.path();
         if path.is_dir() {
             walk(&path, out)?;

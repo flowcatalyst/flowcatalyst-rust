@@ -86,6 +86,9 @@ impl Cache for MemoryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use tokio::time;
 
     #[tokio::test]
     async fn round_trip() {
@@ -122,7 +125,7 @@ mod tests {
             .set_bytes("k", b"v".to_vec(), Duration::from_millis(10))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
         assert!(cache.get_bytes("k").await.unwrap().is_none());
     }
 
@@ -157,7 +160,7 @@ mod tests {
         super::super::set(&cache, "k", &"cached".to_string(), Duration::from_secs(60))
             .await
             .unwrap();
-        let counter = std::sync::Arc::new(std::sync::Mutex::new(0));
+        let counter = Arc::new(Mutex::new(0));
         let counter_clone = counter.clone();
         let v: String =
             super::super::get_or_set(&cache, "k", Duration::from_secs(60), move || async move {
@@ -194,7 +197,7 @@ mod tests {
             .set_bytes("b", b"2".to_vec(), Duration::from_secs(60))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
         cache.reap_expired().await;
         let guard = cache.inner.read().await;
         assert!(!guard.contains_key("a"));

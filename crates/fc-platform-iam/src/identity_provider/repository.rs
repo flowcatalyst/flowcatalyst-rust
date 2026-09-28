@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use super::entity::IdentityProvider;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -51,7 +54,7 @@ impl TryFrom<IdentityProviderRow> for IdentityProvider {
     }
 }
 
-impl fc_platform_core::usecase::unit_of_work::HasId for IdentityProvider {
+impl HasId for IdentityProvider {
     fn id(&self) -> &str {
         &self.id
     }
@@ -215,10 +218,7 @@ impl IdentityProviderRepository {
 
 /// Upsert the provider row and replace its allowed roles (Go `Persist`).
 /// The routed domains are the mappings', never written here.
-async fn write_provider(
-    idp: &IdentityProvider,
-    tx: &mut fc_platform_core::usecase::DbTx<'_>,
-) -> Result<()> {
+async fn write_provider(idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()> {
     sqlx::query(
         r#"INSERT INTO oauth_identity_providers
             (id, code, name, type, oidc_issuer_url, oidc_client_id,
@@ -269,7 +269,7 @@ async fn write_provider(
 
 /// Delete the provider and clear its junctions (the allowed roles, and the
 /// legacy allowed-domains rows so an old install keeps no orphans).
-async fn delete_provider(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>) -> Result<bool> {
+async fn delete_provider(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
     sqlx::query(
         "DELETE FROM oauth_identity_provider_allowed_domains WHERE identity_provider_id = $1",
     )
@@ -290,20 +290,12 @@ async fn delete_provider(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>)
 }
 
 #[async_trait::async_trait]
-impl fc_platform_core::usecase::Persist<IdentityProvider> for IdentityProviderRepository {
-    async fn persist(
-        &self,
-        idp: &IdentityProvider,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<IdentityProvider> for IdentityProviderRepository {
+    async fn persist(&self, idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()> {
         write_provider(idp, tx).await
     }
 
-    async fn delete(
-        &self,
-        idp: &IdentityProvider,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, idp: &IdentityProvider, tx: &mut DbTx<'_>) -> Result<()> {
         delete_provider(&idp.id, tx).await.map(|_| ())
     }
 }

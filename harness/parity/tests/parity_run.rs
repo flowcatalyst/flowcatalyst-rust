@@ -17,16 +17,17 @@
 
 use fc_parity::report::StepStatus;
 use fc_parity::Config;
+use std::env;
 
 #[tokio::test]
 #[ignore = "needs Docker, Go and a release fc-server; see the file doc"]
 async fn the_harness_runs_go_against_rust() {
     let defaults = Config::defaults();
     let config = Config {
-        go_bin_dir: std::env::var_os("PARITY_GO_BIN_DIR").map(Into::into),
-        rust_bin_dir: std::env::var_os("PARITY_RUST_BIN_DIR").map(Into::into),
-        go_src: std::env::var_os("PARITY_GO_SRC").map_or(defaults.go_src.clone(), Into::into),
-        only: std::env::var("PARITY_ONLY").ok(),
+        go_bin_dir: env::var_os("PARITY_GO_BIN_DIR").map(Into::into),
+        rust_bin_dir: env::var_os("PARITY_RUST_BIN_DIR").map(Into::into),
+        go_src: env::var_os("PARITY_GO_SRC").map_or(defaults.go_src.clone(), Into::into),
+        only: env::var("PARITY_ONLY").ok(),
         ..defaults
     };
     let report = fc_parity::run(&config).await.expect("the harness ran");

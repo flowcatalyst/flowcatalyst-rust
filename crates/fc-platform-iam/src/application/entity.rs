@@ -1,6 +1,9 @@
 //! Application Entity — matches TypeScript Application domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::authorization_service::ScopedApplication;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,9 +44,7 @@ impl Application {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Application,
-            ),
+            id: tsid::generate(EntityType::Application),
             application_type: ApplicationType::Application,
             code: code.into(),
             name: name.into(),
@@ -96,7 +97,7 @@ impl Application {
     }
 }
 
-impl fc_platform_core::shared::authorization_service::ScopedApplication for Application {
+impl ScopedApplication for Application {
     fn application_id(&self) -> &str {
         &self.id
     }

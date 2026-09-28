@@ -40,6 +40,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 
 use super::encryption_service::{EncryptionError, EncryptionService, ENCRYPTED_PREFIX};
+use aws_sdk_secretsmanager::error::DisplayErrorContext;
+use std::env;
+use tokio::sync::OnceCell;
 
 /// The reference prefixes stored verbatim and resolved at read time (Go's
 /// `externalSecretSchemes`).
@@ -175,7 +178,7 @@ pub struct EnvSecretStore;
 #[async_trait]
 impl SecretStore for EnvSecretStore {
     async fn get(&self, key: &str) -> Result<String, SecretRefError> {
-        match std::env::var(key) {
+        match env::var(key) {
             Ok(v) if !v.is_empty() => Ok(v),
             _ => Err(SecretRefError::NotFound {
                 scheme: "env".to_string(),
@@ -189,13 +192,13 @@ impl SecretStore for EnvSecretStore {
 /// Manager, read with the host's AWS credentials (the default provider
 /// chain). The client is built on first use.
 pub struct AwsSecretsManagerStore {
-    client: tokio::sync::OnceCell<aws_sdk_secretsmanager::Client>,
+    client: OnceCell<aws_sdk_secretsmanager::Client>,
 }
 
 impl AwsSecretsManagerStore {
     pub fn new() -> Self {
         Self {
-            client: tokio::sync::OnceCell::new(),
+            client: OnceCell::new(),
         }
     }
 
@@ -228,7 +231,7 @@ impl SecretStore for AwsSecretsManagerStore {
             .map_err(|e| SecretRefError::Provider {
                 scheme: "aws-sm".to_string(),
                 key: key.to_string(),
-                message: aws_sdk_secretsmanager::error::DisplayErrorContext(e).to_string(),
+                message: DisplayErrorContext(e).to_string(),
             })?;
         out.secret_string()
             .map(str::to_string)
@@ -318,6 +321,7 @@ impl SecretResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn enc() -> EncryptionService {
@@ -462,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn env_references_read_the_environment() {
         let r = SecretResolver::platform(None);
-        std::env::set_var("FC_SECRET_REF_TEST_VAR", "from-env");
+        env::set_var("FC_SECRET_REF_TEST_VAR", "from-env");
         assert_eq!(
             r.resolve("env://FC_SECRET_REF_TEST_VAR").await.unwrap(),
             "from-env"

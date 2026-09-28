@@ -13,11 +13,12 @@ use fc_function_signing::SignaturesMode;
 use fc_platform::function::artifact::PlatformArtifactRef;
 use fc_platform::function::schedule_check::{parse_cron, zone_id_valid};
 use fc_platform::scheduled_job::cron::JobZone;
+use std::fs;
 
 fn golden() -> Value {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/function/publish-rules-golden.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn table(name: &str) -> Vec<(String, Value)> {

@@ -14,6 +14,7 @@ pub use crate::scheduler::destination::{
     compose_name, compose_pool_code, ComposeError as NameError, Priority, DEFAULT_POOL_CODE,
     DEFAULT_POOL_SUFFIX, SQS_MAX_NAME_LENGTH, TENANT_PLATFORM,
 };
+use std::env;
 
 /// The tenant a client identifier names: the identifier, or `platform`
 /// when there is none.
@@ -112,7 +113,7 @@ impl QueueSettings {
 fn first_env(names: &[&str]) -> String {
     names
         .iter()
-        .filter_map(|n| std::env::var(n).ok())
+        .filter_map(|n| env::var(n).ok())
         .find(|v| !v.is_empty())
         .unwrap_or_default()
 }

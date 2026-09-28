@@ -16,6 +16,11 @@ use crate::shared::error::PlatformError;
 /// `fc-function-model`, whose enums (`Runtime`, `HttpMethod`, …) the stored-row
 /// decoders below take as they take this crate's own.
 pub use fc_function_model::UnknownEnumValue;
+#[cfg(any(test, feature = "test-support"))]
+use serde::de::DeserializeOwned;
+#[cfg(any(test, feature = "test-support"))]
+use std::fmt;
+use std::str::FromStr;
 
 /// Request input: an unknown enum value is the caller's mistake, so it maps to
 /// the standard 400 validation response.
@@ -29,7 +34,7 @@ impl From<UnknownEnumValue> for PlatformError {
 /// value is a 400.
 pub fn parse_opt<T>(value: Option<&str>) -> Result<Option<T>, PlatformError>
 where
-    T: std::str::FromStr<Err = UnknownEnumValue>,
+    T: FromStr<Err = UnknownEnumValue>,
 {
     value
         .map(str::parse)
@@ -49,7 +54,7 @@ pub fn non_empty(value: Option<&str>) -> Option<&str> {
 /// rather than being coerced to a default.
 pub fn decode<T>(value: &str, table: &str, column: &str, row_id: &str) -> Result<T, PlatformError>
 where
-    T: std::str::FromStr<Err = UnknownEnumValue>,
+    T: FromStr<Err = UnknownEnumValue>,
 {
     value
         .parse()
@@ -64,7 +69,7 @@ pub fn decode_opt<T>(
     row_id: &str,
 ) -> Result<Option<T>, PlatformError>
 where
-    T: std::str::FromStr<Err = UnknownEnumValue>,
+    T: FromStr<Err = UnknownEnumValue>,
 {
     value.map(|v| decode(v, table, column, row_id)).transpose()
 }
@@ -147,10 +152,10 @@ pub use crate::str_enum;
 pub fn assert_str_enum<T>(all: &[T], as_str: fn(&T) -> &'static str)
 where
     T: PartialEq
-        + std::fmt::Debug
+        + fmt::Debug
         + serde::Serialize
-        + serde::de::DeserializeOwned
-        + std::str::FromStr<Err = UnknownEnumValue>,
+        + DeserializeOwned
+        + FromStr<Err = UnknownEnumValue>,
 {
     for v in all {
         let s = as_str(v);

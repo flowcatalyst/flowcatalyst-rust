@@ -21,8 +21,19 @@
 //! Refuses to run without explicit confirmation. Intended for the local
 //! dev loop only — there is no "remote" mode.
 
+use crate::dev_paths;
+use crate::embedded_pg;
+use crate::embedded_pg::EmbeddedDbArgs;
+use crate::embedded_pg::Mode;
+use crate::embedded_pg::Reset;
 use anyhow::{Context, Result};
+use fc_platform::shared::bootstrap_admin;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_platform::shared::default_processes;
 use sqlx::Row;
+use std::env;
+use std::io;
 use std::io::Write;
 use tracing::{info, warn};
 
@@ -57,7 +68,7 @@ pub struct FreshArgs {
     /// Embedded cluster location, port and PostGIS source.
     #[cfg(feature = "embedded-db")]
     #[command(flatten)]
-    pub embedded: crate::embedded_pg::EmbeddedDbArgs,
+    pub embedded: EmbeddedDbArgs,
 
     /// Skip the interactive confirmation. ONLY pass this when scripted —
     /// fresh is destructive and irreversible.
@@ -83,11 +94,11 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     // reset hits the right database.
     #[cfg(feature = "embedded-db")]
     let (db_url, mut _embedded) = if args.embedded_db {
-        let emb = crate::embedded_pg::start(
+        let emb = embedded_pg::start(
             &args.embedded,
-            crate::embedded_pg::Reset::default(),
-            crate::embedded_pg::Mode::AttachOrStart,
-            &crate::dev_paths::default_pid_file(),
+            Reset::default(),
+            Mode::AttachOrStart,
+            &dev_paths::default_pid_file(),
         )
         .await?;
         let url = emb.url.clone();
@@ -98,7 +109,7 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     #[cfg(not(feature = "embedded-db"))]
     let db_url = args.database_url.clone();
 
-    let pool = fc_platform::shared::database::create_pool(&db_url)
+    let pool = database::create_pool(&db_url)
         .await
         .context("connect to database")?;
 
@@ -138,16 +149,16 @@ pub async fn run(args: FreshArgs) -> Result<()> {
 
     if !args.yes {
         print!("Type \"fresh\" to confirm: ");
-        std::io::stdout().flush().ok();
+        io::stdout().flush().ok();
         let mut input = String::new();
-        std::io::stdin()
+        io::stdin()
             .read_line(&mut input)
             .context("read confirmation")?;
         if input.trim() != "fresh" {
             println!("Aborted — confirmation did not match.");
             #[cfg(feature = "embedded-db")]
             if let Some(mut e) = _embedded {
-                crate::embedded_pg::stop(&mut e).await;
+                embedded_pg::stop(&mut e).await;
             }
             return Ok(());
         }
@@ -173,37 +184,34 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     }
 
     info!("Re-running migrations");
-    fc_platform::shared::database::run_migrations(
-        &pool,
-        fc_platform::shared::database::MigrationProfile::Embedded,
-    )
-    .await
-    .context("re-run migrations after schema drop")?;
+    database::run_migrations(&pool, MigrationProfile::Embedded)
+        .await
+        .context("re-run migrations after schema drop")?;
 
     info!("Re-seeding built-in roles, platform application, default processes, admin user");
 
-    fc_platform::shared::database::seed_builtin_roles(&pool)
+    database::seed_builtin_roles(&pool)
         .await
         .context("seed built-in roles")?;
-    fc_platform::shared::database::seed_platform_application(&pool)
+    database::seed_platform_application(&pool)
         .await
         .context("seed platform application")?;
-    fc_platform::shared::database::seed_platform_event_types(&pool)
+    database::seed_platform_event_types(&pool)
         .await
         .context("seed platform event types")?;
-    fc_platform::shared::default_processes::seed_default_processes(&pool)
+    default_processes::seed_default_processes(&pool)
         .await
         .context("seed default processes")?;
 
     // `bootstrap_admin_user` reads its config from env vars. Setting
     // them here (only for this process) keeps the seeder's existing
     // single source of truth without splitting the API in two.
-    std::env::set_var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL", &args.admin_email);
-    std::env::set_var(
+    env::set_var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL", &args.admin_email);
+    env::set_var(
         "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD",
         &args.admin_password,
     );
-    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pool)
+    bootstrap_admin::bootstrap_admin_user(&pool)
         .await
         .context("bootstrap admin user")?;
 
@@ -216,7 +224,7 @@ pub async fn run(args: FreshArgs) -> Result<()> {
 
     #[cfg(feature = "embedded-db")]
     if let Some(mut e) = _embedded {
-        crate::embedded_pg::stop(&mut e).await;
+        embedded_pg::stop(&mut e).await;
     }
     Ok(())
 }

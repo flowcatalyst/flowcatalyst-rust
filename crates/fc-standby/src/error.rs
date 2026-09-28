@@ -1,5 +1,6 @@
 //! Error types for the standby module
 
+use std::result;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -23,4 +24,4 @@ pub enum StandbyError {
     Config(String),
 }
 
-pub type Result<T> = std::result::Result<T, StandbyError>;
+pub type Result<T> = result::Result<T, StandbyError>;

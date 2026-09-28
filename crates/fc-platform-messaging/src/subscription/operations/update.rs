@@ -12,7 +12,9 @@ use crate::{
     connection::repository::ConnectionRepository, subscription::repository::SubscriptionRepository,
 };
 use fc_platform_core::directory::ServiceAccountDirectory;
+use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::caller_reach::non_blank;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -86,7 +88,7 @@ pub struct UpdateSubscriptionCommand {
     pub custom_config: Option<Vec<ConfigEntry>>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateSubscriptionCommand {}
+impl AuditMasked for UpdateSubscriptionCommand {}
 
 /// Use case for updating an existing subscription.
 pub struct UpdateSubscriptionUseCase<U: UnitOfWork> {
@@ -155,10 +157,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
             .find_by_id(&command.subscription_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

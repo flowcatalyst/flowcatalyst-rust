@@ -19,6 +19,7 @@ use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderT
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::webauthn::gate::ensure_internal_auth;
 use fc_platform::{EmailDomainMapping, EmailDomainMappingRepository, IdentityProviderRepository};
+use std::collections::HashMap;
 
 /// An identity provider of `idp_type`, stored; its id.
 async fn identity_provider(
@@ -86,7 +87,7 @@ async fn migration_creates_webauthn_credentials_table_with_expected_columns() {
     );
 
     // Spot-check a few critical types/nullabilities.
-    let by_name: std::collections::HashMap<_, _> = columns
+    let by_name: HashMap<_, _> = columns
         .iter()
         .map(|(n, t, nullable)| (n.as_str(), (t.as_str(), nullable.as_str())))
         .collect();

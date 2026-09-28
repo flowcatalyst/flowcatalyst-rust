@@ -24,7 +24,9 @@ use crate::application::operations::events::{ApplicationClientConfigUpdated, App
 use crate::application::operations::UpdateApplicationClientConfigCommand;
 use crate::application_openapi_spec::entity::OpenApiSpec;
 use crate::application_openapi_spec::operations::events::ApplicationOpenApiSpecSynced;
+use crate::auth::operations::events::OAuthClientSecretRotated;
 use crate::auth::operations::events::{AuthConfigCreated, IdpRoleMappingCreated};
+use crate::auth::operations::RotateOAuthClientSecretCommand;
 use crate::client::operations::events::ClientCreated;
 use crate::connection::operations::events::ConnectionCreated;
 use crate::cors::operations::events::CorsOriginAdded;
@@ -63,8 +65,11 @@ use crate::service_account::operations::{
     RegenerateAuthTokenResult, RegenerateSigningSecretCommand, RegenerateSigningSecretResult,
 };
 use crate::shared::encryption_service::EncryptionService;
+use crate::shared::error::PlatformError;
 use crate::subscription::operations::events::{SubscriptionCreated, SubscriptionsSynced};
 use crate::webauthn::operations::events::PasskeyRegistered;
+use axum::http::StatusCode;
+use fc_common::audit_redaction;
 
 const EVENT_ID: &str = "evt_0SNAPSHOT0001";
 
@@ -648,7 +653,7 @@ const OAUTH_CLIENT_SECRET: &str = "oauth-plaintext-client-secret";
 #[test]
 fn oauth_client_secret_rotation_persists_only_the_hash() {
     let enc = test_encryption();
-    let cmd = crate::auth::operations::RotateOAuthClientSecretCommand {
+    let cmd = RotateOAuthClientSecretCommand {
         oauth_client_id: "oac_1".to_string(),
         new_client_secret_ref: enc.hash_secret(OAUTH_CLIENT_SECRET),
         grace_seconds: None,
@@ -658,7 +663,7 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
         (true, false)
     );
 
-    let e = fixed!(crate::auth::operations::events::OAuthClientSecretRotated::new(&ctx(), "oac_1"));
+    let e = fixed!(OAuthClientSecretRotated::new(&ctx(), "oac_1"));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, OAUTH_CLIENT_SECRET);
     // The hash itself no longer reaches the audit row either: the
@@ -666,7 +671,7 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
     assert!(!rows.contains("hashed:v1:"));
     assert_eq!(
         audit_json(&rows)["newClientSecretRef"],
-        fc_common::audit_redaction::MASK
+        audit_redaction::MASK
     );
 }
 
@@ -700,7 +705,7 @@ fn identity_provider_create_persists_no_plaintext_secret() {
     assert!(!rows.contains("encrypted:"));
     assert_eq!(
         audit_json(&rows)["oidcClientSecretRef"],
-        fc_common::audit_redaction::MASK
+        audit_redaction::MASK
     );
 }
 
@@ -730,7 +735,7 @@ fn identity_provider_update_persists_no_plaintext_secret() {
     assert!(!rows.contains("encrypted:"));
     assert_eq!(
         audit_json(&rows)["oidcClientSecretRef"],
-        fc_common::audit_redaction::MASK
+        audit_redaction::MASK
     );
 }
 
@@ -741,8 +746,8 @@ fn identity_provider_secret_without_key_is_refused() {
     // A 400 with Java's code, not a 500.
     assert!(matches!(
         &err,
-        crate::shared::error::PlatformError::Coded { status, code, .. }
-            if *status == axum::http::StatusCode::BAD_REQUEST && code == "ENCRYPTION_NOT_CONFIGURED"
+        PlatformError::Coded { status, code, .. }
+            if *status == StatusCode::BAD_REQUEST && code == "ENCRYPTION_NOT_CONFIGURED"
     ));
     // Blank means "not provided", which needs no key.
     assert_eq!(

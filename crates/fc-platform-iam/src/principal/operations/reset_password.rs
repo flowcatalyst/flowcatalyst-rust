@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use super::events::PasswordResetCompleted;
 use crate::auth::password_service::PasswordService;
+use crate::portal::policy;
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -31,7 +33,7 @@ pub struct ResetPasswordCommand {
     pub enforce_password_complexity: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ResetPasswordCommand {}
+impl AuditMasked for ResetPasswordCommand {}
 
 pub struct ResetPasswordUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -77,7 +79,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         let min = if command.enforce_password_complexity == Some(false) {
             2
         } else {
-            crate::portal::policy::MIN_LENGTH
+            policy::MIN_LENGTH
         };
         if command.new_password.len() < min {
             return Err(UseCaseError::validation(
@@ -147,9 +149,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         // name; the relaxed SDK path skips it (the caller owns its policy).
         if command.enforce_password_complexity != Some(false) {
             let email = principal.email().unwrap_or_default().to_string();
-            if let Some(v) =
-                crate::portal::policy::validate(&command.new_password, &email, &principal.name)
-            {
+            if let Some(v) = policy::validate(&command.new_password, &email, &principal.name) {
                 return Err(UseCaseError::validation(v.code, v.message));
             }
         }

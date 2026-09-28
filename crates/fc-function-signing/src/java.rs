@@ -1,13 +1,14 @@
 //! Small helpers that reproduce JDK / Jackson behaviour Java's verifier
 //! relies on, so parsing decisions land the same way in Rust.
 
+use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine;
 
 /// `java.util.Base64.getDecoder()`: the standard alphabet, padding optional,
 /// no whitespace, lenient about trailing bits.
 pub(crate) const JAVA_BASE64: GeneralPurpose = GeneralPurpose::new(
-    &base64::alphabet::STANDARD,
+    &alphabet::STANDARD,
     GeneralPurposeConfig::new()
         .with_decode_padding_mode(DecodePaddingMode::Indifferent)
         .with_decode_allow_trailing_bits(true),

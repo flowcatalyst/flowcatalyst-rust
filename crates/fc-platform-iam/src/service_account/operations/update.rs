@@ -12,7 +12,9 @@ use crate::{
     client::repository::ClientRepository, service_account::repository::ServiceAccountRepository,
 };
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -50,7 +52,7 @@ pub struct UpdateServiceAccountCommand {
     pub webhook_credentials: Option<WebhookCredentials>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateServiceAccountCommand {}
+impl AuditMasked for UpdateServiceAccountCommand {}
 
 /// `creds` with its secrets (`token`, `password`, `signing_secret`) sealed as
 /// `encrypted:` references, the form every stored webhook secret takes. A
@@ -118,11 +120,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         _command: &UpdateServiceAccountCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -205,6 +203,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_common::audit_redaction;
 
     #[test]
     fn test_command_serialization() {
@@ -236,7 +235,7 @@ mod tests {
             client_ids: None,
             webhook_credentials: Some(creds),
         };
-        let audited = fc_common::audit_redaction::redacted_command_json(&cmd).unwrap();
+        let audited = audit_redaction::redacted_command_json(&cmd).unwrap();
         let wh = &audited["webhookCredentials"];
         assert_eq!(wh["authType"], "BASIC_AUTH");
         assert_eq!(wh["username"], "svc");

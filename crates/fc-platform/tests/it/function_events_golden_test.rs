@@ -24,10 +24,11 @@ use fc_platform::function::{
     Manifest, Runtime,
 };
 use fc_platform::usecase::{DomainEvent, EventMetadata, ExecutionContext};
+use std::fs;
 
 fn golden() -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/function/events-golden.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
 fn at() -> DateTime<Utc> {

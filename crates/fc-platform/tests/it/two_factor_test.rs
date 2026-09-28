@@ -6,6 +6,12 @@ use crate::support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use axum::{
+    body::Body,
+    http::{Method, Request, Response},
+};
+use fc_platform::domain::Principal;
+use fc_platform::mfa::crypto;
 use support::{read_json, TestApp};
 
 /// An INTERNAL identity provider, created through the API; returns its id.
@@ -139,10 +145,6 @@ async fn a_domain_mapping_carries_its_two_factor_policy() {
 
 // ── sign-in challenge, enrolment, self-service ───────────────────────────────
 
-use axum::{
-    body::Body,
-    http::{Method, Request, Response},
-};
 use tower::ServiceExt;
 
 use fc_platform::mfa::crypto::totp_code;
@@ -154,10 +156,10 @@ const PASSWORD: &str = "Correct-Horse-9!";
 /// The platform key TOTP secrets are encrypted with; set before the router
 /// is built (Go refuses TOTP without FLOWCATALYST_APP_KEY).
 fn with_app_key() {
-    crate::support::set_app_key();
+    support::set_app_key();
 }
 
-async fn seed_user(app: &TestApp, email: &str) -> fc_platform::domain::Principal {
+async fn seed_user(app: &TestApp, email: &str) -> Principal {
     use fc_platform::auth::password_service::PasswordService;
     use fc_platform::domain::{Principal, UserScope};
     let mut user = Principal::new_user(email, UserScope::Anchor);
@@ -556,7 +558,7 @@ async fn email_codes_and_remembered_devices() {
             mfa.replace_email_pin(
                 &id,
                 purpose,
-                &fc_platform::mfa::crypto::sha256_hex("424242"),
+                &crypto::sha256_hex("424242"),
                 chrono::Utc::now() + chrono::Duration::minutes(10),
             )
             .await

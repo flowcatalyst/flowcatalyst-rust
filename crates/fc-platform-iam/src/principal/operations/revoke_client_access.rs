@@ -8,6 +8,8 @@ use super::events::ClientAccessRevoked;
 use crate::auth::config_repository::ClientAccessGrantRepository;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::principal_kind::PrincipalType;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -20,7 +22,7 @@ pub struct RevokeClientAccessCommand {
     pub client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokeClientAccessCommand {}
+impl AuditMasked for RevokeClientAccessCommand {}
 
 pub struct RevokeClientAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -71,11 +73,7 @@ impl<U: UnitOfWork> UseCase for RevokeClientAccessUseCase<U> {
         _command: &RevokeClientAccessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

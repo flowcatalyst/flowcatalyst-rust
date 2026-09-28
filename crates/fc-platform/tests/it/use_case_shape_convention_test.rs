@@ -11,6 +11,7 @@
 //!   `execute` in that order. Real exceptions are listed in
 //!   [`SHAPE_EXCEPTIONS`] with a reason.
 
+use crate::support::sources;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
@@ -239,13 +240,13 @@ fn use_case_impls(content: &str) -> Vec<UseCaseImpl> {
 /// Every use case in `src/`, keyed `path::UseCase`, with its file text.
 fn all_use_cases() -> BTreeMap<String, (String, UseCaseImpl)> {
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
     let mut out = BTreeMap::new();
     for file in files {
         let Ok(content) = fs::read_to_string(&file) else {
             continue;
         };
-        let rel = crate::support::sources::strip_src(&file)
+        let rel = sources::strip_src(&file)
             .unwrap_or(&file)
             .to_string_lossy()
             .replace('\\', "/");

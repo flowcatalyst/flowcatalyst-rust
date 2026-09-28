@@ -14,7 +14,13 @@ use tokio::io::AsyncWriteExt;
 use super::{digest_mismatch, empty, too_large, ArtifactBlobStore, MAX_BYTES};
 use crate::function::Digest;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::tsid;
 use fc_platform_core::usecase::UseCaseError;
+use std::env;
+use std::fmt::Display;
+use std::fs;
+use std::io;
+use tokio::fs::File;
 
 /// What an accepted upload stored: its byte count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +34,7 @@ struct TempUpload(PathBuf);
 impl Drop for TempUpload {
     fn drop(&mut self) {
         // Best effort: a leftover temp file is harmless and never served.
-        let _ = std::fs::remove_file(&self.0);
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -43,7 +49,7 @@ pub async fn receive<S, E>(
 ) -> Result<Received, PlatformError>
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
-    E: std::fmt::Display,
+    E: Display,
 {
     receive_into(
         store,
@@ -52,7 +58,7 @@ where
         declared_length,
         body,
         MAX_BYTES,
-        &std::env::temp_dir(),
+        &env::temp_dir(),
     )
     .await
 }
@@ -74,20 +80,20 @@ pub(crate) async fn receive_into<S, E>(
 ) -> Result<Received, PlatformError>
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
-    E: std::fmt::Display,
+    E: Display,
 {
     if declared_length.is_some_and(|n| n > max_bytes) {
         return Err(too_large());
     }
     let temp = TempUpload(temp_dir.join(format!(
         "fc-artifact-upload-{}.tmp",
-        fc_platform_core::shared::tsid::generate_untyped()
+        tsid::generate_untyped()
     )));
-    let io = |e: std::io::Error| {
+    let io = |e: io::Error| {
         tracing::error!(error = %e, "writing an uploaded artifact failed");
         PlatformError::internal(format!("reading the uploaded artifact: {e}"))
     };
-    let mut file = tokio::fs::File::create(&temp.0).await.map_err(io)?;
+    let mut file = File::create(&temp.0).await.map_err(io)?;
     let mut sha256 = Sha256::new();
     let mut count: u64 = 0;
     while let Some(chunk) = body.next().await {
@@ -125,7 +131,12 @@ where
 mod tests {
     use super::*;
     use crate::function::artifact::FileArtifactBlobStore;
+    use fc_platform_core::shared::tsid;
     use futures::stream;
+    use std::convert::Infallible;
+    use std::env;
+    use std::fs;
+    use std::task::Poll;
 
     struct Dirs {
         base: PathBuf,
@@ -135,28 +146,25 @@ mod tests {
 
     impl Dirs {
         fn new() -> Dirs {
-            let base = std::env::temp_dir().join(format!(
-                "fc-upload-{}",
-                fc_platform_core::shared::tsid::generate_untyped()
-            ));
+            let base = env::temp_dir().join(format!("fc-upload-{}", tsid::generate_untyped()));
             let temp = base.join("tmp");
-            std::fs::create_dir_all(&temp).unwrap();
+            fs::create_dir_all(&temp).unwrap();
             let store = FileArtifactBlobStore::new(base.join("store")).unwrap();
             Dirs { base, store, temp }
         }
 
         fn temp_files(&self) -> usize {
-            std::fs::read_dir(&self.temp).unwrap().count()
+            fs::read_dir(&self.temp).unwrap().count()
         }
     }
 
     impl Drop for Dirs {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.base);
+            let _ = fs::remove_dir_all(&self.base);
         }
     }
 
-    type Chunk = Result<Bytes, std::convert::Infallible>;
+    type Chunk = Result<Bytes, Infallible>;
 
     fn chunks(parts: &[&'static [u8]]) -> impl Stream<Item = Chunk> + Unpin {
         stream::iter(
@@ -211,8 +219,7 @@ mod tests {
         let big: &'static [u8] = b"0123456789abcdefX";
         let digest = digest_of(big);
         // Declared: refused before the body is polled at all.
-        let untouched =
-            stream::poll_fn(|_| -> std::task::Poll<Option<Chunk>> { panic!("the body was read") });
+        let untouched = stream::poll_fn(|_| -> Poll<Option<Chunk>> { panic!("the body was read") });
         let err = run(&d, &digest, Some(17), untouched).await.unwrap_err();
         assert_eq!(status(&err), (413, "ARTIFACT_TOO_LARGE".into()));
         // Chunked, no length: the running count passes the cap.

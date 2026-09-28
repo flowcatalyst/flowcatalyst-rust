@@ -17,6 +17,8 @@ use parking_lot::Mutex;
 use tracing::Level;
 
 use bytes::Bytes;
+use std::io;
+use tokio::io::AsyncWrite;
 use wasmtime_wasi::cli::{IsTerminal, StdoutStream};
 use wasmtime_wasi::p2::{OutputStream, Pollable, StreamResult};
 
@@ -123,7 +125,7 @@ impl StdoutStream for GuestOutput {
         Box::new(self.clone())
     }
 
-    fn async_stream(&self) -> Box<dyn tokio::io::AsyncWrite + Send + Sync> {
+    fn async_stream(&self) -> Box<dyn AsyncWrite + Send + Sync> {
         Box::new(self.clone())
     }
 }
@@ -148,21 +150,21 @@ impl OutputStream for GuestOutput {
     }
 }
 
-impl tokio::io::AsyncWrite for GuestOutput {
+impl AsyncWrite for GuestOutput {
     fn poll_write(
         self: Pin<&mut Self>,
         _: &mut Context<'_>,
         bytes: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<io::Result<usize>> {
         self.push(bytes);
         Poll::Ready(Ok(bytes.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }
 }

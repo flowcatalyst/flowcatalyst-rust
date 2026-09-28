@@ -16,6 +16,8 @@ use fc_common::{
 };
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{Mediator, QueueManager};
+use std::cmp;
+use tokio::time;
 
 /// Mediator that tracks timing and counts
 struct TimingMediator {
@@ -80,7 +82,7 @@ impl QueueConsumer for TestQueueConsumer {
         }
 
         let mut messages = self.messages.lock();
-        let count = std::cmp::min(max_messages as usize, messages.len());
+        let count = cmp::min(max_messages as usize, messages.len());
         let result: Vec<_> = messages.drain(0..count).collect();
         Ok(result)
     }
@@ -171,7 +173,7 @@ async fn test_pool_without_rate_limit() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    time::sleep(Duration::from_millis(300)).await;
 
     let elapsed = start.elapsed();
 
@@ -219,7 +221,7 @@ async fn test_pool_with_rate_limit() {
         .unwrap();
 
     // Wait for processing
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    time::sleep(Duration::from_secs(3)).await;
 
     // Messages should be processed (some may be NACKed due to rate limit)
     let processed = mediator.call_count();
@@ -276,7 +278,7 @@ async fn test_multiple_pools_different_rates() {
         .unwrap();
 
     // FAST pool should complete quickly, SLOW pool takes longer
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    time::sleep(Duration::from_secs(4)).await;
 
     assert_eq!(mediator.call_count(), 6);
 }
@@ -383,7 +385,7 @@ async fn test_high_rate_limit() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    time::sleep(Duration::from_secs(2)).await;
 
     let elapsed = start.elapsed();
 
@@ -428,7 +430,7 @@ async fn test_rate_limit_combined_with_concurrency() {
         .unwrap();
 
     // Wait for processing - should be limited by both concurrency and rate
-    tokio::time::sleep(Duration::from_secs(4)).await;
+    time::sleep(Duration::from_secs(4)).await;
 
     assert_eq!(mediator.call_count(), 4);
 }

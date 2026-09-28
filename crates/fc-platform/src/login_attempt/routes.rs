@@ -1,5 +1,10 @@
 //! Login attempt routes: `/api/login-attempts` (plain).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use axum::routing::get;
 use axum::Router;
 use utoipa_axum::router::OpenApiRouter;

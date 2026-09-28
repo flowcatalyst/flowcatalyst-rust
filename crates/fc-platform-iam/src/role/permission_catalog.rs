@@ -4,6 +4,8 @@
 //! `permission_repository.rs`.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 
 /// A permission definition. `code` is the canonical four-segment string
 /// `application:context:aggregate:action`; the segments are stored alongside
@@ -31,9 +33,7 @@ impl CatalogPermission {
         }
         let now = Utc::now();
         Some(Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Permission,
-            ),
+            id: tsid::generate(EntityType::Permission),
             code: code.to_string(),
             subdomain: parts[0].to_string(),
             context: parts[1].to_string(),

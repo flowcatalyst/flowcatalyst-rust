@@ -10,9 +10,14 @@ use crate::support;
 
 use std::time::Duration;
 
+use fc_fnhost_core::db::DbSettings;
 use serde_json::{json, Value};
+use std::process;
+use std::sync::Arc;
+use std::time::Instant;
 use support::postgres::postgres;
 use support::wasm::{entry, guest, manifest, WasmHarness, ADDR};
+use tokio::time;
 
 fn db_manifest(pool_size: i32) -> Value {
     manifest(json!({
@@ -33,7 +38,7 @@ async fn start(dsn: &str) -> WasmHarness {
 }
 
 fn table(name: &str) -> String {
-    format!("w_{name}_{}", std::process::id())
+    format!("w_{name}_{}", process::id())
 }
 
 async fn post(h: &WasmHarness, path: &str) -> Value {
@@ -75,7 +80,7 @@ async fn one_pool_too_many_fails_the_load_and_unloading_closes_the_pool() {
             json!({"secrets": {"DB_DSN": "postgres://u:p@127.0.0.1:1/one"}}),
         )],
         support::wasm::Options {
-            db: fc_fnhost_core::db::DbSettings {
+            db: DbSettings {
                 max_pools: 1,
                 ..Default::default()
             },
@@ -109,10 +114,10 @@ async fn one_pool_too_many_fails_the_load_and_unloading_closes_the_pool() {
     assert!(failed.2.contains("DB_POOL_LIMIT"), "{failed:?}");
     // Unloading the first function closes its pool.
     h.publish(vec![]).await;
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while h.runtime.db_pools().pool_count() != 0 {
         assert!(start.elapsed() < Duration::from_secs(40), "never closed");
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
     }
 }
 
@@ -196,7 +201,7 @@ async fn database_errors_reach_the_guest_as_javas_codes() {
 
     // A statement's timeout is the time left: it ends with the invocation
     // (504), and its connection comes back for the next call.
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     assert_eq!(h.get("/sql?q=SELECT%20pg_sleep(5)").await.status, 504);
     assert!(started.elapsed() < Duration::from_secs(4));
     for _ in 0..3 {
@@ -210,7 +215,7 @@ async fn database_errors_reach_the_guest_as_javas_codes() {
 #[ignore = "requires Docker"]
 async fn a_guest_waiting_on_its_database_holds_no_executing_permit() {
     let spin = "app.orders.spin";
-    let h = std::sync::Arc::new(
+    let h = Arc::new(
         WasmHarness::start_with(
             vec![
                 entry(
@@ -229,12 +234,12 @@ async fn a_guest_waiting_on_its_database_holds_no_executing_permit() {
         )
         .await,
     );
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let sleeping = {
         let h = h.clone();
         tokio::spawn(async move { h.get("/sql?q=SELECT%20pg_sleep(1.5)").await })
     };
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     let computed = h
         .send(
             h.client

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
 pub use fc_common::DispatchStatus;
 use fc_platform_core::shared::enum_str::UnknownEnumValue;
+use fc_platform_core::shared::tsid;
 use serde::{Deserialize, Serialize};
 
 /// Strict parse of a dispatch job status (X-06): anything but a known
@@ -451,7 +452,7 @@ impl DispatchJob {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate_untyped(),
+            id: tsid::generate_untyped(),
             external_id: None,
             kind: DispatchKind::Event,
             code: event_type.into(),
@@ -639,6 +640,7 @@ impl DispatchJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::enum_str;
     use std::str::FromStr;
 
     #[test]
@@ -951,10 +953,7 @@ mod tests {
 
     #[test]
     fn dispatch_attempt_status_writes_failure_and_reads_legacy_failed() {
-        fc_platform_core::shared::enum_str::assert_str_enum(
-            DispatchAttemptStatus::ALL,
-            DispatchAttemptStatus::as_str,
-        );
+        enum_str::assert_str_enum(DispatchAttemptStatus::ALL, DispatchAttemptStatus::as_str);
         assert_eq!(DispatchAttemptStatus::Failure.as_str(), "FAILURE");
         assert_eq!("FAILED".parse(), Ok(DispatchAttemptStatus::Failure));
     }

@@ -804,14 +804,13 @@ pub struct SecretInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::function::JsonNode;
+    use fc_platform_core::shared::enum_str;
 
     /// `FunctionUpdated` writes the status through serde: the same strings.
     #[test]
     fn function_status_serializes_as_its_name() {
-        fc_platform_core::shared::enum_str::assert_str_enum(
-            FunctionStatus::ALL,
-            FunctionStatus::as_str,
-        );
+        enum_str::assert_str_enum(FunctionStatus::ALL, FunctionStatus::as_str);
     }
 
     fn function() -> Function {
@@ -913,10 +912,7 @@ mod tests {
     fn version() -> FunctionVersion {
         let defaults = FunctionLimits::defaults();
         let manifest = Manifest::parse_strict(
-            Some(
-                &crate::function::JsonNode::parse(r#"{"runtime":"wasm","entrypoint":"handle"}"#)
-                    .unwrap(),
-            ),
+            Some(&JsonNode::parse(r#"{"runtime":"wasm","entrypoint":"handle"}"#).unwrap()),
             Runtime::Wasm,
             &defaults,
             &ClientCeilings::of(&defaults),

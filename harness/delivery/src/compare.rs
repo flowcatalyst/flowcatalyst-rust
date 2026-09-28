@@ -12,8 +12,12 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
+use crate::receiver::Delivery;
 use crate::scenario::Scenario;
 use crate::side::{is_terminal, SideRun};
+use crate::stack::SideKind;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Summary {
@@ -75,7 +79,7 @@ fn gap_bucket(ms: u64) -> &'static str {
 }
 
 pub fn summarise(run: &SideRun, signing_secret: Option<&str>) -> Summary {
-    let mut per_hk: BTreeMap<String, Vec<&crate::receiver::Delivery>> = BTreeMap::new();
+    let mut per_hk: BTreeMap<String, Vec<&Delivery>> = BTreeMap::new();
     for d in &run.deliveries {
         if let Some(hk) = &d.hk {
             per_hk.entry(hk.clone()).or_default().push(d);
@@ -435,7 +439,7 @@ pub struct ExpectedDiff {
 /// `pool-concurrency`, `signature`, `status`). A side's broken invariant is
 /// a FAIL unless an `expected-diffs.json` entry names it — which is how a
 /// Go defect is cited (decision #31).
-pub fn invariant_field(side: crate::stack::SideKind, violation: &str) -> String {
+pub fn invariant_field(side: SideKind, violation: &str) -> String {
     let kind = violation
         .split(':')
         .next()
@@ -462,11 +466,11 @@ fn glob(pat: &str, s: &str) -> bool {
     }
 }
 
-pub fn load_expected(path: &std::path::Path) -> anyhow::Result<Vec<ExpectedDiff>> {
+pub fn load_expected(path: &Path) -> anyhow::Result<Vec<ExpectedDiff>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let v: Vec<ExpectedDiff> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    let v: Vec<ExpectedDiff> = serde_json::from_str(&fs::read_to_string(path)?)?;
     for e in &v {
         if e.ruling.trim().is_empty() || e.reason.trim().is_empty() {
             anyhow::bail!("expected-diffs entry {} has no ruling or reason", e.id());

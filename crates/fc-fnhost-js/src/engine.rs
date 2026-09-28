@@ -35,8 +35,14 @@ use deno_core::{JsRuntime, JsRuntimeForSnapshot, RuntimeOptions};
 use fc_fnhost_core::exec::{ExecBudget, Lane};
 
 use crate::ops::fc_function;
+use crate::platform;
 use crate::prepare::BOOTSTRAP;
+use std::env;
+use std::thread::Builder;
+use tokio::runtime;
 use tokio::sync::mpsc;
+use tokio::task;
+use tokio::task::LocalSet;
 
 /// A job: made on the caller's thread, run (as a `!Send` future) on a
 /// worker.
@@ -49,7 +55,7 @@ type Job = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>;
 /// not by a flag.)
 pub fn init_v8() -> Result<Option<&'static [u8]>, String> {
     static INIT: Once = Once::new();
-    INIT.call_once(|| JsRuntime::init_platform(Some(crate::platform::new())));
+    INIT.call_once(|| JsRuntime::init_platform(Some(platform::new())));
     if use_snapshot() {
         base_snapshot().map(Some)
     } else {
@@ -70,7 +76,7 @@ pub fn init_v8() -> Result<Option<&'static [u8]>, String> {
 /// is untested here, and deno_core itself serialises the first snapshot
 /// deserialisation there for a crash of its own. Production hosts run Linux.
 pub fn use_snapshot() -> bool {
-    match std::env::var("FC_FN_JS_SNAPSHOT").ok().as_deref() {
+    match env::var("FC_FN_JS_SNAPSHOT").ok().as_deref() {
         Some(v) if v.eq_ignore_ascii_case("true") => true,
         Some(v) if v.eq_ignore_ascii_case("false") => false,
         _ => cfg!(target_os = "linux"),
@@ -96,11 +102,11 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
     BASE.get_or_init(|| {
         // On a thread of its own: the snapshot creator is entered on it for
         // its whole life, and leaves nothing entered behind.
-        std::thread::Builder::new()
+        Builder::new()
             .name("fn-js-base".into())
             .stack_size(WORKER_STACK_BYTES)
             .spawn(|| {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| format!("no runtime for the base snapshot: {e}"))?;
@@ -124,10 +130,10 @@ pub fn base_snapshot() -> Result<&'static [u8], String> {
                 // The creator's foreground tasks go while it still exists
                 // (see `crate::platform`).
                 // SAFETY: only the pointer's value is used, as a key.
-                let key = crate::platform::key(unsafe { js.v8_isolate().as_raw_isolate_ptr() });
-                crate::platform::close(key);
+                let key = platform::key(unsafe { js.v8_isolate().as_raw_isolate_ptr() });
+                platform::close(key);
                 let snapshot = js.snapshot();
-                crate::platform::forget(key);
+                platform::forget(key);
                 Ok(snapshot)
             })
             .map_err(|e| format!("no thread for the base snapshot: {e}"))?
@@ -190,18 +196,18 @@ impl Workers {
         let mut workers = Vec::with_capacity(count.max(1));
         for i in 0..count.max(1) {
             let (jobs, mut queue) = mpsc::unbounded_channel::<Job>();
-            let runtime = tokio::runtime::Builder::new_current_thread()
+            let runtime = runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| format!("a JS worker's runtime did not start: {e}"))?;
-            std::thread::Builder::new()
+            Builder::new()
                 .name(format!("fn-js-{i}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn(move || {
-                    let local = tokio::task::LocalSet::new();
+                    let local = LocalSet::new();
                     local.block_on(&runtime, async move {
                         while let Some(job) = queue.recv().await {
-                            tokio::task::spawn_local(job());
+                            task::spawn_local(job());
                         }
                     });
                 })

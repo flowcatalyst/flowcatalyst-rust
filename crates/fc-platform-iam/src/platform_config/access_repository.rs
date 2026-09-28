@@ -6,6 +6,9 @@ use sqlx::PgPool;
 
 use super::access_entity::PlatformConfigAccess;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PlatformConfigAccessRow {
@@ -127,19 +130,15 @@ impl PlatformConfigAccessRepository {
     }
 }
 
-impl fc_platform_core::usecase::HasId for PlatformConfigAccess {
+impl HasId for PlatformConfigAccess {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<PlatformConfigAccess> for PlatformConfigAccessRepository {
-    async fn persist(
-        &self,
-        a: &PlatformConfigAccess,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<PlatformConfigAccess> for PlatformConfigAccessRepository {
+    async fn persist(&self, a: &PlatformConfigAccess, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO app_platform_config_access
                 (id, application_code, role_code, can_read, can_write, created_at)
@@ -161,11 +160,7 @@ impl fc_platform_core::usecase::Persist<PlatformConfigAccess> for PlatformConfig
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        a: &PlatformConfigAccess,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, a: &PlatformConfigAccess, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM app_platform_config_access WHERE id = $1")
             .bind(&a.id)
             .execute(&mut **tx.inner)

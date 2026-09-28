@@ -12,6 +12,7 @@ use crate::coverage::CoverageResult;
 use crate::diff::DiffEntry;
 use crate::expected::ExpectedDiff;
 use crate::record::StepRecord;
+use std::fs;
 
 /// Raised to `1.0` once every surface route has a scenario (Java spec §8 S3).
 pub const REQUIRED_COVERAGE: f64 = 0.0;
@@ -246,7 +247,7 @@ fn diff_line(md: &mut String, d: &DiffEntry) {
 
 fn write(file: &Path, content: &str) -> Result<()> {
     if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
     }
-    std::fs::write(file, content).with_context(|| format!("write {}", file.display()))
+    fs::write(file, content).with_context(|| format!("write {}", file.display()))
 }

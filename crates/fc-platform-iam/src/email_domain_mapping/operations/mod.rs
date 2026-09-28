@@ -18,6 +18,7 @@ pub use update::{
     TwoFactorPolicyUpdate, UpdateEmailDomainMappingCommand, UpdateEmailDomainMappingUseCase,
 };
 
+use crate::email_domain_mapping::entity::EmailDomainMapping;
 use fc_platform_core::usecase::UseCaseError;
 
 /// Owner ruling 2026-09-25 (item 3; Java ecb622fe): a mapping routed to a
@@ -27,7 +28,7 @@ use fc_platform_core::usecase::UseCaseError;
 /// existing user of the domain. Single-tenant providers need no pin.
 pub fn require_tenant_pin(
     idp_multi_tenant: bool,
-    mapping: &crate::email_domain_mapping::entity::EmailDomainMapping,
+    mapping: &EmailDomainMapping,
 ) -> Result<(), UseCaseError> {
     if idp_multi_tenant && !mapping.is_tenant_pinned() {
         return Err(UseCaseError::validation(

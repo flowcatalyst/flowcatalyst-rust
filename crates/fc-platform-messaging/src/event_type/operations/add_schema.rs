@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::SchemaAdded;
+use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::entity::{SchemaType, SpecVersion};
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -34,7 +37,7 @@ pub struct AddSchemaCommand {
     pub schema_type: Option<SchemaType>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AddSchemaCommand {}
+impl AuditMasked for AddSchemaCommand {}
 
 fn default_mime_type() -> String {
     "application/schema+json".to_string()
@@ -100,10 +103,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                event_type.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
         }
         Ok(())
     }
@@ -126,7 +126,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
             )?;
 
         // Business rule: cannot add schema to archived event type
-        if event_type.status == crate::event_type::entity::EventTypeStatus::Archived {
+        if event_type.status == EventTypeStatus::Archived {
             return Err(UseCaseError::business_rule(
                 "EVENT_TYPE_ARCHIVED",
                 "Cannot add schema to an archived event type",

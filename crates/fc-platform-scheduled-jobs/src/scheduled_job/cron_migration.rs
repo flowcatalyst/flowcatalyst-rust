@@ -53,6 +53,9 @@ use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use super::cron::CronSpec;
+use fc_platform_core::shared::database;
+use std::array;
+use std::time::Instant;
 
 /// The `_schema_migrations` id. It follows `035_scheduled_jobs_application_id`
 /// in `shared::database::run_migrations`, which runs it after the SQL ones.
@@ -191,7 +194,7 @@ pub fn translate(expr: &str) -> Translation {
                 .into(),
         );
     }
-    let mut fields: [String; 6] = std::array::from_fn(|i| render_field(i, &old.fields[i]));
+    let mut fields: [String; 6] = array::from_fn(|i| render_field(i, &old.fields[i]));
     if old.dom_all {
         fields[3] = "*".into();
     }
@@ -240,7 +243,7 @@ pub struct CronMigrationReport {
 /// Run the migration once (see the module docs). Called by
 /// `shared::database::run_migrations` after the SQL migrations.
 pub async fn run(pool: &PgPool) -> Result<CronMigrationReport, sqlx::Error> {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let mut report = CronMigrationReport::default();
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -326,9 +329,7 @@ pub async fn run(pool: &PgPool) -> Result<CronMigrationReport, sqlx::Error> {
     )
     .bind(MIGRATION_ID)
     .bind(started.elapsed().as_millis() as i32)
-    .bind(fc_platform_core::shared::database::sha256_hex(
-        CHECKSUM_SOURCE,
-    ))
+    .bind(database::sha256_hex(CHECKSUM_SOURCE))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -347,6 +348,7 @@ mod tests {
     use super::*;
     use crate::scheduled_job::cron::JobSchedule;
     use chrono::{DateTime, TimeZone, Utc};
+    use std::slice;
 
     fn rewrite(expr: &str) -> String {
         match translate(expr) {
@@ -471,7 +473,7 @@ mod tests {
             let old = cron::Schedule::from_str(expr).unwrap();
             for zone in zones {
                 let tz: chrono_tz::Tz = zone.parse().unwrap();
-                let new = JobSchedule::new(std::slice::from_ref(&stored), zone);
+                let new = JobSchedule::new(slice::from_ref(&stored), zone);
                 let before: Vec<DateTime<Utc>> = old
                     .after(&start.with_timezone(&tz))
                     .take(400)

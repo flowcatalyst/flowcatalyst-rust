@@ -29,6 +29,7 @@
 
 use std::str::FromStr;
 
+use crate::scheduled_job::java_zone;
 use chrono::{
     DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike, Utc,
 };
@@ -413,7 +414,7 @@ impl JobZone {
         if let Ok(tz) = Tz::from_str(name) {
             return Some(JobZone::Region(tz));
         }
-        crate::scheduled_job::java_zone::java_fixed_offset_seconds(name)
+        java_zone::java_fixed_offset_seconds(name)
             .and_then(FixedOffset::east_opt)
             .map(JobZone::Fixed)
     }

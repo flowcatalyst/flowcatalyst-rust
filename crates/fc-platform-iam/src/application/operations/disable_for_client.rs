@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::ApplicationDisabledForClient;
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct DisableApplicationForClientCommand {
     pub client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DisableApplicationForClientCommand {}
+impl AuditMasked for DisableApplicationForClientCommand {}
 
 pub struct DisableApplicationForClientUseCase<U: UnitOfWork> {
     config_repo: Arc<ApplicationClientConfigRepository>,
@@ -68,11 +70,7 @@ impl<U: UnitOfWork> UseCase for DisableApplicationForClientUseCase<U> {
         _command: &DisableApplicationForClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -22,6 +22,10 @@ use serde_json::{json, Value};
 use support::postgres::postgres;
 
 use crate::support;
+use fc_fnhost_core::db::RowsAnswer;
+use sqlx::postgres::PgConnection;
+use std::process;
+use tokio::time;
 
 fn address(name: &str) -> FunctionAddress {
     FunctionAddress::parse(&format!("app.db.{name}")).unwrap()
@@ -55,7 +59,7 @@ fn session(bindings: &Arc<DbBindings>, timeout: Duration) -> DbSession {
     DbSession::new(Some(bindings.clone()), Instant::now() + timeout)
 }
 
-fn rows(answer: &fc_fnhost_core::db::RowsAnswer) -> Vec<Value> {
+fn rows(answer: &RowsAnswer) -> Vec<Value> {
     serde_json::from_str::<Vec<Value>>(&answer.json).unwrap()
 }
 
@@ -65,7 +69,7 @@ fn text(s: &str) -> Param {
 
 /// A table name no other test uses.
 fn table(name: &str) -> String {
-    format!("t_{name}_{}", std::process::id())
+    format!("t_{name}_{}", process::id())
 }
 
 /// Connections of `bindings`' pool borrowed right now.
@@ -81,7 +85,7 @@ async fn eventually_returned(bindings: &Arc<DbBindings>) {
             start.elapsed() < Duration::from_secs(5),
             "a connection was never returned"
         );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -423,7 +427,7 @@ async fn a_statement_stops_at_the_invocation_deadline() {
         started.elapsed()
     );
     eventually_returned(&b).await;
-    tokio::time::sleep(Duration::from_millis(450)).await;
+    time::sleep(Duration::from_millis(450)).await;
     let late = db.query("SELECT 1", &[]).await.unwrap_err();
     assert_eq!(late.code, DbErrorCode::Timeout);
     assert_eq!(late.message, "no time left before the invocation deadline");
@@ -623,7 +627,7 @@ async fn a_rotated_reference_reaches_the_pool_without_a_reload() {
     let ab = bind(&admin, "admin", 1).await;
     let mut s = session(&ab, Duration::from_secs(10));
     let db = s.open("main").unwrap();
-    let role = format!("rotating_{}", std::process::id());
+    let role = format!("rotating_{}", process::id());
     db.execute(&format!("DROP ROLE IF EXISTS {role}"), &[])
         .await
         .unwrap();
@@ -659,13 +663,13 @@ async fn a_rotated_reference_reaches_the_pool_without_a_reload() {
         .await
         .unwrap();
     *secret.0.lock() = dsn("second");
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    time::sleep(Duration::from_millis(700)).await;
     // Every new connection of the pool now logs in with the new password
     // (an existing one stays valid: PostgreSQL never ends a session for a
     // password change).
     use sqlx::Connection as _;
     let options = b["main"].entry().pool().connect_options();
-    let fresh = sqlx::postgres::PgConnection::connect_with(&options)
+    let fresh = PgConnection::connect_with(&options)
         .await
         .expect("the refreshed credentials log in");
     fresh.close().await.unwrap();

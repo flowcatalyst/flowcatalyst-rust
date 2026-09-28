@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::dispatch_job::signing_guard::SigningGuard;
+use crate::event::api::ContextDataDto;
 use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
 use fc_platform_core::directory::ClientDirectory;
@@ -19,6 +21,7 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use std::collections::HashSet;
 
 // ── Caller-supplied ids ─────────────────────────────────────────────────
 
@@ -51,7 +54,7 @@ pub fn supplied_id(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
 /// 409 `DUPLICATE_ID` (Java ruling 17c, security-fixes-2026-09-24 S3.3).
 pub fn duplicate_id(message: String) -> PlatformError {
     PlatformError::Coded {
-        status: axum::http::StatusCode::CONFLICT,
+        status: StatusCode::CONFLICT,
         code: "DUPLICATE_ID".to_string(),
         message,
         details: Default::default(),
@@ -63,7 +66,7 @@ pub fn duplicate_id(message: String) -> PlatformError {
 /// `DUPLICATE_ID`, as does (at insert) an id that already names a job.
 #[derive(Default)]
 pub struct SuppliedJobIds {
-    seen: std::collections::HashSet<String>,
+    seen: HashSet<String>,
     ids: Vec<String>,
 }
 
@@ -125,7 +128,7 @@ pub struct BatchEventItem {
     #[serde(alias = "client_code")]
     pub client_code: Option<String>,
     #[serde(alias = "context_data")]
-    #[schema(value_type = Option<Vec<crate::event::api::ContextDataDto>>)]
+    #[schema(value_type = Option<Vec<ContextDataDto>>)]
     pub context_data: Option<serde_json::Value>,
 }
 
@@ -193,7 +196,7 @@ pub struct SdkEventsState {
     pub client_repo: Arc<dyn ClientDirectory>,
     /// Refuses an application's event types from a caller that may not
     /// sign as that application (S6, ruling 17a).
-    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
+    pub signing: Arc<SigningGuard>,
 }
 
 /// Ingest a batch of events (SDK)
@@ -351,6 +354,7 @@ pub async fn batch_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
 
     #[test]
     fn a_supplied_id_must_fit_the_column() {
@@ -382,7 +386,7 @@ mod tests {
         let err = ids.claim(Some("A1")).unwrap_err();
         assert!(
             matches!(&err, PlatformError::Coded { status, code, .. }
-                if *status == axum::http::StatusCode::CONFLICT && code == "DUPLICATE_ID"),
+                if *status == StatusCode::CONFLICT && code == "DUPLICATE_ID"),
             "{err:?}"
         );
         assert_eq!(ids.ids(), ["A1".to_string(), "B2".to_string()]);

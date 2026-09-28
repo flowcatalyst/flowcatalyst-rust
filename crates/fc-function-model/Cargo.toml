@@ -21,3 +21,8 @@ serde = { workspace = true }
 # and big integers survive a request DTO.
 serde_json = { workspace = true, features = ["raw_value"] }
 hex = { workspace = true }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

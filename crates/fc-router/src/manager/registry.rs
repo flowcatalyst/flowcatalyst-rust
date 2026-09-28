@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use fc_common::QueueConfig;
 use fc_queue::QueueConsumer;
+use std::mem;
 
 /// One queue's consumer plus its poll loop's state (Go: `runningConsumer`).
 ///
@@ -271,7 +272,7 @@ impl ConsumerRegistry {
 
     /// Remove every detaching consumer (shutdown).
     pub(crate) fn drain_detaching(&self) -> Vec<Arc<RunningConsumer>> {
-        std::mem::take(&mut *self.detaching.lock())
+        mem::take(&mut *self.detaching.lock())
     }
 
     /// Move `rc` (already out of the active maps) onto the detaching list,

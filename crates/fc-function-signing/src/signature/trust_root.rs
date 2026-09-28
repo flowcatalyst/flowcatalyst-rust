@@ -8,6 +8,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::java;
+use std::fs;
+use std::path::Path;
 
 /// The public-good `trusted_root.json`, byte-identical to Java's
 /// `server/src/main/resources/function/sigstore-trusted-root.json`
@@ -63,8 +65,8 @@ impl TrustRoot {
     }
 
     /// An operator-supplied `trusted_root.json` (`FC_FN_TRUST_ROOT`).
-    pub fn from_file(path: &std::path::Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(path)
+    pub fn from_file(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
             .map_err(|e| format!("failed to read trust root file {}: {e}", path.display()))?;
         Self::parse(&text)
     }

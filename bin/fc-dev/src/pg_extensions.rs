@@ -18,6 +18,8 @@
 //!
 //! Pure filesystem work, no logging: the caller decides what is worth a line.
 
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// The families mirrored: PostGIS and its companions. A file belongs when
@@ -66,7 +68,7 @@ pub fn locate(root: &Path, anchor: &str) -> Option<Tree> {
 }
 
 fn has_module(dir: &Path, anchor: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
     entries.flatten().any(|e| {
@@ -93,7 +95,7 @@ pub fn donor_candidates(configured: Option<&Path>, pg_cache_dir: &Path, major: &
     if let Some(t) = locate(&pg_cache_dir.join("bin"), "postgis") {
         out.push(t);
     }
-    if let Ok(entries) = std::fs::read_dir(pg_cache_dir) {
+    if let Ok(entries) = fs::read_dir(pg_cache_dir) {
         let mut java: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
@@ -139,9 +141,9 @@ pub fn has_postgis(tree: &Tree) -> bool {
 
 /// Copy the family from `donor` into `target`. Never overwrites; returns the
 /// sorted names actually copied.
-pub fn mirror(donor: &Tree, target: &Tree) -> std::io::Result<Vec<String>> {
-    std::fs::create_dir_all(&target.modules)?;
-    std::fs::create_dir_all(&target.extensions)?;
+pub fn mirror(donor: &Tree, target: &Tree) -> io::Result<Vec<String>> {
+    fs::create_dir_all(&target.modules)?;
+    fs::create_dir_all(&target.extensions)?;
     let mut copied = mirror_dir(&donor.modules, &target.modules, MODULE_SUFFIXES)?;
     copied.extend(mirror_dir(
         &donor.extensions,
@@ -152,9 +154,9 @@ pub fn mirror(donor: &Tree, target: &Tree) -> std::io::Result<Vec<String>> {
     Ok(copied)
 }
 
-fn mirror_dir(src: &Path, dst: &Path, suffixes: &[&str]) -> std::io::Result<Vec<String>> {
+fn mirror_dir(src: &Path, dst: &Path, suffixes: &[&str]) -> io::Result<Vec<String>> {
     let mut copied = Vec::new();
-    let Ok(entries) = std::fs::read_dir(src) else {
+    let Ok(entries) = fs::read_dir(src) else {
         return Ok(copied);
     };
     for entry in entries.flatten() {
@@ -172,7 +174,7 @@ fn mirror_dir(src: &Path, dst: &Path, suffixes: &[&str]) -> std::io::Result<Vec<
             continue;
         }
         // std::fs::copy carries the permission bits (the modules' exec bit).
-        std::fs::copy(&source, &target)?;
+        fs::copy(&source, &target)?;
         copied.push(name);
     }
     Ok(copied)
@@ -203,10 +205,11 @@ pub fn missing_control_files(installed: &[String], extension_dir: &Path) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn touch(p: &Path) {
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, b"x").unwrap();
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"x").unwrap();
     }
 
     /// A zonky/Go-style tree: lib/postgresql + share/postgresql/extension.
@@ -263,7 +266,7 @@ mod tests {
         let rust = dir.path().join("rust");
         go_tree(&go, true);
         theseus_tree(&rust);
-        std::fs::write(rust.join("share/extension/postgis--3.6.4.sql"), b"mine").unwrap();
+        fs::write(rust.join("share/extension/postgis--3.6.4.sql"), b"mine").unwrap();
 
         let candidates = donor_candidates(None, &dir.path().join("cache"), "18");
         let donor = first_usable(&candidates)
@@ -286,7 +289,7 @@ mod tests {
         assert!(!rust.join("lib/hstore.dylib").exists());
         assert!(!rust.join("share/extension/postgis.README").exists());
         assert_eq!(
-            std::fs::read(rust.join("share/extension/postgis--3.6.4.sql")).unwrap(),
+            fs::read(rust.join("share/extension/postgis--3.6.4.sql")).unwrap(),
             b"mine"
         );
         assert!(has_postgis(&target));

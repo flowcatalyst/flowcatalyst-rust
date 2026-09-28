@@ -62,6 +62,7 @@ use fc_platform_core::permissions::function::FUNCTION_HOST_CONTROL;
 use fc_platform_core::shared::authorization_service::{checks, AuthContext};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase, UseCaseError};
 use fc_platform_iam::application::repository::ApplicationRepository;
 use fc_platform_messaging::event::entity::Event;
@@ -69,6 +70,8 @@ use fc_platform_messaging::event::repository::EventRepository;
 use fc_platform_messaging::event_type::entity::EventTypeStatus;
 use fc_platform_messaging::event_type::repository::EventTypeRepository;
 use fc_platform_messaging::shared::batch_api::{BatchResponse, BatchResultItem};
+use std::fmt::Display;
+use tokio_util::io::ReaderStream;
 
 /// 1-100 events per emit call.
 pub const MAX_EMIT_BATCH: usize = 100;
@@ -171,7 +174,7 @@ fn valid_host_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
 }
 
-fn loaded_invalid(index: usize, message: impl std::fmt::Display) -> UseCaseError {
+fn loaded_invalid(index: usize, message: impl Display) -> UseCaseError {
     UseCaseError::validation("LOADED_INVALID", format!("loaded[{index}]: {message}"))
 }
 
@@ -357,7 +360,7 @@ async fn mark_ready(
                     .into_committed()
             })
             .await
-            .map(fc_platform_core::usecase::Committed::into_inner);
+            .map(Committed::into_inner);
         match result {
             Ok(_) => {}
             Err(e) if e.code() == VERSION_NOT_PUBLISHED => {
@@ -656,7 +659,7 @@ pub async fn download_artifact(
             ),
             (header::CONTENT_LENGTH, HeaderValue::from(size)),
         ],
-        Body::from_stream(tokio_util::io::ReaderStream::new(stream)),
+        Body::from_stream(ReaderStream::new(stream)),
     )
         .into_response())
 }

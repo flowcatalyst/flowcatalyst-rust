@@ -48,12 +48,22 @@ use serde_json::{json, Value};
 use sha2::Digest as _;
 use tower::ServiceExt;
 
+use fc_fnhost_core::desired::Role;
 use fc_fnhost_core::env::{EnvReader, HostEnv};
+use fc_fnhost_core::heartbeat::LoadState;
 use fc_fnhost_core::host::{function_listener, FnHost};
+use fc_platform::application::entity::Application;
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::{permissions, roles, AuthRole};
 use fc_platform::service_account::entity::RoleAssignment;
+use fc_platform::shared::tsid;
+use std::env;
+use std::fs;
+use std::path::Path;
 use support::{read_json, TestApp};
+use tokio::net::TcpListener;
+use tokio::time;
 
 const APP_KEY: &str = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 const POOL: &str = "e2e";
@@ -68,10 +78,10 @@ fn guest() -> Vec<u8> {
 }
 
 fn guest_fixture(name: &str) -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fc-fnhost-core/tests/fixtures/wasm")
         .join(name);
-    std::fs::read(path).expect("the committed PDK guest")
+    fs::read(path).expect("the committed PDK guest")
 }
 
 async fn api(
@@ -160,7 +170,7 @@ async fn start_host(
     platform_url: &str,
     client_id: &str,
     client_secret: &str,
-    cache: &std::path::Path,
+    cache: &Path,
 ) -> FnHost {
     let env = HostEnv::load(&EnvReader::from_pairs([
         ("FC_FN_POOL", POOL),
@@ -228,17 +238,17 @@ async fn version_state(app: &TestApp, token: &str, version: i32) -> String {
 async fn a_function_published_on_the_platform_runs_on_the_host() {
     let store = tempfile::tempdir().unwrap();
     let cache = tempfile::tempdir().unwrap();
-    std::env::set_var("FLOWCATALYST_APP_KEY", APP_KEY);
-    std::env::set_var("FLOWCATALYST_DEV_MODE", "true");
-    std::env::set_var("FC_FN_SIGNATURES", "off");
-    std::env::set_var(
+    env::set_var("FLOWCATALYST_APP_KEY", APP_KEY);
+    env::set_var("FLOWCATALYST_DEV_MODE", "true");
+    env::set_var("FC_FN_SIGNATURES", "off");
+    env::set_var(
         "FC_FN_ARTIFACT_STORE",
         format!("file://{}", store.path().display()),
     );
     let app = TestApp::setup().await;
 
     // The production router on a real socket, for the host.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let platform_url = format!("http://{}", listener.local_addr().unwrap());
     let served = app.router.clone();
     tokio::spawn(async move {
@@ -251,20 +261,20 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     });
 
     let admin = admin(&app).await;
-    let fixture = fc_platform::application::entity::Application::new("fixture", "Fixture");
+    let fixture = Application::new("fixture", "Fixture");
     app.repos.application_repo.insert(&fixture).await.unwrap();
     sqlx::query(
         "INSERT INTO msg_event_types (id, code, name, status, source, client_scoped, \
          application, subdomain, aggregate, created_at, updated_at) \
          VALUES ($1, $2, 'Thing happened', 'CURRENT', 'API', false, 'fixture', 'pdk', 'thing', NOW(), NOW())",
     )
-    .bind(fc_platform::shared::tsid::generate_untyped())
+    .bind(tsid::generate_untyped())
     .bind(EVENT_TYPE)
     .execute(&app.pool)
     .await
     .unwrap();
 
-    let client = fc_platform::client::entity::Client::new("E2E", "e2e");
+    let client = Client::new("E2E", "e2e");
     app.repos.client_repo.insert(&client).await.unwrap();
 
     // ── 1. Create the function and upload its artifact ───────────────────
@@ -373,10 +383,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     host.reconciler().reconcile_once(Utc::now()).await;
     let document = host.reconciler().document().unwrap();
     assert_eq!(document.functions.len(), 1);
-    assert_eq!(
-        document.functions[0].role,
-        fc_fnhost_core::desired::Role::Live
-    );
+    assert_eq!(document.functions[0].role, Role::Live);
 
     let base = format!("http://127.0.0.1:{}", host.port().expect("listener port"));
     let http = reqwest::Client::new();
@@ -404,7 +411,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     host.reconciler().reconcile_once(Utc::now()).await;
     assert_eq!(
         host.reconciler().heartbeat_report(&document).loaded[0].state,
-        fc_fnhost_core::heartbeat::LoadState::Loaded
+        LoadState::Loaded
     );
 
     let (_, status_body) = api(
@@ -673,7 +680,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
             .contains("JavaScript bundle"),
         "{body}"
     );
-    let bundle = std::fs::read(concat!(
+    let bundle = fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../fc-fnhost-js/tests/fixtures/js/guest.mjs"
     ))
@@ -770,7 +777,7 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     assert_eq!(data, json!({"id": 1, "ok": true}));
     assert_eq!(correlation.as_deref(), Some("corr-e2e-js"));
 
-    tokio::time::timeout(Duration::from_secs(30), host.close())
+    time::timeout(Duration::from_secs(30), host.close())
         .await
         .expect("the host shuts down");
 }

@@ -68,10 +68,20 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use base64::engine::general_purpose;
+use fc_platform::scheduler::auth::DispatchAuthService;
+use reqwest::redirect::Policy;
 use serde_json::{json, Value};
 use sha2::Digest as _;
+use std::env;
+use std::fs;
+use std::future::Future;
+use std::io::Read;
+use std::net::TcpListener;
+use std::thread;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
+use tokio::time;
 
 /// fc-function-signing's port of Java's `TestSigstore`: a private CA and
 /// transparency log whose `trusted_root.json` both the platform and the
@@ -109,11 +119,11 @@ impl Proc {
             .unwrap_or_else(|e| panic!("spawn {name}: {e}"));
         let logs = Arc::new(Mutex::new(Vec::new()));
         for stream in [
-            Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
             Box::new(child.stderr.take().unwrap()),
         ] {
             let logs = logs.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
                     logs.lock().unwrap().push(line);
                 }
@@ -150,7 +160,7 @@ impl Drop for Proc {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -175,7 +185,7 @@ fn missing_prerequisite() -> Option<&'static str> {
     if !succeeds("docker", &["info"]) {
         return Some("Docker is not running");
     }
-    let prebuilt = std::env::var_os("FC_JVM_BUILD_DIR").is_some();
+    let prebuilt = env::var_os("FC_JVM_BUILD_DIR").is_some();
     if !succeeds("java", &["-version"]) || !succeeds("javac", &["-version"]) {
         return Some("a JDK (java, javac) is not on PATH");
     }
@@ -183,7 +193,7 @@ fn missing_prerequisite() -> Option<&'static str> {
         return Some("mvn is not on PATH");
     }
     if !prebuilt {
-        let javalin = std::env::var_os("FC_JAVALIN_DIR")
+        let javalin = env::var_os("FC_JAVALIN_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| repo_root().join("../flowcatalyst-javalin"));
         if !javalin.join(".git").exists() {
@@ -249,14 +259,14 @@ fn run(command: &mut Command, what: &str) -> Result<(), String> {
 /// A built javalin tree: `FC_JVM_BUILD_DIR` when set (already built), else
 /// an export of the checkout's `HEAD` under `target/jvm-e2e`, built once.
 fn javalin_tree() -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("FC_JVM_BUILD_DIR") {
+    if let Some(dir) = env::var_os("FC_JVM_BUILD_DIR") {
         eprintln!(
             "[jvm-e2e] using the built javalin tree {}",
             dir.to_string_lossy()
         );
         return Ok(dir.into());
     }
-    let javalin = std::env::var_os("FC_JAVALIN_DIR")
+    let javalin = env::var_os("FC_JAVALIN_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| repo_root().join("../flowcatalyst-javalin"));
     let head = Command::new("git")
@@ -275,7 +285,7 @@ fn javalin_tree() -> Result<PathBuf, String> {
     if tree.join(".built").is_file() {
         return Ok(tree);
     }
-    std::fs::create_dir_all(&tree).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&tree).map_err(|e| e.to_string())?;
     run(
         Command::new("sh").arg("-c").arg(format!(
             "git -C '{}' archive {commit} | tar -x -C '{}'",
@@ -298,7 +308,7 @@ fn javalin_tree() -> Result<PathBuf, String> {
         ]),
         "mvn package of the javalin export",
     )?;
-    std::fs::write(tree.join(".built"), &commit).map_err(|e| e.to_string())?;
+    fs::write(tree.join(".built"), &commit).map_err(|e| e.to_string())?;
     Ok(tree)
 }
 
@@ -313,14 +323,14 @@ fn java_jars(work: &Path) -> Result<JavaJars, String> {
             return Err(format!("{} is missing", jar.display()));
         }
     }
-    let manifest = std::fs::read(tree.join("examples/function-hello/manifest.json"))
+    let manifest = fs::read(tree.join("examples/function-hello/manifest.json"))
         .map_err(|e| format!("function-hello's manifest: {e}"))?;
 
     // The probe: compiled against function-api alone, as a function jar is.
     let probe_dir = work.join("probe");
     let source = probe_dir.join("src/e2e/probe/ScheduleProbe.java");
-    std::fs::create_dir_all(source.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&source, PROBE_SOURCE).map_err(|e| e.to_string())?;
+    fs::create_dir_all(source.parent().unwrap()).map_err(|e| e.to_string())?;
+    fs::write(&source, PROBE_SOURCE).map_err(|e| e.to_string())?;
     let classes = probe_dir.join("classes");
     run(
         Command::new("javac")
@@ -370,7 +380,7 @@ impl Signing {
             now - chrono::Duration::hours(1),
             now + chrono::Duration::hours(1),
         ));
-        let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+        let b64 = |b: &[u8]| general_purpose::STANDARD.encode(b);
         let log_spki = sigstore::spki_der(&eco.log_key);
         let start = (now - chrono::Duration::days(1)).to_rfc3339();
         // A Sigstore `trusted_root.json`, the shape both Java's and Rust's
@@ -387,7 +397,7 @@ impl Signing {
             }],
         });
         let trust_root = dir.join("trusted_root.json");
-        std::fs::write(&trust_root, document.to_string()).unwrap();
+        fs::write(&trust_root, document.to_string()).unwrap();
         Self { eco, trust_root }
     }
 
@@ -537,7 +547,7 @@ impl Platform {
 async fn wait_for<T, F, Fut>(what: &str, timeout: Duration, procs: &[&Proc], mut check: F) -> T
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
+    Fut: Future<Output = Option<T>>,
 {
     let deadline = Instant::now() + timeout;
     loop {
@@ -551,7 +561,7 @@ where
                 .collect();
             panic!("timed out waiting for {what}\n{}", logs.join("\n"));
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        time::sleep(Duration::from_millis(500)).await;
     }
 }
 
@@ -561,7 +571,7 @@ fn platform_command(env: &BTreeMap<&str, String>, dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_fc-server"));
     command
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("PATH", env::var("PATH").unwrap_or_default())
         .envs(env)
         .current_dir(dir);
     command
@@ -577,11 +587,11 @@ fn rust_host(
 ) -> (Command, u16) {
     let port = free_port();
     let cache = dir.join(format!("cache-{host_id}"));
-    std::fs::create_dir_all(&cache).unwrap();
+    fs::create_dir_all(&cache).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_fc-server"));
     command
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("PATH", env::var("PATH").unwrap_or_default())
         .env("RUST_LOG", "info")
         .env("FC_PLATFORM_ENABLED", "false")
         .env("FC_FUNCTION_HOST_ENABLED", "true")
@@ -633,14 +643,14 @@ async fn wait_job(db: &sqlx::PgPool, subject: &str) -> String {
             return id;
         }
         assert!(Instant::now() < deadline, "no dispatch job for {subject}");
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        time::sleep(Duration::from_millis(250)).await;
     }
 }
 
 /// The router's call for one job: `/api/dispatch/process` with the job's
 /// HMAC token. The platform delivers the webhook and answers `{ack}`.
 async fn process(http: &reqwest::Client, platform_url: &str, job_id: &str) -> Value {
-    let token = fc_platform::scheduler::auth::DispatchAuthService::from_app_key(APP_KEY)
+    let token = DispatchAuthService::from_app_key(APP_KEY)
         .unwrap()
         .sign(job_id);
     http.post(format!("{platform_url}/api/dispatch/process"))
@@ -676,7 +686,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
 
     let signing = Signing::new(work.path());
     let store = work.path().join("artifacts");
-    std::fs::create_dir_all(&store).unwrap();
+    fs::create_dir_all(&store).unwrap();
 
     let platform_port = free_port();
     let java_port = free_port();
@@ -722,7 +732,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
     let platform = Platform {
         url: platform_url.clone(),
         http: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             .build()
             .unwrap(),
     };
@@ -841,7 +851,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
 
     // ── The Java host, pool `jvm` ─────────────────────────────────────────
     let java_cache = work.path().join("java-cache");
-    std::fs::create_dir_all(&java_cache).unwrap();
+    fs::create_dir_all(&java_cache).unwrap();
     let mut java = Command::new("java");
     // The flags the host image's entrypoint passes (javalin
     // `function-host/docker/entrypoint.sh`): the build uses preview features.
@@ -909,7 +919,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
         (200..300).contains(&status),
         "signer policy: {status} {body}"
     );
-    let jar = std::fs::read(&jars.hello).unwrap();
+    let jar = fs::read(&jars.hello).unwrap();
     let (artifact_ref, digest) = platform.upload(&publisher, ADDRESS, &jar).await;
 
     let mut manifest = jars.manifest.clone();
@@ -1242,7 +1252,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
         )
         .await;
     assert_eq!(status, 201, "create the probe function: {body}");
-    let probe = std::fs::read(&jars.probe).unwrap();
+    let probe = fs::read(&jars.probe).unwrap();
     let (probe_ref, probe_digest) = platform.upload(&publisher, ticker, &probe).await;
     let (status, body) = platform
         .post(
@@ -1396,7 +1406,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
     assert_ne!(rust_answer.0, 200);
     // No crash loop: still running after two more cycles, and the failure
     // logged once.
-    tokio::time::sleep(Duration::from_secs(32)).await;
+    time::sleep(Duration::from_secs(32)).await;
     rust_proc.assert_running();
     assert_eq!(
         rust_proc.count(&format!(
@@ -1480,8 +1490,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
     assert_eq!(status, 201, "create component function: {body}");
     let component_address = "hello.default.component";
     let component =
-        std::fs::read(repo_root().join("crates/fc-fnhost-core/tests/fixtures/wasm/hello.wasm"))
-            .unwrap();
+        fs::read(repo_root().join("crates/fc-fnhost-core/tests/fixtures/wasm/hello.wasm")).unwrap();
     let (component_ref, component_digest) = platform
         .upload(&publisher, component_address, &component)
         .await;
@@ -1633,7 +1642,7 @@ async fn a_jvm_function_published_on_the_rust_platform_runs_on_the_java_host() {
             "the Java host never exited:\n{}",
             java_proc.log_text()
         );
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        time::sleep(Duration::from_millis(250)).await;
     };
     // The JVM runs its shutdown hook (FnHost.close: drain, close the
     // listener and every function) and then exits 128 + SIGTERM.

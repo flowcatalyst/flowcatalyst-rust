@@ -5,8 +5,11 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::client_config::ApplicationClientConfig;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 /// Row mapping for app_client_configs table
 #[derive(sqlx::FromRow)]
@@ -153,12 +156,13 @@ impl ApplicationClientConfigRepository {
             .bind(Utc::now())
             .execute(&self.pool)
             .await?;
-            Ok(self.find_by_id(&config.id).await?.ok_or_else(|| {
-                fc_platform_core::shared::error::PlatformError::NotFound {
+            Ok(self
+                .find_by_id(&config.id)
+                .await?
+                .ok_or_else(|| PlatformError::NotFound {
                     entity_type: "ApplicationClientConfig".to_string(),
                     id: config.id.clone(),
-                }
-            })?)
+                })?)
         } else {
             // Insert new
             let config = ApplicationClientConfig::new(application_id, client_id);
@@ -241,14 +245,8 @@ impl HasId for ApplicationClientConfig {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ApplicationClientConfig>
-    for ApplicationClientConfigRepository
-{
-    async fn persist(
-        &self,
-        c: &ApplicationClientConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ApplicationClientConfig> for ApplicationClientConfigRepository {
+    async fn persist(&self, c: &ApplicationClientConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO app_client_configs (id, application_id, client_id, enabled, \
@@ -273,11 +271,7 @@ impl fc_platform_core::usecase::Persist<ApplicationClientConfig>
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &ApplicationClientConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &ApplicationClientConfig, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM app_client_configs WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)

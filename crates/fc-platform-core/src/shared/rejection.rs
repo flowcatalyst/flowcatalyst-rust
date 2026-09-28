@@ -19,6 +19,7 @@
 //! is `text/plain`. Platform handlers never answer that way (their errors are
 //! JSON), so nothing else is touched.
 
+use axum::body;
 use axum::{
     body::{Body, Bytes},
     extract::Request,
@@ -190,7 +191,7 @@ pub async fn go_rejections(request: Request, next: Next) -> Response {
     let (request, body) =
         if !oauth && is_small_json(&request) {
             let (parts, body) = request.into_parts();
-            match axum::body::to_bytes(body, MAX_ECHOED_BODY_BYTES as usize).await {
+            match body::to_bytes(body, MAX_ECHOED_BODY_BYTES as usize).await {
                 Ok(bytes) => (
                     Request::from_parts(parts, Body::from(bytes.clone())),
                     Some(bytes),
@@ -210,7 +211,7 @@ pub async fn go_rejections(request: Request, next: Next) -> Response {
         return response;
     }
     let (parts, rejected) = response.into_parts();
-    let text = match axum::body::to_bytes(rejected, MAX_REJECTION_BYTES).await {
+    let text = match body::to_bytes(rejected, MAX_REJECTION_BYTES).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).trim().to_string(),
         Err(_) => String::new(),
     };
@@ -251,6 +252,8 @@ pub async fn go_rejections(request: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Request;
+    use axum::middleware;
     use axum::{extract::Query, routing::post, Router};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
@@ -280,7 +283,7 @@ mod tests {
         Router::new()
             .route("/api/things", post(create).get(list))
             .route("/oauth/things", post(create))
-            .layer(axum::middleware::from_fn(go_rejections))
+            .layer(middleware::from_fn(go_rejections))
     }
 
     async fn call(
@@ -289,7 +292,7 @@ mod tests {
         content_type: Option<&str>,
         body: &str,
     ) -> (StatusCode, Value) {
-        let mut req = axum::http::Request::builder().method(method).uri(uri);
+        let mut req = Request::builder().method(method).uri(uri);
         if let Some(ct) = content_type {
             req = req
                 .header(header::CONTENT_TYPE, ct)

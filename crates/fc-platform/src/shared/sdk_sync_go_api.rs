@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 use crate::connection::operations::sync::{
     SyncConnectionInput, SyncConnectionsCommand, SyncConnectionsUseCase,
 };
+use crate::permissions;
 use crate::process::operations::{SyncProcessInput, SyncProcessesCommand, SyncProcessesUseCase};
 use crate::shared::authorization_service::{checks, ApplicationAccessService, AuthContext};
 use crate::shared::error::PlatformError;
@@ -65,11 +66,11 @@ pub struct SyncProcessesByBodyRequest {
 /// or the application-service connection writes.
 fn can_sync_connections(ctx: &AuthContext) -> Result<(), PlatformError> {
     let perms = [
-        crate::permissions::admin::CONNECTION_SYNC,
-        crate::permissions::admin::CONNECTION_MANAGE,
-        crate::permissions::application_service::CONNECTION_CREATE,
-        crate::permissions::application_service::CONNECTION_UPDATE,
-        crate::permissions::application_service::CONNECTION_DELETE,
+        permissions::admin::CONNECTION_SYNC,
+        permissions::admin::CONNECTION_MANAGE,
+        permissions::application_service::CONNECTION_CREATE,
+        permissions::application_service::CONNECTION_UPDATE,
+        permissions::application_service::CONNECTION_DELETE,
     ];
     if ctx.has_any_permission(&perms) {
         Ok(())

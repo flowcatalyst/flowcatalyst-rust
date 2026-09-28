@@ -29,6 +29,7 @@
 //! domain events without recursion (events about event ingest would emit
 //! events), so they write directly and skip UoW by design.
 
+use crate::support::sources;
 use std::fs;
 
 /// File patterns to scan — handler files.
@@ -127,12 +128,12 @@ fn matches_forbidden(line: &str) -> Option<&'static str> {
 #[test]
 fn handlers_must_not_perform_direct_repo_writes() {
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
 
     let mut violations = Vec::new();
 
     for file in &files {
-        let rel = crate::support::sources::strip_src(file)
+        let rel = sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");

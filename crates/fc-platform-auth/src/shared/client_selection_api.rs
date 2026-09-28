@@ -20,6 +20,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::auth::auth_service::AuthService;
+use fc_platform_iam::client::entity::Client;
 use fc_platform_iam::{
     auth::config_repository::ClientAccessGrantRepository, client::repository::ClientRepository,
     principal::repository::PrincipalRepository, role::repository::RoleRepository,
@@ -111,7 +112,7 @@ impl ClientSelectionState {
     async fn accessible_active_clients(
         &self,
         principal: &Principal,
-    ) -> Result<Vec<fc_platform_iam::client::entity::Client>, PlatformError> {
+    ) -> Result<Vec<Client>, PlatformError> {
         let clients = if principal.scope == UserScope::Anchor {
             self.client_repo.find_active().await?
         } else {

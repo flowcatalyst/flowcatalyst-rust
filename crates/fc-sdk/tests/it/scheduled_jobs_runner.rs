@@ -7,8 +7,8 @@
 
 #![cfg(feature = "scheduled-jobs-runner")]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use fc_sdk::client::FlowCatalystClient;
@@ -17,6 +17,7 @@ use fc_sdk::scheduled_jobs::{
     HandlerError, HandlerFuture, LogOptions, RunResult, ScheduledJobRunner,
 };
 use serde_json::json;
+use tokio::time;
 
 fn dummy_client() -> FlowCatalystClient {
     // Base URL never actually reached in tests that don't tracksCompletion
@@ -77,7 +78,7 @@ async fn handler_runs_in_background_and_process_returns_immediately() {
     assert!(matches!(res, RunResult::Accepted), "got {res:?}");
 
     // Give the spawned task a moment to run.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     assert_eq!(counter.load(Ordering::SeqCst), 1);
 }
 
@@ -105,7 +106,7 @@ async fn lock_contention_skips_handler() {
 
     let res = runner.process(envelope("contention", false));
     assert!(matches!(res, RunResult::Accepted), "got {res:?}");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     assert_eq!(
         counter.load(Ordering::SeqCst),
         0,
@@ -115,7 +116,7 @@ async fn lock_contention_skips_handler() {
 
 #[tokio::test]
 async fn lock_released_so_subsequent_fires_succeed() {
-    let lock: Arc<dyn fc_sdk::lock::LockProvider> = Arc::new(MemoryLockProvider::new());
+    let lock: Arc<dyn LockProvider> = Arc::new(MemoryLockProvider::new());
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
     let runner = ScheduledJobRunner::builder(dummy_client(), Arc::clone(&lock))
@@ -130,9 +131,9 @@ async fn lock_released_so_subsequent_fires_succeed() {
         .build();
 
     runner.process(envelope("seq", false));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     runner.process(envelope("seq", false));
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    time::sleep(Duration::from_millis(80)).await;
 
     assert_eq!(
         counter.load(Ordering::SeqCst),

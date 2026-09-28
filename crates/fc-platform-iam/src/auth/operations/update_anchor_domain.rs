@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::AnchorDomainUpdated;
 use crate::auth::config_repository::AnchorDomainRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -17,7 +19,7 @@ pub struct UpdateAnchorDomainCommand {
     pub domain: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateAnchorDomainCommand {}
+impl AuditMasked for UpdateAnchorDomainCommand {}
 
 pub struct UpdateAnchorDomainUseCase<U: UnitOfWork> {
     anchor_domain_repo: Arc<AnchorDomainRepository>,
@@ -65,11 +67,7 @@ impl<U: UnitOfWork> UseCase for UpdateAnchorDomainUseCase<U> {
         _command: &UpdateAnchorDomainCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::EventTypeArchived;
 use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -19,7 +21,7 @@ pub struct ArchiveEventTypeCommand {
     pub event_type_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ArchiveEventTypeCommand {}
+impl AuditMasked for ArchiveEventTypeCommand {}
 
 /// Use case for archiving an event type.
 pub struct ArchiveEventTypeUseCase<U: UnitOfWork> {
@@ -65,10 +67,7 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                event_type.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
         }
         Ok(())
     }

@@ -33,13 +33,14 @@ use fc_platform::function::DnsLabel;
 use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
 use fc_platform::shared::encryption_service::EncryptionService;
 use fc_platform::shared::error::PlatformError;
+use std::fs;
 use support::TestApp;
 
 fn data(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data/function")
         .join(name);
-    std::fs::read_to_string(path).unwrap()
+    fs::read_to_string(path).unwrap()
 }
 
 async fn builder(app: &TestApp, app_key: &str) -> DesiredStateBuilder {

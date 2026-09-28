@@ -14,10 +14,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use fc_fnhost_core::wasm::inspect;
 use fc_function_abi::EventEmitError;
 use serde_json::{json, Value};
+use std::fs;
+use std::thread;
 use support::listener::{signed, timestamp};
 use support::wasm::{enc, entry, guest, manifest, WasmHarness, ADDR};
+use tokio::time;
 
 async fn one(name: &str, manifest_extra: Value, entry_extra: Value) -> WasmHarness {
     WasmHarness::start(vec![entry(
@@ -154,7 +158,7 @@ async fn a_spinning_guest_is_stopped_at_its_deadline_and_the_next_call_is_served
     // The permit comes back only once the guest has really stopped.
     let freed = Instant::now();
     while h.function_permits() == Some(0) && freed.elapsed() < Duration::from_secs(3) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(
         h.function_permits(),
@@ -291,7 +295,7 @@ async fn a_call_past_max_concurrency_is_busy() {
         let h = h.clone();
         tokio::spawn(async move { h.get("/x?sleepMs=500").await })
     };
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    time::sleep(Duration::from_millis(150)).await;
     let busy = h.get("/x").await;
     assert_eq!(busy.status, 429, "{}", busy.text());
     assert_eq!(slow.await.unwrap().status, 200);
@@ -345,11 +349,11 @@ fn upstream() -> (u16, Arc<AtomicUsize>) {
     let port = listener.local_addr().unwrap().port();
     let served = Arc::new(AtomicUsize::new(0));
     let count = served.clone();
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let count = count.clone();
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let mut buf = [0u8; 8192];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let head = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -373,7 +377,7 @@ fn upstream() -> (u16, Arc<AtomicUsize>) {
                     }
                     "/redirect" => "HTTP/1.1 302 Found\r\nlocation: /ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
                     "/slow" => {
-                        std::thread::sleep(Duration::from_secs(3));
+                        thread::sleep(Duration::from_secs(3));
                         "HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\nslow".into()
                     }
                     _ => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
@@ -484,7 +488,7 @@ async fn an_outbound_call_never_outlives_the_invocation_deadline() {
     assert_eq!(resp.status, 504, "{}", resp.text());
     let freed = Instant::now();
     while h.function_permits() == Some(0) && freed.elapsed() < Duration::from_secs(3) {
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
     assert!(
         start.elapsed() < Duration::from_millis(2000),
@@ -577,8 +581,8 @@ async fn emit_reaches_the_control_plane_and_a_refusal_is_a_typed_value() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn emit_event_answers_the_event_id_and_the_platforms_reason() {
     let imports = |name: &str| {
-        let bytes = std::fs::read(guest(name)).unwrap();
-        fc_fnhost_core::wasm::inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20)
+        let bytes = fs::read(guest(name)).unwrap();
+        inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20)
             .unwrap()
             .imports
     };
@@ -625,10 +629,8 @@ async fn emit_event_answers_the_event_id_and_the_platforms_reason() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_plain_wasi_http_component_with_no_flowcatalyst_imports_runs() {
-    let bytes = std::fs::read(guest("pure")).unwrap();
-    let accepted =
-        fc_fnhost_core::wasm::inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20)
-            .unwrap();
+    let bytes = fs::read(guest("pure")).unwrap();
+    let accepted = inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20).unwrap();
     assert!(
         !accepted
             .imports
@@ -687,7 +689,7 @@ async fn with_every_pool_slot_in_use_a_call_is_unavailable_not_a_failure() {
         let h = h.clone();
         tokio::spawn(async move { h.get("/x?sleepMs=500").await })
     };
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    time::sleep(Duration::from_millis(150)).await;
     let refused = h.get("/x").await;
     assert_eq!(refused.status, 503, "{}", refused.text());
     assert_eq!(refused.error(), "FUNCTION_UNAVAILABLE");

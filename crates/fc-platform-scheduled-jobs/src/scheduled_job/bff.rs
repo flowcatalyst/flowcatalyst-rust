@@ -25,6 +25,9 @@ use crate::scheduled_job::{
     InstanceListFilters, ScheduledJob, ScheduledJobInstance, ScheduledJobInstanceLog,
     ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
+use fc_platform_core::directory::ApplicationDirectory;
+use fc_platform_core::directory::ClientDirectory;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
@@ -33,8 +36,8 @@ use fc_platform_core::shared::middleware::Authenticated;
 pub struct BffScheduledJobsState {
     pub repo: Arc<ScheduledJobRepository>,
     pub instance_repo: Arc<ScheduledJobInstanceRepository>,
-    pub client_repo: Arc<dyn fc_platform_core::directory::ClientDirectory>,
-    pub application_repo: Arc<dyn fc_platform_core::directory::ApplicationDirectory>,
+    pub client_repo: Arc<dyn ClientDirectory>,
+    pub application_repo: Arc<dyn ApplicationDirectory>,
 }
 
 // ── Response DTOs ───────────────────────────────────────────────────────────
@@ -336,7 +339,7 @@ pub async fn list_jobs(
     auth: Authenticated,
     Query(q): Query<RawQuery>,
 ) -> Result<Json<BffPage<BffScheduledJobResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
     let page = pagination(&q);
 
     let mut filters = JobListFilters {
@@ -400,7 +403,7 @@ pub async fn get_job(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<BffScheduledJobResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
     let j = visible_job(&state, &auth.0, &id).await?;
     let keys = [(j.id.clone(), j.tracks_completion)];
     let ((clients, applications), active) =
@@ -416,7 +419,7 @@ pub async fn list_instances(
     Path(id): Path<String>,
     Query(q): Query<RawQuery>,
 ) -> Result<Json<BffPage<BffScheduledJobInstanceResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
     visible_job(&state, &auth.0, &id).await?;
     let page = pagination(&q);
     let (page_no, size) = page;
@@ -470,7 +473,7 @@ pub async fn get_instance(
     auth: Authenticated,
     Path(instance_id): Path<String>,
 ) -> Result<Json<BffScheduledJobInstanceResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
     let inst = visible_instance(&state, &auth.0, &instance_id).await?;
     Ok(Json(inst.into()))
 }
@@ -482,7 +485,7 @@ pub async fn list_instance_logs(
     Path(instance_id): Path<String>,
     Query(q): Query<RawQuery>,
 ) -> Result<Json<Vec<BffInstanceLogResponse>>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
     visible_instance(&state, &auth.0, &instance_id).await?;
     let limit = q
         .get("limit")
@@ -499,7 +502,7 @@ pub async fn filter_options(
     State(state): State<BffScheduledJobsState>,
     auth: Authenticated,
 ) -> Result<Json<BffScheduledJobsFilterOptions>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_scheduled_jobs(&auth.0)?;
+    checks::can_read_scheduled_jobs(&auth.0)?;
 
     let (clients, applications) = tokio::try_join!(
         state.client_repo.find_all(),

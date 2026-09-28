@@ -21,9 +21,12 @@ use sqlx::PgPool;
 
 use super::entity::{FunctionVersion, SignerIdentity, VersionState};
 use super::{Digest, DnsLabel, JsonNode, Manifest, LIVE_ALIAS};
+use axum::http::StatusCode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::log_throttle::LogThrottle;
 use fc_platform_core::usecase::{DbTx, LockedRead, Persist};
+use std::result;
+use std::time::Duration;
 
 /// The next version number of a function, read under its row lock.
 #[derive(Debug, Clone)]
@@ -350,7 +353,7 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
                 .await?;
         if locked.is_none() {
             return Err(PlatformError::Coded {
-                status: axum::http::StatusCode::NOT_FOUND,
+                status: StatusCode::NOT_FOUND,
                 code: "FUNCTION_NOT_FOUND".to_string(),
                 message: format!("Function not found: {}", query.0),
                 details: Default::default(),
@@ -426,13 +429,10 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
 /// dispatch mode without a trace. Throttled to one line a minute (every
 /// repository read of the row runs this); a dropped entry carries names,
 /// never secret values, and is capped.
-fn read_stored_manifest(
-    json: &JsonNode,
-    version_id: &str,
-) -> std::result::Result<Manifest, String> {
+fn read_stored_manifest(json: &JsonNode, version_id: &str) -> result::Result<Manifest, String> {
     let (manifest, dropped) = Manifest::read_stored_reporting(json).map_err(|e| e.to_string())?;
     if !dropped.is_empty() {
-        static DROPPED_LOG: LogThrottle = LogThrottle::new(std::time::Duration::from_secs(60));
+        static DROPPED_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(60));
         if let Some(suppressed) = DROPPED_LOG.admit() {
             for part in &dropped {
                 tracing::warn!(
@@ -457,7 +457,7 @@ fn to_entity_or_corrupt(row: VersionRow) -> Result<FunctionVersion> {
 }
 
 /// Why a stored row cannot be read. Never carries manifest content.
-fn to_entity(row: VersionRow) -> std::result::Result<FunctionVersion, String> {
+fn to_entity(row: VersionRow) -> result::Result<FunctionVersion, String> {
     let json = JsonNode::parse(&row.manifest)
         .map_err(|_| "fnr_versions.manifest is not valid JSON".to_string())?;
     let manifest = read_stored_manifest(&json, &row.id)?;
@@ -491,17 +491,20 @@ fn to_entity(row: VersionRow) -> std::result::Result<FunctionVersion, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
+    use tracing::subscriber;
 
     #[derive(Clone, Default)]
     struct Captured(Arc<Mutex<Vec<u8>>>);
 
-    impl std::io::Write for Captured {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    impl Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
@@ -521,7 +524,7 @@ mod tests {
                 "endpoints":[{"path":"/ok","auth":"none"},{"path":"no-leading-slash","auth":"none"}]}"#,
         )
         .unwrap();
-        tracing::subscriber::with_default(subscriber, || {
+        subscriber::with_default(subscriber, || {
             let manifest = read_stored_manifest(&stored, "fnv_1").unwrap();
             assert_eq!(manifest.endpoints.len(), 1);
             read_stored_manifest(&stored, "fnv_1").unwrap();

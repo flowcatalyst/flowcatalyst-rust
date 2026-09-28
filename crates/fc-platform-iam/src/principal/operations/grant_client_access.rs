@@ -10,6 +10,8 @@ use crate::client::repository::ClientRepository;
 use crate::principal::entity::ClientAccessGrant;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -22,7 +24,7 @@ pub struct GrantClientAccessCommand {
     pub client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for GrantClientAccessCommand {}
+impl AuditMasked for GrantClientAccessCommand {}
 
 pub struct GrantClientAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -76,11 +78,7 @@ impl<U: UnitOfWork> UseCase for GrantClientAccessUseCase<U> {
         _command: &GrantClientAccessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

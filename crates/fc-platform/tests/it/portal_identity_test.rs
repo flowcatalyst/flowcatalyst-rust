@@ -16,17 +16,25 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
+use base64::engine::general_purpose;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::email_domain_mapping::entity::ScopeType;
 use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderType};
+use fc_platform::portal::oidc;
+use fc_platform::portal::PortalDeps;
+use fc_platform::portal::PortalState;
 use fc_platform::role::entity::roles;
 use fc_platform::service_account::entity::RoleAssignment;
+use fc_platform::shared::email_service::LogEmailService;
+use fc_platform::shared::rate_limit_store::NoopRateLimitStore;
 use fc_platform::shared::rate_limit_store::PostgresRateLimitStore;
 use fc_platform::Client;
+use std::env;
 use support::{assert_status, read_json, TestApp};
 
 /// CONFIDENTIAL portal apps hash a generated secret under the app key.
 fn set_app_key() {
-    crate::support::set_app_key();
+    support::set_app_key();
 }
 
 async fn setup() -> TestApp {
@@ -107,7 +115,7 @@ fn query_param(url: &str, name: &str) -> Option<String> {
 
 fn jwt_payload(token: &str) -> Value {
     let payload = token.split('.').nth(1).expect("jwt payload");
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let bytes = general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .expect("b64");
     serde_json::from_slice(&bytes).expect("json")
@@ -116,7 +124,7 @@ fn jwt_payload(token: &str) -> Value {
 const VERIFIER: &str = "portal-test-verifier-0123456789-abcdefghijklmnopqrstuvwxyz";
 
 fn challenge() -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()))
+    general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER.as_bytes()))
 }
 
 /// Start a flow at /portal/authorize; returns the flow id.
@@ -1209,11 +1217,7 @@ async fn sso_owned_domains_route_to_their_idp() {
     idp.oidc_client_id = Some("portal-client".into());
     app.repos.idp_repo.insert(&idp).await.expect("insert idp");
     // The provider's domains are its email-domain mappings (Go's model).
-    let mut mapping = fc_platform::EmailDomainMapping::new(
-        "acme.test",
-        &idp.id,
-        fc_platform::email_domain_mapping::entity::ScopeType::Client,
-    );
+    let mut mapping = fc_platform::EmailDomainMapping::new("acme.test", &idp.id, ScopeType::Client);
     mapping.primary_client_id = Some(client_id.clone());
     app.repos
         .edm_repo
@@ -1300,7 +1304,7 @@ async fn sso_owned_domains_route_to_their_idp() {
 
     // The callback sink: a first login JIT-creates the identity with the app
     // it came through, and mints a portal code.
-    let portal_state = fc_platform::portal::PortalState::new(fc_platform::portal::PortalDeps {
+    let portal_state = PortalState::new(PortalDeps {
         pool: app.pool.clone(),
         clients: app.repos.client_repo.clone(),
         oauth_clients: app.repos.oauth_client_repo.clone(),
@@ -1308,9 +1312,9 @@ async fn sso_owned_domains_route_to_their_idp() {
         auth_codes: app.repos.auth_code_repo.clone(),
         password_service: Arc::new(fc_platform::PasswordService::default()),
         unit_of_work: app.unit_of_work.clone(),
-        email_service: Arc::new(fc_platform::shared::email_service::LogEmailService),
+        email_service: Arc::new(LogEmailService),
         encryption_service: None,
-        rate_limit_store: Arc::new(fc_platform::shared::rate_limit_store::NoopRateLimitStore),
+        rate_limit_store: Arc::new(NoopRateLimitStore),
         external_base_url: "http://localhost".into(),
     });
     let parked = portal_state
@@ -1319,9 +1323,7 @@ async fn sso_owned_domains_route_to_their_idp() {
         .await
         .unwrap()
         .expect("portal state");
-    let resp =
-        fc_platform::portal::oidc::complete(&portal_state, &parked, "jit@acme.test", "Jit User")
-            .await;
+    let resp = oidc::complete(&portal_state, &parked, "jit@acme.test", "Jit User").await;
     assert_eq!(resp.status(), StatusCode::FOUND);
     let back = location(&resp);
     assert!(
@@ -1342,12 +1344,12 @@ async fn sso_owned_domains_route_to_their_idp() {
 #[ignore = "requires Docker"]
 async fn portal_login_is_budgeted_per_client_and_email() {
     set_app_key();
-    std::env::set_var("FC_RL_PORTAL_LOGIN_PER_15MIN", "3");
+    env::set_var("FC_RL_PORTAL_LOGIN_PER_15MIN", "3");
     let app = TestApp::setup_with_rate_limit_store(|pool| {
         Arc::new(PostgresRateLimitStore::new(pool.clone()))
     })
     .await;
-    std::env::remove_var("FC_RL_PORTAL_LOGIN_PER_15MIN");
+    env::remove_var("FC_RL_PORTAL_LOGIN_PER_15MIN");
     let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-budget").await;
     let portal = create_app(&app, &anchor, &client_id, "budget", json!({})).await;

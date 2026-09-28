@@ -8,6 +8,11 @@
 
 pub use fc_platform_core::shared::database::*;
 
+use crate::event_type::repository::EventTypeRepository;
+use crate::scheduled_job::cron_migration;
+use crate::seed::platform_event_types;
+use crate::shared::error;
+use futures::future::BoxFuture;
 use futures::FutureExt;
 use sqlx::PgPool;
 use tracing::info;
@@ -25,10 +30,8 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
 /// database another platform has migrated: see the module docs). It is
 /// not in the pre-tracker backfill on purpose: a pre-tracker Rust
 /// database still needs it, and its own guard covers Go's.
-fn cron_migration(pool: &PgPool) -> futures::future::BoxFuture<'_, Result<(), sqlx::Error>> {
-    crate::scheduled_job::cron_migration::run(pool)
-        .map(|r| r.map(|_| ()))
-        .boxed()
+fn cron_migration(pool: &PgPool) -> BoxFuture<'_, Result<(), sqlx::Error>> {
+    cron_migration::run(pool).map(|r| r.map(|_| ())).boxed()
 }
 
 // ── Built-in role seeding ────────────────────────────────────────────────────
@@ -47,7 +50,7 @@ fn cron_migration(pool: &PgPool) -> futures::future::BoxFuture<'_, Result<(), sq
 /// dynamic utoipa-generated OpenAPI document is stored against this row by
 /// the "Sync All" dashboard action. Idempotent — leaves any existing row
 /// alone (including the more-descriptive name the dev seeder may have set).
-pub async fn seed_platform_application(pool: &PgPool) -> crate::shared::error::Result<()> {
+pub async fn seed_platform_application(pool: &PgPool) -> error::Result<()> {
     use crate::application::entity::Application;
     use crate::application::repository::ApplicationRepository;
 
@@ -71,9 +74,9 @@ pub async fn seed_platform_application(pool: &PgPool) -> crate::shared::error::R
 /// Bootstrap-only, like [`seed_builtin_roles`]: it runs before HTTP serving
 /// begins, has no executing principal, and writes no events (see CLAUDE.md
 /// "Built-in role seeding").
-pub async fn seed_platform_event_types(pool: &PgPool) -> crate::shared::error::Result<()> {
-    let repo = crate::event_type::repository::EventTypeRepository::new(pool);
-    let defs = crate::seed::platform_event_types::definitions();
+pub async fn seed_platform_event_types(pool: &PgPool) -> error::Result<()> {
+    let repo = EventTypeRepository::new(pool);
+    let defs = platform_event_types::definitions();
     let inserted = repo.seed_catalogue(&defs).await?;
     if inserted > 0 {
         info!(inserted, total = defs.len(), "Seeded platform event types");
@@ -81,7 +84,7 @@ pub async fn seed_platform_event_types(pool: &PgPool) -> crate::shared::error::R
     Ok(())
 }
 
-pub async fn seed_builtin_roles(pool: &PgPool) -> crate::shared::error::Result<()> {
+pub async fn seed_builtin_roles(pool: &PgPool) -> error::Result<()> {
     use crate::role::entity::roles;
     use crate::role::repository::RoleRepository;
 

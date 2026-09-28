@@ -11,7 +11,9 @@ use super::create::EventTypeBindingInput;
 use super::events::{
     SubscriptionCreated, SubscriptionDeleted, SubscriptionUpdated, SubscriptionsSynced,
 };
+use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
+use crate::dispatch_job::entity;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
 use crate::subscription::entity::SubscriptionSource;
 use crate::subscription::repository::SubscriptionRepository;
@@ -19,6 +21,8 @@ use crate::{
     dispatch_pool::entity::DispatchPool,
     subscription::entity::{EventTypeBinding, Subscription},
 };
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -70,7 +74,7 @@ pub struct SyncSubscriptionsCommand {
     pub remove_unlisted: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncSubscriptionsCommand {}
+impl AuditMasked for SyncSubscriptionsCommand {}
 
 pub struct SyncSubscriptionsUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
@@ -163,11 +167,9 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
     ) -> Result<(), UseCaseError> {
         if let Some(client_id) = command.client_id.as_deref() {
             if !ctx.caller().can_access_client(client_id) {
-                return Err(UseCaseError::verbatim(
-                    fc_platform_core::shared::error::PlatformError::forbidden(format!(
-                        "No access to client: {client_id}"
-                    )),
-                ));
+                return Err(UseCaseError::verbatim(PlatformError::forbidden(format!(
+                    "No access to client: {client_id}"
+                ))));
             }
         }
         Ok(())
@@ -279,9 +281,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         // means NEXT_ON_ERROR with a warning. An existing
                         // subscription's mode is left alone on update, as
                         // before.
-                        .mode(crate::dispatch_job::entity::parse_dispatch_mode(
-                            input.mode.as_deref(),
-                        ))
+                        .mode(entity::parse_dispatch_mode(input.mode.as_deref()))
                         .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
                         .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
                         .build();
@@ -367,7 +367,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                 .find_by_codes_for_application(&codes, app),
             self.connection_repo.find_by_ids(&ids),
         )?;
-        let by_id: HashMap<String, crate::connection::entity::Connection> =
+        let by_id: HashMap<String, Connection> =
             by_id.into_iter().map(|c| (c.id.clone(), c)).collect();
 
         let mut resolved = Vec::with_capacity(command.subscriptions.len());

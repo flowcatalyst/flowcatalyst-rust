@@ -21,6 +21,7 @@ use fc_queue::{
     QueueConsumer,
 };
 use reqwest;
+use tokio::time;
 
 const AMQP_URI: &str = "amqp://admin:admin@localhost:5672";
 const TEST_QUEUE_NAME: &str = "test-queue";
@@ -162,7 +163,7 @@ async fn test_publish_and_consume() {
         .expect("Failed to create consumer");
 
     // Poll for the message
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
 
     assert_eq!(messages.len(), 1);
@@ -200,7 +201,7 @@ async fn test_message_acknowledgment() {
         .await
         .expect("Failed to create consumer");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert_eq!(messages.len(), 1);
 
@@ -211,7 +212,7 @@ async fn test_message_acknowledgment() {
         .expect("Ack failed");
 
     // Create a new consumer to check message is gone
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert!(messages.is_empty());
 
@@ -248,7 +249,7 @@ async fn test_message_nack_requeue() {
         .await
         .expect("Failed to create consumer");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert_eq!(messages.len(), 1);
 
@@ -259,7 +260,7 @@ async fn test_message_nack_requeue() {
         .expect("Nack failed");
 
     // Message should be requeued and available again
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].message.id, "amqp-msg-nack");
@@ -334,7 +335,7 @@ async fn test_extend_visibility_noop() {
         .await
         .expect("Failed to create consumer");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert_eq!(messages.len(), 1);
 
@@ -380,7 +381,7 @@ async fn test_multiple_messages() {
         .await
         .expect("Failed to create consumer");
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     let messages = consumer.poll(10).await.expect("Poll failed");
 
     assert!(!messages.is_empty());

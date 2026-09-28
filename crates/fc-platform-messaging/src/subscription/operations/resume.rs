@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::SubscriptionResumed;
 use crate::subscription::repository::SubscriptionRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct ResumeSubscriptionCommand {
     pub subscription_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ResumeSubscriptionCommand {}
+impl AuditMasked for ResumeSubscriptionCommand {}
 
 /// Use case for resuming a paused subscription.
 pub struct ResumeSubscriptionUseCase<U: UnitOfWork> {
@@ -63,10 +65,7 @@ impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
             .find_by_id(&command.subscription_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

@@ -19,7 +19,12 @@ use tokio::sync::Notify;
 
 use crate::control_plane::ControlPlane;
 use crate::desired::Entry;
+use crate::exec::ExecBudget;
 use crate::invoke::Invoker;
+use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
+use tokio::time;
 
 /// The heartbeat error for a runtime with no loader on this host.
 pub const RUNTIME_UNSUPPORTED: &str = "RUNTIME_UNSUPPORTED";
@@ -36,7 +41,7 @@ pub trait FunctionInstance: Invoker + Send + Sync + 'static {
     async fn close(&self);
 
     /// For the runtime's own invoke path to reach its concrete type.
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// The result of one load attempt. A refusal is routine, not an error.
@@ -56,8 +61,8 @@ pub enum LoadOutcome {
     },
 }
 
-impl std::fmt::Debug for LoadOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for LoadOutcome {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             LoadOutcome::Loaded(_) => f.write_str("Loaded"),
             LoadOutcome::Refused { reason, detail } => write!(f, "Refused({reason}: {detail})"),
@@ -88,7 +93,7 @@ pub struct Loaders {
     by_runtime: HashMap<String, Arc<dyn FunctionLoader>>,
     /// The executing permits the runtimes share (`FC_FN_MAX_EXECUTING`),
     /// for the host's metrics.
-    budget: Option<crate::exec::ExecBudget>,
+    budget: Option<ExecBudget>,
 }
 
 impl Loaders {
@@ -104,13 +109,13 @@ impl Loaders {
 
     /// Records the executing budget the registered runtimes share, so the
     /// host can expose it (`fc_fn_executing`).
-    pub fn with_budget(mut self, budget: crate::exec::ExecBudget) -> Self {
+    pub fn with_budget(mut self, budget: ExecBudget) -> Self {
         self.budget = Some(budget);
         self
     }
 
     /// The executing budget the runtimes share, when one was recorded.
-    pub fn budget(&self) -> Option<&crate::exec::ExecBudget> {
+    pub fn budget(&self) -> Option<&ExecBudget> {
         self.budget.as_ref()
     }
 
@@ -141,8 +146,8 @@ pub struct LoadedFunction {
     closed: AtomicBool,
 }
 
-impl std::fmt::Debug for LoadedFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for LoadedFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "LoadedFunction[{}@{}]", self.address, self.version)
     }
 }
@@ -220,7 +225,7 @@ impl LoadedFunction {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }
-        let drained = tokio::time::timeout(drain_timeout, async {
+        let drained = time::timeout(drain_timeout, async {
             loop {
                 let notified = self.drained.notified();
                 if self.in_flight.load(Ordering::Acquire) == 0 {
@@ -245,15 +250,20 @@ impl LoadedFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::invoke::InvocationContext;
+    use crate::invoke::InvokeError;
+    use crate::invoke::Invoker;
+    use std::any::Any;
+    use tokio::time;
 
     struct Probe(AtomicBool);
 
     #[async_trait]
-    impl crate::invoke::Invoker for Probe {
+    impl Invoker for Probe {
         async fn invoke(
             &self,
-            _context: crate::invoke::InvocationContext,
-        ) -> Result<fc_function_abi::Response, crate::invoke::InvokeError> {
+            _context: InvocationContext,
+        ) -> Result<fc_function_abi::Response, InvokeError> {
             Ok(fc_function_abi::Response::ack())
         }
     }
@@ -263,7 +273,7 @@ mod tests {
         async fn close(&self) {
             self.0.store(true, Ordering::SeqCst);
         }
-        fn as_any(&self) -> &dyn std::any::Any {
+        fn as_any(&self) -> &dyn Any {
             self
         }
     }
@@ -278,7 +288,7 @@ mod tests {
             let function = function.clone();
             tokio::spawn(async move { function.close().await })
         };
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
         assert!(
             !probe.0.load(Ordering::SeqCst),
             "closed while a call was in flight"

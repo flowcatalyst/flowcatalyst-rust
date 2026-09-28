@@ -1,6 +1,11 @@
 //! Dispatch job actions (Go's requeue, cancel, complete and sign), on both
 //! tiers, at their full paths.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

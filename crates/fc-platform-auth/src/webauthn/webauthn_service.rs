@@ -15,6 +15,7 @@ use webauthn_rs::prelude::{
     RequestChallengeResponse, Url, Webauthn, WebauthnBuilder,
 };
 
+use base64::engine::general_purpose;
 use fc_platform_core::shared::error::{PlatformError, Result};
 
 /// Stable namespace UUID used to derive a webauthn `user_unique_id` from a
@@ -57,14 +58,9 @@ impl WebauthnService {
             .collect::<Result<Vec<_>>>()?;
 
         let fake_hmac_key = match env::var("FC_WEBAUTHN_FAKE_HMAC_KEY") {
-            Ok(b64) => base64::engine::general_purpose::STANDARD
-                .decode(&b64)
-                .map_err(|e| {
-                    PlatformError::internal(format!(
-                        "FC_WEBAUTHN_FAKE_HMAC_KEY must be base64: {}",
-                        e
-                    ))
-                })?,
+            Ok(b64) => general_purpose::STANDARD.decode(&b64).map_err(|e| {
+                PlatformError::internal(format!("FC_WEBAUTHN_FAKE_HMAC_KEY must be base64: {}", e))
+            })?,
             Err(_) => {
                 // Per-process random key — degrades enumeration defence to
                 // "fake creds vary across restarts" but never leaks signal
@@ -125,7 +121,7 @@ impl WebauthnService {
                 let bytes: &[u8] = cid.as_ref();
                 serde_json::json!({
                     "type": "public-key",
-                    "id": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
+                    "id": general_purpose::URL_SAFE_NO_PAD.encode(bytes),
                 })
             })
             .collect();
@@ -134,7 +130,7 @@ impl WebauthnService {
         rand::rng().fill_bytes(&mut challenge);
         Ok(serde_json::json!({
             "publicKey": {
-                "challenge": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&challenge),
+                "challenge": general_purpose::URL_SAFE_NO_PAD.encode(&challenge),
                 "timeout": 60_000,
                 "rpId": self.rp_id,
                 "userVerification": "required",

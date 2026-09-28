@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::role::entity::permissions;
 use fc_platform::role::entity::roles;
 use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
 use support::{read_json, TestApp};
@@ -298,7 +299,7 @@ async fn permission_is_checked_before_the_application() {
 #[ignore = "requires Docker"]
 async fn provisioned_service_account_reaches_only_its_application() {
     // Provisioning encrypts the OAuth client secret; any 32-byte key will do.
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let role_name = application_service_role(&app).await;
     let app_a = create_app(&app, "prov-a").await;
@@ -483,7 +484,7 @@ async fn mint_with_role(app: &TestApp, id: &str, role: &str) -> (String, bool, V
 #[ignore = "requires Docker"]
 async fn created_service_account_reaches_only_granted_applications() {
     // Creation encrypts the generated credentials; any 32-byte key will do.
-    crate::support::set_app_key();
+    support::set_app_key();
     let app = TestApp::setup().await;
     let app_x = create_app(&app, "new-x").await;
     create_app(&app, "new-y").await;
@@ -671,8 +672,8 @@ fn user_admin_token(app: &TestApp, principal: &Principal) -> String {
         .generate_access_token_with_scope(
             principal,
             &[
-                fc_platform::role::entity::permissions::iam::USER_UPDATE.to_string(),
-                fc_platform::role::entity::permissions::iam::USER_READ.to_string(),
+                permissions::iam::USER_UPDATE.to_string(),
+                permissions::iam::USER_READ.to_string(),
             ],
             None,
         )

@@ -35,11 +35,18 @@ use fc_platform::auth::oidc_sync_service::OidcSyncService;
 use fc_platform::auth::password_service::PasswordService;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::repository::Repositories;
+use fc_platform::router;
 use fc_platform::shared::authorization_service::AuthorizationService;
+use fc_platform::shared::database;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::shared::middleware::{AppState, AuthLayer};
+use fc_platform::shared::rate_limit_store::NoopRateLimitStore;
+use fc_platform::shared::rate_limit_store::RateLimitPolicies;
+use fc_platform::shared::rate_limit_store::RateLimitStore;
 use fc_platform::shared::server_setup::{AuthServices, PlatformContext, PlatformRoutesConfig};
 use fc_platform::usecase::PgUnitOfWork;
+use std::env;
+use std::sync::Once;
 
 /// The app key (`FLOWCATALYST_APP_KEY`) every test runs under: any 32-byte
 /// key does. One key for the whole test binary, because the environment is
@@ -51,8 +58,8 @@ pub const APP_KEY: &str = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 /// and services read it when they are built, so call it before
 /// `TestApp::setup` in a test that stores secrets.
 pub fn set_app_key() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| std::env::set_var("FLOWCATALYST_APP_KEY", APP_KEY));
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| env::set_var("FLOWCATALYST_APP_KEY", APP_KEY));
 }
 
 /// A fully-wired test application sharing a live Postgres container.
@@ -70,19 +77,14 @@ pub struct TestApp {
 impl TestApp {
     /// Start a fresh container + migrated DB + full router.
     pub async fn setup() -> Self {
-        Self::setup_with_rate_limit_store(|_| {
-            Arc::new(fc_platform::shared::rate_limit_store::NoopRateLimitStore)
-        })
-        .await
+        Self::setup_with_rate_limit_store(|_| Arc::new(NoopRateLimitStore)).await
     }
 
     /// [`TestApp::setup`] with the distributed rate-limit store `store`
     /// builds from the test database (the default never limits).
     #[allow(dead_code)]
     pub async fn setup_with_rate_limit_store(
-        store: impl FnOnce(
-            &sqlx::PgPool,
-        ) -> Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
+        store: impl FnOnce(&sqlx::PgPool) -> Arc<dyn RateLimitStore>,
     ) -> Self {
         let container = Postgres::default()
             .with_db_name("flowcatalyst_test")
@@ -106,7 +108,7 @@ impl TestApp {
 
         // Seed the platform application row — the BFF developer routes expect
         // it to exist; production binaries seed it before serving HTTP.
-        fc_platform::shared::database::seed_platform_application(&pool)
+        database::seed_platform_application(&pool)
             .await
             .expect("seed platform application");
         let platform_application_id = repos
@@ -153,9 +155,7 @@ impl TestApp {
             &unit_of_work,
             PlatformRoutesConfig {
                 rate_limit_store: store(&pool),
-                rate_limit_policies: Arc::new(
-                    fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-                ),
+                rate_limit_policies: Arc::new(RateLimitPolicies::from_env()),
                 session_cookie_secure: false,
                 session_cookie_same_site: PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string(),
                 session_token_expiry_secs: PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,
@@ -167,7 +167,7 @@ impl TestApp {
             platform_application_id,
         );
 
-        let (base_router, _openapi) = fc_platform::router::build(&ctx);
+        let (base_router, _openapi) = router::build(&ctx);
         let router = base_router.layer(AuthLayer::new(AppState {
             auth_service: auth_service.clone(),
             authz_service,

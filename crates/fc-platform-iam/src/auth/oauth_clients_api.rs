@@ -14,11 +14,30 @@ use utoipa::{IntoParams, ToSchema};
 // Client secrets are stored as `hashed:v1:` refs (EncryptionService::hash_secret).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
+use crate::application::repository::ApplicationRepository;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
+use crate::auth::operations::ActivateOAuthClientUseCase;
+use crate::auth::operations::CreateOAuthClientUseCase;
+use crate::auth::operations::DeactivateOAuthClientUseCase;
+use crate::auth::operations::DeleteOAuthClientUseCase;
+use crate::auth::operations::RevokeOAuthClientPreviousSecretUseCase;
+use crate::auth::operations::RotateOAuthClientSecretUseCase;
+use crate::auth::operations::UpdateOAuthClientUseCase;
+use crate::portal;
+use crate::portal::repository::PortalAppRepository;
+use crate::principal::repository::PrincipalRepository;
+use axum::body::Bytes;
+use base64::engine::general_purpose;
+use fc_platform_core::principal_kind::PrincipalType;
 use fc_platform_core::shared::api_common::SuccessResponse;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 /// Create OAuth client request
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -229,7 +248,7 @@ impl From<OAuthClient> for OAuthClientResponse {
 /// application ids, names resolved in one query; an id whose application is
 /// gone keeps the id as its name.
 async fn fill_application_refs(
-    apps: &crate::application::repository::ApplicationRepository,
+    apps: &ApplicationRepository,
     responses: &mut [OAuthClientResponse],
 ) -> Result<(), PlatformError> {
     let mut ids: Vec<String> = responses
@@ -306,40 +325,19 @@ pub struct OAuthClientsQuery {
 pub struct OAuthClientsState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
     /// Resolves application ids to names for the `applications` refs.
-    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
+    pub application_repo: Arc<ApplicationRepository>,
     /// Resolves `portalAppId` to its owning client (Go `State.PortalApps`).
-    pub portal_apps: Arc<crate::portal::repository::PortalAppRepository>,
+    pub portal_apps: Arc<PortalAppRepository>,
     /// Checks a create's `principalId` names a service account's principal.
-    pub principal_repo: Arc<crate::principal::repository::PrincipalRepository>,
-    pub create_oauth_client_use_case: Arc<
-        crate::auth::operations::CreateOAuthClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub update_oauth_client_use_case: Arc<
-        crate::auth::operations::UpdateOAuthClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub delete_oauth_client_use_case: Arc<
-        crate::auth::operations::DeleteOAuthClientUseCase<fc_platform_core::usecase::PgUnitOfWork>,
-    >,
-    pub activate_oauth_client_use_case: Arc<
-        crate::auth::operations::ActivateOAuthClientUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub deactivate_oauth_client_use_case: Arc<
-        crate::auth::operations::DeactivateOAuthClientUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub rotate_oauth_client_secret_use_case: Arc<
-        crate::auth::operations::RotateOAuthClientSecretUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub revoke_oauth_client_previous_secret_use_case: Arc<
-        crate::auth::operations::RevokeOAuthClientPreviousSecretUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub principal_repo: Arc<PrincipalRepository>,
+    pub create_oauth_client_use_case: Arc<CreateOAuthClientUseCase<PgUnitOfWork>>,
+    pub update_oauth_client_use_case: Arc<UpdateOAuthClientUseCase<PgUnitOfWork>>,
+    pub delete_oauth_client_use_case: Arc<DeleteOAuthClientUseCase<PgUnitOfWork>>,
+    pub activate_oauth_client_use_case: Arc<ActivateOAuthClientUseCase<PgUnitOfWork>>,
+    pub deactivate_oauth_client_use_case: Arc<DeactivateOAuthClientUseCase<PgUnitOfWork>>,
+    pub rotate_oauth_client_secret_use_case: Arc<RotateOAuthClientSecretUseCase<PgUnitOfWork>>,
+    pub revoke_oauth_client_previous_secret_use_case:
+        Arc<RevokeOAuthClientPreviousSecretUseCase<PgUnitOfWork>>,
 }
 
 /// Parses request grant types; an unknown one is a 400.
@@ -372,9 +370,9 @@ pub async fn create_oauth_client(
     use crate::auth::operations::CreateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_oauth_clients(&auth.0)?;
+    checks::can_create_oauth_clients(&auth.0)?;
     let mut portal_client_id = req.portal_client_id.clone();
-    crate::portal::resolve_oauth_client_portal_app(
+    portal::resolve_oauth_client_portal_app(
         &state.portal_apps,
         req.portal_app_id.as_deref(),
         &mut portal_client_id,
@@ -382,11 +380,9 @@ pub async fn create_oauth_client(
     .await?;
 
     // Auto-generate client_id if not provided
-    let client_id = req.client_id.unwrap_or_else(|| {
-        fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::OAuthClient,
-        )
-    });
+    let client_id = req
+        .client_id
+        .unwrap_or_else(|| tsid::generate(EntityType::OAuthClient));
     // Go CreateOAuthClient (auth/operations/oauth_client.go): the name is
     // checked first, then the exact client type.
     if req.client_name.trim().is_empty() {
@@ -414,14 +410,13 @@ pub async fn create_oauth_client(
 
         let mut secret_bytes = [0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
-        let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+        let plaintext = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-        let enc = fc_platform_core::shared::encryption_service::EncryptionService::from_env()
-            .ok_or_else(|| {
-                PlatformError::internal(
-                    "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
-                )
-            })?;
+        let enc = EncryptionService::from_env().ok_or_else(|| {
+            PlatformError::internal(
+                "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
+            )
+        })?;
         (Some(enc.hash_secret(&plaintext)), Some(plaintext))
     } else {
         (None, None)
@@ -435,30 +430,25 @@ pub async fn create_oauth_client(
     // a service account on `client_credentials`, never as a user, which the
     // token endpoint refuses; the link is checked here so the refusal comes
     // at create time rather than at every token request.
-    let service_account_principal_id =
-        match crate::portal::trimmed_or_none(req.principal_id.as_deref()) {
-            None => None,
-            Some(principal_id) => {
-                let principal = state
-                    .principal_repo
-                    .find_by_id(&principal_id)
-                    .await?
-                    .ok_or_else(|| PlatformError::not_found_code("Principal", &principal_id))?;
-                if principal.principal_type
-                    != fc_platform_core::principal_kind::PrincipalType::Service
-                {
-                    return Err(PlatformError::bad_request_code(
-                        "PRINCIPAL_NOT_SERVICE_ACCOUNT",
-                        "principalId must name a service account's principal",
-                    ));
-                }
-                Some(principal.id)
+    let service_account_principal_id = match portal::trimmed_or_none(req.principal_id.as_deref()) {
+        None => None,
+        Some(principal_id) => {
+            let principal = state
+                .principal_repo
+                .find_by_id(&principal_id)
+                .await?
+                .ok_or_else(|| PlatformError::not_found_code("Principal", &principal_id))?;
+            if principal.principal_type != PrincipalType::Service {
+                return Err(PlatformError::bad_request_code(
+                    "PRINCIPAL_NOT_SERVICE_ACCOUNT",
+                    "principalId must name a service account's principal",
+                ));
             }
-        };
+            Some(principal.id)
+        }
+    };
 
-    let oauth_client_id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::OAuthClient,
-    );
+    let oauth_client_id = tsid::generate(EntityType::OAuthClient);
 
     let cmd = CreateOAuthClientCommand {
         oauth_client_id: oauth_client_id.clone(),
@@ -521,7 +511,7 @@ pub async fn get_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<OAuthClientResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_oauth_clients(&auth.0)?;
+    checks::can_read_oauth_clients(&auth.0)?;
 
     let client = state
         .oauth_client_repo
@@ -549,7 +539,7 @@ pub async fn list_oauth_clients(
     auth: Authenticated,
     Query(query): Query<OAuthClientsQuery>,
 ) -> Result<Json<OAuthClientListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_oauth_clients(&auth.0)?;
+    checks::can_read_oauth_clients(&auth.0)?;
 
     let want_active = match query.active.as_deref() {
         Some("true") => Some(true),
@@ -596,9 +586,9 @@ pub async fn update_oauth_client(
     use crate::auth::operations::UpdateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_oauth_clients(&auth.0)?;
+    checks::can_update_oauth_clients(&auth.0)?;
     let mut portal_client_id = req.portal_client_id.clone();
-    crate::portal::resolve_oauth_client_portal_app(
+    portal::resolve_oauth_client_portal_app(
         &state.portal_apps,
         req.portal_app_id.as_deref(),
         &mut portal_client_id,
@@ -657,7 +647,7 @@ pub async fn delete_oauth_client(
     use crate::auth::operations::DeleteOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_oauth_clients(&auth.0)?;
+    checks::can_delete_oauth_clients(&auth.0)?;
 
     let cmd = DeleteOAuthClientCommand {
         oauth_client_id: id,
@@ -722,7 +712,7 @@ pub async fn get_oauth_client_by_client_id(
     auth: Authenticated,
     Path(client_id): Path<String>,
 ) -> Result<Json<OAuthClientResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_oauth_clients(&auth.0)?;
+    checks::can_read_oauth_clients(&auth.0)?;
 
     let client = state
         .oauth_client_repo
@@ -756,7 +746,7 @@ pub async fn activate_oauth_client(
     use crate::auth::operations::ActivateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_oauth_clients(&auth.0)?;
+    checks::can_update_oauth_clients(&auth.0)?;
 
     let cmd = ActivateOAuthClientCommand {
         oauth_client_id: id,
@@ -796,7 +786,7 @@ pub async fn deactivate_oauth_client(
     use crate::auth::operations::DeactivateOAuthClientCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_oauth_clients(&auth.0)?;
+    checks::can_update_oauth_clients(&auth.0)?;
 
     let cmd = DeactivateOAuthClientCommand {
         oauth_client_id: id,
@@ -847,14 +837,12 @@ pub async fn regenerate_oauth_client_secret(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-    body: axum::body::Bytes,
+    body: Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
     use crate::auth::operations::RotateOAuthClientSecretCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_oauth_client_secrets(
-        &auth.0,
-    )?;
+    checks::can_write_oauth_client_secrets(&auth.0)?;
     let req = parse_rotate_body(&body)?;
 
     // Generate + hash the secret at the edge; the use case gets only the
@@ -863,7 +851,7 @@ pub async fn regenerate_oauth_client_secret(
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
     let plaintext_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    let enc = fc_platform_core::shared::encryption_service::EncryptionService::from_env()
+    let enc = EncryptionService::from_env()
         .ok_or_else(|| PlatformError::internal("FLOWCATALYST_APP_KEY not configured"))?;
     let cmd = RotateOAuthClientSecretCommand {
         oauth_client_id: id,
@@ -912,11 +900,9 @@ pub async fn rotate_oauth_client_secret(
     state: State<OAuthClientsState>,
     auth: Authenticated,
     path: Path<String>,
-    body: axum::body::Bytes,
+    body: Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_oauth_client_secrets(
-        &auth.0,
-    )?;
+    checks::can_write_oauth_client_secrets(&auth.0)?;
     regenerate_oauth_client_secret(state, auth, path, body).await
 }
 
@@ -946,9 +932,7 @@ pub async fn revoke_oauth_client_previous_secret(
     use crate::auth::operations::RevokeOAuthClientPreviousSecretCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_oauth_client_secrets(
-        &auth.0,
-    )?;
+    checks::can_write_oauth_client_secrets(&auth.0)?;
     let cmd = RevokeOAuthClientPreviousSecretCommand {
         oauth_client_id: id,
     };
@@ -967,6 +951,8 @@ pub async fn revoke_oauth_client_previous_secret(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::Query;
+    use axum::http::Uri;
 
     /// `?active=true` parses (a typed bool beside a flattened struct didn't).
     #[test]
@@ -979,10 +965,8 @@ mod tests {
             ),
             ("/api/oauth-clients", None),
         ] {
-            let uri: axum::http::Uri = uri.parse().unwrap();
-            let q = axum::extract::Query::<OAuthClientsQuery>::try_from_uri(&uri)
-                .unwrap()
-                .0;
+            let uri: Uri = uri.parse().unwrap();
+            let q = Query::<OAuthClientsQuery>::try_from_uri(&uri).unwrap().0;
             assert_eq!(q.active.as_deref(), want);
         }
     }

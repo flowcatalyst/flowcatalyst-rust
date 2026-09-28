@@ -28,7 +28,11 @@ use std::collections::HashMap;
 
 use crate::role::entity::AuthRole;
 use crate::role::repository::RoleRepository;
+#[cfg(test)]
+use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::authorization_service::Authority;
+#[cfg(test)]
+use fc_platform_core::shared::authorization_service::{AuthContext, Credential};
 use fc_platform_core::usecase::UseCaseError;
 
 const PLATFORM_PREFIX: &str = "platform:";
@@ -196,21 +200,17 @@ pub async fn require_role_ref_change<A: Authority + Sync + ?Sized>(
 /// A caller for unit tests: the given tier, clients and permissions. The
 /// one place these IAM tests build an [`fc_platform_core::shared::authorization_service::AuthContext`] by hand.
 #[cfg(test)]
-pub(crate) fn test_caller(
-    scope: fc_platform_core::principal_kind::UserScope,
-    clients: &[&str],
-    perms: &[&str],
-) -> fc_platform_core::shared::authorization_service::AuthContext {
-    fc_platform_core::shared::authorization_service::AuthContext {
+pub(crate) fn test_caller(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
+    AuthContext {
         principal_id: "prn_caller".to_string(),
-        principal_type: fc_platform_core::principal_kind::PrincipalType::User,
+        principal_type: PrincipalType::User,
         scope,
         email: None,
         name: "Caller".to_string(),
         accessible_clients: clients.iter().map(|s| s.to_string()).collect(),
         permissions: perms.iter().map(|s| s.to_string()).collect(),
         roles: vec![],
-        credential: fc_platform_core::shared::authorization_service::Credential::BearerToken,
+        credential: Credential::BearerToken,
     }
 }
 
@@ -219,8 +219,9 @@ mod tests {
     use super::*;
     use crate::role::entity::roles;
     use fc_platform_core::principal_kind::UserScope;
+    use fc_platform_core::shared::authorization_service::AuthContext;
 
-    fn caller(perms: &[&str]) -> fc_platform_core::shared::authorization_service::AuthContext {
+    fn caller(perms: &[&str]) -> AuthContext {
         test_caller(UserScope::Anchor, &["*"], perms)
     }
 
@@ -258,10 +259,7 @@ mod tests {
         );
         // Nobody holds anything without a caller.
         assert_eq!(
-            permissions_above::<fc_platform_core::shared::authorization_service::AuthContext>(
-                None,
-                ["platform:iam:user:view"]
-            ),
+            permissions_above::<AuthContext>(None, ["platform:iam:user:view"]),
             s(&["platform:iam:user:view"])
         );
     }

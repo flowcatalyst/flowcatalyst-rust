@@ -8,8 +8,11 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 /// The move: the mapping (by id), its new provider, the users to reset.
 #[derive(Debug, Clone)]
@@ -43,12 +46,8 @@ impl ProviderMoveRepository {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ProviderMove> for ProviderMoveRepository {
-    async fn persist(
-        &self,
-        m: &ProviderMove,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ProviderMove> for ProviderMoveRepository {
+    async fn persist(&self, m: &ProviderMove, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "UPDATE tnt_email_domain_mappings SET identity_provider_id = $2, \
              primary_client_id = COALESCE($3, primary_client_id), updated_at = NOW() \
@@ -64,13 +63,7 @@ impl fc_platform_core::usecase::Persist<ProviderMove> for ProviderMoveRepository
             .await
     }
 
-    async fn delete(
-        &self,
-        _m: &ProviderMove,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
-        Err(fc_platform_core::shared::error::PlatformError::internal(
-            "a provider move is not deleted",
-        ))
+    async fn delete(&self, _m: &ProviderMove, _tx: &mut DbTx<'_>) -> Result<()> {
+        Err(PlatformError::internal("a provider move is not deleted"))
     }
 }

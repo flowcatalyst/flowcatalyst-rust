@@ -15,12 +15,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::http::Request;
 use fc_common::{
     DispatchMode, MediationOutcome, MediationType, Message, PoolConfig, QueuedMessage, RouterConfig,
 };
 use fc_queue::QueueConsumer;
+use fc_router::api;
 use fc_router::flight_recorder::EventKind;
 use fc_router::{Mediator, QueueManager};
+use std::future;
+use tokio::time;
 
 // ── Doubles ────────────────────────────────────────────────────────────────
 
@@ -33,7 +37,7 @@ struct ByName;
 impl Mediator for ByName {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
         if message.id.starts_with("hang") {
-            std::future::pending::<()>().await;
+            future::pending::<()>().await;
         }
         if message.id.starts_with("log") {
             tracing::warn!(status = 418, "target answered oddly");
@@ -57,7 +61,7 @@ impl QueueConsumer for Consumer {
         "q1"
     }
     async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
-        std::future::pending().await
+        future::pending().await
     }
     async fn ack(&self, receipt: &str) -> fc_queue::Result<()> {
         self.acked.lock().unwrap().push(receipt.to_string());
@@ -126,7 +130,7 @@ async fn eventually(what: &str, mut f: impl FnMut() -> bool) {
         if f() {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for {what}");
 }
@@ -236,7 +240,7 @@ async fn the_message_lookup_says_where_a_message_is() {
         fc_router::HealthServiceConfig::default(),
         warnings.clone(),
     ));
-    let app = fc_router::api::create_router(
+    let app = api::create_router(
         Arc::new(NoPublisher),
         manager.clone(),
         warnings,
@@ -248,7 +252,7 @@ async fn the_message_lookup_says_where_a_message_is() {
         let path = path.to_string();
         async move {
             let resp = app
-                .oneshot(axum::http::Request::get(path).body(Body::empty()).unwrap())
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
             let bytes = resp.into_body().collect().await.unwrap().to_bytes();

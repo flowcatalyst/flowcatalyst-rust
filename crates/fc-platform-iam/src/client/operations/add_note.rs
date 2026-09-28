@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ClientNoteAdded;
 use crate::client::entity::ClientNote;
 use crate::client::repository::ClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -20,7 +22,7 @@ pub struct AddClientNoteCommand {
     pub text: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AddClientNoteCommand {}
+impl AuditMasked for AddClientNoteCommand {}
 
 pub struct AddClientNoteUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,
@@ -75,11 +77,7 @@ impl<U: UnitOfWork> UseCase for AddClientNoteUseCase<U> {
         _command: &AddClientNoteCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

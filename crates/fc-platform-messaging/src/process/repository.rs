@@ -8,6 +8,8 @@ use super::entity::{Process, ProcessStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct ProcessRow {
@@ -211,12 +213,8 @@ impl HasId for Process {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Process> for ProcessRepository {
-    async fn persist(
-        &self,
-        p: &Process,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Process> for ProcessRepository {
+    async fn persist(&self, p: &Process, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO msg_processes (id, code, name, description, status, source, application, subdomain, process_name, body, diagram_type, tags, created_at, updated_at)
@@ -254,11 +252,7 @@ impl fc_platform_core::usecase::Persist<Process> for ProcessRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        p: &Process,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, p: &Process, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM msg_processes WHERE id = $1")
             .bind(&p.id)
             .execute(&mut **tx.inner)

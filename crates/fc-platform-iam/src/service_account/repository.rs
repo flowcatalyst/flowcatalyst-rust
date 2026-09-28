@@ -17,7 +17,14 @@ use fc_platform_core::directory::{
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::enum_str::decode_opt;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Formatter;
 
 /// Row mapping for iam_principals table (SERVICE type rows)
 #[derive(sqlx::FromRow, Clone)]
@@ -130,8 +137,8 @@ pub struct StoredWebhookCredentials {
 }
 
 /// The refs are sealed, but still never printed.
-impl std::fmt::Debug for StoredWebhookCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for StoredWebhookCredentials {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("StoredWebhookCredentials")
             .field("code", &self.code)
             .field("active", &self.active)
@@ -348,9 +355,9 @@ impl ServiceAccountRepository {
     pub async fn oldest_active_webhook_credentials_for(
         &self,
         application_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, StoredWebhookCredentials>> {
+    ) -> Result<HashMap<String, StoredWebhookCredentials>> {
         if application_ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows: Vec<(String, StoredWebhookCredentials)> =
             sqlx::query_as::<_, (String, String, bool, Option<String>, Option<String>)>(
@@ -408,9 +415,9 @@ impl ServiceAccountRepository {
     pub async fn find_signing_accounts(
         &self,
         references: &[String],
-    ) -> Result<std::collections::HashMap<String, SigningAccount>> {
+    ) -> Result<HashMap<String, SigningAccount>> {
         if references.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows = sqlx::query_as::<_, SigningAccountRow>(
             "SELECT r.ref, sa.code, sa.application_id, sa.client_ids, \
@@ -587,7 +594,7 @@ impl ServiceAccountRepository {
             .filter_map(|p| p.service_account_id.clone())
             .collect();
 
-        let sa_rows: std::collections::HashMap<String, ServiceAccountRow> = if !sa_ids.is_empty() {
+        let sa_rows: HashMap<String, ServiceAccountRow> = if !sa_ids.is_empty() {
             sqlx::query_as::<_, ServiceAccountRow>(
                 "SELECT id, code, name, description, application_id, scope, client_ids, active, \
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
@@ -602,7 +609,7 @@ impl ServiceAccountRepository {
             .map(|r| (r.id.clone(), r))
             .collect()
         } else {
-            std::collections::HashMap::new()
+            HashMap::new()
         };
 
         let mut grants = self.load_grants(&principal_ids).await?;
@@ -713,10 +720,7 @@ impl ServiceAccountRepository {
 
     /// Batch-load roles, client grants and application grants for
     /// principals, one query per junction table.
-    async fn load_grants(
-        &self,
-        principal_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, Grants>> {
+    async fn load_grants(&self, principal_ids: &[String]) -> Result<HashMap<String, Grants>> {
         let (roles, clients, applications) = tokio::try_join!(
             sqlx::query_as::<_, PrincipalRoleRow>(
                 "SELECT principal_id, role_name, assignment_source, assigned_at, assigned_by \
@@ -738,7 +742,7 @@ impl ServiceAccountRepository {
             .fetch_all(&self.pool),
         )?;
 
-        let mut map: std::collections::HashMap<String, Grants> = std::collections::HashMap::new();
+        let mut map: HashMap<String, Grants> = HashMap::new();
         for r in roles {
             map.entry(r.principal_id.clone())
                 .or_default()
@@ -770,12 +774,8 @@ impl HasId for ServiceAccount {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
-    async fn persist(
-        &self,
-        sa: &ServiceAccount,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ServiceAccount> for ServiceAccountRepository {
+    async fn persist(&self, sa: &ServiceAccount, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         // The account's reach, as the principal carries it: a CLIENT account's
         // one client is its home client; a PARTNER account's clients are
@@ -873,11 +873,7 @@ impl fc_platform_core::usecase::Persist<ServiceAccount> for ServiceAccountReposi
         if !granted_client_ids.is_empty() {
             let grant_ids: Vec<String> = granted_client_ids
                 .iter()
-                .map(|_| {
-                    fc_platform_core::shared::tsid::generate(
-                        fc_platform_core::shared::tsid::EntityType::ClientAccessGrant,
-                    )
-                })
+                .map(|_| tsid::generate(EntityType::ClientAccessGrant))
                 .collect();
             sqlx::query(
                 "INSERT INTO iam_client_access_grants
@@ -944,11 +940,7 @@ impl fc_platform_core::usecase::Persist<ServiceAccount> for ServiceAccountReposi
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        sa: &ServiceAccount,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, sa: &ServiceAccount, tx: &mut DbTx<'_>) -> Result<()> {
         // Delete any OAuth client wired to this service account principal.
         // Migration 027 adds an FK with ON DELETE CASCADE, which would
         // make this row-level delete redundant — but we keep it here as
@@ -1005,7 +997,7 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
     async fn find_signing_accounts(
         &self,
         references: &[String],
-    ) -> Result<std::collections::HashMap<String, SigningAccount>> {
+    ) -> Result<HashMap<String, SigningAccount>> {
         ServiceAccountRepository::find_signing_accounts(self, references).await
     }
 }
@@ -1013,6 +1005,7 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service_account::entity::SigningAlgorithm;
 
     fn principal_row() -> PrincipalRow {
         PrincipalRow {
@@ -1085,7 +1078,7 @@ mod tests {
             );
             assert_eq!(
                 sa.webhook_credentials.signing_algorithm,
-                Some(crate::service_account::entity::SigningAlgorithm::HmacSha256)
+                Some(SigningAlgorithm::HmacSha256)
             );
         }
     }

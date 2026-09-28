@@ -7,6 +7,9 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use super::entity::PlatformConfig;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::HasId;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PlatformConfigRow {
@@ -230,19 +233,15 @@ impl PlatformConfigRepository {
     }
 }
 
-impl fc_platform_core::usecase::HasId for PlatformConfig {
+impl HasId for PlatformConfig {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<PlatformConfig> for PlatformConfigRepository {
-    async fn persist(
-        &self,
-        c: &PlatformConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<PlatformConfig> for PlatformConfigRepository {
+    async fn persist(&self, c: &PlatformConfig, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO app_platform_configs
                 (id, application_code, section, property, scope, client_id,
@@ -273,11 +272,7 @@ impl fc_platform_core::usecase::Persist<PlatformConfig> for PlatformConfigReposi
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &PlatformConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &PlatformConfig, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM app_platform_configs WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)

@@ -8,6 +8,8 @@ use super::entity::{DispatchPool, DispatchPoolStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 /// Row mapping for msg_dispatch_pools table
 #[derive(sqlx::FromRow)]
@@ -264,12 +266,8 @@ impl HasId for DispatchPool {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<DispatchPool> for DispatchPoolRepository {
-    async fn persist(
-        &self,
-        p: &DispatchPool,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<DispatchPool> for DispatchPoolRepository {
+    async fn persist(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO msg_dispatch_pools (id, code, name, description, rate_limit, concurrency, client_id, client_identifier, status, created_at, updated_at)
@@ -301,11 +299,7 @@ impl fc_platform_core::usecase::Persist<DispatchPool> for DispatchPoolRepository
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        p: &DispatchPool,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, p: &DispatchPool, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM msg_dispatch_pools WHERE id = $1")
             .bind(&p.id)
             .execute(&mut **tx.inner)

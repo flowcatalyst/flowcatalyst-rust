@@ -17,7 +17,20 @@
 //!   validate ([`password`]), `/oauth/token` ([`token`]) and the OIDC
 //!   callback ([`oidc`]).
 
+use fc_platform_iam::identity_provider::entity::IdentityProvider;
+use fc_platform_iam::identity_provider::entity::IdentityProviderType;
+use fc_platform_iam::platform_config::repository::PlatformConfigRepository;
 pub use fc_platform_iam::portal::*;
+use fc_platform_iam::{
+    auth::oauth_client_repository::OAuthClientRepository, client::repository::ClientRepository,
+    identity_provider::repository::IdentityProviderRepository,
+};
+use repository::{
+    PortalAppRepository, PortalFlowRepository, PortalIdentityRepository, PortalOAuthClientReader,
+    PortalOidcStateRepository, PortalResetTokenRepository,
+};
+use std::env;
+use std::time::Duration;
 
 pub mod api;
 mod email;
@@ -36,14 +49,6 @@ use fc_platform_core::shared::error::Result;
 use fc_platform_core::shared::rate_limit_store::{RateLimitPolicy, RateLimitStore};
 use fc_platform_core::usecase::PgUnitOfWork;
 use fc_platform_iam::auth::password_service::PasswordService;
-use fc_platform_iam::{
-    auth::oauth_client_repository::OAuthClientRepository, client::repository::ClientRepository,
-    identity_provider::repository::IdentityProviderRepository,
-};
-use repository::{
-    PortalAppRepository, PortalFlowRepository, PortalIdentityRepository, PortalOAuthClientReader,
-    PortalOidcStateRepository, PortalResetTokenRepository,
-};
 
 /// Everything the portal plane's handlers and hooks need.
 #[derive(Clone)]
@@ -97,11 +102,7 @@ impl PortalState {
             tokens: Arc::new(PortalResetTokenRepository::new(&deps.pool)),
             identities: identities.clone(),
             email_service: deps.email_service,
-            brand: Some(Arc::new(
-                fc_platform_iam::platform_config::repository::PlatformConfigRepository::new(
-                    &deps.pool,
-                ),
-            )),
+            brand: Some(Arc::new(PlatformConfigRepository::new(&deps.pool))),
             password_service: deps.password_service.clone(),
             external_base_url: deps.external_base_url,
         });
@@ -128,16 +129,13 @@ impl PortalState {
     /// The OIDC IdP that owns the email domain, if any (Go
     /// `identityprovider.OIDCProviderForDomain`): domain ownership alone
     /// decides SSO vs password, on every login surface.
-    pub async fn oidc_provider_for_domain(
-        &self,
-        domain: &str,
-    ) -> Result<Option<fc_platform_iam::identity_provider::entity::IdentityProvider>> {
+    pub async fn oidc_provider_for_domain(&self, domain: &str) -> Result<Option<IdentityProvider>> {
         if domain.is_empty() {
             return Ok(None);
         }
         let idps = self.identity_providers.find_all().await?;
         Ok(idps.into_iter().find(|idp| {
-            idp.r#type == fc_platform_iam::identity_provider::entity::IdentityProviderType::Oidc
+            idp.r#type == IdentityProviderType::Oidc
                 && idp
                     .allowed_email_domains
                     .iter()
@@ -149,9 +147,9 @@ impl PortalState {
 /// Go `ratelimit.Policies.PortalLogin`: `FC_RL_PORTAL_LOGIN_PER_15MIN`
 /// (default 10) per (client, email) per 15 minutes.
 pub fn portal_login_policy_from_env() -> RateLimitPolicy {
-    let limit = std::env::var("FC_RL_PORTAL_LOGIN_PER_15MIN")
+    let limit = env::var("FC_RL_PORTAL_LOGIN_PER_15MIN")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
-    RateLimitPolicy::new(std::time::Duration::from_secs(15 * 60), limit)
+    RateLimitPolicy::new(Duration::from_secs(15 * 60), limit)
 }

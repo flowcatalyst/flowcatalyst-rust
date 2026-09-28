@@ -13,8 +13,13 @@ use super::domains::{
     validate_mapping_scope, DomainDeps,
 };
 use super::events::IdentityProviderCreated;
+use crate::identity_provider::entity::IdentityProvider;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::identity_provider::repository::IdentityProviderRepository;
+use crate::role::ceiling;
+use crate::role::repository::RoleRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new identity provider.
@@ -52,7 +57,7 @@ pub struct CreateIdentityProviderCommand {
     pub allowed_role_ids: Vec<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateIdentityProviderCommand {}
+impl AuditMasked for CreateIdentityProviderCommand {}
 
 /// Use case for creating a new identity provider.
 pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
@@ -60,7 +65,7 @@ pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
     domains: DomainDeps,
     unit_of_work: Arc<U>,
     /// The allow-list's role ceiling (owner ruling 14).
-    role_repo: Arc<crate::role::repository::RoleRepository>,
+    role_repo: Arc<RoleRepository>,
 }
 
 impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
@@ -68,7 +73,7 @@ impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
         idp_repo: Arc<IdentityProviderRepository>,
         domains: DomainDeps,
         unit_of_work: Arc<U>,
-        role_repo: Arc<crate::role::repository::RoleRepository>,
+        role_repo: Arc<RoleRepository>,
     ) -> Self {
         Self {
             idp_repo,
@@ -130,10 +135,8 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         command: &CreateIdentityProviderCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-            ctx.caller(),
-        )?;
-        crate::role::ceiling::require_role_ref_change(
+        checks::require_anchor_scope(ctx.caller())?;
+        ceiling::require_role_ref_change(
             ctx.caller(),
             &self.role_repo,
             &[],
@@ -164,11 +167,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         require_scope_for_new_domains(&self.domains, &domains, scope).await?;
 
         // Go stores the OIDC fields whatever the type.
-        let mut idp = crate::identity_provider::entity::IdentityProvider::new(
-            &command.code,
-            &command.name,
-            command.idp_type,
-        );
+        let mut idp = IdentityProvider::new(&command.code, &command.name, command.idp_type);
         idp.oidc_issuer_url = command.oidc_issuer_url.clone();
         idp.oidc_client_id = command.oidc_client_id.clone();
         idp.oidc_client_secret_ref = command.oidc_client_secret_ref.clone();

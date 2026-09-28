@@ -30,6 +30,8 @@
 //! and reports when the stored value should be rewritten to the current
 //! hashed form.
 
+use crate::shared::error::PlatformError;
+use crate::usecase::UseCaseError;
 use aes_gcm::{
     aead::{generic_array::typenum::U12, rand_core::RngCore, Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
@@ -37,6 +39,7 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::env;
 use std::string::FromUtf8Error;
 use subtle::ConstantTimeEq;
 use tracing::{info, warn};
@@ -78,13 +81,13 @@ pub fn require_configured(
     enc.ok_or(EncryptionError::NotConfigured)
 }
 
-impl From<EncryptionError> for crate::shared::error::PlatformError {
+impl From<EncryptionError> for PlatformError {
     fn from(e: EncryptionError) -> Self {
         Self::internal(e.to_string())
     }
 }
 
-impl From<EncryptionError> for crate::usecase::UseCaseError {
+impl From<EncryptionError> for UseCaseError {
     fn from(e: EncryptionError) -> Self {
         Self::internal("ENCRYPTION_ERROR", e.to_string())
     }
@@ -179,8 +182,8 @@ impl EncryptionService {
     /// - `FLOWCATALYST_APP_KEY` — current key (required)
     /// - `FLOWCATALYST_APP_KEY_PREVIOUS` — previous key for rotation (optional)
     pub fn from_env() -> Option<Self> {
-        let current_key = std::env::var("FLOWCATALYST_APP_KEY").ok()?;
-        let previous_key = std::env::var("FLOWCATALYST_APP_KEY_PREVIOUS").ok();
+        let current_key = env::var("FLOWCATALYST_APP_KEY").ok()?;
+        let previous_key = env::var("FLOWCATALYST_APP_KEY_PREVIOUS").ok();
 
         let previous_keys: Vec<&str> = previous_key
             .as_deref()
@@ -211,13 +214,13 @@ impl EncryptionService {
     /// (owner ruling 2026-09-08) rather than carrying on with every secret
     /// read failing.
     pub fn from_env_checked() -> Result<Option<Self>, EncryptionError> {
-        let Some(current) = std::env::var("FLOWCATALYST_APP_KEY")
+        let Some(current) = env::var("FLOWCATALYST_APP_KEY")
             .ok()
             .filter(|k| !k.is_empty())
         else {
             return Ok(None);
         };
-        let previous = std::env::var("FLOWCATALYST_APP_KEY_PREVIOUS")
+        let previous = env::var("FLOWCATALYST_APP_KEY_PREVIOUS")
             .ok()
             .map(|k| k.trim().to_string())
             .filter(|k| !k.is_empty());

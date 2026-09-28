@@ -1,7 +1,9 @@
 //! Audit Log Entity — matches TypeScript AuditLog domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
 use serde::{Deserialize, Serialize};
+use std::any;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +31,7 @@ impl AuditLog {
         principal_id: Option<String>,
     ) -> Self {
         Self {
-            id: fc_platform_core::shared::tsid::generate_untyped(),
+            id: tsid::generate_untyped(),
             entity_type: entity_type.into(),
             entity_id: entity_id.into(),
             operation: operation.into(),
@@ -58,7 +60,7 @@ impl AuditLog {
         command: &C,
         principal_id: Option<String>,
     ) -> Self {
-        let command_name = std::any::type_name::<C>()
+        let command_name = any::type_name::<C>()
             .rsplit("::")
             .next()
             .unwrap_or("Unknown")

@@ -26,6 +26,11 @@ use tracing::warn;
 
 use super::{Bucket, RateLimitDecision, RateLimitPolicy, RateLimitStore};
 use crate::shared::api_common::ApiError;
+use crate::shared::middleware;
+use axum::body;
+use axum::body::Body;
+use axum::http::header;
+use axum::http::Method;
 
 /// State handed to `distributed_rate_limit_per_ip` via
 /// `from_fn_with_state`. One instance per (bucket, policy) — multiple
@@ -142,18 +147,16 @@ pub async fn distributed_rate_limit_per_email(
     request: Request,
     next: Next,
 ) -> Response {
-    if request.method() != axum::http::Method::POST
-        || !request.uri().path().ends_with(state.path_suffix)
-    {
+    if request.method() != Method::POST || !request.uri().path().ends_with(state.path_suffix) {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();
-    let bytes = match axum::body::to_bytes(body, EMAIL_LIMIT_MAX_BODY_BYTES).await {
+    let bytes = match body::to_bytes(body, EMAIL_LIMIT_MAX_BODY_BYTES).await {
         Ok(bytes) => bytes,
         Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let key = email_budget_key(&bytes);
-    let request = Request::from_parts(parts, axum::body::Body::from(bytes));
+    let request = Request::from_parts(parts, Body::from(bytes));
     let Some(key) = key else {
         return next.run(request).await;
     };
@@ -184,17 +187,14 @@ pub async fn distributed_rate_limit_per_email(
 }
 
 fn extract_ip(headers: &HeaderMap) -> Option<String> {
-    crate::shared::middleware::extract_trusted_client_ip(headers)
+    middleware::extract_trusted_client_ip(headers)
 }
 
 fn too_many_requests_response(retry_after_secs: u32, message: &str) -> Response {
     let body = ApiError::new("TOO_MANY_REQUESTS", message.to_string());
     (
         StatusCode::TOO_MANY_REQUESTS,
-        [(
-            axum::http::header::RETRY_AFTER,
-            retry_after_secs.max(1).to_string(),
-        )],
+        [(header::RETRY_AFTER, retry_after_secs.max(1).to_string())],
         Json(body),
     )
         .into_response()
@@ -205,6 +205,8 @@ mod tests {
     use super::*;
     use crate::shared::rate_limit_store::RateLimitError;
     use async_trait::async_trait;
+    use axum::body;
+    use axum::middleware;
     use axum::{body::Body, routing::post, Router};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -253,7 +255,7 @@ mod tests {
         Router::new()
             .route("/request", post(echo.clone()))
             .route("/confirm", post(echo))
-            .layer(axum::middleware::from_fn_with_state(
+            .layer(middleware::from_fn_with_state(
                 DistributedEmailLimitState {
                     store,
                     bucket: Bucket::PASSWORD_RESET_EMAIL,
@@ -277,7 +279,7 @@ mod tests {
             .await
             .unwrap();
         let status = res.status();
-        let bytes = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        let bytes = body::to_bytes(res.into_body(), 1024).await.unwrap();
         (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 

@@ -26,3 +26,8 @@ der = { version = "0.7", features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 # Test-only: SPKI encoding for the TestSigstore port's generated keys.
 p256 = { version = "0.13", features = ["alloc"] }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

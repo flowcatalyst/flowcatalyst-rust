@@ -8,12 +8,19 @@ use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use axum::http::header;
+use axum::http::HeaderMap;
+use fc_platform_core::shared::authorization_service::Credential;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::application::client_config_repository::ApplicationClientConfigRepository;
 use fc_platform_iam::application::repository::ApplicationRepository;
+use fc_platform_iam::auth::auth_service;
+use fc_platform_iam::auth::auth_service::AuthService;
 use fc_platform_iam::client::repository::ClientRepository;
 use fc_platform_iam::principal::repository::PrincipalRepository;
+use fc_platform_iam::role::repository::RoleRepository;
+use std::collections::HashSet;
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -69,10 +76,10 @@ pub struct MeState {
     /// JWT-derived `AuthContext` does not carry.
     pub principal_repo: Arc<PrincipalRepository>,
     /// Orders the caller's permissions as Go does (role by role).
-    pub role_repo: Arc<fc_platform_iam::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     /// Reads a bearer's own `clients` / `applications` claims for
     /// `/api/me`, which reports the credential's reach, not the row's.
-    pub auth_service: Arc<fc_platform_iam::auth::auth_service::AuthService>,
+    pub auth_service: Arc<AuthService>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -283,7 +290,7 @@ pub async fn list_my_client_applications(
 )]
 pub async fn whoami(
     State(state): State<MeState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     auth: Authenticated,
 ) -> Result<Json<WhoamiResponse>, PlatformError> {
     let ctx = &auth.0;
@@ -294,12 +301,12 @@ pub async fn whoami(
     // (Go `BuildClaims`), so its reach is the row's.
     let principal = state.principal_repo.find_by_id(&ctx.principal_id).await?;
     let bearer_claims = match ctx.credential {
-        fc_platform_core::shared::authorization_service::Credential::BearerToken => headers
-            .get(axum::http::header::AUTHORIZATION)
+        Credential::BearerToken => headers
+            .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
-            .and_then(fc_platform_iam::auth::auth_service::extract_bearer_token)
+            .and_then(auth_service::extract_bearer_token)
             .and_then(|token| state.auth_service.validate_token(token).ok()),
-        fc_platform_core::shared::authorization_service::Credential::SessionCookie => None,
+        Credential::SessionCookie => None,
     };
     let (accessible_client_ids, (accessible_application_ids, all_applications)) =
         match (&bearer_claims, &principal) {
@@ -315,9 +322,7 @@ pub async fn whoami(
                 if let Some(home) = p.client_id.as_ref().filter(|c| !c.is_empty()) {
                     clients.push(home.clone());
                 }
-                let (ids, all) = parse_applications_claim(
-                    &fc_platform_iam::auth::auth_service::applications_claim(p),
-                );
+                let (ids, all) = parse_applications_claim(&auth_service::applications_claim(p));
                 (clients, (ids, all || p.all_applications))
             }
             (None, None) => (Vec::new(), (Vec::new(), false)),
@@ -387,7 +392,7 @@ pub async fn list_my_applications(
         .principal_repo
         .find_by_id(&auth.0.principal_id)
         .await?;
-    let accessible_ids: std::collections::HashSet<String> = principal
+    let accessible_ids: HashSet<String> = principal
         .map(|p| p.accessible_application_ids.into_iter().collect())
         .unwrap_or_default();
 

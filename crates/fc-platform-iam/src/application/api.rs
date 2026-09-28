@@ -13,14 +13,24 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::application::api;
+use crate::application::entity::ApplicationType;
 use crate::application::operations::attach_service_account::{
     AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
 };
+use crate::application::operations::DisableApplicationForClientCommand;
+use crate::application::operations::DisableApplicationForClientUseCase;
+use crate::application::operations::EnableApplicationForClientCommand;
+use crate::application::operations::EnableApplicationForClientUseCase;
+use crate::application::operations::ProvisionServiceAccountCommand;
+use crate::application::operations::UpdateApplicationClientConfigCommand;
+use crate::application::operations::UpdateApplicationClientConfigUseCase;
 use crate::application::operations::{
     ActivateApplicationCommand, ActivateApplicationUseCase, CreateApplicationCommand,
     CreateApplicationUseCase, DeactivateApplicationCommand, DeactivateApplicationUseCase,
     UpdateApplicationCommand, UpdateApplicationUseCase,
 };
+use crate::application::ApplicationClientConfig;
 use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
 use crate::principal::repository::PrincipalRepository;
@@ -37,9 +47,16 @@ use crate::{
     role::repository::RoleRepository,
     service_account::repository::ServiceAccountRepository,
 };
+use base64::engine::general_purpose;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::{checks, AuthContext};
+use fc_platform_core::shared::encryption_service::EncryptionService;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::PgUnitOfWork;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
 
@@ -327,12 +344,9 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateApplicationUseCase<U>>,
     pub activate_use_case: Arc<ActivateApplicationUseCase<U>>,
     pub deactivate_use_case: Arc<DeactivateApplicationUseCase<U>>,
-    pub enable_for_client_use_case:
-        Arc<crate::application::operations::EnableApplicationForClientUseCase<U>>,
-    pub disable_for_client_use_case:
-        Arc<crate::application::operations::DisableApplicationForClientUseCase<U>>,
-    pub update_client_config_use_case:
-        Arc<crate::application::operations::UpdateApplicationClientConfigUseCase<U>>,
+    pub enable_for_client_use_case: Arc<EnableApplicationForClientUseCase<U>>,
+    pub disable_for_client_use_case: Arc<DisableApplicationForClientUseCase<U>>,
+    pub update_client_config_use_case: Arc<UpdateApplicationClientConfigUseCase<U>>,
     /// OAuth client repo + create use case — used by the provision-service-account
     /// and provision-login-client endpoints to mint a client_credentials or
     /// authorization_code OAuth client for the application.
@@ -341,7 +355,7 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     /// Concrete `PgUnitOfWork` for orchestrated operations (provision-service-account)
     /// that span two aggregates. Routed via `run(closure)` — handler owns the
     /// tx boundary. Trait-backed use cases still go through `U`.
-    pub pg_unit_of_work: Arc<fc_platform_core::usecase::PgUnitOfWork>,
+    pub pg_unit_of_work: Arc<PgUnitOfWork>,
 }
 
 /// Create a new application
@@ -352,7 +366,7 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     operation_id = "createApplication",
     request_body = CreateApplicationRequest,
     responses(
-        (status = 201, description = "Application created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Application created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -362,25 +376,17 @@ pub async fn create_application<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Json(req): Json<CreateApplicationRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     // Go's permission check first (PERMISSION_REQUIRED), then Rust's anchor
     // gate: only anchor users manage applications.
-    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::can_write_applications(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let command = CreateApplicationCommand {
         code: req.code,
         name: req.name,
         description: req.description,
-        application_type: fc_platform_core::shared::enum_str::parse_opt(
-            req.application_type.as_deref(),
-        )?,
+        application_type: enum_str::parse_opt(req.application_type.as_deref())?,
         default_base_url: req.default_base_url,
         icon_url: req.icon_url,
         website: req.website,
@@ -393,9 +399,7 @@ pub async fn create_application<U: UnitOfWork>(
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(event) => Ok((
             StatusCode::CREATED,
-            Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-                event.application_id,
-            )),
+            Json(CreatedResponse::new(event.application_id)),
         )),
         Err(err) => Err(err.into()),
     }
@@ -421,7 +425,7 @@ pub async fn get_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     let app = state
         .application_repo
@@ -464,17 +468,14 @@ pub async fn list_applications<U: UnitOfWork>(
     auth: Authenticated,
     Query(query): Query<ApplicationsQuery>,
 ) -> Result<Json<ApplicationListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     // Go lists every application, filtered only when asked, ordered by code
     // and unpaginated (application/api/api.go:63-81).
-    let want_type = fc_platform_core::shared::enum_str::parse_opt::<
-        crate::application::entity::ApplicationType,
-    >(fc_platform_core::shared::enum_str::non_empty(
+    let want_type = enum_str::parse_opt::<ApplicationType>(enum_str::non_empty(
         query.application_type.as_deref(),
     ))?;
-    let want_active =
-        fc_platform_core::shared::enum_str::non_empty(query.active.as_deref()).map(|a| a == "true");
+    let want_active = enum_str::non_empty(query.active.as_deref()).map(|a| a == "true");
     let mut apps: Vec<_> = state
         .application_repo
         .find_all()
@@ -516,8 +517,8 @@ pub async fn update_application<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateApplicationRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::can_write_applications(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let command = UpdateApplicationCommand {
         id: id.clone(),
@@ -558,8 +559,8 @@ pub async fn delete_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::can_delete_applications(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     delete_application_cascade(
         &state.pg_unit_of_work,
@@ -576,7 +577,7 @@ pub async fn delete_application<U: UnitOfWork>(
 /// transaction. The body of `DELETE /api/applications/{id}` after its
 /// permission checks, shared with the server-rendered `fc-web` UI.
 pub async fn delete_application_cascade(
-    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    pg_unit_of_work: &PgUnitOfWork,
     service_account_repo: &Arc<ServiceAccountRepository>,
     application_repo: &Arc<ApplicationRepository>,
     id: &str,
@@ -653,8 +654,8 @@ pub async fn activate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::can_write_applications(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     let command = ActivateApplicationCommand { id: id.clone() };
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -697,8 +698,8 @@ pub async fn deactivate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_applications(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::can_write_applications(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
 
     deactivate_application_cascade(
         &state.pg_unit_of_work,
@@ -722,7 +723,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
 /// /api/applications/{id}/deactivate` after its permission checks, shared
 /// with the server-rendered `fc-web` UI.
 pub async fn deactivate_application_cascade(
-    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    pg_unit_of_work: &PgUnitOfWork,
     service_account_repo: &Arc<ServiceAccountRepository>,
     oauth_client_repo: &Arc<OAuthClientRepository>,
     application_repo: &Arc<ApplicationRepository>,
@@ -760,10 +761,7 @@ pub async fn deactivate_application_cascade(
             let deactivate_sa_uc = DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
             let deactivate_oauth_uc =
                 DeactivateOAuthClientUseCase::new(oauth_repo, session.clone());
-            let deactivate_app_uc =
-                crate::application::operations::DeactivateApplicationUseCase::new(
-                    app_repo, session,
-                );
+            let deactivate_app_uc = DeactivateApplicationUseCase::new(app_repo, session);
 
             let ctx = ExecutionContext::from_auth(&auth);
 
@@ -827,7 +825,7 @@ pub async fn get_application_by_code<U: UnitOfWork>(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     let app = state
         .application_repo
@@ -871,16 +869,10 @@ pub async fn provision_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<ProvisionServiceAccountResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints a service account and binds it.
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::SERVICE_ACCOUNT_CREATE,
-    )?;
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::SERVICE_ACCOUNT_CREATE)?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
 
     let service_account = provision_application_service_account(
         &state.pg_unit_of_work,
@@ -909,7 +901,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
 /// permission checks, shared with the server-rendered `fc-web` UI. The
 /// plaintext secret in the result is the only chance to read it.
 pub async fn provision_application_service_account(
-    pg_unit_of_work: &fc_platform_core::usecase::PgUnitOfWork,
+    pg_unit_of_work: &PgUnitOfWork,
     application_repo: &Arc<ApplicationRepository>,
     service_account_repo: &Arc<ServiceAccountRepository>,
     client_repo: &Arc<ClientRepository>,
@@ -941,12 +933,8 @@ pub async fn provision_application_service_account(
     // Mint the OAuth client identifiers and a fresh secret BEFORE opening
     // the tx. We hand the hashed ref into the closure and keep the
     // plaintext to return in the response.
-    let oauth_row_id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::OAuthClient,
-    );
-    let oauth_public_client_id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::OAuthClient,
-    );
+    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_public_client_id = tsid::generate(EntityType::OAuthClient);
     let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
 
     let sa_code = format!("app:{}", app.code);
@@ -963,8 +951,7 @@ pub async fn provision_application_service_account(
     // The SA's webhook credentials are encrypted before storage.
     // `generate_client_secret` above already failed if no key
     // is configured.
-    let encryption =
-        fc_platform_core::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
+    let encryption = EncryptionService::from_env().map(Arc::new);
 
     let oauth_row_id_for_cmd = oauth_row_id.clone();
     let oauth_public_client_id_for_cmd = oauth_public_client_id.clone();
@@ -973,7 +960,7 @@ pub async fn provision_application_service_account(
     // (SA insert, Application update, OAuth client insert) roll back. Each
     // writes its own event; the audit rows all record Go's one
     // `ProvisionServiceAccountCommand`.
-    let provision_cmd = crate::application::operations::ProvisionServiceAccountCommand {
+    let provision_cmd = ProvisionServiceAccountCommand {
         application_id: app_id.clone(),
     };
     let result = pg_unit_of_work
@@ -984,7 +971,7 @@ pub async fn provision_application_service_account(
                 AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
             let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);
 
-            let ctx = fc_platform_core::usecase::ExecutionContext::from_auth(&auth);
+            let ctx = ExecutionContext::from_auth(&auth);
 
             // 1. Create the ServiceAccount (a SERVICE principal is created
             //    behind it, with an id of its own).
@@ -1111,16 +1098,10 @@ pub async fn provision_login_client<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<ProvisionLoginClientRequest>,
 ) -> Result<(StatusCode, Json<ProvisionLoginClientResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints an OAuth client for the application.
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::auth::OAUTH_CLIENT_CREATE,
-    )?;
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
-    )?;
+    checks::require_permission(&auth.0, permissions::auth::OAUTH_CLIENT_CREATE)?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
 
     let login_client = provision_application_login_client(
         &state.create_oauth_client_use_case,
@@ -1182,12 +1163,8 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         .ok_or_else(|| PlatformError::not_found("Application", id))?;
     let _ = oauth_client_repo;
 
-    let oauth_row_id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::OAuthClient,
-    );
-    let oauth_public_client_id = fc_platform_core::shared::tsid::generate(
-        fc_platform_core::shared::tsid::EntityType::OAuthClient,
-    );
+    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let oauth_public_client_id = tsid::generate(EntityType::OAuthClient);
     let client_name = format!("{} Login", app.name);
 
     // CONFIDENTIAL clients get a secret at the edge (only confidential
@@ -1264,14 +1241,11 @@ fn generate_client_secret() -> Result<(String, String), PlatformError> {
     use base64::Engine;
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
-    let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+    let plaintext = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    let enc = fc_platform_core::shared::encryption_service::EncryptionService::from_env()
-        .ok_or_else(|| {
-            PlatformError::internal(
-                "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
-            )
-        })?;
+    let enc = EncryptionService::from_env().ok_or_else(|| {
+        PlatformError::internal("FLOWCATALYST_APP_KEY not configured — cannot hash client secret")
+    })?;
     let stored_ref = enc.hash_secret(&plaintext);
     Ok((plaintext, stored_ref))
 }
@@ -1296,7 +1270,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     // Get the application
     let app = state
@@ -1342,7 +1316,7 @@ pub async fn list_application_roles<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationRolesResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     // Go lists the role names registered against the application id; an
     // unknown application simply has none.
@@ -1397,7 +1371,7 @@ pub struct ClientConfigResponse {
 #[serde(rename_all = "camelCase")]
 #[schema(as = ClientConfigListResponse)]
 pub struct ClientConfigsResponse {
-    pub items: Vec<crate::application::api::GoClientConfigResponse>,
+    pub items: Vec<api::GoClientConfigResponse>,
 }
 
 /// Client config request. `baseUrlOverride: ""` clears the override;
@@ -1431,7 +1405,7 @@ pub async fn list_client_configs<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientConfigsResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_applications(&auth.0)?;
+    checks::can_read_applications(&auth.0)?;
 
     // Go lists the application's configs as stored; an unknown application
     // has none (200 `{items: []}`).
@@ -1440,7 +1414,7 @@ pub async fn list_client_configs<U: UnitOfWork>(
         .find_by_application(&id)
         .await?
         .into_iter()
-        .map(crate::application::api::GoClientConfigResponse::from)
+        .map(api::GoClientConfigResponse::from)
         .collect();
     Ok(Json(ClientConfigsResponse { items }))
 }
@@ -1470,13 +1444,10 @@ pub async fn update_client_config<U: UnitOfWork>(
     Path((id, client_id)): Path<(String, String)>,
     Json(req): Json<ClientConfigRequest>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
-    )?;
+    checks::require_anchor(&auth.0)?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
 
-    let cmd = crate::application::operations::UpdateApplicationClientConfigCommand {
+    let cmd = UpdateApplicationClientConfigCommand {
         application_id: id.clone(),
         client_id: client_id.clone(),
         enabled: req.enabled,
@@ -1547,13 +1518,10 @@ pub async fn enable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_ENABLE_CLIENT,
-    )?;
+    checks::require_anchor(&auth.0)?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_ENABLE_CLIENT)?;
 
-    let cmd = crate::application::operations::EnableApplicationForClientCommand {
+    let cmd = EnableApplicationForClientCommand {
         application_id: id.clone(),
         client_id: client_id.clone(),
     };
@@ -1590,13 +1558,10 @@ pub async fn disable_for_client<U: UnitOfWork>(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    fc_platform_core::shared::authorization_service::checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_DISABLE_CLIENT,
-    )?;
+    checks::require_anchor(&auth.0)?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_DISABLE_CLIENT)?;
 
-    let cmd = crate::application::operations::DisableApplicationForClientCommand {
+    let cmd = DisableApplicationForClientCommand {
         application_id: id.clone(),
         client_id: client_id.clone(),
     };
@@ -1688,10 +1653,7 @@ pub async fn attach_application_service_account(
     Json(req): Json<AttachServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
-    checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_UPDATE,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_UPDATE)?;
     let sa_id = req.service_account_id.trim().to_string();
     // Go validates the ids before resolving the principal.
     let principal_id = if sa_id.is_empty() || id.trim().is_empty() {
@@ -1741,10 +1703,7 @@ pub async fn get_application_client_config(
     auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<Json<GoClientConfigResponse>, PlatformError> {
-    checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::APPLICATION_READ,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::APPLICATION_READ)?;
     let c = state
         .client_config_repo
         .find_by_application_and_client(&id, &client_id)
@@ -1755,8 +1714,8 @@ pub async fn get_application_client_config(
     Ok(Json(c.into()))
 }
 
-impl From<crate::application::ApplicationClientConfig> for GoClientConfigResponse {
-    fn from(c: crate::application::ApplicationClientConfig) -> Self {
+impl From<ApplicationClientConfig> for GoClientConfigResponse {
+    fn from(c: ApplicationClientConfig) -> Self {
         Self {
             id: c.id,
             application_id: c.application_id,
@@ -1777,18 +1736,20 @@ mod tests {
     /// `?active=true` parses (a typed bool beside a flattened struct didn't).
     #[test]
     fn the_applications_query_parses_through_the_real_query_parser() {
-        let uri: axum::http::Uri = "/api/applications?active=true&type=APPLICATION"
+        let uri: Uri = "/api/applications?active=true&type=APPLICATION"
             .parse()
             .unwrap();
-        let q = axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri)
-            .unwrap()
-            .0;
+        let q = Query::<ApplicationsQuery>::try_from_uri(&uri).unwrap().0;
         assert_eq!(q.active.as_deref(), Some("true"));
         assert_eq!(q.application_type.as_deref(), Some("APPLICATION"));
-        let uri: axum::http::Uri = "/api/applications?page=0&size=20".parse().unwrap();
-        assert!(axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri).is_ok());
+        let uri: Uri = "/api/applications?page=0&size=20".parse().unwrap();
+        assert!(Query::<ApplicationsQuery>::try_from_uri(&uri).is_ok());
     }
+    use crate::application::api::GoClientConfigResponse;
+    use crate::application::client_config::ApplicationClientConfig;
     use crate::application::entity::{Application, ApplicationType};
+    use axum::extract::Query;
+    use axum::http::Uri;
     use chrono::Utc;
 
     fn make_test_application() -> Application {
@@ -2019,21 +1980,14 @@ mod tests {
 
     #[test]
     fn go_client_config_answers_the_overrides_only_when_set() {
-        let mut config =
-            crate::application::client_config::ApplicationClientConfig::new("app_1", "clt_1");
-        let bare = serde_json::to_value(crate::application::api::GoClientConfigResponse::from(
-            config.clone(),
-        ))
-        .unwrap();
+        let mut config = ApplicationClientConfig::new("app_1", "clt_1");
+        let bare = serde_json::to_value(GoClientConfigResponse::from(config.clone())).unwrap();
         assert!(bare.get("baseUrlOverride").is_none());
         assert!(bare.get("configJson").is_none());
 
         config.base_url_override = Some("https://acme.example.com".to_string());
         config.config_json = Some(serde_json::json!({"flags": {"beta": true}}));
-        let set = serde_json::to_value(crate::application::api::GoClientConfigResponse::from(
-            config,
-        ))
-        .unwrap();
+        let set = serde_json::to_value(GoClientConfigResponse::from(config)).unwrap();
         assert_eq!(set["baseUrlOverride"], "https://acme.example.com");
         assert_eq!(
             set["configJson"],

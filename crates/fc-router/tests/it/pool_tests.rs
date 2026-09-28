@@ -22,6 +22,9 @@ use fc_common::{
     AckNack, BatchMessage, MediationOutcome, MediationResult, MediationType, Message,
     MessageCallback, PoolConfig,
 };
+use std::time::Instant;
+use tokio::task;
+use tokio::time;
 
 /// Test callback that records ack/nack via a oneshot channel
 struct TestCallback {
@@ -112,7 +115,7 @@ impl Mediator for MockMediator {
         self.processed_ids.lock().push(message.id.clone());
 
         if self.delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            time::sleep(Duration::from_millis(self.delay_ms)).await;
         }
 
         if self.should_fail {
@@ -155,7 +158,7 @@ fn create_batch_message(
         receipt_handle: format!("receipt-{}", id),
         broker_message_id: Some(format!("broker-{}", id)),
         queue_identifier: "test-queue".to_string(),
-        batch_id: Some(std::sync::Arc::from("batch-1")),
+        batch_id: Some(Arc::from("batch-1")),
         callback: Box::new(TestCallback {
             tx: parking_lot::Mutex::new(Some(tx)),
         }),
@@ -207,7 +210,7 @@ async fn test_single_message_processing() {
     pool.submit(batch_msg).await.unwrap();
 
     // Wait for processing
-    let result = tokio::time::timeout(Duration::from_secs(5), rx).await;
+    let result = time::timeout(Duration::from_secs(5), rx).await;
     assert!(result.is_ok());
 
     let ack_nack = result.unwrap().unwrap();
@@ -237,7 +240,7 @@ async fn test_multiple_messages_concurrent() {
 
     // All should complete
     for rx in receivers {
-        let result = tokio::time::timeout(Duration::from_secs(5), rx).await;
+        let result = time::timeout(Duration::from_secs(5), rx).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap().unwrap(), AckNack::Ack));
     }
@@ -267,7 +270,7 @@ async fn test_message_group_fifo_ordering() {
 
     // Wait for all to complete
     for rx in receivers {
-        let result = tokio::time::timeout(Duration::from_secs(10), rx).await;
+        let result = time::timeout(Duration::from_secs(10), rx).await;
         assert!(result.is_ok());
     }
 
@@ -292,7 +295,7 @@ async fn test_different_groups_parallel() {
     pool.start().await;
 
     // Submit messages to different groups - should process in parallel
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let mut receivers = Vec::new();
 
     for i in 0..5 {
@@ -306,7 +309,7 @@ async fn test_different_groups_parallel() {
 
     // Wait for all
     for rx in receivers {
-        let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
+        let _ = time::timeout(Duration::from_secs(5), rx).await;
     }
 
     let elapsed = start.elapsed();
@@ -334,7 +337,7 @@ async fn test_failed_message_nack() {
     let (batch_msg, rx) = create_batch_message("msg-1", None);
     pool.submit(batch_msg).await.unwrap();
 
-    let result = tokio::time::timeout(Duration::from_secs(5), rx).await;
+    let result = time::timeout(Duration::from_secs(5), rx).await;
     assert!(result.is_ok());
 
     let ack_nack = result.unwrap().unwrap();
@@ -447,7 +450,7 @@ async fn test_pool_shutdown() {
     let (batch_msg, rx) = create_batch_message("msg-1", None);
     pool.submit(batch_msg).await.unwrap();
 
-    let result = tokio::time::timeout(Duration::from_millis(100), rx).await;
+    let result = time::timeout(Duration::from_millis(100), rx).await;
     if let Ok(Ok(ack_nack)) = result {
         assert!(matches!(ack_nack, AckNack::Nack { .. }));
     }
@@ -497,7 +500,7 @@ async fn drain_then_wait_drained_resolves_after_in_flight_work() {
     }
 
     // drain() must return promptly — it does not wait for in-flight work.
-    let drain_start = std::time::Instant::now();
+    let drain_start = Instant::now();
     pool.drain().await;
     assert!(
         drain_start.elapsed() < Duration::from_millis(50),
@@ -506,7 +509,7 @@ async fn drain_then_wait_drained_resolves_after_in_flight_work() {
 
     // wait_drained() should resolve once the in-flight mediator calls (each
     // ~100ms) finish.
-    let waited = tokio::time::timeout(Duration::from_secs(5), pool.wait_drained()).await;
+    let waited = time::timeout(Duration::from_secs(5), pool.wait_drained()).await;
     assert!(waited.is_ok(), "wait_drained() timed out");
 
     // All callbacks must have been acked (mediator succeeds by default).
@@ -535,7 +538,7 @@ async fn wait_drained_on_idle_pool_resolves_immediately() {
 
     pool.start().await;
 
-    let waited = tokio::time::timeout(Duration::from_secs(1), pool.wait_drained()).await;
+    let waited = time::timeout(Duration::from_secs(1), pool.wait_drained()).await;
     assert!(
         waited.is_ok(),
         "wait_drained() should resolve immediately on an idle pool"
@@ -563,7 +566,7 @@ async fn submit_after_drain_is_nacked() {
     let (batch_msg, rx) = create_batch_message("msg-1", None);
     pool.submit(batch_msg).await.unwrap();
 
-    let result = tokio::time::timeout(Duration::from_secs(1), rx).await;
+    let result = time::timeout(Duration::from_secs(1), rx).await;
     assert!(result.is_ok(), "submit after drain should nack promptly");
     let ack_nack = result.unwrap().unwrap();
     assert!(matches!(ack_nack, AckNack::Nack { .. }));
@@ -652,7 +655,7 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
                     receipt_handle: format!("receipt-{}-{}", s, i),
                     broker_message_id: Some(format!("broker-{}-{}", s, i)),
                     queue_identifier: "test-queue".to_string(),
-                    batch_id: Some(std::sync::Arc::from("batch-1")),
+                    batch_id: Some(Arc::from("batch-1")),
                     callback: Box::new(TestCallback {
                         tx: parking_lot::Mutex::new(Some(tx)),
                     }),
@@ -679,7 +682,7 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
                 });
 
                 if i % 4 == 0 {
-                    tokio::task::yield_now().await;
+                    task::yield_now().await;
                 }
             }
         }));
@@ -690,7 +693,7 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
     }
 
     pool.drain().await;
-    let waited = tokio::time::timeout(Duration::from_secs(30), pool.wait_drained()).await;
+    let waited = time::timeout(Duration::from_secs(30), pool.wait_drained()).await;
     assert!(waited.is_ok(), "wait_drained() timed out");
 
     // Give the spawned ack/nack recorder tasks a moment to run after their
@@ -699,7 +702,7 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
         if acks.load(Ordering::SeqCst) + nacks.load(Ordering::SeqCst) >= N as u32 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
 
     // Check the primary regression signal (spurious nacks) first so a
@@ -770,7 +773,7 @@ fn create_ordered_batch(id: &str, group_id: &str) -> (BatchMessage, oneshot::Rec
         receipt_handle: format!("receipt-{}", id),
         broker_message_id: Some(format!("broker-{}", id)),
         queue_identifier: "test-queue".to_string(),
-        batch_id: Some(std::sync::Arc::from("batch-1")),
+        batch_id: Some(Arc::from("batch-1")),
         callback: Box::new(TestCallback {
             tx: parking_lot::Mutex::new(Some(tx)),
         }),
@@ -794,7 +797,7 @@ async fn group_flush_suppresses_sibling_acks_unmediated_and_counts_metric() {
 
     let (head, head_rx) = create_ordered_batch("head", "g1");
     pool.submit(head).await.unwrap();
-    let head_ack = tokio::time::timeout(Duration::from_secs(5), head_rx)
+    let head_ack = time::timeout(Duration::from_secs(5), head_rx)
         .await
         .unwrap()
         .unwrap();
@@ -804,7 +807,7 @@ async fn group_flush_suppresses_sibling_acks_unmediated_and_counts_metric() {
     // be ACKed without ever being mediated.
     let (sib, sib_rx) = create_ordered_batch("sib1", "g1");
     pool.submit(sib).await.unwrap();
-    let sib_ack = tokio::time::timeout(Duration::from_secs(5), sib_rx)
+    let sib_ack = time::timeout(Duration::from_secs(5), sib_rx)
         .await
         .unwrap()
         .unwrap();
@@ -840,7 +843,7 @@ async fn group_flush_ttl_expiry_resumes_delivery() {
 
     let (head, head_rx) = create_ordered_batch("head", "g1");
     pool.submit(head).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), head_rx)
+    time::timeout(Duration::from_secs(5), head_rx)
         .await
         .unwrap()
         .unwrap();
@@ -848,7 +851,7 @@ async fn group_flush_ttl_expiry_resumes_delivery() {
     // Still within the 1s window: suppressed.
     let (sib1, sib1_rx) = create_ordered_batch("sib1", "g1");
     pool.submit(sib1).await.unwrap();
-    let sib1_ack = tokio::time::timeout(Duration::from_secs(5), sib1_rx)
+    let sib1_ack = time::timeout(Duration::from_secs(5), sib1_rx)
         .await
         .unwrap()
         .unwrap();
@@ -856,11 +859,11 @@ async fn group_flush_ttl_expiry_resumes_delivery() {
     assert_eq!(mediator.calls(), vec!["head".to_string()]);
 
     // Wait past the window.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    time::sleep(Duration::from_millis(1100)).await;
 
     let (sib2, sib2_rx) = create_ordered_batch("sib2", "g1");
     pool.submit(sib2).await.unwrap();
-    let sib2_ack = tokio::time::timeout(Duration::from_secs(5), sib2_rx)
+    let sib2_ack = time::timeout(Duration::from_secs(5), sib2_rx)
         .await
         .unwrap()
         .unwrap();
@@ -886,7 +889,7 @@ async fn group_flush_clear_lifts_suppression_early() {
 
     let (head, head_rx) = create_ordered_batch("head", "g1");
     pool.submit(head).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), head_rx)
+    time::timeout(Duration::from_secs(5), head_rx)
         .await
         .unwrap()
         .unwrap();
@@ -897,7 +900,7 @@ async fn group_flush_clear_lifts_suppression_early() {
 
     let (sib, sib_rx) = create_ordered_batch("sib1", "g1");
     pool.submit(sib).await.unwrap();
-    let sib_ack = tokio::time::timeout(Duration::from_secs(5), sib_rx)
+    let sib_ack = time::timeout(Duration::from_secs(5), sib_rx)
         .await
         .unwrap()
         .unwrap();
@@ -938,16 +941,16 @@ async fn release_remainder_nacks_buffered_remainder_leaves_in_flight_alone() {
     // delay) so m2/m3 are still sitting in the group's VecDeque when
     // release_remainder runs — deterministic since concurrency:1 keeps the
     // drain task blocked on m1's mediate() call for the whole window.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
 
     let released = pool.release_remainder().await;
     assert_eq!(released, 2, "m2 and m3 were still buffered, unstarted");
 
-    let a2 = tokio::time::timeout(Duration::from_secs(1), r2)
+    let a2 = time::timeout(Duration::from_secs(1), r2)
         .await
         .unwrap()
         .unwrap();
-    let a3 = tokio::time::timeout(Duration::from_secs(1), r3)
+    let a3 = time::timeout(Duration::from_secs(1), r3)
         .await
         .unwrap()
         .unwrap();
@@ -956,7 +959,7 @@ async fn release_remainder_nacks_buffered_remainder_leaves_in_flight_alone() {
 
     // m1 was already in flight when release_remainder ran — untouched, and
     // resolves normally once the mediator's delay elapses.
-    let a1 = tokio::time::timeout(Duration::from_secs(2), r1)
+    let a1 = time::timeout(Duration::from_secs(2), r1)
         .await
         .unwrap()
         .unwrap();
@@ -986,7 +989,7 @@ async fn release_remainder_stops_new_admission() {
 
     let (batch_msg, rx) = create_batch_message("msg-1", None);
     pool.submit(batch_msg).await.unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), rx)
+    let result = time::timeout(Duration::from_secs(1), rx)
         .await
         .unwrap()
         .unwrap();
@@ -1022,7 +1025,7 @@ async fn mediating_snapshot_reflects_in_flight_delivery_then_clears() {
 
     // Give the worker time to acquire its permit and start mediating, but
     // well inside the mock's 200ms delay.
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    time::sleep(Duration::from_millis(60)).await;
     let snap = pool.mediating_snapshot();
     assert_eq!(snap.len(), 1, "the in-flight delivery must be visible");
     let entry = &snap[0];
@@ -1037,7 +1040,7 @@ async fn mediating_snapshot_reflects_in_flight_delivery_then_clears() {
     );
     assert!(entry.mediated_at.elapsed() < Duration::from_millis(200));
 
-    let result = tokio::time::timeout(Duration::from_secs(2), rx)
+    let result = time::timeout(Duration::from_secs(2), rx)
         .await
         .unwrap()
         .unwrap();
@@ -1076,7 +1079,7 @@ async fn group_snapshot_reflects_a_gated_ordered_group() {
 
     // The drainer has picked up msg-1 (mediating, 200ms delay) and msg-2 is
     // still buffered behind it — the group is "gated".
-    tokio::time::sleep(Duration::from_millis(60)).await;
+    time::sleep(Duration::from_millis(60)).await;
     let snap = pool.group_snapshot();
     assert_eq!(snap.len(), 1, "exactly one live group");
     let row = &snap[0];
@@ -1094,7 +1097,7 @@ async fn group_snapshot_reflects_a_gated_ordered_group() {
     assert!(!row.suppressed);
 
     for rx in [rx1, rx2] {
-        let result = tokio::time::timeout(Duration::from_secs(2), rx)
+        let result = time::timeout(Duration::from_secs(2), rx)
             .await
             .unwrap()
             .unwrap();
@@ -1104,7 +1107,7 @@ async fn group_snapshot_reflects_a_gated_ordered_group() {
     // Give the drainer's final idle-exit tick a moment, then the fully
     // drained group must be gone (drainGroup's empty-buffer exit removes
     // it from group_handlers entirely — see GroupInfo's own doc comment).
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     assert!(
         pool.group_snapshot().is_empty(),
         "a fully-drained group must not show up in the snapshot"

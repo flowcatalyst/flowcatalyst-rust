@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::CorsOriginDeleted;
 use crate::cors::repository::CorsOriginRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -17,7 +19,7 @@ pub struct DeleteCorsOriginCommand {
     pub origin_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteCorsOriginCommand {}
+impl AuditMasked for DeleteCorsOriginCommand {}
 
 pub struct DeleteCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
@@ -51,11 +53,7 @@ impl<U: UnitOfWork> UseCase for DeleteCorsOriginUseCase<U> {
         _command: &DeleteCorsOriginCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -16,6 +16,7 @@ use crate::support;
 
 use axum::http::StatusCode;
 
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::permissions;
 use support::{read_json, TestApp};
@@ -252,7 +253,7 @@ const UNRELATED: &str = "platform:messaging:event:view";
 #[ignore = "requires Docker"]
 async fn every_read_answers_as_go_for_an_under_privileged_caller() {
     let app = TestApp::setup().await;
-    let client = fc_platform::client::entity::Client::new("Read Perms", "read-perms");
+    let client = Client::new("Read Perms", "read-perms");
     app.repos
         .client_repo
         .insert(&client)
@@ -307,8 +308,8 @@ async fn every_read_answers_as_go_for_an_under_privileged_caller() {
 #[ignore = "requires Docker"]
 async fn principal_self_read_and_out_of_reach_rows_answer_as_go() {
     let app = TestApp::setup().await;
-    let mine = fc_platform::client::entity::Client::new("Mine", "rp-mine");
-    let theirs = fc_platform::client::entity::Client::new("Theirs", "rp-theirs");
+    let mine = Client::new("Mine", "rp-mine");
+    let theirs = Client::new("Theirs", "rp-theirs");
     for c in [&mine, &theirs] {
         app.repos
             .client_repo

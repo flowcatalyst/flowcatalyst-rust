@@ -8,6 +8,9 @@ use async_trait::async_trait;
 use super::cache::FileBody;
 use super::{percent_decode, ArtifactError, Source, SourceStream};
 use crate::digest::Digest;
+use std::path::PathBuf;
+use tokio::fs;
+use tokio::fs::File;
 
 #[derive(Debug, Default, Clone)]
 pub struct FileSource;
@@ -21,13 +24,13 @@ impl Source for FileSource {
         _: Option<&str>,
     ) -> Result<SourceStream, ArtifactError> {
         let path = resolve(artifact_ref)?;
-        let metadata = tokio::fs::metadata(&path)
+        let metadata = fs::metadata(&path)
             .await
             .map_err(|_| ArtifactError::NotFound)?;
         if !metadata.is_file() {
             return Err(ArtifactError::NotFound);
         }
-        let file = tokio::fs::File::open(&path)
+        let file = File::open(&path)
             .await
             .map_err(|_| ArtifactError::NotFound)?;
         Ok(SourceStream {
@@ -39,7 +42,7 @@ impl Source for FileSource {
 
 /// `new URI(ref)` → scheme `file`, no host, an absolute (percent-decoded)
 /// path. Query and fragment are not part of the path.
-fn resolve(artifact_ref: &str) -> Result<std::path::PathBuf, ArtifactError> {
+fn resolve(artifact_ref: &str) -> Result<PathBuf, ArtifactError> {
     let rest = artifact_ref
         .strip_prefix("file:")
         .ok_or_else(|| ArtifactError::BadRef("not a file:// reference".into()))?;
@@ -61,7 +64,7 @@ fn resolve(artifact_ref: &str) -> Result<std::path::PathBuf, ArtifactError> {
             "file:// references must be absolute".into(),
         ));
     }
-    Ok(std::path::PathBuf::from(percent_decode(path)?))
+    Ok(PathBuf::from(percent_decode(path)?))
 }
 
 #[cfg(test)]
@@ -69,18 +72,17 @@ mod tests {
     use super::*;
     use crate::artifact::{ArtifactCache, ArtifactStore, ArtifactStores, DEFAULT_MAX_BYTES};
     use sha2::{Digest as _, Sha256};
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     #[test]
     fn references_resolve_like_java_uri() {
         assert_eq!(
             resolve("file:///a/b%20c.wasm").unwrap(),
-            std::path::PathBuf::from("/a/b c.wasm")
+            PathBuf::from("/a/b c.wasm")
         );
-        assert_eq!(
-            resolve("file:/a/b").unwrap(),
-            std::path::PathBuf::from("/a/b")
-        );
+        assert_eq!(resolve("file:/a/b").unwrap(), PathBuf::from("/a/b"));
         assert!(matches!(
             resolve("file://host/a"),
             Err(ArtifactError::BadRef(_))
@@ -95,7 +97,7 @@ mod tests {
     async fn fetches_a_file_through_the_cache() {
         let dir = tempfile::tempdir().unwrap();
         let artifact = dir.path().join("fn.wasm");
-        std::fs::write(&artifact, b"\0asm module bytes").unwrap();
+        fs::write(&artifact, b"\0asm module bytes").unwrap();
         let digest = Digest::from_sha256(&Sha256::digest(b"\0asm module bytes").into());
         let stores = ArtifactStores::new(
             ArtifactCache::new(dir.path().join("cache"), DEFAULT_MAX_BYTES).unwrap(),

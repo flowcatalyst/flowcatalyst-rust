@@ -7,6 +7,9 @@ use std::collections::HashMap;
 use super::entity::EmailDomainMapping;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -298,10 +301,7 @@ impl EmailDomainMappingRepository {
 
 /// Upsert a mapping and replace its junction rows, inside the caller's
 /// transaction: the one write path for `tnt_email_domain_mappings`.
-async fn write_mapping(
-    edm: &EmailDomainMapping,
-    tx: &mut fc_platform_core::usecase::DbTx<'_>,
-) -> Result<()> {
+async fn write_mapping(edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
     sqlx::query(
         r#"INSERT INTO tnt_email_domain_mappings
             (id, email_domain, identity_provider_id, scope_type,
@@ -377,7 +377,7 @@ async fn write_mapping(
     Ok(())
 }
 
-async fn delete_junctions(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>) -> Result<()> {
+async fn delete_junctions(id: &str, tx: &mut DbTx<'_>) -> Result<()> {
     for table in [
         "tnt_email_domain_mapping_additional_clients",
         "tnt_email_domain_mapping_granted_clients",
@@ -394,7 +394,7 @@ async fn delete_junctions(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>
     Ok(())
 }
 
-async fn delete_mapping(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>) -> Result<bool> {
+async fn delete_mapping(id: &str, tx: &mut DbTx<'_>) -> Result<bool> {
     delete_junctions(id, tx).await?;
     let result = sqlx::query("DELETE FROM tnt_email_domain_mappings WHERE id = $1")
         .bind(id)
@@ -403,27 +403,19 @@ async fn delete_mapping(id: &str, tx: &mut fc_platform_core::usecase::DbTx<'_>) 
     Ok(result.rows_affected() > 0)
 }
 
-impl fc_platform_core::usecase::unit_of_work::HasId for EmailDomainMapping {
+impl HasId for EmailDomainMapping {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[async_trait::async_trait]
-impl fc_platform_core::usecase::Persist<EmailDomainMapping> for EmailDomainMappingRepository {
-    async fn persist(
-        &self,
-        edm: &EmailDomainMapping,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<EmailDomainMapping> for EmailDomainMappingRepository {
+    async fn persist(&self, edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
         write_mapping(edm, tx).await
     }
 
-    async fn delete(
-        &self,
-        edm: &EmailDomainMapping,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, edm: &EmailDomainMapping, tx: &mut DbTx<'_>) -> Result<()> {
         delete_mapping(&edm.id, tx).await.map(|_| ())
     }
 }

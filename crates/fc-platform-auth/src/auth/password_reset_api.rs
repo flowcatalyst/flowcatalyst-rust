@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
+use crate::auth::refresh_token_repository::RefreshTokenRepository;
 use crate::mfa::TwoFactorLogin;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::ClientIp;
@@ -29,6 +30,7 @@ use fc_platform_iam::mfa::entity::MethodType;
 use fc_platform_iam::password_reset::entity::{PasswordResetToken, TokenPurpose};
 use fc_platform_iam::password_reset::repository::PasswordResetTokenRepository;
 use fc_platform_iam::principal::entity::Principal;
+use fc_platform_iam::principal::operations::ResetPasswordUseCase;
 use fc_platform_iam::principal::repository::PrincipalRepository;
 
 /// Wrong authenticator codes against a factor-gated reset token before the
@@ -50,13 +52,12 @@ pub struct PasswordResetApiState {
     pub password_reset_repo: Arc<PasswordResetTokenRepository>,
     /// Use case used by `confirm_reset` so the principal write + event +
     /// audit log are committed atomically.
-    pub reset_password_use_case:
-        Arc<fc_platform_iam::principal::operations::ResetPasswordUseCase<PgUnitOfWork>>,
+    pub reset_password_use_case: Arc<ResetPasswordUseCase<PgUnitOfWork>>,
     /// The 2FA hand-off (factor-gated resets, `reset_2fa` tokens, the
     /// enrolment gate, the invite's session). None: resets ignore 2FA.
     pub two_factor: Option<Arc<TwoFactorLogin>>,
     /// Refresh tokens minted under the old password die with it.
-    pub refresh_token_repo: Arc<crate::auth::refresh_token_repository::RefreshTokenRepository>,
+    pub refresh_token_repo: Arc<RefreshTokenRepository>,
     /// The password-setup request's per-IP and per-address budget.
     pub rate_limit_store: Arc<dyn RateLimitStore>,
     pub rate_limit_policies: Arc<RateLimitPolicies>,

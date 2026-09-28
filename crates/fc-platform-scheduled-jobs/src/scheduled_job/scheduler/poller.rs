@@ -29,6 +29,10 @@ use crate::scheduled_job::entity::{
 use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 pub struct ScheduledJobPoller {
     config: ScheduledJobSchedulerConfig,
@@ -57,8 +61,8 @@ impl ScheduledJobPoller {
             interval_seconds = self.config.poll_interval.as_secs(),
             "Scheduled-job poller started"
         );
-        let mut ticker = tokio::time::interval(self.config.poll_interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut ticker = time::interval(self.config.poll_interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -113,9 +117,7 @@ impl ScheduledJobPoller {
         };
 
         let instance = ScheduledJobInstance {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ScheduledJobInstance,
-            ),
+            id: tsid::generate(EntityType::ScheduledJobInstance),
             scheduled_job_id: job.id.clone(),
             client_id: job.client_id.clone(),
             job_code: job.code.clone(),

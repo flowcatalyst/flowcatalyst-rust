@@ -21,6 +21,9 @@ use super::trust_root::{CertificateAuthority, TrustRoot};
 use super::{Reason, Verification};
 use crate::digest::{Digest, SignerIdentity};
 use crate::java;
+use p256::ecdsa::Signature;
+use p256::ecdsa::VerifyingKey;
+use p384::ecdsa;
 
 const MEDIA_TYPE: &str = "application/vnd.dev.sigstore.bundle.v0.3+json";
 const CODE_SIGNING_EKU: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.3");
@@ -849,8 +852,8 @@ fn read_header(der: &[u8], offset: usize) -> Option<(usize, usize)> {
 }
 
 pub(crate) enum EcKey {
-    P256(p256::ecdsa::VerifyingKey),
-    P384(p384::ecdsa::VerifyingKey),
+    P256(VerifyingKey),
+    P384(ecdsa::VerifyingKey),
 }
 
 impl EcKey {
@@ -865,11 +868,9 @@ impl EcKey {
         let curve: ObjectIdentifier = spki.algorithm.parameters.as_ref()?.decode_as().ok()?;
         let point = spki.subject_public_key.as_bytes()?;
         if curve == SECP256R1 {
-            p256::ecdsa::VerifyingKey::from_sec1_bytes(point)
-                .ok()
-                .map(EcKey::P256)
+            VerifyingKey::from_sec1_bytes(point).ok().map(EcKey::P256)
         } else if curve == SECP384R1 {
-            p384::ecdsa::VerifyingKey::from_sec1_bytes(point)
+            ecdsa::VerifyingKey::from_sec1_bytes(point)
                 .ok()
                 .map(EcKey::P384)
         } else {
@@ -882,9 +883,9 @@ impl EcKey {
     pub(crate) fn verify_prehash(&self, prehash: &[u8], signature_der: &[u8]) -> bool {
         use p256::ecdsa::signature::hazmat::PrehashVerifier;
         match self {
-            EcKey::P256(key) => p256::ecdsa::Signature::from_der(signature_der)
+            EcKey::P256(key) => Signature::from_der(signature_der)
                 .is_ok_and(|sig| key.verify_prehash(prehash, &sig).is_ok()),
-            EcKey::P384(key) => p384::ecdsa::Signature::from_der(signature_der)
+            EcKey::P384(key) => ecdsa::Signature::from_der(signature_der)
                 .is_ok_and(|sig| key.verify_prehash(prehash, &sig).is_ok()),
         }
     }

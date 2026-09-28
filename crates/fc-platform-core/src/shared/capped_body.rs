@@ -74,6 +74,7 @@ fn append_capped(bytes: &mut Vec<u8>, chunk: &[u8], cap: usize) -> bool {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn chunks_are_kept_up_to_the_cap() {
@@ -100,7 +101,7 @@ mod tests {
     /// and the read ends without waiting for the rest.
     #[tokio::test]
     async fn a_huge_response_is_read_only_to_the_cap() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -133,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_short_response_is_read_whole() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();

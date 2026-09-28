@@ -8,8 +8,11 @@ use std::sync::Arc;
 
 use super::events::EventTypeCreated;
 use crate::event_type::entity::EventType;
+use crate::event_type::entity::SpecVersion;
 use crate::event_type::entity::{EventTypeCode, EventTypeCodeError};
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new event type.
@@ -43,7 +46,7 @@ pub struct CreateEventTypeCommand {
     pub schema: Option<serde_json::Value>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateEventTypeCommand {}
+impl AuditMasked for CreateEventTypeCommand {}
 
 impl CreateEventTypeCommand {
     /// Parse a requested code for this command, with Go `CreateEventType`'s
@@ -130,10 +133,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         command: &CreateEventTypeCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::caller_reach::check_scope_access(
-            ctx.caller(),
-            command.client_id.as_deref(),
-        )
+        caller_reach::check_scope_access(ctx.caller(), command.client_id.as_deref())
     }
 
     async fn execute(
@@ -163,11 +163,7 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         }
         event_type.client_scoped = command.client_scoped;
         if let Some(schema) = &command.schema {
-            let spec = crate::event_type::entity::SpecVersion::new(
-                &event_type.id,
-                "1.0",
-                Some(schema.clone()),
-            );
+            let spec = SpecVersion::new(&event_type.id, "1.0", Some(schema.clone()));
             event_type.add_schema_version(spec);
         }
         event_type.created_by = Some(ctx.principal_id.clone());

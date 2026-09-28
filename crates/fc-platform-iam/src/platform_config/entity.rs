@@ -1,6 +1,8 @@
 //! PlatformConfig Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +57,7 @@ impl PlatformConfig {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::PlatformConfig,
-            ),
+            id: tsid::generate(EntityType::PlatformConfig),
             application_code: application_code.into(),
             section: section.into(),
             property: property.into(),

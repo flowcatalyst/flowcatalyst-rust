@@ -261,6 +261,7 @@ fn percent_decode(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ptr;
 
     fn p(raw: &str) -> RoutePattern {
         RoutePattern::parse(raw).unwrap()
@@ -484,10 +485,10 @@ mod tests {
         // Identical patterns compare equal; the stable sort keeps the first.
         let twins = [p("/x"), p("/x")];
         let m = RoutePattern::first_match(&twins, "/x").unwrap();
-        assert!(std::ptr::eq(m.pattern, &twins[0]));
+        assert!(ptr::eq(m.pattern, &twins[0]));
         // Any iterator of patterns, e.g. an endpoint list's paths.
         let owned = [p("/a/{id}"), p("/a/b")];
         let m = RoutePattern::first_match(owned.iter(), "/a/b").unwrap();
-        assert!(std::ptr::eq(m.pattern, &owned[1]));
+        assert!(ptr::eq(m.pattern, &owned[1]));
     }
 }

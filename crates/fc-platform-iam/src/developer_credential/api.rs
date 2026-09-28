@@ -20,7 +20,10 @@ use super::operations::{
     SetDeveloperCredentialCommand, SetDeveloperCredentialUseCase,
 };
 use super::DEVELOPER_ROLE;
+use crate::principal::api::PrincipalResponse;
 use crate::principal::{entity::Principal, repository::PrincipalRepository};
+use base64::engine::general_purpose;
+use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::{checks, AuthContext};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::PlatformError;
@@ -49,7 +52,7 @@ pub struct SetDeveloperCredentialResponse {
 /// answers it, plus `hasDeveloperCredential` / `developerCredentialUpdatedAt`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DeveloperUserListResponse {
-    #[schema(value_type = Vec<crate::principal::api::PrincipalResponse>)]
+    #[schema(value_type = Vec<PrincipalResponse>)]
     pub principals: Vec<serde_json::Value>,
     #[schema(value_type = i64)]
     pub total: usize,
@@ -68,7 +71,7 @@ pub async fn list_developer_users(
     State(state): State<DeveloperCredentialsState>,
     auth: Authenticated,
 ) -> Result<Json<DeveloperUserListResponse>, PlatformError> {
-    checks::require_permission(&auth.0, fc_platform_core::permissions::iam::USER_READ)?;
+    checks::require_permission(&auth.0, permissions::iam::USER_READ)?;
     let users: Vec<Principal> = state
         .principal_repo
         .find_with_role(DEVELOPER_ROLE)
@@ -85,8 +88,7 @@ pub async fn list_developer_users(
         .into_iter()
         .map(|p| {
             let updated = times.get(&p.id).copied();
-            let mut v = serde_json::to_value(crate::principal::api::PrincipalResponse::from(p))
-                .unwrap_or_default();
+            let mut v = serde_json::to_value(PrincipalResponse::from(p)).unwrap_or_default();
             v["hasDeveloperCredential"] = serde_json::Value::Bool(updated.is_some());
             if let Some(at) = updated {
                 v["developerCredentialUpdatedAt"] = serde_json::Value::String(at.to_rfc3339());
@@ -118,10 +120,7 @@ pub async fn set_developer_credential(
 ) -> Result<Json<SetDeveloperCredentialResponse>, PlatformError> {
     // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
-        checks::require_permission(
-            &auth.0,
-            fc_platform_core::permissions::developer::API_CREDENTIAL_MANAGE,
-        )?;
+        checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
         checks::can_write_principals(&auth.0)?;
     }
@@ -133,10 +132,7 @@ pub async fn set_developer_credential(
 /// needs the user-admin write permission.
 fn require_credential_access(ctx: &AuthContext, id: &str) -> Result<(), PlatformError> {
     if ctx.principal_id == id {
-        checks::require_permission(
-            ctx,
-            fc_platform_core::permissions::developer::API_CREDENTIAL_MANAGE,
-        )
+        checks::require_permission(ctx, permissions::developer::API_CREDENTIAL_MANAGE)
     } else {
         checks::can_write_principals(ctx)
     }
@@ -158,7 +154,7 @@ pub async fn set_credential(
     })?;
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes[..]);
-    let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let plaintext = general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let command = SetDeveloperCredentialCommand {
         principal_id: id.to_string(),
         secret_ref: enc.hash_secret(&plaintext),
@@ -191,10 +187,7 @@ pub async fn revoke_developer_credential(
 ) -> Result<StatusCode, PlatformError> {
     // The coarse gate before any load (see `require_credential_access`).
     if auth.0.principal_id == id {
-        checks::require_permission(
-            &auth.0,
-            fc_platform_core::permissions::developer::API_CREDENTIAL_MANAGE,
-        )?;
+        checks::require_permission(&auth.0, permissions::developer::API_CREDENTIAL_MANAGE)?;
     } else {
         checks::can_write_principals(&auth.0)?;
     }

@@ -20,9 +20,14 @@ use super::events::{
 };
 use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
 use crate::scheduled_job::ScheduledJobRepository;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,10 +75,10 @@ pub struct SyncScheduledJobsCommand {
     /// `protectedIds`, `function-invocation.md` §4.2). Neither updated when
     /// listed nor archived when unlisted.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
-    pub protected_ids: std::collections::BTreeSet<String>,
+    pub protected_ids: BTreeSet<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncScheduledJobsCommand {}
+impl AuditMasked for SyncScheduledJobsCommand {}
 
 pub struct SyncScheduledJobsUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
@@ -122,23 +127,17 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
     ) -> Result<(), UseCaseError> {
         match command.client_id.as_deref() {
             Some(cid) if !ctx.caller().can_access_client(cid) => Err(UseCaseError::verbatim(
-                fc_platform_core::shared::error::PlatformError::forbidden(format!(
-                    "No access to client: {cid}"
-                )),
+                PlatformError::forbidden(format!("No access to client: {cid}")),
             )),
             Some(_) => Ok(()),
             None if ctx.caller().is_anchor()
-                || ctx
-                    .caller()
-                    .has_permission(fc_platform_core::permissions::ADMIN_ALL) =>
+                || ctx.caller().has_permission(permissions::ADMIN_ALL) =>
             {
                 Ok(())
             }
-            None => Err(UseCaseError::verbatim(
-                fc_platform_core::shared::error::PlatformError::forbidden(
-                    "Only anchor users can sync platform-scoped scheduled jobs",
-                ),
-            )),
+            None => Err(UseCaseError::verbatim(PlatformError::forbidden(
+                "Only anchor users can sync platform-scoped scheduled jobs",
+            ))),
         }
     }
 
@@ -159,7 +158,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         };
         let existing = existing?;
 
-        let mut existing_by_code: std::collections::HashMap<String, ScheduledJob> =
+        let mut existing_by_code: HashMap<String, ScheduledJob> =
             existing.into_iter().map(|j| (j.code.clone(), j)).collect();
 
         let mut created: Vec<String> = Vec::new();

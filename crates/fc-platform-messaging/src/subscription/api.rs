@@ -11,11 +11,26 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::dispatch_job::entity;
+use crate::subscription::access;
+use crate::subscription::entity::ConfigEntry;
+use crate::subscription::entity::SubscriptionStatus;
 use crate::subscription::entity::{EventTypeBinding, Subscription};
+use crate::subscription::operations::CreateSubscriptionUseCase;
+use crate::subscription::operations::DeleteSubscriptionUseCase;
+use crate::subscription::operations::EventTypeBindingInput;
+use crate::subscription::operations::PauseSubscriptionUseCase;
+use crate::subscription::operations::ResumeSubscriptionUseCase;
+use crate::subscription::operations::UpdateSubscriptionUseCase;
 use crate::subscription::repository::SubscriptionRepository;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 /// Event type binding request
 #[derive(Debug, Deserialize, ToSchema)]
@@ -39,8 +54,8 @@ pub struct EventTypeBindingRequest {
 }
 
 impl EventTypeBindingRequest {
-    fn into_input(self) -> crate::subscription::operations::EventTypeBindingInput {
-        crate::subscription::operations::EventTypeBindingInput {
+    fn into_input(self) -> EventTypeBindingInput {
+        EventTypeBindingInput {
             event_type_code: self.event_type_code,
             filter: self.filter,
             event_type_id: self.event_type_id,
@@ -58,12 +73,10 @@ pub struct ConfigEntryRequest {
     pub value: String,
 }
 
-fn config_entries(
-    entries: Option<Vec<ConfigEntryRequest>>,
-) -> Option<Vec<crate::subscription::entity::ConfigEntry>> {
+fn config_entries(entries: Option<Vec<ConfigEntryRequest>>) -> Option<Vec<ConfigEntry>> {
     entries.map(|v| {
         v.into_iter()
-            .map(|c| crate::subscription::entity::ConfigEntry {
+            .map(|c| ConfigEntry {
                 key: c.key,
                 value: c.value,
             })
@@ -238,8 +251,8 @@ pub struct ConfigEntryResponse {
     pub value: String,
 }
 
-impl From<&crate::subscription::entity::ConfigEntry> for ConfigEntryResponse {
-    fn from(c: &crate::subscription::entity::ConfigEntry) -> Self {
+impl From<&ConfigEntry> for ConfigEntryResponse {
+    fn from(c: &ConfigEntry) -> Self {
         Self {
             key: c.key.clone(),
             value: c.value.clone(),
@@ -358,31 +371,11 @@ pub struct SubscriptionsQuery {
 #[derive(Clone)]
 pub struct SubscriptionsState {
     pub subscription_repo: Arc<SubscriptionRepository>,
-    pub create_use_case: Arc<
-        crate::subscription::operations::CreateSubscriptionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub update_use_case: Arc<
-        crate::subscription::operations::UpdateSubscriptionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::subscription::operations::DeleteSubscriptionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub pause_use_case: Arc<
-        crate::subscription::operations::PauseSubscriptionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub resume_use_case: Arc<
-        crate::subscription::operations::ResumeSubscriptionUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub create_use_case: Arc<CreateSubscriptionUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateSubscriptionUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteSubscriptionUseCase<PgUnitOfWork>>,
+    pub pause_use_case: Arc<PauseSubscriptionUseCase<PgUnitOfWork>>,
+    pub resume_use_case: Arc<ResumeSubscriptionUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new subscription
@@ -393,7 +386,7 @@ pub struct SubscriptionsState {
     operation_id = "createSubscription",
     request_body = CreateSubscriptionRequest,
     responses(
-        (status = 201, description = "Subscription created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Subscription created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -403,23 +396,15 @@ pub async fn create_subscription(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
     Json(req): Json<CreateSubscriptionRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::subscription::operations::CreateSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
+    checks::can_write_subscriptions(&auth.0)?;
 
     // Ruling X-01: absent or unrecognised means NEXT_ON_ERROR (with a warning
     // for the unrecognised case), never a rejection.
-    let mode = Some(crate::dispatch_job::entity::parse_dispatch_mode(
-        req.mode.as_deref(),
-    ));
+    let mode = Some(entity::parse_dispatch_mode(req.mode.as_deref()));
 
     // The use case checks, in Go's order: the input (400), then the
     // caller's reach into the requested client (403 SCOPE_FORBIDDEN; a
@@ -453,9 +438,7 @@ pub async fn create_subscription(
 
     Ok((
         StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.subscription_id,
-        )),
+        Json(CreatedResponse::new(event.subscription_id)),
     ))
 }
 
@@ -479,7 +462,7 @@ pub async fn get_subscription(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SubscriptionResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_subscriptions(&auth.0)?;
+    checks::can_read_subscriptions(&auth.0)?;
 
     let subscription = state
         .subscription_repo
@@ -488,7 +471,7 @@ pub async fn get_subscription(
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
 
     // Check client access
-    crate::subscription::access::ensure_visible(&auth.0, &subscription)?;
+    access::ensure_visible(&auth.0, &subscription)?;
 
     Ok(Json(subscription.into()))
 }
@@ -510,9 +493,8 @@ pub async fn list_subscriptions(
     auth: Authenticated,
     Query(query): Query<SubscriptionsQuery>,
 ) -> Result<Json<SubscriptionListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_subscriptions(&auth.0)?;
-    let status: Option<crate::subscription::entity::SubscriptionStatus> =
-        fc_platform_core::shared::enum_str::parse_opt(query.status.as_deref())?;
+    checks::can_read_subscriptions(&auth.0)?;
+    let status: Option<SubscriptionStatus> = enum_str::parse_opt(query.status.as_deref())?;
 
     // Go: the filters as given (no status filter means every status), then
     // `FilterClientScoped` — platform subscriptions to every holder of the
@@ -527,9 +509,9 @@ pub async fn list_subscriptions(
     let filtered: Vec<SubscriptionResponse> = subscriptions
         .into_iter()
         .filter(|s| {
-            s.client_id.as_deref().is_none_or(|cid| {
-                fc_platform_core::shared::caller_reach::reaches_client(&auth.0, cid)
-            })
+            s.client_id
+                .as_deref()
+                .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|s| s.into())
         .collect();
@@ -566,7 +548,7 @@ pub async fn update_subscription(
     use crate::subscription::operations::UpdateSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
+    checks::can_write_subscriptions(&auth.0)?;
 
     // The use case validates, loads (404) and checks the caller's scope on
     // the loaded row (403 SCOPE_FORBIDDEN), in Go's order.
@@ -587,7 +569,7 @@ pub async fn update_subscription(
         mode: req
             .mode
             .as_deref()
-            .map(|m| crate::dispatch_job::entity::parse_dispatch_mode(Some(m))),
+            .map(|m| entity::parse_dispatch_mode(Some(m))),
         max_retries: req.max_retries,
         timeout_seconds: req.timeout_seconds,
         data_only: req.data_only,
@@ -625,7 +607,7 @@ pub async fn pause_subscription(
     use crate::subscription::operations::PauseSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
+    checks::can_write_subscriptions(&auth.0)?;
 
     // The use case answers 404 for a missing subscription, then checks the
     // caller's scope on it (Go `CheckScopeAccess`).
@@ -663,7 +645,7 @@ pub async fn resume_subscription(
     use crate::subscription::operations::ResumeSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
+    checks::can_write_subscriptions(&auth.0)?;
 
     // The use case answers 404 for a missing subscription, then checks the
     // caller's scope on it (Go `CheckScopeAccess`).
@@ -701,7 +683,7 @@ pub async fn delete_subscription(
     use crate::subscription::operations::DeleteSubscriptionCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_subscriptions(&auth.0)?;
+    checks::can_delete_subscriptions(&auth.0)?;
 
     // The use case answers 404 for a missing subscription, then checks the
     // caller's scope on it (Go `CheckScopeAccess`).

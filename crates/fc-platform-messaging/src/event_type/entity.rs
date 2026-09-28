@@ -1,7 +1,13 @@
 //! EventType Entity — matches TypeScript EventType domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use serde::de;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -89,9 +95,7 @@ impl SpecVersion {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Schema,
-            ),
+            id: tsid::generate(EntityType::Schema),
             event_type_id: event_type_id.into(),
             version: version.into(),
             mime_type: "application/schema+json".to_string(),
@@ -226,8 +230,8 @@ impl AsRef<str> for EventTypeCode {
     }
 }
 
-impl std::fmt::Display for EventTypeCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for EventTypeCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
@@ -241,7 +245,7 @@ impl Serialize for EventTypeCode {
 impl<'de> Deserialize<'de> for EventTypeCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let code = String::deserialize(deserializer)?;
-        Self::parse(&code).map_err(serde::de::Error::custom)
+        Self::parse(&code).map_err(de::Error::custom)
     }
 }
 
@@ -254,9 +258,7 @@ impl EventType {
         let event_name = code.event_name().to_string();
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::EventType,
-            ),
+            id: tsid::generate(EntityType::EventType),
             code: code.into_string(),
             name: name.into(),
             description: None,
@@ -299,6 +301,8 @@ impl EventType {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::thread;
+    use std::time::Duration;
 
     // ── EventTypeCode parsing ─────────────────────────────────────────────
 
@@ -389,7 +393,7 @@ mod tests {
     fn archive_flips_status_and_bumps_updated_at() {
         let mut et = EventType::new(code("a:b:c:d"), "Name");
         let before = et.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         et.archive();
         assert_eq!(et.status, EventTypeStatus::Archived);
         assert!(et.updated_at > before);
@@ -399,7 +403,7 @@ mod tests {
     fn add_schema_version_appends_and_bumps_updated_at() {
         let mut et = EventType::new(code("a:b:c:d"), "Name");
         let before = et.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         let sv = SpecVersion::new(&et.id, "1.0.0", None);
         et.add_schema_version(sv);
         assert_eq!(et.spec_versions.len(), 1);

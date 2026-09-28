@@ -8,11 +8,20 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
+use crate::developer_credential::DeveloperCredential;
+use crate::principal::entity::PrincipalSyncBatch;
 use crate::service_account::entity::RoleAssignment;
 use fc_platform_core::directory::PrincipalDirectory;
 use fc_platform_core::shared::enum_str::{decode, decode_opt};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::iter;
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
@@ -86,9 +95,9 @@ impl TryFrom<PrincipalRow> for Principal {
             service_account_id: r.service_account_id,
             roles: vec![],
             assigned_clients: vec![],
-            client_identifier_map: std::collections::HashMap::new(),
+            client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
-            application_code_map: std::collections::HashMap::new(),
+            application_code_map: HashMap::new(),
             all_applications: r.all_applications,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -566,10 +575,9 @@ impl PrincipalRepository {
 
         if !principal.accessible_application_ids.is_empty() {
             let count = principal.accessible_application_ids.len();
-            let principal_ids: Vec<String> =
-                std::iter::repeat_n(principal.id.clone(), count).collect();
+            let principal_ids: Vec<String> = iter::repeat_n(principal.id.clone(), count).collect();
             let app_ids: Vec<String> = principal.accessible_application_ids.clone();
-            let granted_ats: Vec<DateTime<Utc>> = std::iter::repeat_n(now, count).collect();
+            let granted_ats: Vec<DateTime<Utc>> = iter::repeat_n(now, count).collect();
 
             sqlx::query(
                 "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
@@ -622,9 +630,7 @@ impl PrincipalRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (principal_id, client_id) DO NOTHING",
         )
-        .bind(fc_platform_core::shared::tsid::generate(
-            fc_platform_core::shared::tsid::EntityType::ClientAccessGrant,
-        ))
+        .bind(tsid::generate(EntityType::ClientAccessGrant))
         .bind(principal_id)
         .bind(client_id)
         .bind(principal_id)
@@ -649,12 +655,9 @@ impl PrincipalRepository {
     }
 
     /// Batch-lookup principal names by IDs. Returns a map of id -> name.
-    pub async fn find_names_by_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
         if ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT id, name FROM iam_principals WHERE id = ANY($1)")
@@ -682,7 +685,7 @@ impl PrincipalRepository {
         }
 
         let count = roles.len();
-        let pids: Vec<String> = std::iter::repeat_n(principal_id.to_string(), count).collect();
+        let pids: Vec<String> = iter::repeat_n(principal_id.to_string(), count).collect();
         let role_names: Vec<String> = roles.iter().map(|r| r.role.clone()).collect();
         let sources: Vec<Option<&str>> = roles
             .iter()
@@ -738,15 +741,13 @@ impl PrincipalRepository {
         let client_ids: Vec<String> = grant_rows.into_iter().map(|g| g.client_id).collect();
 
         // Collect all client IDs for identifier lookup (grant + home)
-        let mut all_client_ids: std::collections::HashSet<String> =
-            client_ids.iter().cloned().collect();
+        let mut all_client_ids: HashSet<String> = client_ids.iter().cloned().collect();
         if let Some(ref cid) = home_client_id {
             all_client_ids.insert(cid.clone());
         }
 
         // Batch-load client identifiers
-        let mut identifier_map: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let mut identifier_map: HashMap<String, String> = HashMap::new();
         if !all_client_ids.is_empty() {
             let ids_vec: Vec<String> = all_client_ids.into_iter().collect();
             let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
@@ -804,8 +805,7 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut role_map: std::collections::HashMap<String, Vec<RoleAssignment>> =
-            std::collections::HashMap::new();
+        let mut role_map: HashMap<String, Vec<RoleAssignment>> = HashMap::new();
         for r in all_roles {
             role_map
                 .entry(r.principal_id.clone())
@@ -821,10 +821,8 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut grant_map: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        let mut all_client_ids: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut grant_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut all_client_ids: HashSet<String> = HashSet::new();
         for g in &all_grants {
             all_client_ids.insert(g.client_id.clone());
         }
@@ -842,8 +840,7 @@ impl PrincipalRepository {
         }
 
         // Batch-load client identifiers
-        let mut client_id_to_identifier: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let mut client_id_to_identifier: HashMap<String, String> = HashMap::new();
         if !all_client_ids.is_empty() {
             let ids_vec: Vec<String> = all_client_ids.into_iter().collect();
             let client_rows = sqlx::query_as::<_, ClientIdentifierRow>(
@@ -869,10 +866,8 @@ impl PrincipalRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut app_access_map: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        let mut app_code_map: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
+        let mut app_access_map: HashMap<String, Vec<String>> = HashMap::new();
+        let mut app_code_map: HashMap<String, String> = HashMap::new();
         for a in all_app_access {
             if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
                 app_code_map.insert(a.application_id.clone(), code);
@@ -893,7 +888,7 @@ impl PrincipalRepository {
                     principal.roles = roles;
                 }
                 // Build client identifier map — include both grant clients and home client
-                let mut id_map = std::collections::HashMap::new();
+                let mut id_map = HashMap::new();
                 if let Some(ref home_cid) = principal.client_id {
                     if let Some(ident) = client_id_to_identifier.get(home_cid) {
                         id_map.insert(home_cid.clone(), ident.clone());
@@ -931,21 +926,15 @@ impl PrincipalRepository {
 // and one UNNEST role insert, whatever the batch size. Client grants and
 // application access are not touched by a sync.
 
-impl HasId for crate::principal::entity::PrincipalSyncBatch {
+impl HasId for PrincipalSyncBatch {
     fn id(&self) -> &str {
         "principals"
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<crate::principal::entity::PrincipalSyncBatch>
-    for PrincipalRepository
-{
-    async fn persist(
-        &self,
-        batch: &crate::principal::entity::PrincipalSyncBatch,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<PrincipalSyncBatch> for PrincipalRepository {
+    async fn persist(&self, batch: &PrincipalSyncBatch, tx: &mut DbTx<'_>) -> Result<()> {
         let ps = &batch.principals;
         if ps.is_empty() {
             return Ok(());
@@ -1049,11 +1038,7 @@ impl fc_platform_core::usecase::Persist<crate::principal::entity::PrincipalSyncB
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        _batch: &crate::principal::entity::PrincipalSyncBatch,
-        _tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, _batch: &PrincipalSyncBatch, _tx: &mut DbTx<'_>) -> Result<()> {
         Err(PlatformError::Internal {
             message: "a principal sync batch is never deleted".to_string(),
         })
@@ -1073,12 +1058,8 @@ impl HasId for Principal {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<Principal> for PrincipalRepository {
-    async fn persist(
-        &self,
-        p: &Principal,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<Principal> for PrincipalRepository {
+    async fn persist(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         let email_domain = p
             .user_identity
@@ -1190,11 +1171,7 @@ impl fc_platform_core::usecase::Persist<Principal> for PrincipalRepository {
             let grant_ids: Vec<String> = p
                 .assigned_clients
                 .iter()
-                .map(|_| {
-                    fc_platform_core::shared::tsid::generate(
-                        fc_platform_core::shared::tsid::EntityType::ClientAccessGrant,
-                    )
-                })
+                .map(|_| tsid::generate(EntityType::ClientAccessGrant))
                 .collect();
             sqlx::query(
                 "INSERT INTO iam_client_access_grants
@@ -1232,11 +1209,7 @@ impl fc_platform_core::usecase::Persist<Principal> for PrincipalRepository {
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        p: &Principal,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, p: &Principal, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
             .bind(&p.id)
             .execute(&mut **tx.inner)
@@ -1259,7 +1232,7 @@ impl fc_platform_core::usecase::Persist<Principal> for PrincipalRepository {
 
 // ── Developer API credential (Go's dev_client_secret_ref) ──────────────────
 
-impl HasId for crate::developer_credential::DeveloperCredential {
+impl HasId for DeveloperCredential {
     fn id(&self) -> &str {
         &self.principal_id
     }
@@ -1270,14 +1243,8 @@ impl HasId for crate::developer_credential::DeveloperCredential {
 /// rotate stamps `dev_client_secret_updated_at`, revoke clears both columns
 /// (Go `SetDevClientSecretRef` / `ClearDevClientSecretRef`).
 #[async_trait::async_trait]
-impl fc_platform_core::usecase::Persist<crate::developer_credential::DeveloperCredential>
-    for PrincipalRepository
-{
-    async fn persist(
-        &self,
-        c: &crate::developer_credential::DeveloperCredential,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<DeveloperCredential> for PrincipalRepository {
+    async fn persist(&self, c: &DeveloperCredential, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "UPDATE iam_principals SET dev_client_secret_ref = $2, \
              dev_client_secret_updated_at = CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END, \
@@ -1290,11 +1257,7 @@ impl fc_platform_core::usecase::Persist<crate::developer_credential::DeveloperCr
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &crate::developer_credential::DeveloperCredential,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &DeveloperCredential, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "UPDATE iam_principals SET dev_client_secret_ref = NULL, \
              dev_client_secret_updated_at = NULL, updated_at = NOW() WHERE id = $1",
@@ -1326,7 +1289,7 @@ impl PrincipalRepository {
     pub async fn find_developer_secret_times(
         &self,
         ids: &[String],
-    ) -> Result<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>> {
+    ) -> Result<HashMap<String, chrono::DateTime<chrono::Utc>>> {
         let rows = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>)>(
             "SELECT id, dev_client_secret_updated_at FROM iam_principals \
              WHERE id = ANY($1) AND dev_client_secret_ref IS NOT NULL",
@@ -1368,9 +1331,9 @@ impl PrincipalRepository {
     pub async fn find_names_and_emails_by_ids(
         &self,
         ids: &[String],
-    ) -> Result<std::collections::HashMap<String, (String, String)>> {
+    ) -> Result<HashMap<String, (String, String)>> {
         if ids.is_empty() {
-            return Ok(std::collections::HashMap::new());
+            return Ok(HashMap::new());
         }
         let rows: Vec<(String, String, Option<String>)> =
             sqlx::query_as("SELECT id, name, email FROM iam_principals WHERE id = ANY($1)")
@@ -1403,11 +1366,7 @@ impl PrincipalRepository {
     /// Hand federated users back to the internal provider inside `tx` (Go
     /// `MoveMappingTx`): provider INTERNAL, no external identity, and the
     /// roles their IdP synced dropped.
-    pub async fn reset_to_internal_in_tx(
-        &self,
-        ids: &[String],
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    pub async fn reset_to_internal_in_tx(&self, ids: &[String], tx: &mut DbTx<'_>) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
         }

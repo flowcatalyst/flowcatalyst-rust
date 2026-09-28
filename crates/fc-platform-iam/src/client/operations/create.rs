@@ -8,11 +8,14 @@ use std::sync::Arc;
 use super::events::ClientCreated;
 use crate::client::entity::Client;
 use crate::client::repository::ClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use std::sync::OnceLock;
 
 /// Identifier format: lowercase alphanumeric with hyphens, 2-50 chars
 fn identifier_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     // Go's identifierPattern (client/operations/create.go:14).
     PATTERN.get_or_init(|| Regex::new(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$").unwrap())
 }
@@ -28,7 +31,7 @@ pub struct CreateClientCommand {
     pub identifier: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateClientCommand {}
+impl AuditMasked for CreateClientCommand {}
 
 /// Use case for creating a new client.
 pub struct CreateClientUseCase<U: UnitOfWork> {
@@ -105,11 +108,7 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         _command: &CreateClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

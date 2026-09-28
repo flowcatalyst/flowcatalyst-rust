@@ -11,6 +11,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use fc_common::{MediationOutcome, MediationResult};
+use tokio::time;
 use tracing::debug;
 
 /// The in-call HTTP retry schedule (ledger A-03).
@@ -121,7 +122,7 @@ where
             delay_ms = delay.as_millis(),
             "Retrying mediation"
         );
-        tokio::time::sleep(delay).await;
+        time::sleep(delay).await;
     }
 }
 

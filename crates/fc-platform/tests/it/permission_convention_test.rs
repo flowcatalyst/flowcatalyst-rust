@@ -11,6 +11,7 @@
 //! callback), add the file or handler name to one of the skip lists below
 //! with a comment explaining why.
 
+use crate::support::sources;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -120,7 +121,7 @@ const FN_SKIPLIST: &[&str] = &[
 ];
 
 fn should_skip(path: &Path) -> bool {
-    let rel = crate::support::sources::strip_src(path)
+    let rel = sources::strip_src(path)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
@@ -257,7 +258,7 @@ fn every_write_handler_calls_an_auth_check() {
     let skip_keys: HashSet<&str> = FN_SKIPLIST.iter().copied().collect();
 
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
 
     let mut violations: Vec<String> = Vec::new();
 
@@ -268,7 +269,7 @@ fn every_write_handler_calls_an_auth_check() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = crate::support::sources::strip_src(file)
+        let rel = sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");
@@ -309,7 +310,7 @@ fn every_write_handler_calls_an_auth_check() {
 #[test]
 fn every_app_code_handler_checks_application_access() {
     let mut files = Vec::new();
-    files.extend(crate::support::sources::rs_files());
+    files.extend(sources::rs_files());
 
     let mut checked = 0;
     let mut violations: Vec<String> = Vec::new();
@@ -317,7 +318,7 @@ fn every_app_code_handler_checks_application_access() {
         let Ok(content) = fs::read_to_string(file) else {
             continue;
         };
-        let rel = crate::support::sources::strip_src(file)
+        let rel = sources::strip_src(file)
             .unwrap_or(file)
             .to_string_lossy()
             .replace('\\', "/");

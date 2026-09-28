@@ -16,6 +16,9 @@
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::env;
+use std::fmt;
+use std::fmt::Formatter;
 use subtle::ConstantTimeEq;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -31,8 +34,8 @@ pub struct DispatchAuthService {
     secret: String,
 }
 
-impl std::fmt::Debug for DispatchAuthService {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for DispatchAuthService {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("DispatchAuthService")
             .finish_non_exhaustive()
     }
@@ -58,7 +61,7 @@ impl DispatchAuthService {
 
     /// Derive from `FLOWCATALYST_APP_KEY`. `None` when it is unset or blank.
     pub fn from_env() -> Option<Self> {
-        std::env::var("FLOWCATALYST_APP_KEY")
+        env::var("FLOWCATALYST_APP_KEY")
             .ok()
             .and_then(|k| Self::from_app_key(&k))
     }

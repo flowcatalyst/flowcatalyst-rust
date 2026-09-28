@@ -20,6 +20,7 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 use super::events::PasskeyAuthenticated;
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -34,7 +35,7 @@ pub struct AuthenticatePasskeyCommand {
     pub authentication_state: Option<PasskeyAuthentication>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AuthenticatePasskeyCommand {}
+impl AuditMasked for AuthenticatePasskeyCommand {}
 
 pub struct AuthenticationOutcome {
     pub principal_id: String,

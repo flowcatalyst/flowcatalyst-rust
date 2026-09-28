@@ -23,6 +23,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
 use tracing::{debug, info, warn};
 
 /// Latest release version observed on GitHub (if newer than the running
@@ -38,7 +40,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Spawn the version check. Returns immediately; the task itself swallows
 /// all errors (this is a hint, not a hard requirement).
 pub fn spawn() {
-    if std::env::var("FC_DEV_UPDATE_CHECK")
+    if env::var("FC_DEV_UPDATE_CHECK")
         .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
         .unwrap_or(false)
     {
@@ -157,7 +159,7 @@ pub fn cached_upgrade_available() -> Option<String> {
 
 fn read_cache() -> Option<CacheEntry> {
     let path = cache_path()?;
-    let bytes = std::fs::read(&path).ok()?;
+    let bytes = fs::read(&path).ok()?;
     let entry: CacheEntry = serde_json::from_slice(&bytes).ok()?;
     let age = Utc::now().signed_duration_since(entry.checked_at);
     if age.num_seconds() < CACHE_TTL_SECS && age.num_seconds() >= 0 {
@@ -170,9 +172,9 @@ fn read_cache() -> Option<CacheEntry> {
 fn write_cache(entry: &CacheEntry) {
     let Some(path) = cache_path() else { return };
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = fs::create_dir_all(dir);
     }
     if let Ok(bytes) = serde_json::to_vec(entry) {
-        let _ = std::fs::write(&path, bytes);
+        let _ = fs::write(&path, bytes);
     }
 }

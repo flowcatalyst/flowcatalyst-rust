@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::SchemaFinalised;
 use crate::event_type::entity::SpecVersionStatus;
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -22,7 +24,7 @@ pub struct FinaliseSchemaCommand {
     pub version: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for FinaliseSchemaCommand {}
+impl AuditMasked for FinaliseSchemaCommand {}
 
 /// Use case for finalising a schema version (FINALISING → CURRENT).
 pub struct FinaliseSchemaUseCase<U: UnitOfWork> {
@@ -74,10 +76,7 @@ impl<U: UnitOfWork> UseCase for FinaliseSchemaUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                event_type.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
         }
         Ok(())
     }

@@ -1,5 +1,6 @@
 //! Embedded HTML operator dashboard.
 
+use axum::extract::OriginalUri;
 use axum::response::{Html, IntoResponse};
 
 /// Serve dashboard HTML, with the mount prefix injected so the page works
@@ -8,9 +9,7 @@ use axum::response::{Html, IntoResponse};
 ///
 /// The injected `window.__API_BASE__` is consumed by `fetchWithAuth` in
 /// `dashboard.html` to prepend onto every `/monitoring/...` request.
-pub(crate) async fn dashboard_html_handler(
-    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-) -> impl IntoResponse {
+pub(crate) async fn dashboard_html_handler(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
     const DASHBOARD_HTML: &str = include_str!("../../resources/dashboard.html");
 
     // The handler is mounted at both `/monitoring/dashboard` and

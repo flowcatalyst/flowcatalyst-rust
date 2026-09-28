@@ -3,6 +3,7 @@
 //! Stores refresh tokens in `oauth_oidc_payloads` (type = "RefreshToken")
 //! for compatibility with the TypeScript oidc-provider implementation.
 
+use crate::auth::refresh_token;
 use crate::auth::refresh_token::RefreshToken;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::error::Result;
@@ -96,7 +97,7 @@ impl From<PayloadRow> for RefreshToken {
         let created_at = m.created_at;
         let expires_at = m
             .expires_at
-            .unwrap_or_else(|| created_at + crate::auth::refresh_token::refresh_token_ttl());
+            .unwrap_or_else(|| created_at + refresh_token::refresh_token_ttl());
 
         RefreshToken {
             id,

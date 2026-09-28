@@ -23,6 +23,8 @@ use testcontainers::ContainerAsync;
 use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
+use axum::routing;
+use fc_platform::dispatch_job::reaper;
 use fc_platform::scheduler::DispatchAuthService;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::shared::dispatch_process_api::{
@@ -30,6 +32,8 @@ use fc_platform::shared::dispatch_process_api::{
 };
 use fc_platform::shared::routes::dispatch_process_router;
 use fc_platform::{ClientRepository, DispatchJobRepository};
+use tokio::net::TcpListener;
+use tokio::time;
 
 const APP_KEY: &str = "process-test-app-key";
 
@@ -74,7 +78,7 @@ async fn subscriber_handler(
         .unwrap()
         .pop_front()
         .unwrap_or_else(|| Canned::status(200));
-    tokio::time::sleep(canned.delay).await;
+    time::sleep(canned.delay).await;
     let mut resp = (StatusCode::from_u16(canned.status).unwrap(), canned.body).into_response();
     for (k, v) in canned.headers {
         resp.headers_mut().insert(k, v.parse().unwrap());
@@ -85,9 +89,9 @@ async fn subscriber_handler(
 async fn start_subscriber() -> (Arc<Subscriber>, String) {
     let s = Arc::new(Subscriber::default());
     let app = Router::new()
-        .route("/hook", axum::routing::post(subscriber_handler))
+        .route("/hook", routing::post(subscriber_handler))
         .with_state(s.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (s, format!("http://{addr}/hook"))
@@ -783,12 +787,9 @@ async fn the_reaper_resets_stranded_siblings() {
         .await
         .unwrap();
     let repo = DispatchJobRepository::new(&f.pool);
-    let mut ids = fc_platform::dispatch_job::reaper::sweep_once(
-        &repo,
-        fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
-    )
-    .await
-    .unwrap();
+    let mut ids = reaper::sweep_once(&repo, reaper::DEFAULT_PROCESSING_LIVE_AFTER)
+        .await
+        .unwrap();
     ids.sort();
     assert_eq!(ids, vec![queued.id.clone(), stale.id.clone()]);
     assert_eq!(f.row(&live.id).await.status, "PROCESSING");

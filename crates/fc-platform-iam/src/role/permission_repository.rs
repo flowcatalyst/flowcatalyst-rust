@@ -8,6 +8,8 @@ use sqlx::PgPool;
 use crate::role::permission_catalog::CatalogPermission;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 #[derive(sqlx::FromRow)]
 struct PermissionRow {
@@ -77,13 +79,9 @@ impl HasId for CatalogPermission {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<CatalogPermission> for PermissionCatalogRepository {
+impl Persist<CatalogPermission> for PermissionCatalogRepository {
     /// Go's `PermissionUpsert`: idempotent by code.
-    async fn persist(
-        &self,
-        p: &CatalogPermission,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn persist(&self, p: &CatalogPermission, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "INSERT INTO iam_permissions (id, code, subdomain, context, aggregate, action, description)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -107,11 +105,7 @@ impl fc_platform_core::usecase::Persist<CatalogPermission> for PermissionCatalog
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        p: &CatalogPermission,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, p: &CatalogPermission, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM iam_permissions WHERE code = $1")
             .bind(&p.code)
             .execute(&mut **tx.inner)

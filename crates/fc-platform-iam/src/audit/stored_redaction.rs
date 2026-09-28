@@ -7,6 +7,7 @@
 use serde_json::Value;
 
 use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
+use fc_common::audit_redaction;
 
 /// The stored `operation` of a set-property command: this platform's type
 /// name, and the name the Java and Go platforms record for the same command.
@@ -26,5 +27,5 @@ pub fn redact_stored_document(operation: &str, document: &Value) -> Value {
     } else {
         &[]
     };
-    fc_common::audit_redaction::redact_document(document, masked)
+    audit_redaction::redact_document(document, masked)
 }

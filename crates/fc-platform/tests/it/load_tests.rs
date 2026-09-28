@@ -14,6 +14,8 @@ use std::time::Instant;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
+use fc_platform::dispatch_job::signing_guard::SigningGuard;
+use fc_platform::permissions;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::{
     Client, ClientRepository, DispatchJob, DispatchJobRepository, Event, EventRepository,
@@ -384,7 +386,7 @@ async fn test_api_batch_events_throughput() {
     let sdk_events_state = SdkEventsState {
         event_repo,
         client_repo: Arc::new(fc_platform::ClientRepository::new(&pool)),
-        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+        signing: Arc::new(SigningGuard::new(
             Arc::new(fc_platform::SubscriptionRepository::new(&pool)),
             Arc::new(fc_platform::ConnectionRepository::new(&pool)),
             Arc::new(fc_platform::ServiceAccountRepository::new(&pool)),
@@ -400,7 +402,7 @@ async fn test_api_batch_events_throughput() {
     let token = auth_service
         .generate_access_token_with_scope(
             &principal,
-            &[fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string()],
+            &[permissions::admin::BATCH_EVENTS_WRITE.to_string()],
             None,
         )
         .expect("Failed to generate token");

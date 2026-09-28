@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 use super::deploy::{ensure_function_exists, read_manifest};
 use super::{print_json, CliError, Ctx, Io, OutputMode};
+use std::fs;
 
 #[derive(clap::Subcommand, Debug)]
 pub enum ConfigCommand {
@@ -185,7 +186,7 @@ pub async fn secret(
         } => {
             check_address(address)?;
             let raw = match from_file {
-                Some(path) => std::fs::read_to_string(path).map_err(|e| {
+                Some(path) => fs::read_to_string(path).map_err(|e| {
                     CliError::Other(format!("could not read {}: {e}", path.display()))
                 })?,
                 None => {

@@ -31,14 +31,16 @@ use rsa::{BigUint, RsaPublicKey};
 use serde_json::Value;
 
 use crate::clock::SharedClock;
+use base64::alphabet;
 use fc_function_model::java;
+use tokio::sync::Mutex;
 
 pub const REFETCH_FLOOR: chrono::Duration = chrono::Duration::seconds(30);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `Base64.getUrlDecoder()`: the URL alphabet, padding optional.
 pub(crate) const BASE64_URL: GeneralPurpose = GeneralPurpose::new(
-    &base64::alphabet::URL_SAFE,
+    &alphabet::URL_SAFE,
     GeneralPurposeConfig::new()
         .with_decode_padding_mode(DecodePaddingMode::Indifferent)
         .with_decode_allow_trailing_bits(true),
@@ -58,11 +60,11 @@ pub struct JwksKeySource {
     keys: RwLock<HashMap<String, RsaPublicKey>>,
     discovered: RwLock<Discovered>,
     /// Serialises fetches; holds the time of the last one.
-    last_fetch: tokio::sync::Mutex<Option<DateTime<Utc>>>,
+    last_fetch: Mutex<Option<DateTime<Utc>>>,
     /// When [`Self::ensure_discovered`] last tried discovery: its own floor,
     /// separate from the JWKS one, so an on-demand discovery never delays
     /// the key fetch a following token needs.
-    last_discovery: tokio::sync::Mutex<Option<DateTime<Utc>>>,
+    last_discovery: Mutex<Option<DateTime<Utc>>>,
     fetch_count: AtomicUsize,
 }
 
@@ -74,8 +76,8 @@ impl JwksKeySource {
             clock,
             keys: RwLock::new(HashMap::new()),
             discovered: RwLock::new(Discovered::default()),
-            last_fetch: tokio::sync::Mutex::new(None),
-            last_discovery: tokio::sync::Mutex::new(None),
+            last_fetch: Mutex::new(None),
+            last_discovery: Mutex::new(None),
             fetch_count: AtomicUsize::new(0),
         }
     }

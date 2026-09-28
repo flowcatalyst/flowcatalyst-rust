@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
 use sqlx::PgPool;
+use std::env;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 /// The tenant segment for client-less jobs.
@@ -202,17 +205,17 @@ impl DispatchQueueSettings {
     /// `FC_DISPATCH_QUEUE_PREFIX`.
     pub fn from_env() -> Result<Self, String> {
         let first = |a: &str, b: &str| {
-            std::env::var(a)
+            env::var(a)
                 .ok()
                 .filter(|v| !v.is_empty())
-                .or_else(|| std::env::var(b).ok().filter(|v| !v.is_empty()))
+                .or_else(|| env::var(b).ok().filter(|v| !v.is_empty()))
                 .unwrap_or_default()
         };
         Self::resolve(
             &first("FC_DISPATCH_QUEUE_TYPE", "DISPATCH_QUEUE_TYPE"),
             &first("FC_DISPATCH_QUEUE_URL", "DISPATCH_QUEUE_URL"),
             &first("FC_DISPATCH_QUEUE_REGION", "DISPATCH_QUEUE_REGION"),
-            &std::env::var("FC_DISPATCH_QUEUE_PREFIX").unwrap_or_default(),
+            &env::var("FC_DISPATCH_QUEUE_PREFIX").unwrap_or_default(),
         )
     }
 }
@@ -271,7 +274,7 @@ pub struct PoolCodeResolver {
     pool: PgPool,
     ttl: Duration,
     snapshot: RwLock<PoolCodeSnapshot>,
-    refresh_lock: tokio::sync::Mutex<()>,
+    refresh_lock: Mutex<()>,
 }
 
 impl PoolCodeResolver {
@@ -280,7 +283,7 @@ impl PoolCodeResolver {
             pool,
             ttl,
             snapshot: RwLock::new(PoolCodeSnapshot::default()),
-            refresh_lock: tokio::sync::Mutex::new(()),
+            refresh_lock: Mutex::new(()),
         }
     }
 
@@ -386,7 +389,7 @@ pub struct SubscriptionPriorityCache {
     pool: PgPool,
     ttl: Duration,
     snapshot: RwLock<PrioritySnapshot>,
-    refresh_lock: tokio::sync::Mutex<()>,
+    refresh_lock: Mutex<()>,
 }
 
 impl SubscriptionPriorityCache {
@@ -395,7 +398,7 @@ impl SubscriptionPriorityCache {
             pool,
             ttl,
             snapshot: RwLock::new(PrioritySnapshot::default()),
-            refresh_lock: tokio::sync::Mutex::new(()),
+            refresh_lock: Mutex::new(()),
         }
     }
 
@@ -447,7 +450,7 @@ pub struct DestinationInput<'a> {
 /// tenant from the client (platform when none or unknown); priority from the
 /// job's own recognised queue, else its subscription's, else DEFAULT.
 pub struct DestinationResolver {
-    tenants: std::sync::Arc<PoolCodeResolver>,
+    tenants: Arc<PoolCodeResolver>,
     priorities: SubscriptionPriorityCache,
     prefix: String,
     sqs: bool,
@@ -455,7 +458,7 @@ pub struct DestinationResolver {
 
 impl DestinationResolver {
     pub fn new(
-        tenants: std::sync::Arc<PoolCodeResolver>,
+        tenants: Arc<PoolCodeResolver>,
         priorities: SubscriptionPriorityCache,
         settings: &DispatchQueueSettings,
     ) -> Self {

@@ -90,6 +90,43 @@ use fc_platform::usecase::PgUnitOfWork;
 use fc_common::config::{
     env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
 };
+use fc_common::diagnostics::init;
+use fc_common::logging;
+use fc_platform::dispatch_job::reaper;
+use fc_platform::repository::RoleRepository;
+use fc_platform::router;
+use fc_platform::scheduler::SchedulerConfig;
+use fc_platform::service::RoleSyncService;
+use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
+use fc_platform::shared::bootstrap_admin;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_platform::shared::database::SecretProvider;
+use fc_platform::shared::default_processes;
+use fc_platform::shared::encryption_service::EncryptionService;
+use fc_platform::shared::integrity_scan;
+use fc_platform::shared::rate_limit_store;
+use fc_platform::shared::rate_limit_store::RateLimitPolicies;
+use fc_platform::shared::rate_limit_store::RateLimitStore;
+use fc_platform::shared::server_setup;
+use fc_platform::shared::server_setup::AuthInitConfig;
+use fc_platform::shared::server_setup::AuthServices;
+use fc_platform::shared::server_setup::PlatformContext;
+use fc_platform::shared::server_setup::PlatformRoutesConfig;
+use fc_router::bootstrap::RouterEnv;
+use fc_router::bootstrap::RouterRuntime;
+use rustls::crypto::aws_lc_rs;
+use sqlx::postgres::PgPoolOptions;
+use std::collections::HashSet;
+use std::env;
+use std::path::Path;
+use std::process;
+use std::sync::RwLock;
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::Sender;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 mod diagnostics;
 mod function_host;
@@ -106,10 +143,7 @@ mod mcp;
 ///
 /// When mode 2 is used the `SecretProvider` is also returned so the caller
 /// can register the credential-refresh task on every pool it opens.
-async fn resolve_database_url() -> Result<(
-    String,
-    Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
-)> {
+async fn resolve_database_url() -> Result<(String, Option<Arc<dyn SecretProvider>>)> {
     use fc_platform::shared::database::{
         database_source_from_env, AwsSecretProvider, DatabaseSource, SecretProvider,
     };
@@ -145,11 +179,11 @@ async fn resolve_database_url() -> Result<(
 /// sets no directory, so the image path is the default.
 fn static_dir() -> Option<String> {
     const IMAGE_SPA_DIR: &str = "/app/frontend/dist";
-    std::env::var("FC_STATIC_DIR")
+    env::var("FC_STATIC_DIR")
         .ok()
         .filter(|v| !v.trim().is_empty())
         .or_else(|| {
-            std::path::Path::new(IMAGE_SPA_DIR)
+            Path::new(IMAGE_SPA_DIR)
                 .join("index.html")
                 .is_file()
                 .then(|| IMAGE_SPA_DIR.to_string())
@@ -177,7 +211,7 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
     })?;
 
     let (database_url, _) = resolve_database_url().await?;
-    let pool = fc_platform::shared::database::create_pool(&database_url)
+    let pool = database::create_pool(&database_url)
         .await
         .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
 
@@ -198,12 +232,12 @@ async fn main() -> Result<()> {
     // brings aws-lc-rs, others ring), so a client that asks rustls for "the
     // default" provider — the `rediss://` Redis connection behind standby and
     // the rate-limit store — would panic without a process-level choice.
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = aws_lc_rs::default_provider().install_default();
 
     // Maintenance subcommands run instead of the server.
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("backfill-secrets") {
-        fc_common::logging::init_production_logging("fc-server");
+        logging::init_production_logging("fc-server");
         return backfill_secrets(&args[1..]).await;
     }
 
@@ -259,13 +293,13 @@ async fn main() -> Result<()> {
     if function_host_enabled && !other_roles {
         // The panic hook, before the host's own logging (it reaches stderr
         // until then, the host's JSON lines after).
-        fc_common::diagnostics::init();
-        std::process::exit(function_host::run_host_only().await);
+        init();
+        process::exit(function_host::run_host_only().await);
     }
 
     // JSON logs by default, as Go's fc-server writes them (CloudWatch); the
     // panic hook comes with them.
-    fc_common::logging::init_production_logging("fc-server");
+    logging::init_production_logging("fc-server");
     info!("Starting FlowCatalyst Unified Server");
     // One Prometheus registry for the whole process, installed before any
     // subsystem records into it: the metrics port serves it whatever roles
@@ -300,7 +334,7 @@ async fn main() -> Result<()> {
     // half-configured platform credential refuses to start, as Go's
     // newRouterServer does.
     let router_env = if router_enabled {
-        let mut env = fc_router::bootstrap::RouterEnv::from_env()?;
+        let mut env = RouterEnv::from_env()?;
         // The router API verifies platform bearer tokens (owner ruling 2):
         // against FC_ROUTER_PLATFORM_URL, else the platform in this process.
         if platform_enabled {
@@ -329,7 +363,7 @@ async fn main() -> Result<()> {
 
     // A malformed FLOWCATALYST_APP_KEY is fatal at boot, as in Go (an unset
     // one is the documented "encryption disabled" state).
-    fc_platform::shared::encryption_service::EncryptionService::from_env_checked()
+    EncryptionService::from_env_checked()
         .map_err(|e| anyhow::anyhow!("FLOWCATALYST_APP_KEY: {e}"))?;
 
     // ── Database ─────────────────────────────────────────────────────────────
@@ -430,8 +464,8 @@ async fn main() -> Result<()> {
 
     // Stops the background processors that take a token (the dispatch
     // scheduler, the outbox) at shutdown; their tasks are joined, bounded.
-    let processors_stop = tokio_util::sync::CancellationToken::new();
-    let mut processor_tasks: Vec<(&'static str, tokio::task::JoinHandle<()>)> = Vec::new();
+    let processors_stop = CancellationToken::new();
+    let mut processor_tasks: Vec<(&'static str, JoinHandle<()>)> = Vec::new();
 
     // Scheduler (dispatch job polling)
     if scheduler_enabled {
@@ -493,9 +527,9 @@ async fn main() -> Result<()> {
         if let Some(ref election) = leader_election {
             let status_rx = election.subscribe();
             let alb_config = fc_router::AlbTrafficConfig {
-                target_group_arn: std::env::var("FC_ALB_TARGET_GROUP_ARN")
+                target_group_arn: env::var("FC_ALB_TARGET_GROUP_ARN")
                     .expect("FC_ALB_TARGET_GROUP_ARN required when FC_ALB_ENABLED=true"),
-                target_id: std::env::var("FC_ALB_TARGET_ID")
+                target_id: env::var("FC_ALB_TARGET_ID")
                     .expect("FC_ALB_TARGET_ID required when FC_ALB_ENABLED=true"),
                 target_port: env_or_parse("FC_ALB_TARGET_PORT", 8080),
                 // Go: FC_ALB_DEREGISTRATION_DELAY_SECONDS, non-positive → 300 s.
@@ -525,12 +559,12 @@ async fn main() -> Result<()> {
     info!("API server listening on http://{}", api_addr);
     let api_listener = TcpListener::bind(&api_addr).await?;
     // Stops both listeners at shutdown; see `drain_http`.
-    let http_stop = tokio_util::sync::CancellationToken::new();
+    let http_stop = CancellationToken::new();
     // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
     let api_task = {
         let stop = http_stop.clone();
         tokio::spawn(async move {
-            fc_platform::router::serve_api(api_listener, app, stop.cancelled_owned()).await;
+            router::serve_api(api_listener, app, stop.cancelled_owned()).await;
         })
     };
 
@@ -634,7 +668,7 @@ async fn main() -> Result<()> {
     info!("=============================================");
 
     // ── Shutdown ─────────────────────────────────────────────────────────────
-    fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
+    server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received...");
 
     // The function host stops first, so its DRAINING heartbeat still
@@ -649,10 +683,7 @@ async fn main() -> Result<()> {
     // what its groups still hold); joined, bounded.
     processors_stop.cancel();
     for (name, task) in processor_tasks {
-        if tokio::time::timeout(Duration::from_secs(30), task)
-            .await
-            .is_err()
-        {
+        if time::timeout(Duration::from_secs(30), task).await.is_err() {
             warn!(processor = name, "did not stop within 30s");
         }
     }
@@ -677,7 +708,7 @@ async fn main() -> Result<()> {
 
     info!("FlowCatalyst Unified Server shutdown complete");
     // Flush what the optional exporters buffer (OTLP spans).
-    fc_common::logging::shutdown();
+    logging::shutdown();
     Ok(())
 }
 
@@ -685,7 +716,7 @@ async fn main() -> Result<()> {
 struct Database {
     pool: sqlx::PgPool,
     url: String,
-    secret_provider: Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
+    secret_provider: Option<Arc<dyn SecretProvider>>,
     secret_refresh_interval: Duration,
 }
 
@@ -694,43 +725,40 @@ struct Database {
 async fn connect_database() -> Result<Database> {
     let (database_url, secret_provider) = resolve_database_url().await?;
     info!("Connecting to PostgreSQL...");
-    let pg_pool = fc_platform::shared::database::create_pool(&database_url)
+    let pg_pool = database::create_pool(&database_url)
         .await
         .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
 
-    fc_platform::shared::database::run_migrations(
-        &pg_pool,
-        fc_platform::shared::database::MigrationProfile::Production,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
+    database::run_migrations(&pg_pool, MigrationProfile::Production)
+        .await
+        .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
 
-    fc_platform::shared::database::seed_builtin_roles(&pg_pool)
+    database::seed_builtin_roles(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Built-in role seeding failed: {}", e))?;
 
-    fc_platform::shared::database::seed_platform_application(&pg_pool)
+    database::seed_platform_application(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
     // Go seeds the platform event-type catalogue on every start.
-    fc_platform::shared::database::seed_platform_event_types(&pg_pool)
+    database::seed_platform_event_types(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Platform event type seeding failed: {}", e))?;
 
-    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+    default_processes::seed_default_processes(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
 
     // Create the initial platform admin if no anchor user exists yet. No-op
     // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
     // _PASSWORD env vars when first run.
-    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pg_pool)
+    bootstrap_admin::bootstrap_admin_user(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Bootstrap admin seeding failed: {}", e))?;
 
     // Referential-integrity scan — warns about orphaned junction rows.
-    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+    integrity_scan::run(&pg_pool).await;
 
     // Bootstrap of users / clients / applications / service accounts is
     // owned by `fc-dev init`. fc-server is the production binary path —
@@ -744,9 +772,9 @@ async fn connect_database() -> Result<Database> {
     // the now-stale credentials. Mirrors the TS implementation.
     // DB_SECRET_REFRESH_INTERVAL_MS (default 5 min; zero or negative: off).
     // Every pool opened from these credentials registers its own refresh.
-    let secret_refresh_interval = fc_platform::shared::database::secret_refresh_interval_from_env();
+    let secret_refresh_interval = database::secret_refresh_interval_from_env();
     if let Some(provider) = secret_provider.clone() {
-        fc_platform::shared::database::start_secret_refresh(
+        database::start_secret_refresh(
             provider,
             pg_pool.clone(),
             database_url.clone(),
@@ -782,8 +810,7 @@ async fn init_platform(
     // `spawn_stream_processor` below.
 
     // CORS origins cache
-    let cors_origins_cache: Arc<std::sync::RwLock<std::collections::HashSet<String>>> =
-        Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+    let cors_origins_cache: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
     {
         match repos.cors_repo.get_allowed_origins().await {
             Ok(origins) => {
@@ -800,7 +827,7 @@ async fn init_platform(
         let cache = cors_origins_cache.clone();
         let cors_repo_bg = CorsOriginRepository::new(pg_pool);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            let mut interval = time::interval(Duration::from_secs(60));
             interval.tick().await;
             loop {
                 interval.tick().await;
@@ -820,24 +847,21 @@ async fn init_platform(
 
     // Sync code-defined roles
     {
-        let role_sync = fc_platform::service::RoleSyncService::new(std::sync::Arc::new(
-            fc_platform::repository::RoleRepository::new(pg_pool),
-        ));
+        let role_sync = RoleSyncService::new(Arc::new(RoleRepository::new(pg_pool)));
         if let Err(e) = role_sync.sync_code_defined_roles().await {
             warn!("Role sync failed: {}", e);
         }
     }
 
     // Auth services
-    let auth_init_config = fc_platform::shared::server_setup::AuthInitConfig {
+    let auth_init_config = AuthInitConfig {
         issuer: jwt_issuer,
-        ..fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:8080")
+        ..AuthInitConfig::from_env("http://localhost:8080")
     };
     // The session cookie lives as long as the session JWT (Go: both from
     // OIDC_SESSION_TTL).
     let session_ttl_secs = auth_init_config.session_token_expiry_secs;
-    let auth_services =
-        fc_platform::shared::server_setup::init_auth_services(&repos, auth_init_config)?;
+    let auth_services = server_setup::init_auth_services(&repos, auth_init_config)?;
     info!("Auth services initialized");
 
     let unit_of_work = Arc::new(PgUnitOfWork::new(pg_pool.clone()));
@@ -852,20 +876,18 @@ async fn init_platform(
     // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
     // Postgres fallback). Constructed once here so the choice is logged at
     // startup, then handed to the platform router builder.
-    let rate_limit_store =
-        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
-    let rate_limit_policies =
-        Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
+    let rate_limit_store = rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies = Arc::new(RateLimitPolicies::from_env());
 
     // The stranded-sibling reaper (Go's A-01 backstop): platform
     // housekeeping, run wherever the platform is, not leader-gated (each
     // sweep is a status-guarded UPDATE).
     if platform_enabled {
-        tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+        tokio::spawn(reaper::run_reaper(
             repos.dispatch_job_repo.clone(),
-            fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
-            fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
-            tokio_util::sync::CancellationToken::new(),
+            reaper::DEFAULT_REAPER_INTERVAL,
+            reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+            CancellationToken::new(),
         ));
     }
 
@@ -875,10 +897,7 @@ async fn init_platform(
     // secret overlaps, and keep the login-attempts partitions. Wherever the
     // platform runs, not leader-gated, as Go.
     if platform_enabled {
-        fc_platform::shared::server_setup::spawn_auth_purger(
-            pg_pool,
-            repos.oauth_client_repo.clone(),
-        );
+        server_setup::spawn_auth_purger(pg_pool, repos.oauth_client_repo.clone());
     }
 
     // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
@@ -888,7 +907,7 @@ async fn init_platform(
         let store = rate_limit_store.clone();
         let max_window = rate_limit_policies.max_window();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            let mut tick = time::interval(Duration::from_secs(3600));
             tick.tick().await; // skip the immediate-fire tick
             loop {
                 tick.tick().await;
@@ -932,15 +951,15 @@ fn minimal_app() -> Router {
 /// How long the HTTP servers get to finish their in-flight requests at
 /// shutdown (Go `server.Run`: `context.WithTimeout(…, 30*time.Second)` around
 /// `apiSrv.Shutdown`).
-const HTTP_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stop the HTTP servers gracefully: `stop` makes each stop accepting and
 /// finish what it is serving; wait up to `timeout` for all of them, then
 /// abort whatever is left.
 async fn drain_http(
-    stop: &tokio_util::sync::CancellationToken,
-    mut servers: Vec<tokio::task::JoinHandle<()>>,
-    timeout: std::time::Duration,
+    stop: &CancellationToken,
+    mut servers: Vec<JoinHandle<()>>,
+    timeout: Duration,
 ) -> bool {
     stop.cancel();
     let all = async {
@@ -948,7 +967,7 @@ async fn drain_http(
             let _ = s.await;
         }
     };
-    if tokio::time::timeout(timeout, all).await.is_ok() {
+    if time::timeout(timeout, all).await.is_ok() {
         info!("HTTP servers drained");
         return true;
     }
@@ -967,14 +986,14 @@ async fn drain_http(
 #[allow(clippy::too_many_arguments)]
 fn build_platform_app(
     api_port: u16,
-    auth_services: &fc_platform::shared::server_setup::AuthServices,
+    auth_services: &AuthServices,
     unit_of_work: &Arc<PgUnitOfWork>,
     repos: &Repositories,
-    cors_origins_cache: &Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+    cors_origins_cache: &Arc<RwLock<HashSet<String>>>,
     _standby_enabled: bool,
     platform_application_id: String,
-    rate_limit_store: Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
-    rate_limit_policies: Arc<fc_platform::shared::rate_limit_store::RateLimitPolicies>,
+    rate_limit_store: Arc<dyn RateLimitStore>,
+    rate_limit_policies: Arc<RateLimitPolicies>,
     session_ttl_secs: i64,
 ) -> Router {
     let app_state = AppState {
@@ -983,35 +1002,31 @@ fn build_platform_app(
     };
 
     // The platform API router: every route module, built from one context.
-    let ctx = fc_platform::shared::server_setup::PlatformContext::new(
+    let ctx = PlatformContext::new(
         repos,
         auth_services,
         unit_of_work,
-        fc_platform::shared::server_setup::PlatformRoutesConfig {
+        PlatformRoutesConfig {
             rate_limit_store,
             rate_limit_policies,
             session_cookie_secure: true,
-            session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE").unwrap_or_else(
-                |_| {
-                    fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE
-                        .to_string()
-                },
-            ),
+            session_cookie_same_site: env::var("FC_SESSION_COOKIE_SAME_SITE")
+                .unwrap_or_else(|_| PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),
             session_token_expiry_secs: session_ttl_secs,
             static_dir: static_dir(),
-            oidc_login_external_base_url: std::env::var("FC_EXTERNAL_BASE_URL")
-                .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
+            oidc_login_external_base_url: env::var("FC_EXTERNAL_BASE_URL")
+                .or_else(|_| env::var("EXTERNAL_BASE_URL"))
                 .ok(),
-            well_known_external_base_url: std::env::var("FC_EXTERNAL_BASE_URL")
-                .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
+            well_known_external_base_url: env::var("FC_EXTERNAL_BASE_URL")
+                .or_else(|_| env::var("EXTERNAL_BASE_URL"))
                 .unwrap_or_else(|_| format!("http://localhost:{}", api_port)),
-            password_reset_external_base_url: std::env::var("FC_EXTERNAL_BASE_URL")
-                .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
+            password_reset_external_base_url: env::var("FC_EXTERNAL_BASE_URL")
+                .or_else(|_| env::var("EXTERNAL_BASE_URL"))
                 .unwrap_or_else(|_| format!("http://localhost:{}", api_port)),
         },
         platform_application_id,
     );
-    let (app, _openapi) = fc_platform::router::build(&ctx);
+    let (app, _openapi) = router::build(&ctx);
 
     // Add middleware layers
     let app = app
@@ -1077,9 +1092,9 @@ fn build_platform_app(
 /// `fc_router::bootstrap::RouterRuntime`, polling only while
 /// this instance leads. Returns the runtime and its HTTP surface.
 async fn start_router(
-    env: &fc_router::bootstrap::RouterEnv,
+    env: &RouterEnv,
     active_rx: watch::Receiver<bool>,
-) -> Result<(fc_router::bootstrap::RouterRuntime, Router)> {
+) -> Result<(RouterRuntime, Router)> {
     use fc_router::bootstrap::{
         dev_router_config, sqs_client, RouterRuntime, RouterRuntimeOptions, SchemeConsumerFactory,
         SqsPublisher,
@@ -1118,8 +1133,8 @@ async fn spawn_scheduler(
     pg_pool: &sqlx::PgPool,
     active_rx: watch::Receiver<bool>,
     api_port: u16,
-    stop: tokio_util::sync::CancellationToken,
-) -> Result<tokio::task::JoinHandle<()>> {
+    stop: CancellationToken,
+) -> Result<JoinHandle<()>> {
     use fc_platform::scheduler::{DispatchAuthService, DispatchQueueSettings, DispatchScheduler};
 
     let settings = DispatchQueueSettings::from_env()
@@ -1147,7 +1162,7 @@ async fn spawn_scheduler(
 /// Spawn the scheduled-job scheduler (cron poller + webhook dispatcher),
 /// gated on leadership. Single-replica assumption inside the active region.
 async fn spawn_scheduled_job_scheduler(
-    repos: &fc_platform::repository::Repositories,
+    repos: &Repositories,
     mut active_rx: watch::Receiver<bool>,
 ) -> Result<()> {
     use fc_platform::scheduled_job::scheduler::{
@@ -1156,12 +1171,10 @@ async fn spawn_scheduled_job_scheduler(
 
     // Firings are signed with each job's application's credentials (Java
     // JobDispatcher).
-    let credentials = Arc::new(
-        fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver::new(
-            repos.service_account_repo.clone(),
-            fc_platform::shared::encryption_service::EncryptionService::from_env().map(Arc::new),
-        ),
-    );
+    let credentials = Arc::new(OutboundCredentialsResolver::new(
+        repos.service_account_repo.clone(),
+        EncryptionService::from_env().map(Arc::new),
+    ));
     let svc = Arc::new(
         ScheduledJobSchedulerService::new(
             ScheduledJobSchedulerConfig::from_env(),
@@ -1172,7 +1185,7 @@ async fn spawn_scheduled_job_scheduler(
     );
 
     tokio::spawn(async move {
-        let mut handles: Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>;
+        let mut handles: Option<(JoinHandle<()>, JoinHandle<()>)>;
         loop {
             // Wait until active.
             if !*active_rx.borrow() {
@@ -1225,17 +1238,17 @@ async fn spawn_scheduled_job_scheduler(
 /// `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT`, which the ECS task definitions
 /// set), then the older `FC_SCHEDULER_PROCESSING_ENDPOINT`, and defaults to
 /// this server's own listener.
-fn load_scheduler_config(api_port: u16) -> fc_platform::scheduler::SchedulerConfig {
-    let defaults = fc_platform::scheduler::SchedulerConfig::default();
+fn load_scheduler_config(api_port: u16) -> SchedulerConfig {
+    let defaults = SchedulerConfig::default();
     let processing_endpoint = [
         "FC_DISPATCH_PROCESSING_ENDPOINT",
         "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
         "FC_SCHEDULER_PROCESSING_ENDPOINT",
     ]
     .iter()
-    .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
+    .find_map(|k| env::var(k).ok().filter(|v| !v.trim().is_empty()))
     .unwrap_or_else(|| format!("http://localhost:{api_port}/api/dispatch/process"));
-    fc_platform::scheduler::SchedulerConfig {
+    SchedulerConfig {
         poll_interval: Duration::from_millis(env_or_parse(
             "FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS",
             defaults.poll_interval.as_millis() as u64,
@@ -1260,7 +1273,7 @@ fn load_scheduler_config(api_port: u16) -> fc_platform::scheduler::SchedulerConf
 /// caches connect options independently.
 async fn spawn_stream_processor(
     database_url: &str,
-    secret_provider: Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
+    secret_provider: Option<Arc<dyn SecretProvider>>,
     secret_refresh_interval: Duration,
     mut active_rx: watch::Receiver<bool>,
 ) -> Result<StreamProcessorShutdown> {
@@ -1277,7 +1290,7 @@ async fn spawn_stream_processor(
         partition_manager_enabled: env_bool("FC_STREAM_PARTITION_MANAGER_ENABLED", true),
     };
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(4)
         .idle_timeout(Duration::from_secs(20))
         .acquire_timeout(Duration::from_secs(30))
@@ -1286,7 +1299,7 @@ async fn spawn_stream_processor(
         .map_err(|e| anyhow::anyhow!("Stream processor PG pool failed: {}", e))?;
 
     if let Some(provider) = secret_provider {
-        fc_platform::shared::database::start_secret_refresh(
+        database::start_secret_refresh(
             provider,
             pool.clone(),
             database_url.to_string(),
@@ -1294,7 +1307,7 @@ async fn spawn_stream_processor(
         );
     }
 
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let pool_clone = pool.clone();
 
     let task = tokio::spawn(async move {
@@ -1365,8 +1378,8 @@ async fn spawn_stream_processor(
 
 /// Handle for stopping the stream processor from the main shutdown path.
 struct StreamProcessorShutdown {
-    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    task: tokio::task::JoinHandle<()>,
+    stop_tx: Option<Sender<()>>,
+    task: JoinHandle<()>,
     pool: sqlx::PgPool,
 }
 
@@ -1376,7 +1389,7 @@ impl StreamProcessorShutdown {
     async fn stop(mut self) {
         // Dropping the sender signals the spawned task.
         self.stop_tx.take();
-        if tokio::time::timeout(Duration::from_secs(30), &mut self.task)
+        if time::timeout(Duration::from_secs(30), &mut self.task)
             .await
             .is_err()
         {
@@ -1395,8 +1408,8 @@ impl StreamProcessorShutdown {
 async fn spawn_outbox_processor(
     mut active_rx: watch::Receiver<bool>,
     platform_pool: &sqlx::PgPool,
-    stop: tokio_util::sync::CancellationToken,
-) -> Result<tokio::task::JoinHandle<()>> {
+    stop: CancellationToken,
+) -> Result<JoinHandle<()>> {
     use fc_outbox::setup;
     use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
@@ -1540,21 +1553,28 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
 #[cfg(test)]
 mod drain_tests {
     use super::*;
+    use axum::routing;
+    use fc_platform::router;
     use std::time::Duration;
+    use std::time::Instant;
+    use tokio::sync::Notify;
+    use tokio::task::JoinHandle;
+    use tokio::time;
+    use tokio_util::sync::CancellationToken;
 
     /// A route that takes `delay`, and a signal that a request reached it
     /// (so a test drains only once the request is really in flight, however
     /// long the client takes to build and connect).
-    async fn slow(delay: Duration) -> (Router, Arc<tokio::sync::Notify>) {
-        let entered = Arc::new(tokio::sync::Notify::new());
+    async fn slow(delay: Duration) -> (Router, Arc<Notify>) {
+        let entered = Arc::new(Notify::new());
         let signal = entered.clone();
         let app = Router::new().route(
             "/slow",
-            axum::routing::post(move || {
+            routing::post(move || {
                 let signal = signal.clone();
                 async move {
                     signal.notify_one();
-                    tokio::time::sleep(delay).await;
+                    time::sleep(delay).await;
                     "done"
                 }
             }),
@@ -1562,8 +1582,8 @@ mod drain_tests {
         (app, entered)
     }
 
-    async fn in_flight(entered: &tokio::sync::Notify) {
-        tokio::time::timeout(Duration::from_secs(10), entered.notified())
+    async fn in_flight(entered: &Notify) {
+        time::timeout(Duration::from_secs(10), entered.notified())
             .await
             .expect("the request reached the handler");
     }
@@ -1574,20 +1594,14 @@ mod drain_tests {
         reqwest::Client::builder().no_proxy().build().unwrap()
     }
 
-    async fn serve(
-        app: Router,
-    ) -> (
-        String,
-        tokio_util::sync::CancellationToken,
-        tokio::task::JoinHandle<()>,
-    ) {
+    async fn serve(app: Router) -> (String, CancellationToken, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let stop = tokio_util::sync::CancellationToken::new();
+        let stop = CancellationToken::new();
         let task = {
             let stop = stop.clone();
             tokio::spawn(async move {
-                fc_platform::router::serve_api(listener, app, stop.cancelled_owned()).await;
+                router::serve_api(listener, app, stop.cancelled_owned()).await;
             })
         };
         (format!("http://{addr}/slow"), stop, task)
@@ -1616,7 +1630,7 @@ mod drain_tests {
         tokio::spawn(async move { local_client().post(url).send().await });
         in_flight(&entered).await;
 
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         assert!(!drain_http(&stop, vec![task], Duration::from_millis(200)).await);
         assert!(started.elapsed() < Duration::from_secs(5));
     }

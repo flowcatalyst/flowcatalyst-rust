@@ -33,6 +33,8 @@ pub async fn functions_openapi() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     /// The document extends Java's, when the Java checkout is next to this
     /// repo: every path and method Java has, every schema, and every
@@ -40,10 +42,10 @@ mod tests {
     /// holds); only additions differ.
     #[test]
     fn extends_javas_file() {
-        let java = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        let java = Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../../flowcatalyst-javalin/server/src/main/resources/openapi/functions.openapi.json",
         );
-        let Ok(bytes) = std::fs::read(&java) else {
+        let Ok(bytes) = fs::read(&java) else {
             eprintln!("skipped: {} not found", java.display());
             return;
         };

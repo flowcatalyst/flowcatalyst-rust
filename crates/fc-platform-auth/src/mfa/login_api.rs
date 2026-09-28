@@ -31,10 +31,13 @@ use super::service::{EnrollError, MfaService};
 use super::token::{MfaTokenIssuer, Purpose};
 use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
 use crate::auth::session_cookie::SessionCookieConfig;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::ClientIp;
 use fc_platform_core::shared::rate_limit_store::{
     within_mail_budget, Bucket, RateLimitPolicies, RateLimitStore,
 };
+use fc_platform_iam::auth::auth_service;
 use fc_platform_iam::{
     audit::repository::AuditLogRepository,
     auth::auth_service::AuthService,
@@ -283,10 +286,7 @@ impl TwoFactorLogin {
             .flatten_permissions(roles)
             .await
             .unwrap_or_default();
-        if permissions
-            .iter()
-            .any(|p| p == fc_platform_core::permissions::ADMIN_ALL)
-        {
+        if permissions.iter().any(|p| p == permissions::ADMIN_ALL) {
             permissions.push("*".to_string());
         }
         permissions
@@ -325,7 +325,7 @@ impl TwoFactorLogin {
             None,
         )
         .await;
-        let roles = fc_platform_iam::auth::auth_service::role_names(p);
+        let roles = auth_service::role_names(p);
         let permissions = self.permissions(&roles).await;
         let body = CompletedLogin {
             status: "ok",
@@ -356,7 +356,7 @@ impl TwoFactorLogin {
         &self,
         jar: &CookieJar,
         p: &Principal,
-    ) -> fc_platform_core::shared::error::Result<Option<Response>> {
+    ) -> Result<Option<Response>, PlatformError> {
         Ok(self
             .second_factor_owed(jar, p)
             .await?
@@ -369,7 +369,7 @@ impl TwoFactorLogin {
         &self,
         jar: &CookieJar,
         p: &Principal,
-    ) -> fc_platform_core::shared::error::Result<Option<SecondFactor>> {
+    ) -> Result<Option<SecondFactor>, PlatformError> {
         // Federated users never carry a password; defensive.
         if p.external_identity.is_some() {
             return Ok(None);
@@ -399,9 +399,7 @@ impl TwoFactorLogin {
             let token = self
                 .tokens
                 .mint(&p.id, Purpose::Pending, PENDING_TOKEN_TTL_SECS)
-                .ok_or_else(|| {
-                    fc_platform_core::shared::error::PlatformError::internal("mint mfa token")
-                })?;
+                .ok_or_else(|| PlatformError::internal("mint mfa token"))?;
             return Ok(Some(SecondFactor::Challenge {
                 mfa_token: token,
                 methods: usable,
@@ -417,9 +415,7 @@ impl TwoFactorLogin {
         let token = self
             .tokens
             .mint(&p.id, Purpose::Enroll, ENROLL_TOKEN_TTL_SECS)
-            .ok_or_else(|| {
-                fc_platform_core::shared::error::PlatformError::internal("mint mfa token")
-            })?;
+            .ok_or_else(|| PlatformError::internal("mint mfa token"))?;
         Ok(Some(SecondFactor::Enrollment {
             enroll_token: token,
             allowed_methods: eval.allowed_methods(),

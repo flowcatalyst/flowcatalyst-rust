@@ -11,6 +11,7 @@ use crate::tsid;
 use crate::usecase::DomainEvent;
 
 use super::error::OutboxError;
+use crate::usecase::audit;
 
 /// Write a dispatch job to the outbox for async processing.
 ///
@@ -364,14 +365,14 @@ impl AuditLogPayload {
     pub fn to_outbox_payload(&self) -> Result<serde_json::Value, serde_json::Error> {
         let mut payload = serde_json::to_value(self)?;
         if let Some(json) = payload.get_mut("operation_json") {
-            *json = crate::usecase::audit::redact_document(json, &[]);
+            *json = audit::redact_document(json, &[]);
         }
         Ok(payload)
     }
 
     /// Create from a domain event and command.
     pub fn from_event<E: DomainEvent, C: Serialize>(event: &E, command: &C) -> Self {
-        let command_name = crate::usecase::audit::command_name::<C>();
+        let command_name = audit::command_name::<C>();
 
         let m = event.metadata();
         let subject = &m.subject;
@@ -394,7 +395,7 @@ impl AuditLogPayload {
             operation: command_name,
             // Redacted (docs/spec/audit-redaction.md, Java repo); pass
             // `Audited(&cmd)` to apply the command's AuditMasked fields too.
-            operation_json: crate::usecase::audit::audit_operation_json(command),
+            operation_json: audit::audit_operation_json(command),
             principal_id: m.principal_id.clone(),
             application_id: None,
             client_id: None,

@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -70,7 +71,7 @@ impl JwksCache {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
             ttl_secs,

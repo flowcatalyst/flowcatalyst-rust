@@ -1,5 +1,9 @@
 use async_trait::async_trait;
 use fc_common::{Message, QueuedMessage};
+use std::mem;
+use std::result;
+use std::sync::Mutex;
+use std::time::Instant;
 
 pub mod error;
 pub mod scheme;
@@ -25,7 +29,7 @@ pub mod nats;
 pub use error::QueueError;
 pub use scheme::{resolve_scheme, QueueScheme};
 
-pub type Result<T> = std::result::Result<T, QueueError>;
+pub type Result<T> = result::Result<T, QueueError>;
 
 /// Queue metrics for monitoring
 #[derive(Debug, Clone, Default)]
@@ -64,7 +68,7 @@ pub struct RejectedMessage {
 /// drains it. Keeps at most [`RejectedLog::CAPACITY`] entries — a flood of
 /// malformed messages is reported by its first entries, not held in memory.
 #[derive(Debug, Default)]
-pub struct RejectedLog(std::sync::Mutex<Vec<RejectedMessage>>);
+pub struct RejectedLog(Mutex<Vec<RejectedMessage>>);
 
 impl RejectedLog {
     pub const CAPACITY: usize = 100;
@@ -83,7 +87,7 @@ impl RejectedLog {
     pub fn take(&self) -> Vec<RejectedMessage> {
         self.0
             .lock()
-            .map(|mut v| std::mem::take(&mut *v))
+            .map(|mut v| mem::take(&mut *v))
             .unwrap_or_default()
     }
 }
@@ -140,7 +144,7 @@ pub trait QueueConsumer: Send + Sync {
     /// poll-return check, and an override that itself goes stale (broker
     /// disconnected, nothing delivered in a long time) still lets the
     /// watchdog restart normally.
-    fn last_broker_activity(&self) -> Option<std::time::Instant> {
+    fn last_broker_activity(&self) -> Option<Instant> {
         None
     }
 

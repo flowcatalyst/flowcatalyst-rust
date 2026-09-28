@@ -7,13 +7,16 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use axum::routing;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::Utc;
 use parking_lot::Mutex;
+use rsa::pkcs1v15::SigningKey;
 use rsa::traits::PublicKeyParts;
 use rsa::RsaPrivateKey;
 use serde_json::{json, Value};
+use tokio::net::TcpListener;
 
 /// The issuer the fake platform's discovery document names.
 pub const ISSUER: &str = "https://platform.example.test";
@@ -130,13 +133,10 @@ impl TestPlatform {
             }
         };
         let app = axum::Router::new()
-            .route(
-                "/.well-known/openid-configuration",
-                axum::routing::get(discovery),
-            )
-            .route("/.well-known/jwks.json", axum::routing::get(jwks))
+            .route("/.well-known/openid-configuration", routing::get(discovery))
+            .route("/.well-known/jwks.json", routing::get(jwks))
             .merge(extra);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         *state.self_url.lock() = url.clone();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -202,7 +202,7 @@ pub fn mint(key: &RsaPrivateKey, kid: &str, issuer: &str, claims: &Claims) -> St
         URL_SAFE_NO_PAD.encode(header.to_string()),
         URL_SAFE_NO_PAD.encode(payload.to_string())
     );
-    let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(key.clone());
+    let signer = SigningKey::<sha2::Sha256>::new(key.clone());
     let signature = signer.sign(input.as_bytes()).to_vec();
     format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature))
 }

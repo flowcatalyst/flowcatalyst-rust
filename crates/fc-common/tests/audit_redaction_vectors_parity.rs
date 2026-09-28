@@ -8,6 +8,7 @@
 //! split into their own repos, so a copy that drifts would let one language
 //! pass a rule the others fail.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -29,9 +30,9 @@ const COPIES: &[&str] = &[
 #[test]
 fn every_copy_is_byte_identical_to_the_canonical_vectors() {
     let root = repo_root();
-    let canonical = std::fs::read(root.join(CANONICAL)).expect("read canonical vectors");
+    let canonical = fs::read(root.join(CANONICAL)).expect("read canonical vectors");
     for copy in COPIES {
-        let bytes = std::fs::read(root.join(copy)).unwrap_or_else(|e| panic!("read {copy}: {e}"));
+        let bytes = fs::read(root.join(copy)).unwrap_or_else(|e| panic!("read {copy}: {e}"));
         assert!(
             bytes == canonical,
             "{copy} differs from {CANONICAL}; copy the canonical file over it byte for byte"
@@ -41,7 +42,7 @@ fn every_copy_is_byte_identical_to_the_canonical_vectors() {
 
 #[test]
 fn the_canonical_vectors_parse() {
-    let bytes = std::fs::read(repo_root().join(CANONICAL)).expect("read canonical vectors");
+    let bytes = fs::read(repo_root().join(CANONICAL)).expect("read canonical vectors");
     let cases: serde_json::Value = serde_json::from_slice(&bytes).expect("vectors are JSON");
     let cases = cases.as_array().expect("vectors are an array");
     assert!(!cases.is_empty());

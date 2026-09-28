@@ -9,6 +9,8 @@ use crate::application::client_config::ApplicationClientConfig;
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::application::repository::ApplicationRepository;
 use crate::client::repository::ClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -21,7 +23,7 @@ pub struct EnableApplicationForClientCommand {
     pub client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for EnableApplicationForClientCommand {}
+impl AuditMasked for EnableApplicationForClientCommand {}
 
 pub struct EnableApplicationForClientUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
@@ -80,11 +82,7 @@ impl<U: UnitOfWork> UseCase for EnableApplicationForClientUseCase<U> {
         _command: &EnableApplicationForClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

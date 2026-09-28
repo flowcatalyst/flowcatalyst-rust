@@ -16,6 +16,7 @@ pub use identity::{
     SetPortalIdentityStatusUseCase, SetStatusCommand,
 };
 
+use fc_platform_core::shared::error;
 use fc_platform_core::usecase::UseCaseError;
 use fc_platform_iam::portal::entity::PortalApp;
 use fc_platform_iam::portal::repository::PortalAppRepository;
@@ -24,7 +25,7 @@ use fc_platform_iam::portal::repository::PortalAppRepository;
 /// UPPER_SNAKE, owner decision 5) and `<Resource> not found: <id>`.
 pub fn not_found(resource: &str, id: &str) -> UseCaseError {
     UseCaseError::not_found(
-        fc_platform_core::shared::error::not_found_code(resource),
+        error::not_found_code(resource),
         format!("{resource} not found: {id}"),
     )
 }

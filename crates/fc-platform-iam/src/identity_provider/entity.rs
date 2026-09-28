@@ -1,6 +1,8 @@
 //! IdentityProvider Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,9 +51,7 @@ impl IdentityProvider {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::IdentityProvider,
-            ),
+            id: tsid::generate(EntityType::IdentityProvider),
             code: code.into(),
             name: name.into(),
             r#type: idp_type,

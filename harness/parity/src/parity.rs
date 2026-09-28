@@ -16,11 +16,15 @@ use crate::loader;
 use crate::model::{Scenario, Step};
 use crate::normaliser;
 use crate::pg::DockerPg;
+use crate::record::StepRecord;
 use crate::report::{Report, ScenarioResult, StepResult, StepStatus};
 use crate::runner::{Runner, StepOutcome};
 use crate::seed::{self, ADMIN_EMAIL, ADMIN_PASSWORD};
 use crate::side::SubprocessSide;
 use crate::vars::{SeedIds, Vars};
+use std::env;
+use std::fs;
+use std::mem;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -72,12 +76,12 @@ impl Config {
 }
 
 pub async fn run(config: &Config) -> Result<Report> {
-    std::fs::create_dir_all(&config.report_dir)
+    fs::create_dir_all(&config.report_dir)
         .with_context(|| format!("create {}", config.report_dir.display()))?;
-    let scratch = std::env::temp_dir().join(format!("fc-parity-{}", keys::random_token()));
-    std::fs::create_dir_all(&scratch)?;
+    let scratch = env::temp_dir().join(format!("fc-parity-{}", keys::random_token()));
+    fs::create_dir_all(&scratch)?;
     let result = run_in(config, &scratch).await;
-    let _ = std::fs::remove_dir_all(&scratch);
+    let _ = fs::remove_dir_all(&scratch);
     result
 }
 
@@ -204,7 +208,7 @@ pub fn base_env(private_key: &Path, public_key: &Path, app_key: &str) -> IndexMa
     set("FC_BOOTSTRAP_ADMIN_PASSWORD", ADMIN_PASSWORD);
     set("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL", ADMIN_EMAIL);
     set("FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD", ADMIN_PASSWORD);
-    if std::env::var_os("RUST_LOG").is_none() {
+    if env::var_os("RUST_LOG").is_none() {
         set("RUST_LOG", "info");
     }
     env
@@ -237,14 +241,14 @@ async fn run_scenarios(
             ADMIN_PASSWORD,
             &run,
             ids.clone(),
-            std::mem::take(&mut go_labels),
+            mem::take(&mut go_labels),
         );
         let mut rust_vars = Vars::new(
             ADMIN_EMAIL,
             ADMIN_PASSWORD,
             &run,
             ids.clone(),
-            std::mem::take(&mut rust_labels),
+            mem::take(&mut rust_labels),
         );
         let go_run = Runner::new(&go_side.base_url)?
             .run(scenario, &mut go_vars)
@@ -425,7 +429,7 @@ fn known_go_failure(
     })
 }
 
-fn record_of(o: &StepOutcome) -> Option<crate::record::StepRecord> {
+fn record_of(o: &StepOutcome) -> Option<StepRecord> {
     match o {
         StepOutcome::Ran(r) => Some(r.clone()),
         StepOutcome::Failed { record, .. } => record.clone(),

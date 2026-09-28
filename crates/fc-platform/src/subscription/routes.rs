@@ -1,5 +1,10 @@
 //! Subscription routes: `/api/subscriptions`.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

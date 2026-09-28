@@ -2,6 +2,7 @@
 //! the platform session cookie (password login, OIDC login, passkeys).
 
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use fc_platform_core::shared::middleware;
 use tracing::warn;
 
 /// How the session cookie is named and flagged. Built once at startup.
@@ -20,7 +21,7 @@ impl SessionCookieConfig {
     /// only for fc-dev's plain-http localhost).
     pub fn password_login(secure: bool) -> Self {
         Self {
-            name: fc_platform_core::shared::middleware::SESSION_COOKIE_NAME.to_string(),
+            name: middleware::SESSION_COOKIE_NAME.to_string(),
             secure,
             same_site: SameSite::Lax,
             ttl: time::Duration::seconds(86400),

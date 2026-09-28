@@ -12,13 +12,21 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::dispatch_pool::entity::{DispatchPool, DispatchPoolStatus};
+use crate::dispatch_pool::operations::ActivateDispatchPoolCommand;
+use crate::dispatch_pool::operations::ActivateDispatchPoolUseCase;
+use crate::dispatch_pool::operations::SuspendDispatchPoolCommand;
+use crate::dispatch_pool::operations::SuspendDispatchPoolUseCase;
 use crate::dispatch_pool::operations::{
     ArchiveDispatchPoolCommand, ArchiveDispatchPoolUseCase, CreateDispatchPoolCommand,
     CreateDispatchPoolUseCase, DeleteDispatchPoolCommand, DeleteDispatchPoolUseCase,
     UpdateDispatchPoolCommand, UpdateDispatchPoolUseCase,
 };
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::api_common::PaginationParams;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
@@ -138,8 +146,8 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateDispatchPoolUseCase<U>>,
     pub archive_use_case: Arc<ArchiveDispatchPoolUseCase<U>>,
     pub delete_use_case: Arc<DeleteDispatchPoolUseCase<U>>,
-    pub suspend_use_case: Arc<crate::dispatch_pool::operations::SuspendDispatchPoolUseCase<U>>,
-    pub activate_use_case: Arc<crate::dispatch_pool::operations::ActivateDispatchPoolUseCase<U>>,
+    pub suspend_use_case: Arc<SuspendDispatchPoolUseCase<U>>,
+    pub activate_use_case: Arc<ActivateDispatchPoolUseCase<U>>,
 }
 
 /// Create a new dispatch pool
@@ -150,7 +158,7 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     operation_id = "createDispatchPool",
     request_body = CreateDispatchPoolRequest,
     responses(
-        (status = 201, description = "Dispatch pool created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Dispatch pool created", body = CreatedResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -160,17 +168,11 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Json(req): Json<CreateDispatchPoolRequest>,
-) -> Result<
-    (
-        StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; the use case then validates (400) and checks the
     // caller's reach into the requested client (403 SCOPE_FORBIDDEN).
-    fc_platform_core::shared::authorization_service::checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_write_dispatch_pools(&auth.0)?;
 
     let command = CreateDispatchPoolCommand {
         code: req.code,
@@ -186,9 +188,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     match state.create_use_case.run(command, ctx).await.into_result() {
         Ok(event) => Ok((
             StatusCode::CREATED,
-            Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-                event.pool_id,
-            )),
+            Json(CreatedResponse::new(event.pool_id)),
         )),
         Err(err) => Err(err.into()),
     }
@@ -214,7 +214,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_pools(&auth.0)?;
+    checks::can_read_dispatch_pools(&auth.0)?;
 
     let pool = state
         .dispatch_pool_repo
@@ -251,12 +251,11 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     auth: Authenticated,
     Query(query): Query<DispatchPoolsQuery>,
 ) -> Result<Json<DispatchPoolListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_dispatch_pools(&auth.0)?;
+    checks::can_read_dispatch_pools(&auth.0)?;
 
     // Go: the filters as given (no status filter means every status), then
     // `FilterClientScoped`.
-    let status_filter: Option<DispatchPoolStatus> =
-        fc_platform_core::shared::enum_str::parse_opt(query.status.as_deref())?;
+    let status_filter: Option<DispatchPoolStatus> = enum_str::parse_opt(query.status.as_deref())?;
     let pools = state
         .dispatch_pool_repo
         .find_with_filters(
@@ -267,9 +266,9 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     let filtered: Vec<DispatchPoolResponse> = pools
         .into_iter()
         .filter(|p| {
-            p.client_id.as_deref().is_none_or(|cid| {
-                fc_platform_core::shared::caller_reach::reaches_client(&auth.0, cid)
-            })
+            p.client_id
+                .as_deref()
+                .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|p| p.into())
         .collect();
@@ -305,7 +304,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
 ) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    fc_platform_core::shared::authorization_service::checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_write_dispatch_pools(&auth.0)?;
 
     // The use case validates, loads (404) and checks the caller's scope on
     // the pool (403 SCOPE_FORBIDDEN), in Go's order.
@@ -347,7 +346,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
 ) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    fc_platform_core::shared::authorization_service::checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_write_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 
@@ -384,13 +383,13 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
 ) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    fc_platform_core::shared::authorization_service::checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_write_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 
     // Go's SuspendDispatchPool: status SUSPENDED, event
     // platform:admin:dispatch-pool:suspended (it used to archive the pool).
-    let command = crate::dispatch_pool::operations::SuspendDispatchPoolCommand { id: id.clone() };
+    let command = SuspendDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state.suspend_use_case.run(command, ctx).await.into_result() {
@@ -423,13 +422,13 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
 ) -> Result<StatusCode, PlatformError> {
     // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
     // permission first; client reach is checked below.
-    fc_platform_core::shared::authorization_service::checks::can_write_dispatch_pools(&auth.0)?;
+    checks::can_write_dispatch_pools(&auth.0)?;
     // The use case loads the pool (404) and checks the caller's scope on it
     // (Go `CheckScopeAccess`).
 
     // Go's ActivateDispatchPool: status ACTIVE, event
     // platform:admin:dispatch-pool:activated (it used to change nothing).
-    let command = crate::dispatch_pool::operations::ActivateDispatchPoolCommand { id: id.clone() };
+    let command = ActivateDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::from_auth(&auth.0);
 
     match state
@@ -464,7 +463,7 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_delete_dispatch_pools(&auth.0)?;
+    checks::can_delete_dispatch_pools(&auth.0)?;
 
     // The use case answers 404 for a missing pool, then checks the caller's
     // scope on it (Go's order).

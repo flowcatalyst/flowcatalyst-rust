@@ -11,6 +11,9 @@ use std::sync::Arc;
 use super::events::OAuthClientUpdated;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
 use crate::auth::oauth_entity::GrantType;
+use crate::portal;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -49,7 +52,7 @@ pub struct UpdateOAuthClientCommand {
     pub api_access: Option<bool>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateOAuthClientCommand {}
+impl AuditMasked for UpdateOAuthClientCommand {}
 
 pub struct UpdateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
@@ -99,11 +102,7 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
         _command: &UpdateOAuthClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -145,13 +144,13 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
             client.active = active;
         }
         if let Some(portal_client_id) = &command.portal_client_id {
-            client.portal_client_id = crate::portal::trimmed_or_none(Some(portal_client_id));
+            client.portal_client_id = portal::trimmed_or_none(Some(portal_client_id));
             if client.portal_client_id.is_none() {
                 client.portal_app_id = None; // no portal, no portal app
             }
         }
         if let Some(portal_app_id) = &command.portal_app_id {
-            client.portal_app_id = crate::portal::trimmed_or_none(Some(portal_app_id));
+            client.portal_app_id = portal::trimmed_or_none(Some(portal_app_id));
         }
         if let Some(ref scopes) = command.default_scopes {
             client.default_scopes = scopes.clone();
@@ -159,7 +158,7 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
         if let Some(api_access) = command.api_access {
             client.api_access = api_access;
         }
-        crate::portal::validate_oauth_client_plane(&client)?;
+        portal::validate_oauth_client_plane(&client)?;
         client.updated_at = chrono::Utc::now();
 
         let event = OAuthClientUpdated::new(&ctx, &client.id, &client.client_name);

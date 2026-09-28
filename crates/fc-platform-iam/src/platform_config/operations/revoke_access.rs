@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::PlatformConfigAccessRevoked;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -17,7 +19,7 @@ pub struct RevokePlatformConfigAccessCommand {
     pub role_code: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RevokePlatformConfigAccessCommand {}
+impl AuditMasked for RevokePlatformConfigAccessCommand {}
 
 pub struct RevokePlatformConfigAccessUseCase<U: UnitOfWork> {
     access_repo: Arc<PlatformConfigAccessRepository>,
@@ -65,11 +67,7 @@ impl<U: UnitOfWork> UseCase for RevokePlatformConfigAccessUseCase<U> {
         _command: &RevokePlatformConfigAccessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_update_platform_config(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_update_platform_config(ctx.caller())?)
     }
 
     async fn execute(

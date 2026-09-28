@@ -29,8 +29,20 @@ wasmtime::component::bindgen!({
     },
 });
 
+use crate::db::Database;
+use crate::db::DbFailure;
+use crate::db::DbSession;
+use crate::db::Param;
+use crate::db::RowsAnswer;
+use crate::db::Transaction;
+use crate::emit::OutboundEvent;
+use crate::invoke::InvocationContext;
+use crate::invoke::UsageMeter;
 use flowcatalyst::function::{config, db, events, invocation, log, secrets};
 use wasmtime::component::Resource;
+use wasmtime::component::ResourceTableError;
+use wasmtime_wasi::p2;
+use wasmtime_wasi_http::p2::add_only_http_to_linker_async;
 
 /// The host side of every import a function can have: WASI 0.2 (the proxy
 /// and CLI sets), `wasi:http`, and `flowcatalyst:function`. A component that
@@ -38,8 +50,8 @@ use wasmtime::component::Resource;
 /// ours) links against the same linker.
 pub fn linker(engine: &wasmtime::Engine) -> wasmtime::Result<Linker<GuestState>> {
     let mut linker = Linker::new(engine);
-    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
+    p2::add_to_linker_async(&mut linker)?;
+    add_only_http_to_linker_async(&mut linker)?;
     Imports::add_to_linker::<GuestState, HasSelf<GuestState>>(&mut linker, |state| state)?;
     Ok(linker)
 }
@@ -77,12 +89,12 @@ use crate::emit::EmitFailure;
 /// size here too, so an instance that never grows still reports it.
 pub struct MeteredLimits {
     pub limits: StoreLimits,
-    pub usage: crate::invoke::UsageMeter,
+    pub usage: UsageMeter,
     in_use: u64,
 }
 
 impl MeteredLimits {
-    pub fn new(limits: StoreLimits, usage: crate::invoke::UsageMeter) -> Self {
+    pub fn new(limits: StoreLimits, usage: UsageMeter) -> Self {
         Self {
             limits,
             usage,
@@ -145,7 +157,7 @@ impl FunctionShared {
         event: events::OutboundEvent,
         defaults: (String, Option<String>),
     ) -> Result<String, EmitFailure> {
-        let event = crate::emit::OutboundEvent {
+        let event = OutboundEvent {
             event_type: event.type_,
             source: event.source,
             subject: event.subject,
@@ -172,7 +184,7 @@ pub struct InvocationData {
 }
 
 impl InvocationData {
-    pub fn from(context: &crate::invoke::InvocationContext) -> Self {
+    pub fn from(context: &InvocationContext) -> Self {
         let caller = match &context.caller {
             Caller::Platform => invocation::Caller::Platform,
             Caller::Anonymous => invocation::Caller::Anonymous,
@@ -218,7 +230,7 @@ pub struct GuestState {
     pub function: Arc<FunctionShared>,
     pub invocation: InvocationData,
     /// The invocation's databases (`flowcatalyst:function/db`).
-    pub db: crate::db::DbSession,
+    pub db: DbSession,
 }
 
 impl WasiView for GuestState {
@@ -327,7 +339,7 @@ impl invocation::Host for GuestState {
 
 // ── flowcatalyst:function/db (0.1.2): a thin layer over crate::db ────────
 
-fn db_error(failure: crate::db::DbFailure) -> db::Error {
+fn db_error(failure: DbFailure) -> db::Error {
     use crate::db::DbErrorCode as C;
     db::Error {
         code: match failure.code {
@@ -346,28 +358,28 @@ fn db_error(failure: crate::db::DbFailure) -> db::Error {
 
 /// A handle the host could not store or find (the resource table is
 /// full, or the handle is gone): reported as the guest's error, not a trap.
-fn table_error(e: wasmtime::component::ResourceTableError) -> db::Error {
+fn table_error(e: ResourceTableError) -> db::Error {
     db::Error {
         code: db::ErrorCode::Error,
         message: format!("the database handle is not available: {e}"),
     }
 }
 
-fn db_params(params: Vec<db::Param>) -> Vec<crate::db::Param> {
+fn db_params(params: Vec<db::Param>) -> Vec<Param> {
     params
         .into_iter()
         .map(|p| match p {
-            db::Param::Null => crate::db::Param::Null,
-            db::Param::Boolean(b) => crate::db::Param::Boolean(b),
-            db::Param::Integer(i) => crate::db::Param::Integer(i),
-            db::Param::Float(f) => crate::db::Param::Float(f),
-            db::Param::Decimal(d) => crate::db::Param::Decimal(d),
-            db::Param::Text(t) => crate::db::Param::Text(t),
+            db::Param::Null => Param::Null,
+            db::Param::Boolean(b) => Param::Boolean(b),
+            db::Param::Integer(i) => Param::Integer(i),
+            db::Param::Float(f) => Param::Float(f),
+            db::Param::Decimal(d) => Param::Decimal(d),
+            db::Param::Text(t) => Param::Text(t),
         })
         .collect()
 }
 
-fn db_rows(rows: crate::db::RowsAnswer) -> db::Rows {
+fn db_rows(rows: RowsAnswer) -> db::Rows {
     db::Rows {
         json: rows.json,
         count: rows.count,
@@ -376,7 +388,7 @@ fn db_rows(rows: crate::db::RowsAnswer) -> db::Rows {
 }
 
 impl db::Host for GuestState {
-    async fn open(&mut self, name: String) -> Result<Resource<crate::db::Database>, db::Error> {
+    async fn open(&mut self, name: String) -> Result<Resource<Database>, db::Error> {
         let database = self.db.open(&name).map_err(db_error)?;
         self.table.push(database).map_err(table_error)
     }
@@ -385,7 +397,7 @@ impl db::Host for GuestState {
 impl db::HostDatabase for GuestState {
     async fn query(
         &mut self,
-        database: Resource<crate::db::Database>,
+        database: Resource<Database>,
         sql: String,
         params: Vec<db::Param>,
     ) -> Result<db::Rows, db::Error> {
@@ -399,7 +411,7 @@ impl db::HostDatabase for GuestState {
 
     async fn execute(
         &mut self,
-        database: Resource<crate::db::Database>,
+        database: Resource<Database>,
         sql: String,
         params: Vec<db::Param>,
     ) -> Result<u64, db::Error> {
@@ -412,14 +424,14 @@ impl db::HostDatabase for GuestState {
 
     async fn begin(
         &mut self,
-        database: Resource<crate::db::Database>,
-    ) -> Result<Resource<crate::db::Transaction>, db::Error> {
+        database: Resource<Database>,
+    ) -> Result<Resource<Transaction>, db::Error> {
         let database = self.table.get(&database).map_err(table_error)?;
         let transaction = database.begin().await.map_err(db_error)?;
         self.table.push(transaction).map_err(table_error)
     }
 
-    async fn drop(&mut self, database: Resource<crate::db::Database>) -> wasmtime::Result<()> {
+    async fn drop(&mut self, database: Resource<Database>) -> wasmtime::Result<()> {
         self.table.delete(database)?;
         Ok(())
     }
@@ -428,7 +440,7 @@ impl db::HostDatabase for GuestState {
 impl db::HostTransaction for GuestState {
     async fn query(
         &mut self,
-        transaction: Resource<crate::db::Transaction>,
+        transaction: Resource<Transaction>,
         sql: String,
         params: Vec<db::Param>,
     ) -> Result<db::Rows, db::Error> {
@@ -442,7 +454,7 @@ impl db::HostTransaction for GuestState {
 
     async fn execute(
         &mut self,
-        transaction: Resource<crate::db::Transaction>,
+        transaction: Resource<Transaction>,
         sql: String,
         params: Vec<db::Param>,
     ) -> Result<u64, db::Error> {
@@ -453,28 +465,19 @@ impl db::HostTransaction for GuestState {
             .map_err(db_error)
     }
 
-    async fn commit(
-        &mut self,
-        transaction: Resource<crate::db::Transaction>,
-    ) -> Result<(), db::Error> {
+    async fn commit(&mut self, transaction: Resource<Transaction>) -> Result<(), db::Error> {
         let transaction = self.table.delete(transaction).map_err(table_error)?;
         transaction.commit().await.map_err(db_error)
     }
 
-    async fn rollback(
-        &mut self,
-        transaction: Resource<crate::db::Transaction>,
-    ) -> Result<(), db::Error> {
+    async fn rollback(&mut self, transaction: Resource<Transaction>) -> Result<(), db::Error> {
         let transaction = self.table.delete(transaction).map_err(table_error)?;
         transaction.rollback().await.map_err(db_error)
     }
 
     /// Dropping an open transaction rolls it back (its connection goes back
     /// to the pool, whose reset rolls back).
-    async fn drop(
-        &mut self,
-        transaction: Resource<crate::db::Transaction>,
-    ) -> wasmtime::Result<()> {
+    async fn drop(&mut self, transaction: Resource<Transaction>) -> wasmtime::Result<()> {
         self.table.delete(transaction)?;
         Ok(())
     }

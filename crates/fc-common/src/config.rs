@@ -2,24 +2,25 @@
 //!
 //! All binaries should use these instead of defining their own.
 
+use std::env;
 use std::str::FromStr;
 
 /// Read an env var or return the default.
 pub fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
+    env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
 /// Read an env var, trying the primary key first, then an alias.
 /// This allows both TS-style (`PORT`) and Rust-style (`FC_API_PORT`) env vars.
 pub fn env_or_alias(primary: &str, alias: &str, default: &str) -> String {
-    std::env::var(primary)
-        .or_else(|_| std::env::var(alias))
+    env::var(primary)
+        .or_else(|_| env::var(alias))
         .unwrap_or_else(|_| default.to_string())
 }
 
 /// Read an env var and parse it, or return the default.
 pub fn env_or_parse<T: FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
+    env::var(key)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
@@ -27,8 +28,8 @@ pub fn env_or_parse<T: FromStr>(key: &str, default: T) -> T {
 
 /// Read an env var (with alias) and parse it, or return the default.
 pub fn env_or_alias_parse<T: FromStr>(primary: &str, alias: &str, default: T) -> T {
-    std::env::var(primary)
-        .or_else(|_| std::env::var(alias))
+    env::var(primary)
+        .or_else(|_| env::var(alias))
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
@@ -36,7 +37,7 @@ pub fn env_or_alias_parse<T: FromStr>(primary: &str, alias: &str, default: T) ->
 
 /// Read an env var as a boolean (`"true"` or `"1"` → true), or return the default.
 pub fn env_bool(key: &str, default: bool) -> bool {
-    std::env::var(key)
+    env::var(key)
         .ok()
         .map(|v| v == "true" || v == "1")
         .unwrap_or(default)
@@ -44,8 +45,8 @@ pub fn env_bool(key: &str, default: bool) -> bool {
 
 /// Read an env var as a boolean with an alias fallback.
 pub fn env_bool_alias(primary: &str, alias: &str, default: bool) -> bool {
-    std::env::var(primary)
-        .or_else(|_| std::env::var(alias))
+    env::var(primary)
+        .or_else(|_| env::var(alias))
         .ok()
         .map(|v| v == "true" || v == "1")
         .unwrap_or(default)
@@ -53,7 +54,7 @@ pub fn env_bool_alias(primary: &str, alias: &str, default: bool) -> bool {
 
 /// Read a required env var, returning an error if missing.
 pub fn env_required(key: &str) -> anyhow::Result<String> {
-    std::env::var(key).map_err(|_| anyhow::anyhow!("{} environment variable is required", key))
+    env::var(key).map_err(|_| anyhow::anyhow!("{} environment variable is required", key))
 }
 
 // ── env_first: N-way priority alias resolution ─────────────────────────────
@@ -74,7 +75,7 @@ pub fn env_required(key: &str) -> anyhow::Result<String> {
 /// with the canonical `FC_*` name first.
 pub fn env_first(keys: &[&str], default: &str) -> String {
     for key in keys {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             if !v.is_empty() {
                 return v;
             }
@@ -88,7 +89,7 @@ pub fn env_first(keys: &[&str], default: &str) -> String {
 /// string default" (e.g. an optional webhook URL).
 pub fn env_first_opt(keys: &[&str]) -> Option<String> {
     for key in keys {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             if !v.is_empty() {
                 return Some(v);
             }
@@ -101,7 +102,7 @@ pub fn env_first_opt(keys: &[&str]) -> Option<String> {
 /// non-empty → false — same truthy rule as [`env_bool`]).
 pub fn env_first_bool(keys: &[&str], default: bool) -> bool {
     for key in keys {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             if !v.is_empty() {
                 return v == "true" || v == "1";
             }
@@ -129,7 +130,7 @@ pub fn parse_go_bool(raw: &str) -> Option<bool> {
 /// (`PLATFORM_ENABLED`, `MESSAGE_ROUTER_ENABLED`, …).
 pub fn env_first_bool_go(keys: &[&str], default: bool) -> bool {
     for key in keys {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             if !v.is_empty() {
                 return parse_go_bool(&v).unwrap_or(default);
             }
@@ -144,7 +145,7 @@ pub fn env_first_bool_go(keys: &[&str], default: bool) -> bool {
 /// down the alias chain).
 pub fn env_first_parse<T: FromStr>(keys: &[&str], default: T) -> T {
     for key in keys {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             if v.is_empty() {
                 continue;
             }

@@ -18,6 +18,8 @@ use axum::{Json, Router};
 use fc_outbox::{setup, OutboxBackend, OutboxTableConfig};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::mysql::Mysql;
+use tokio::net::TcpListener;
+use tokio::time;
 
 #[tokio::test]
 async fn this_build_carries_the_mysql_backend() {
@@ -82,7 +84,7 @@ async fn the_binary_delivers_a_mysql_outbox_row() {
             }),
         )
     };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let platform_port = listener.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(listener, platform).await.unwrap() });
 
@@ -118,7 +120,7 @@ async fn the_binary_delivers_a_mysql_outbox_row() {
             created = true;
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
     assert!(created, "the processor did not create outbox_messages");
 
@@ -140,7 +142,7 @@ async fn the_binary_delivers_a_mysql_outbox_row() {
         if remaining == 0 {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(remaining, 0, "the row was not delivered");
     let received = received.lock().unwrap();

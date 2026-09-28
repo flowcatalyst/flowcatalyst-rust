@@ -8,7 +8,13 @@ use argon2::{
 };
 use tracing::{debug, warn};
 
+use argon2::password_hash;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::result;
 
 /// Password policy configuration
 #[derive(Debug, Clone)]
@@ -65,8 +71,8 @@ pub enum PasswordRule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasswordPolicyError(pub Vec<PasswordRule>);
 
-impl std::fmt::Display for PasswordPolicyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for PasswordPolicyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for (i, rule) in self.0.iter().enumerate() {
             if i > 0 {
                 f.write_str("; ")?;
@@ -77,7 +83,7 @@ impl std::fmt::Display for PasswordPolicyError {
     }
 }
 
-impl std::error::Error for PasswordPolicyError {}
+impl error::Error for PasswordPolicyError {}
 
 impl From<PasswordPolicyError> for PlatformError {
     fn from(err: PasswordPolicyError) -> Self {
@@ -89,7 +95,7 @@ impl From<PasswordPolicyError> for PlatformError {
 
 impl PasswordPolicy {
     /// Validate a password against the policy
-    pub fn validate(&self, password: &str) -> std::result::Result<(), PasswordPolicyError> {
+    pub fn validate(&self, password: &str) -> result::Result<(), PasswordPolicyError> {
         let mut errors = Vec::new();
 
         if password.len() < self.min_length {
@@ -335,7 +341,7 @@ impl PasswordService {
                 debug!("Password verification successful");
                 Ok(true)
             }
-            Err(argon2::password_hash::Error::Password) => {
+            Err(password_hash::Error::Password) => {
                 warn!("Password verification failed: incorrect password");
                 Ok(false)
             }

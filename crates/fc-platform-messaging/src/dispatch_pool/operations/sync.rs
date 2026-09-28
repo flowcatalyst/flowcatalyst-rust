@@ -11,13 +11,18 @@ use super::events::{
     DispatchPoolArchived, DispatchPoolCreated, DispatchPoolUpdated, DispatchPoolsSynced,
 };
 use crate::dispatch_pool::entity::DispatchPool;
+use crate::dispatch_pool::entity::DispatchPoolStatus;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::permissions;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 fn pool_code_pattern() -> &'static Regex {
-    static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap())
 }
 
@@ -52,10 +57,10 @@ pub struct SyncDispatchPoolsCommand {
     /// `protectedIds`, `function-invocation.md` §4.2). Neither updated when
     /// listed nor archived when unlisted, and neither counted.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
-    pub protected_ids: std::collections::BTreeSet<String>,
+    pub protected_ids: BTreeSet<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncDispatchPoolsCommand {}
+impl AuditMasked for SyncDispatchPoolsCommand {}
 
 pub struct SyncDispatchPoolsUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,
@@ -129,9 +134,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
     ) -> Result<(), UseCaseError> {
         if command.remove_unlisted
             && !ctx.caller().is_anchor()
-            && !ctx
-                .caller()
-                .has_permission(fc_platform_core::permissions::ADMIN_ALL)
+            && !ctx.caller().has_permission(permissions::ADMIN_ALL)
         {
             return Err(UseCaseError::forbidden(
                 "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP",
@@ -196,7 +199,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         if command.remove_unlisted {
             for pool in &existing {
                 if !synced_codes.contains(&pool.code)
-                    && pool.status != crate::dispatch_pool::entity::DispatchPoolStatus::Archived
+                    && pool.status != DispatchPoolStatus::Archived
                     && !command.protected_ids.contains(&pool.id)
                 {
                     let mut archived = pool.clone();

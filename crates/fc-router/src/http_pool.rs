@@ -31,6 +31,9 @@ use tracing::{debug, info, warn};
 
 use crate::warning::WarningService;
 use fc_common::{WarningCategory, WarningSeverity};
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 /// Origin identity. Two URLs sharing `(scheme, host, port)` share a
 /// single HTTP/2 connection in hyper, so we pool at this granularity.
@@ -51,8 +54,8 @@ impl HostKey {
     }
 }
 
-impl std::fmt::Display for HostKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for HostKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}://{}:{}", self.scheme, self.host, self.port)
     }
 }
@@ -422,6 +425,7 @@ impl HostPoolRegistry {
 mod tests {
     use super::*;
     use crate::warning::WarningService;
+    use std::thread;
 
     fn make_builder() -> Arc<ClientBuilderFn> {
         Arc::new(|_host: &HostKey| reqwest::Client::builder().build().unwrap())
@@ -539,7 +543,7 @@ mod tests {
         drop(g1);
         drop(g2);
         drop(g3);
-        std::thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
         pool.sweep();
         assert_eq!(pool.slot_count(), 1, "sweep should retain exactly one slot");
     }
@@ -563,7 +567,7 @@ mod tests {
         let g2 = pool.acquire();
         assert_eq!(pool.slot_count(), 2);
         drop(g2);
-        std::thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
         pool.sweep();
         // Busy slot must survive even though slot 2 became idle.
         assert!(pool.slot_count() >= 1);

@@ -25,6 +25,7 @@ use super::repository::{ServiceAccountRepository, StoredWebhookCredentials};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::Result;
 use fc_platform_core::shared::secret_ref::SecretResolver;
+use std::collections::HashMap;
 
 /// How long one answer is reused (Java `OutboundCredentials.Cache.TTL`).
 const TTL: Duration = Duration::from_secs(60);
@@ -99,12 +100,12 @@ impl OutboundCredentialsResolver {
     pub async fn for_applications_fresh(
         &self,
         application_ids: &[String],
-    ) -> Result<std::collections::HashMap<String, OutboundCredentials>> {
+    ) -> Result<HashMap<String, OutboundCredentials>> {
         let stored = self
             .service_accounts
             .oldest_active_webhook_credentials_for(application_ids)
             .await?;
-        let mut opened = std::collections::HashMap::with_capacity(stored.len());
+        let mut opened = HashMap::with_capacity(stored.len());
         for (application_id, s) in stored {
             opened.insert(application_id, self.open(&s).await);
         }

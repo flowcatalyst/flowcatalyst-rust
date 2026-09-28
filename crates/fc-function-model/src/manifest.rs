@@ -39,6 +39,7 @@ use crate::hostname::Hostname;
 use crate::http_method::HttpMethod;
 use crate::java::is_blank as java_is_blank;
 use crate::json::JsonNode;
+use crate::json::JsonParseError;
 use crate::route_pattern::RoutePattern;
 use crate::runtime::Runtime;
 use crate::setting_key::SettingKey;
@@ -401,7 +402,7 @@ impl Manifest {
         function_runtime: Runtime,
         defaults: &FunctionLimits,
         ceilings: &ClientCeilings,
-    ) -> Result<Result<Manifest, ManifestRejected>, crate::json::JsonParseError> {
+    ) -> Result<Result<Manifest, ManifestRejected>, JsonParseError> {
         let root = JsonNode::parse(text)?;
         Ok(Self::check(
             Some(&root),

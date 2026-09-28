@@ -4,17 +4,19 @@
 //! of truth; this test fails while the PDK's copy differs from it.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
-        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 walk(root, &path, out);
             } else {
                 let rel = path.strip_prefix(root).unwrap().to_path_buf();
-                out.insert(rel, std::fs::read(&path).unwrap());
+                out.insert(rel, fs::read(&path).unwrap());
             }
         }
     }
@@ -35,7 +37,7 @@ fn the_pdk_vendors_the_hosts_wit_unchanged() {
         .chain(vendored_files.keys())
         .filter(|k| source_files.get(*k) != vendored_files.get(*k))
         .map(|k| k.display().to_string())
-        .collect::<std::collections::BTreeSet<_>>()
+        .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
 

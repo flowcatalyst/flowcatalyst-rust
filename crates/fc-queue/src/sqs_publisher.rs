@@ -43,6 +43,7 @@
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
+use aws_sdk_sqs::error::DisplayErrorContext;
 use aws_sdk_sqs::types::{QueueAttributeName, SendMessageBatchRequestEntry};
 use aws_sdk_sqs::Client;
 use tracing::{info, warn};
@@ -184,9 +185,7 @@ impl SqsBatchApi for AwsSqsBatchApi {
                 if missing {
                     Err(SendBatchError::QueueMissing)
                 } else {
-                    Err(SendBatchError::Other(
-                        aws_sdk_sqs::error::DisplayErrorContext(&err).to_string(),
-                    ))
+                    Err(SendBatchError::Other(DisplayErrorContext(&err).to_string()))
                 }
             }
         }
@@ -218,7 +217,7 @@ impl SqsBatchApi for AwsSqsBatchApi {
                 }
                 Err(format!(
                     "create dispatch queue {queue_name:?}: {}",
-                    aws_sdk_sqs::error::DisplayErrorContext(&err)
+                    DisplayErrorContext(&err)
                 ))
             }
         }

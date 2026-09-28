@@ -18,7 +18,9 @@
 
 use serde::Serialize;
 use std::time::Duration;
+use tokio::runtime::RuntimeMetrics;
 use tokio::runtime::{Handle, RuntimeFlavor};
+use tokio::time;
 
 /// One worker thread.
 #[derive(Debug, Clone, Serialize)]
@@ -103,7 +105,7 @@ pub fn snapshot(handle: &Handle) -> TokioSnapshot {
 }
 
 #[cfg(target_has_atomic = "64")]
-fn worker_counters(m: &tokio::runtime::RuntimeMetrics, i: usize) -> (f64, u64, bool) {
+fn worker_counters(m: &RuntimeMetrics, i: usize) -> (f64, u64, bool) {
     (
         m.worker_total_busy_duration(i).as_secs_f64(),
         m.worker_park_count(i),
@@ -124,7 +126,7 @@ fn worker_counters(_: &tokio::runtime::RuntimeMetrics, _: usize) -> (f64, u64, b
 /// if the handler cannot run, that is the answer.
 pub async fn sample(handle: &Handle, window: Duration) -> TokioSnapshot {
     let before = snapshot(handle);
-    tokio::time::sleep(window).await;
+    time::sleep(window).await;
     let mut after = snapshot(handle);
     let secs = window.as_secs_f64().max(f64::EPSILON);
     let mut never_parked = Vec::new();
@@ -240,6 +242,9 @@ pub(crate) fn render(s: &TokioSnapshot, w: &mut Writer<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::Barrier;
+    use std::thread;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_snapshot_sees_the_runtime() {
@@ -254,12 +259,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sampling_flags_a_blocked_worker() {
         let handle = Handle::current();
-        let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let started = Arc::new(Barrier::new(2));
         let entered = started.clone();
         let blocker = tokio::spawn(async move {
             entered.wait();
             // Deliberately blocking an async worker for the whole window.
-            std::thread::sleep(Duration::from_millis(600));
+            thread::sleep(Duration::from_millis(600));
         });
         started.wait();
         let s = sample(&handle, Duration::from_millis(300)).await;

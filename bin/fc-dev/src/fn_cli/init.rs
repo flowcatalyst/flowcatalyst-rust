@@ -28,6 +28,8 @@ use std::path::{Path, PathBuf};
 
 use super::credentials::platform_url_or_default;
 use super::{CliError, Ctx, Io};
+use std::fs;
+use std::path;
 
 /// The Rust template, as `(relative path, contents)`. `cargo-generate.toml`
 /// is `cargo generate`'s own and is not copied.
@@ -231,7 +233,7 @@ pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliEr
     );
     let pdk_path =
         match &args.pdk_path {
-            Some(path) => Some(std::path::absolute(path).map_err(|e| {
+            Some(path) => Some(path::absolute(path).map_err(|e| {
                 CliError::Other(format!("could not resolve {}: {e}", path.display()))
             })?),
             None => None,
@@ -268,9 +270,9 @@ pub fn run(ctx: &Ctx<'_>, args: &InitArgs, io: &mut Io<'_>) -> Result<i32, CliEr
     for (rel, contents) in &files {
         let path = args.dir.join(rel);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, contents)?;
+        fs::write(&path, contents)?;
     }
 
     if args.manifest_only {
@@ -367,7 +369,7 @@ fn with_local_pdk(cargo_toml: &str, pdk: &Path) -> String {
 }
 
 fn default_name(dir: &Path) -> String {
-    std::path::absolute(dir)
+    path::absolute(dir)
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "function".to_string())
@@ -395,6 +397,9 @@ mod tests {
     use super::super::{FnArgs, FnCommand, OutputMode};
     use super::*;
     use std::collections::BTreeSet;
+    use std::fs;
+    use std::io;
+    use tokio::runtime::Builder;
 
     fn args(dir: &Path, extra: InitArgs) -> FnArgs {
         FnArgs {
@@ -419,9 +424,9 @@ mod tests {
     }
 
     fn run_init(fn_args: &FnArgs) -> (i32, String, String) {
-        let (mut out, mut err, mut stdin) = (Vec::new(), Vec::new(), std::io::empty());
+        let (mut out, mut err, mut stdin) = (Vec::new(), Vec::new(), io::empty());
         let env = |_: &str| None;
-        let code = tokio::runtime::Builder::new_current_thread()
+        let code = Builder::new_current_thread()
             .build()
             .unwrap()
             .block_on(super::super::run_with(
@@ -448,19 +453,19 @@ mod tests {
         assert_eq!(code, 0, "{err}");
         assert!(out.contains("fc-dev fn build"), "{out}");
 
-        let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        let cargo = fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("name = \"order-mapper\""), "{cargo}");
         assert!(cargo.contains("fc-function-pdk = { git = "), "{cargo}");
-        let lib = std::fs::read_to_string(dir.join("src/lib.rs")).unwrap();
+        let lib = fs::read_to_string(dir.join("src/lib.rs")).unwrap();
         assert!(
             lib.starts_with("//! order-mapper: a FlowCatalyst function."),
             "{lib}"
         );
-        let readme = std::fs::read_to_string(dir.join("README.md")).unwrap();
+        let readme = fs::read_to_string(dir.join("README.md")).unwrap();
         assert!(readme.contains("release/order_mapper.wasm"), "{readme}");
         assert!(dir.join(".gitignore").exists());
         for (rel, _) in TEMPLATE {
-            let text = std::fs::read_to_string(dir.join(rel)).unwrap();
+            let text = fs::read_to_string(dir.join(rel)).unwrap();
             assert!(
                 !text.contains("{{project-name}}") && !text.contains("{{crate_name}}"),
                 "{rel}"
@@ -468,8 +473,7 @@ mod tests {
         }
 
         let manifest: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
-                .unwrap();
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(
             manifest["$schema"],
             "http://localhost:9999/api/schemas/function-manifest.json"
@@ -491,8 +495,7 @@ mod tests {
         ));
         assert_eq!(code, 0, "{err}");
         let manifest: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
-                .unwrap();
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(manifest["runtime"], "wasm");
         assert_eq!(manifest["entrypoint"], "wasi_http_incoming_handler");
         assert_eq!(manifest["config"], serde_json::json!(["GREETING"]));
@@ -502,16 +505,13 @@ mod tests {
     fn refuses_to_overwrite_and_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("hello");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("manifest.json"), "{}").unwrap();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("manifest.json"), "{}").unwrap();
         let (code, _, err) = run_init(&args(tmp.path(), init_args(dir.clone())));
         assert_eq!(code, 1);
         assert!(err.contains("refusing to overwrite"), "{err}");
         assert!(!dir.join("Cargo.toml").exists());
-        assert_eq!(
-            std::fs::read_to_string(dir.join("manifest.json")).unwrap(),
-            "{}"
-        );
+        assert_eq!(fs::read_to_string(dir.join("manifest.json")).unwrap(), "{}");
     }
 
     #[test]
@@ -587,21 +587,21 @@ mod tests {
             assert_eq!(code, 0, "{err}");
             assert!(out.contains("fc-dev fn deploy dist/function.mjs"), "{out}");
             let package: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).unwrap())
+                serde_json::from_str(&fs::read_to_string(dir.join("package.json")).unwrap())
                     .unwrap();
             assert_eq!(package["name"], "order-mapper");
             assert!(package["scripts"]["build"]
                 .as_str()
                 .unwrap()
                 .contains("--external:flowcatalyst:*"));
-            let text = std::fs::read_to_string(dir.join(source)).unwrap();
+            let text = fs::read_to_string(dir.join(source)).unwrap();
             assert!(
                 text.starts_with("// order-mapper: a FlowCatalyst function."),
                 "{text}"
             );
             assert!(dir.join("types/flowcatalyst-function.d.ts").exists());
             let manifest: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
+                serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap())
                     .unwrap();
             assert_eq!(manifest["runtime"], "js");
             assert!(manifest.get("entrypoint").is_none(), "it defaults");
@@ -650,7 +650,7 @@ mod tests {
         let mut on_disk = BTreeSet::new();
         let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop() {
-            for entry in std::fs::read_dir(&dir).unwrap() {
+            for entry in fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     if path

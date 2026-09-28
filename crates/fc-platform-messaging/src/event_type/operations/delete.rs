@@ -8,6 +8,8 @@ use super::events::EventTypeDeleted;
 use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::entity::SpecVersionStatus;
 use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -20,7 +22,7 @@ pub struct DeleteEventTypeCommand {
     pub event_type_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteEventTypeCommand {}
+impl AuditMasked for DeleteEventTypeCommand {}
 
 /// Use case for deleting an event type.
 ///
@@ -70,10 +72,7 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
             .find_by_id(&command.event_type_id)
             .await?
         {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                event_type.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
         }
         Ok(())
     }

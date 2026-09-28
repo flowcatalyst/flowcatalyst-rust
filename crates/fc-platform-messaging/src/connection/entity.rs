@@ -1,6 +1,9 @@
 //! Connection Entity
 
+use crate::connection::sync_plan;
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,9 +50,7 @@ impl Connection {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Connection,
-            ),
+            id: tsid::generate(EntityType::Connection),
             code: code.into(),
             application_code: None,
             name: name.into(),
@@ -59,7 +60,7 @@ impl Connection {
             service_account_id: service_account_id.into(),
             client_id: None,
             client_identifier: None,
-            source: crate::connection::sync_plan::SOURCE_UI.to_string(),
+            source: sync_plan::SOURCE_UI.to_string(),
             created_at: now,
             updated_at: now,
         }

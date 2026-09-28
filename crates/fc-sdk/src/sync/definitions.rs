@@ -514,6 +514,7 @@ impl ScheduledJobDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::SyncResult;
 
     /// Owner decision 22 of 2026-09-25: a sync carries a password hash for
     /// users it creates; the platform reports the existing users it ignored.
@@ -533,7 +534,7 @@ mod tests {
             "$2y$10$hash"
         );
 
-        let result: crate::client::SyncResult = serde_json::from_value(serde_json::json!({
+        let result: SyncResult = serde_json::from_value(serde_json::json!({
             "applicationCode": "hr", "created": 0, "updated": 1, "deleted": 0,
             "syncedCodes": ["a@example.com"], "passwordHashIgnored": ["a@example.com"]
         }))
@@ -543,7 +544,7 @@ mod tests {
             vec!["a@example.com".to_string()]
         );
 
-        let omitted: crate::client::SyncResult = serde_json::from_value(serde_json::json!({
+        let omitted: SyncResult = serde_json::from_value(serde_json::json!({
             "applicationCode": "hr", "created": 1, "updated": 0, "deleted": 0,
             "syncedCodes": ["b@example.com"]
         }))

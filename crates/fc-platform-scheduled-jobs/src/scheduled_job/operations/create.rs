@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::events::ScheduledJobCreated;
 use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
+use fc_platform_core::shared::authorization_service::Authority;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +43,7 @@ pub struct CreateScheduledJobCommand {
     pub target_url: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateScheduledJobCommand {}
+impl AuditMasked for CreateScheduledJobCommand {}
 
 fn default_timezone() -> String {
     "UTC".into()
@@ -63,18 +66,16 @@ impl<U: UnitOfWork> CreateScheduledJobUseCase<U> {
 /// Go's `CreateScheduledJob` authorize phase: a client's job needs that
 /// client, a platform job an anchor.
 fn check_create_access(
-    caller: &impl fc_platform_core::shared::authorization_service::Authority,
+    caller: &impl Authority,
     client_id: Option<&str>,
-) -> Result<(), fc_platform_core::shared::error::PlatformError> {
+) -> Result<(), PlatformError> {
     match client_id {
-        Some(cid) if !caller.can_access_client(cid) => {
-            Err(fc_platform_core::shared::error::PlatformError::forbidden(
-                format!("No access to client: {cid}"),
-            ))
-        }
+        Some(cid) if !caller.can_access_client(cid) => Err(PlatformError::forbidden(format!(
+            "No access to client: {cid}"
+        ))),
         Some(_) => Ok(()),
         None if caller.is_anchor() => Ok(()),
-        None => Err(fc_platform_core::shared::error::PlatformError::forbidden(
+        None => Err(PlatformError::forbidden(
             "Only anchor users can create platform-scoped jobs",
         )),
     }

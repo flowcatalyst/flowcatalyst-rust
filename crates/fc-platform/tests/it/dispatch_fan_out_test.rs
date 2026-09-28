@@ -13,12 +13,14 @@ use testcontainers_modules::postgres::Postgres;
 use tokio_util::sync::CancellationToken;
 
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use fc_stream::event_fan_out;
 use fc_stream::health::StreamHealth;
 use fc_stream::EventFanOutConfig;
+use tokio::time;
 
 async fn run_for(pool: &PgPool, how_long: Duration) {
     let cancel = CancellationToken::new();
-    let task = tokio::spawn(fc_stream::event_fan_out::run(
+    let task = tokio::spawn(event_fan_out::run(
         pool.clone(),
         EventFanOutConfig {
             batch_size: 200,
@@ -27,9 +29,9 @@ async fn run_for(pool: &PgPool, how_long: Duration) {
         Arc::new(StreamHealth::new("event-fan-out".into())),
         cancel.clone(),
     ));
-    tokio::time::sleep(how_long).await;
+    time::sleep(how_long).await;
     cancel.cancel();
-    tokio::time::timeout(Duration::from_secs(10), task)
+    time::timeout(Duration::from_secs(10), task)
         .await
         .expect("fan-out stops when cancelled")
         .unwrap();

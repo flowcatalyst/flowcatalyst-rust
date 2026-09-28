@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::AuditLog;
+use fc_platform_core::shared::api_common::DecodedCursor;
 use fc_platform_core::shared::error::Result;
+use std::slice;
 
 #[derive(sqlx::FromRow)]
 struct AuditLogRow {
@@ -120,7 +122,7 @@ impl AuditLogRepository {
 
     /// Insert one row, `performed_at` as the log carries it.
     pub async fn insert(&self, log: &AuditLog) -> Result<()> {
-        self.insert_batch(std::slice::from_ref(log)).await
+        self.insert_batch(slice::from_ref(log)).await
     }
 
     /// Insert every row in one statement (UNNEST), so a batch lands or fails
@@ -261,7 +263,7 @@ impl AuditLogRepository {
         entity_id: Option<&str>,
         operation: Option<&str>,
         principal_id: Option<&str>,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<AuditLog>> {
         self.search_with_cursor_filtered(
@@ -285,7 +287,7 @@ impl AuditLogRepository {
     pub async fn search_with_cursor_filtered(
         &self,
         filter: &AuditCursorFilter<'_>,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<AuditLog>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM aud_logs WHERE TRUE");

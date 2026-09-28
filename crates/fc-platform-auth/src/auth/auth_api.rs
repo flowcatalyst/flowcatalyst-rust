@@ -19,14 +19,24 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
+use crate::auth::refresh_rotation;
+use crate::auth::refresh_rotation::Rejection;
 use crate::auth::refresh_token_repository::RefreshTokenRepository;
+use crate::mfa::login_api::SecondFactor;
+use crate::mfa::TwoFactorLogin;
+use axum::body::Bytes;
+use axum::response::Response;
+use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::{ClientIp, OptionalAuth};
+use fc_platform_iam::auth::auth_service;
 use fc_platform_iam::auth::auth_service::AuthService;
 use fc_platform_iam::auth::password_service::PasswordService;
 use fc_platform_iam::identity_provider::entity::IdentityProviderType;
 use fc_platform_iam::login_attempt::entity::LoginOutcome;
+use fc_platform_iam::principal::entity::Principal;
 use fc_platform_iam::principal::repository::PrincipalRepository;
+use fc_platform_iam::role::repository::RoleRepository;
 use fc_platform_iam::{
     email_domain_mapping::repository::EmailDomainMappingRepository,
     identity_provider::repository::IdentityProviderRepository,
@@ -168,7 +178,7 @@ pub struct AuthState {
     pub auth_service: Arc<AuthService>,
     pub principal_repo: Arc<PrincipalRepository>,
     /// Flattens roles to permissions for `/auth/me`
-    pub role_repo: Arc<fc_platform_iam::role::repository::RoleRepository>,
+    pub role_repo: Arc<RoleRepository>,
     pub password_service: Arc<PasswordService>,
     pub refresh_token_repo: Arc<RefreshTokenRepository>,
     pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
@@ -181,7 +191,7 @@ pub struct AuthState {
     /// Two-factor sign-in (Go's login `MFA` + `MFATokens`). When set, a user
     /// who owes a second factor gets `mfa_required` / `enrollment_required`
     /// instead of a session.
-    pub two_factor: Option<Arc<crate::mfa::TwoFactorLogin>>,
+    pub two_factor: Option<Arc<TwoFactorLogin>>,
 }
 
 /// Login with email and password
@@ -203,8 +213,8 @@ pub async fn login(
     State(state): State<AuthState>,
     ClientIp(client_ip): ClientIp,
     jar: CookieJar,
-    body: axum::body::Bytes,
-) -> Result<axum::response::Response, PlatformError> {
+    body: Bytes,
+) -> Result<Response, PlatformError> {
     // Go decodes the body itself (auth/login/endpoint.go:448-452): an
     // unreadable body is 400 `INVALID_JSON`, absent members are empty.
     let req: LoginRequest = serde_json::from_slice(&body)
@@ -232,14 +242,10 @@ pub async fn login(
 }
 
 /// The completed-login payload (Go `completeLogin`'s body).
-async fn login_response(
-    state: &AuthState,
-    jar: CookieJar,
-    principal: fc_platform_iam::principal::entity::Principal,
-) -> axum::response::Response {
+async fn login_response(state: &AuthState, jar: CookieJar, principal: Principal) -> Response {
     let principal_email = principal.email().unwrap_or_default().to_string();
 
-    let roles = fc_platform_iam::auth::auth_service::role_names(&principal);
+    let roles = auth_service::role_names(&principal);
     // An unresolvable permission set leaves the list empty; the user is
     // signed in regardless (Go, endpoint.go:586-592).
     let (permissions, sso_managed) = tokio::join!(
@@ -264,12 +270,12 @@ async fn login_response(
 pub enum PasswordLogin {
     /// Signed in: set the session cookie carrying `session_token`.
     Session {
-        principal: Box<fc_platform_iam::principal::entity::Principal>,
+        principal: Box<Principal>,
         session_token: String,
     },
     /// A second factor is owed first (`mfa_required` /
     /// `enrollment_required`); no session was minted.
-    SecondFactor(crate::mfa::login_api::SecondFactor),
+    SecondFactor(SecondFactor),
 }
 
 /// Password login, shared by the JSON `/auth/login` handler and the
@@ -532,7 +538,7 @@ pub async fn get_current_user(
         .filter(|p| p.active)
         .ok_or_else(not_authenticated)?;
 
-    let roles = fc_platform_iam::auth::auth_service::role_names(&principal);
+    let roles = auth_service::role_names(&principal);
     let (permissions, sso_managed) = tokio::try_join!(
         effective_permissions(&state, &roles),
         sso_managed(&state, &principal),
@@ -558,20 +564,14 @@ async fn effective_permissions(
     roles: &[String],
 ) -> Result<Vec<String>, PlatformError> {
     let mut permissions = state.role_repo.flatten_permissions(roles).await?;
-    if permissions
-        .iter()
-        .any(|p| p == fc_platform_core::permissions::ADMIN_ALL)
-    {
+    if permissions.iter().any(|p| p == permissions::ADMIN_ALL) {
         permissions.push("*".to_string());
     }
     Ok(permissions)
 }
 
 /// Go `ssoManaged` (auth/login/endpoint.go:616-634).
-async fn sso_managed(
-    state: &AuthState,
-    principal: &fc_platform_iam::principal::entity::Principal,
-) -> Result<bool, PlatformError> {
+async fn sso_managed(state: &AuthState, principal: &Principal) -> Result<bool, PlatformError> {
     if principal.external_identity.is_some() {
         return Ok(true);
     }
@@ -637,7 +637,7 @@ pub struct TokenRefreshResponse {
 )]
 pub async fn refresh_token(
     State(state): State<AuthState>,
-    body: axum::body::Bytes,
+    body: Bytes,
 ) -> Result<Json<TokenRefreshResponse>, PlatformError> {
     // Go decodes the body itself (auth/login/endpoint.go:341-350).
     let req: RefreshTokenRequest = serde_json::from_slice(&body)
@@ -652,25 +652,21 @@ pub async fn refresh_token(
     // token issued to an OAuth client is refused and not consumed: it
     // refreshes through /oauth/token, which checks the client (Go
     // handleRefresh, auth/login/endpoint.go:352-360).
-    let rotated = match crate::auth::refresh_rotation::rotate(
-        &*state.refresh_token_repo,
-        &req.refresh_token,
-        None,
-    )
-    .await?
-    {
-        Ok(rotated) => rotated,
-        Err(crate::auth::refresh_rotation::Rejection::Refused { .. }) => {
-            return Err(PlatformError::session_unauthorized(
-                "Token was not issued to this client",
-            ));
-        }
-        Err(_) => {
-            return Err(PlatformError::session_unauthorized(
-                "Invalid or expired refresh token",
-            ));
-        }
-    };
+    let rotated =
+        match refresh_rotation::rotate(&*state.refresh_token_repo, &req.refresh_token, None).await?
+        {
+            Ok(rotated) => rotated,
+            Err(Rejection::Refused { .. }) => {
+                return Err(PlatformError::session_unauthorized(
+                    "Token was not issued to this client",
+                ));
+            }
+            Err(_) => {
+                return Err(PlatformError::session_unauthorized(
+                    "Invalid or expired refresh token",
+                ));
+            }
+        };
     let raw_token = rotated.new_raw;
     let stored_token = rotated.stored;
 

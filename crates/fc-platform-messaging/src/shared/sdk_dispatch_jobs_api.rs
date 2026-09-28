@@ -7,8 +7,10 @@ use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::dispatch_job::api;
 use crate::dispatch_job::api::CreateDispatchJobRequest;
 use crate::dispatch_job::entity::parse_dispatch_mode;
+use crate::dispatch_job::signing_guard::SigningGuard;
 use crate::dispatch_job::{
     entity::{DispatchJob, DispatchKind, RetryStrategy},
     repository::DispatchJobRepository,
@@ -16,6 +18,7 @@ use crate::dispatch_job::{
 use crate::shared::batch_api::{job_ids_taken, BatchResponse, BatchResultItem, SuppliedJobIds};
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
@@ -24,7 +27,7 @@ use fc_platform_core::shared::middleware::Authenticated;
 pub struct SdkDispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     /// Refuses a job signed by an identity the caller may not use (S5).
-    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
+    pub signing: Arc<SigningGuard>,
 }
 
 /// SDK batch dispatch-jobs request. The wrapper key is `items` (1:1 with the
@@ -69,10 +72,7 @@ pub async fn sdk_batch_create_dispatch_jobs(
         // The client the job is written under (owner decision #24): a
         // single-client caller's absent client is its client; any other
         // non-anchor must name one it can access.
-        let client_id = fc_platform_core::shared::caller_reach::require_writable_client(
-            &auth.0,
-            job_req.client_id,
-        )?;
+        let client_id = caller_reach::require_writable_client(&auth.0, job_req.client_id)?;
 
         // Absent/empty means EVENT; anything else must be an exact kind (400).
         let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
@@ -138,15 +138,14 @@ pub async fn sdk_batch_create_dispatch_jobs(
         }
 
         // Optional, as in Go's BatchItem: an outbox item carries none.
-        job.service_account_id =
-            fc_platform_core::shared::caller_reach::non_blank(job_req.service_account_id);
+        job.service_account_id = caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.retry_strategy = retry_strategy;
         job.data_only = job_req.data_only;
 
         job.metadata = job_req.metadata;
-        job.descriptor = crate::dispatch_job::api::job_descriptor(job_req.descriptor)?;
-        job.queue = crate::dispatch_job::api::job_queue(job_req.queue.as_deref())?;
+        job.descriptor = api::job_descriptor(job_req.descriptor)?;
+        job.queue = api::job_queue(job_req.queue.as_deref())?;
 
         if let Some(id) = supplied.claim(job_req.id.as_deref())? {
             job.id = id;

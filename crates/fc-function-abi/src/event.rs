@@ -1,4 +1,6 @@
 use crate::{java, InvalidArgument};
+use std::fmt;
+use std::fmt::Formatter;
 
 /// An event a function emits through its host. Mirrors Java
 /// `function-api/src/main/java/io/flowcatalyst/function/OutboundEvent.java`.
@@ -133,9 +135,9 @@ impl OutboundEvent {
     }
 }
 
-impl std::fmt::Debug for OutboundEvent {
+impl fmt::Debug for OutboundEvent {
     /// The payload's length, never its bytes, as Java's `toString`.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("OutboundEvent")
             .field("event_type", &self.event_type)
             .field("source", &self.source)

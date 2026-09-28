@@ -7,11 +7,12 @@
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rand::RngCore;
 
 use crate::auth::AuthError;
+use base64::engine::general_purpose;
 
 const IV_LEN: usize = 12;
 const KEY_LEN: usize = 32;
@@ -83,7 +84,7 @@ impl SessionCrypto {
 fn decode_secret(s: &str) -> Result<[u8; KEY_LEN], AuthError> {
     let candidates: Vec<Vec<u8>> = [
         URL_SAFE_NO_PAD.decode(s).ok(),
-        base64::engine::general_purpose::STANDARD.decode(s).ok(),
+        general_purpose::STANDARD.decode(s).ok(),
         hex_decode(s).ok(),
     ]
     .into_iter()

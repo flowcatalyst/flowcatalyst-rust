@@ -15,6 +15,8 @@ use super::events::PolicyUpdated;
 use crate::function::entity::{ClientPolicy, SignerRule};
 use crate::function::policy_repository::ClientPolicyRepository;
 use crate::function::{java_is_blank, FunctionOwner, Runtime};
+use fc_platform_core::permissions;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
 };
@@ -120,15 +122,11 @@ impl<U: UnitOfWork> UseCase for PutFunctionPolicyUseCase<U> {
         _command: &PutPolicyCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
+        checks::require_anchor_scope(ctx.caller())?;
+        Ok(checks::require_permission(
             ctx.caller(),
-        )?;
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_permission(
-                ctx.caller(),
-                fc_platform_core::permissions::function::FUNCTION_POLICY_MANAGE,
-            )?,
-        )
+            permissions::function::FUNCTION_POLICY_MANAGE,
+        )?)
     }
 
     async fn execute(

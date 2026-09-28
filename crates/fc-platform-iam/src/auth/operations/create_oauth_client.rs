@@ -13,6 +13,9 @@ use std::sync::Arc;
 use super::events::OAuthClientCreated;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
+use crate::portal;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +51,7 @@ pub struct CreateOAuthClientCommand {
     pub api_access: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateOAuthClientCommand {}
+impl AuditMasked for CreateOAuthClientCommand {}
 
 pub struct CreateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
@@ -100,11 +103,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         _command: &CreateOAuthClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -142,15 +141,11 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
             .allowed_origins(command.allowed_origins.clone())
             .maybe_service_account_principal_id(command.service_account_principal_id.clone())
             .maybe_created_by(command.created_by.clone())
-            .maybe_portal_client_id(crate::portal::trimmed_or_none(
-                command.portal_client_id.as_deref(),
-            ))
-            .maybe_portal_app_id(crate::portal::trimmed_or_none(
-                command.portal_app_id.as_deref(),
-            ))
+            .maybe_portal_client_id(portal::trimmed_or_none(command.portal_client_id.as_deref()))
+            .maybe_portal_app_id(portal::trimmed_or_none(command.portal_app_id.as_deref()))
             .api_access(command.api_access)
             .build();
-        crate::portal::validate_oauth_client_plane(&client)?;
+        portal::validate_oauth_client_plane(&client)?;
 
         let event =
             OAuthClientCreated::new(&ctx, &client.id, &client.client_id, &client.client_name);

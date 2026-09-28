@@ -14,6 +14,8 @@ use std::sync::Arc;
 use super::events::UserUpdated;
 use crate::{client::repository::ClientRepository, principal::repository::PrincipalRepository};
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -27,7 +29,7 @@ pub struct SetClientAssociationCommand {
     pub mode: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SetClientAssociationCommand {}
+impl AuditMasked for SetClientAssociationCommand {}
 
 pub struct SetClientAssociationUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -85,11 +87,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
         _command: &SetClientAssociationCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobPaused;
 use crate::scheduled_job::ScheduledJobRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -18,7 +20,7 @@ pub struct PauseScheduledJobCommand {
     pub scheduled_job_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for PauseScheduledJobCommand {}
+impl AuditMasked for PauseScheduledJobCommand {}
 
 pub struct PauseScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
@@ -52,10 +54,7 @@ impl<U: UnitOfWork> UseCase for PauseScheduledJobUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(job) = self.repo.find_by_id(&command.scheduled_job_id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                job.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_deref())?;
         }
         Ok(())
     }

@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use super::events::DispatchPoolUpdated;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -35,7 +37,7 @@ pub struct UpdateDispatchPoolCommand {
     pub concurrency: Option<i32>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateDispatchPoolCommand {}
+impl AuditMasked for UpdateDispatchPoolCommand {}
 
 /// Use case for updating a dispatch pool.
 pub struct UpdateDispatchPoolUseCase<U: UnitOfWork> {
@@ -80,10 +82,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

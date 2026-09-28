@@ -1,6 +1,12 @@
 //! Common API types and utilities
 
+use base64::engine::general_purpose;
 use serde::{Deserialize, Serialize};
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::str;
 use utoipa::{IntoParams, ToSchema};
 
 mod string_or_number {
@@ -124,13 +130,13 @@ pub struct PaginatedResponse<T> {
 #[derive(Debug)]
 pub struct CursorDecodeError;
 
-impl std::fmt::Display for CursorDecodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CursorDecodeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "invalid cursor")
     }
 }
 
-impl std::error::Error for CursorDecodeError {}
+impl error::Error for CursorDecodeError {}
 
 /// Encode a `(created_at, id)` pair as an opaque cursor. The `id` is hashed
 /// to a `u64` so the cursor doesn't leak the full TSID structure and stays
@@ -142,7 +148,7 @@ pub fn encode_cursor(created_at: chrono::DateTime<chrono::Utc>, id: &str) -> Str
     // Use the raw id string in the cursor — it's already a stable, sortable
     // TSID, and including it lets the keyset comparison be exact.
     let raw = format!("{}:{}", micros, id);
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())
+    general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())
 }
 
 /// Decoded cursor for repositories. Returns the original (created_at, id)
@@ -154,10 +160,10 @@ pub struct DecodedCursor {
 
 pub fn decode_cursor(cursor: &str) -> Result<DecodedCursor, CursorDecodeError> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let bytes = general_purpose::URL_SAFE_NO_PAD
         .decode(cursor.as_bytes())
         .map_err(|_| CursorDecodeError)?;
-    let raw = std::str::from_utf8(&bytes).map_err(|_| CursorDecodeError)?;
+    let raw = str::from_utf8(&bytes).map_err(|_| CursorDecodeError)?;
     let (micros_str, id) = raw.split_once(':').ok_or(CursorDecodeError)?;
     let micros: i64 = micros_str.parse().map_err(|_| CursorDecodeError)?;
     let created_at =

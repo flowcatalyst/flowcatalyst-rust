@@ -19,8 +19,10 @@ use crate::process::operations::{
 };
 use crate::process::repository::ProcessRepository;
 use fc_platform_core::shared::api_common::{CreatedResponse, PaginationParams};
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -124,10 +126,10 @@ pub struct ProcessesQuery {
 #[derive(Clone)]
 pub struct ProcessesState {
     pub process_repo: Arc<ProcessRepository>,
-    pub create_use_case: Arc<CreateProcessUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub update_use_case: Arc<UpdateProcessUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub archive_use_case: Arc<ArchiveProcessUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
-    pub delete_use_case: Arc<DeleteProcessUseCase<fc_platform_core::usecase::PgUnitOfWork>>,
+    pub create_use_case: Arc<CreateProcessUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateProcessUseCase<PgUnitOfWork>>,
+    pub archive_use_case: Arc<ArchiveProcessUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteProcessUseCase<PgUnitOfWork>>,
 }
 
 #[utoipa::path(
@@ -148,7 +150,7 @@ pub async fn create_process(
     auth: Authenticated,
     Json(req): Json<CreateProcessRequest>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_create_processes(&auth.0)?;
+    checks::can_create_processes(&auth.0)?;
 
     let cmd = CreateProcessCommand {
         code: CreateProcessCommand::parse_code(&req.code, &req.name)?,
@@ -183,7 +185,7 @@ pub async fn get_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ProcessResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_processes(&auth.0)?;
+    checks::can_read_processes(&auth.0)?;
     let process = state
         .process_repo
         .find_by_id(&id)
@@ -209,7 +211,7 @@ pub async fn get_process_by_code(
     auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ProcessResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_processes(&auth.0)?;
+    checks::can_read_processes(&auth.0)?;
     let process = state
         .process_repo
         .find_by_code(&code)
@@ -234,7 +236,7 @@ pub async fn list_processes(
     auth: Authenticated,
     Query(query): Query<ProcessesQuery>,
 ) -> Result<Json<ProcessListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_processes(&auth.0)?;
+    checks::can_read_processes(&auth.0)?;
 
     // Go filters on the status as given: no default, and a status no
     // process has (`ACTIVE`, say) is an empty list, not a 400.
@@ -280,7 +282,7 @@ pub async fn update_process(
     Path(id): Path<String>,
     Json(req): Json<UpdateProcessRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_update_processes(&auth.0)?;
+    checks::can_update_processes(&auth.0)?;
 
     // Ensure the process exists (gives a clean 404 before the use case runs).
     let _existing = state
@@ -319,7 +321,7 @@ pub async fn archive_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_processes(&auth.0)?;
+    checks::can_write_processes(&auth.0)?;
 
     let _existing = state
         .process_repo
@@ -350,7 +352,7 @@ pub async fn delete_process(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_delete_processes(&auth.0)?;
+    checks::can_delete_processes(&auth.0)?;
 
     let _existing = state
         .process_repo

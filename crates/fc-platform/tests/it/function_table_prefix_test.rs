@@ -20,6 +20,8 @@ use testcontainers::ContainerAsync;
 use testcontainers_modules::postgres::Postgres;
 
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use std::time::Duration;
+use tokio::time;
 
 const GO_059: &str = include_str!("../data/go/059_functions.sql");
 const RETIRED: [(&str, &str); 3] = [
@@ -57,7 +59,7 @@ async fn fresh_postgres() -> (PgPool, ContainerAsync<Postgres>) {
             Err(e) if attempt < 10 => {
                 attempt += 1;
                 eprintln!("connect attempt {attempt} failed: {e}; retrying");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                time::sleep(Duration::from_secs(1)).await;
             }
             Err(e) => panic!("connect: {e}"),
         }

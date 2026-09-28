@@ -47,6 +47,17 @@ use fc_platform::shared::encryption_service::EncryptionService;
 use fc_platform::{Principal, UserScope};
 
 use crate::fn_cli::credentials::CliFile;
+use axum::middleware;
+use base64::engine::general_purpose;
+use std::env;
+use std::fmt;
+use std::fmt::Formatter;
+use std::fs;
+use std::fs::OpenOptions;
+use std::fs::Permissions;
+use std::io::Write;
+#[cfg(test)]
+use std::net::{Ipv4Addr, TcpListener};
 
 /// The one pool fc-dev's host serves: the manifest's default.
 pub const POOL: &str = "default";
@@ -136,8 +147,8 @@ pub fn apply_platform_defaults(args: &FunctionArgs, data_dir: &Path) {
 }
 
 fn set_default(key: &str, value: &str) {
-    if std::env::var_os(key).is_none() {
-        std::env::set_var(key, value);
+    if env::var_os(key).is_none() {
+        env::set_var(key, value);
     }
 }
 
@@ -165,8 +176,8 @@ pub struct Credentials {
     pub client_secret: String,
 }
 
-impl std::fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials")
             .field("client_id", &self.client_id)
             .field("client_secret", &"<redacted>")
@@ -320,7 +331,7 @@ async fn upsert_client(
 /// 32 random bytes, URL-safe base64.
 fn generate_secret() -> String {
     let bytes: [u8; 32] = rand::rng().random();
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
+    base64::Engine::encode(&general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
 /// The host's environment (Java `FnHostLauncher.Settings`): built from
@@ -346,11 +357,11 @@ pub fn host_env_pairs(
         ("FC_FN_HOST_ID", HOST_ID.to_string()),
         (
             "FC_FN_SIGNATURES",
-            std::env::var("FC_FN_SIGNATURES").unwrap_or_else(|_| "off".to_string()),
+            env::var("FC_FN_SIGNATURES").unwrap_or_else(|_| "off".to_string()),
         ),
         (
             "FLOWCATALYST_DEV_MODE",
-            std::env::var("FLOWCATALYST_DEV_MODE").unwrap_or_else(|_| "true".to_string()),
+            env::var("FLOWCATALYST_DEV_MODE").unwrap_or_else(|_| "true".to_string()),
         ),
     ]
     .into_iter()
@@ -366,7 +377,7 @@ pub fn host_env_pairs(
         "FC_FN_TRUST_ROOT",
         "FC_DRAIN_TIMEOUT_SECONDS",
     ] {
-        if let Ok(value) = std::env::var(key) {
+        if let Ok(value) = env::var(key) {
             pairs.retain(|(k, _)| k != key);
             pairs.push((key.to_string(), value));
         }
@@ -448,31 +459,28 @@ impl HostSlot {
 /// config, secrets, delete, …), asks the host to reconcile at once instead
 /// of at its next 15 s poll.
 pub fn nudge_on_function_writes(router: Router, slot: HostSlot) -> Router {
-    router.layer(axum::middleware::from_fn(
-        move |req: Request, next: Next| {
-            let slot = slot.clone();
-            async move {
-                let write = req.method() != Method::GET
-                    && req.method() != Method::HEAD
-                    && req.uri().path().starts_with("/api/function");
-                let response = next.run(req).await;
-                if write && response.status().is_success() {
-                    slot.nudge();
-                }
-                response
+    router.layer(middleware::from_fn(move |req: Request, next: Next| {
+        let slot = slot.clone();
+        async move {
+            let write = req.method() != Method::GET
+                && req.method() != Method::HEAD
+                && req.uri().path().starts_with("/api/function");
+            let response = next.run(req).await;
+            if write && response.status().is_success() {
+                slot.nudge();
             }
-        },
-    ))
+            response
+        }
+    }))
 }
 
 /// Writes `fn-cli.json` owner-only (Java `OwnerOnlyFile`).
 pub fn write_cli_file(path: &Path, file: &CliFile) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(file)?;
-    let mut options = std::fs::OpenOptions::new();
+    let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
@@ -485,9 +493,9 @@ pub fn write_cli_file(path: &Path, file: &CliFile) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(path, Permissions::from_mode(0o600))?;
     }
-    std::io::Write::write_all(&mut out, &bytes)?;
+    Write::write_all(&mut out, &bytes)?;
     Ok(())
 }
 
@@ -505,7 +513,7 @@ pub fn cli_file(args: &FunctionArgs, api_port: u16, cli: &Credentials) -> CliFil
 /// A free loopback port (bound, then released). Only for tests.
 #[cfg(test)]
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
         .expect("a free port")

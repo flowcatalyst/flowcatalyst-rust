@@ -12,6 +12,8 @@ use super::events::{RoleCreated, RoleDeleted, RoleUpdated, RolesSynced};
 use crate::application::repository::ApplicationRepository;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -41,11 +43,11 @@ pub struct SyncRolesCommand {
     pub remove_unlisted: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncRolesCommand {}
+impl AuditMasked for SyncRolesCommand {}
 
 pub struct SyncRolesUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,
-    application_repo: Arc<crate::application::repository::ApplicationRepository>,
+    application_repo: Arc<ApplicationRepository>,
     unit_of_work: Arc<U>,
 }
 
@@ -99,7 +101,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
             .find_by_code(&command.application_code)
             .await?
         {
-            fc_platform_core::shared::authorization_service::checks::require_caller_application_access(
+            checks::require_caller_application_access(
                 ctx.caller(),
                 &command.application_code,
                 Some(app),

@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 use super::auth::{OidcValidator, TokenClaims};
+use base64::engine::general_purpose;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -633,7 +634,7 @@ fn validate_nonce(id_token: &str, expected_nonce: &str) -> Result<(), String> {
         .decode(parts[1])
         .or_else(|_| {
             // Try with padding
-            base64::engine::general_purpose::URL_SAFE.decode(parts[1])
+            general_purpose::URL_SAFE.decode(parts[1])
         })
         .map_err(|e| format!("Failed to base64url-decode ID token payload: {}", e))?;
 
@@ -662,7 +663,7 @@ fn decode_claims_insecure(token: &str) -> Result<TokenClaims, String> {
 
     let payload_bytes = BASE64URL
         .decode(parts[1])
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(parts[1]))
+        .or_else(|_| general_purpose::URL_SAFE.decode(parts[1]))
         .map_err(|e| format!("Failed to base64url-decode token payload: {}", e))?;
 
     serde_json::from_slice::<TokenClaims>(&payload_bytes)
@@ -690,6 +691,7 @@ pub fn oidc_flow_routes(state: Arc<OidcFlowState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn test_generate_random_string() {
@@ -809,7 +811,7 @@ mod tests {
 
         store.insert("session-1".to_string(), claims);
         // Session should be expired immediately
-        std::thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
         assert!(store.get("session-1").is_none());
     }
 

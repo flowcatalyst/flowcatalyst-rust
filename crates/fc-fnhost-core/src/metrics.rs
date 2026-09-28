@@ -24,8 +24,15 @@ use prometheus_client::metrics::gauge::{ConstGauge, Gauge};
 use prometheus_client::metrics::histogram::Histogram;
 use prometheus_client::registry::Registry;
 
+use crate::exec::ExecBudget;
+use crate::invoke::Consumption;
 use crate::reconciler::ReconcileObserver;
 use crate::registry::FunctionRegistry;
+use prometheus_client::encoding::text;
+use prometheus_client::metrics::MetricType;
+use std::fmt;
+use std::fmt::Formatter;
+use std::mem;
 
 /// 5 ms … 60 s.
 const DURATION_BUCKETS: [f64; 13] = [
@@ -113,7 +120,7 @@ pub struct FnMetrics {
     reconcile_total: Family<Labels, Counter>,
     last_reconcile_success: Gauge<f64, AtomicU64>,
     permits: Arc<RwLock<Option<Arc<dyn PermitsView>>>>,
-    budget: Arc<RwLock<Option<crate::exec::ExecBudget>>>,
+    budget: Arc<RwLock<Option<ExecBudget>>>,
     /// The invocation label sets created per address, for the sweep.
     invocation_labels: Mutex<HashMap<String, HashSet<Labels>>>,
     known_addresses: Mutex<HashSet<FunctionAddress>>,
@@ -123,14 +130,14 @@ struct RegistryGauges {
     registry: Arc<FunctionRegistry>,
 }
 
-impl std::fmt::Debug for RegistryGauges {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for RegistryGauges {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str("RegistryGauges")
     }
 }
 
 impl Collector for RegistryGauges {
-    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), std::fmt::Error> {
+    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), fmt::Error> {
         let loaded = ConstGauge::new(self.registry.len() as i64);
         loaded.encode(encoder.encode_descriptor(
             "fc_fn_loaded",
@@ -153,14 +160,14 @@ struct PermitsGauge {
     permits: Arc<RwLock<Option<Arc<dyn PermitsView>>>>,
 }
 
-impl std::fmt::Debug for PermitsGauge {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PermitsGauge {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str("PermitsGauge")
     }
 }
 
 impl Collector for PermitsGauge {
-    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), std::fmt::Error> {
+    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), fmt::Error> {
         let Some(permits) = self.permits.read().clone() else {
             return Ok(());
         };
@@ -168,7 +175,7 @@ impl Collector for PermitsGauge {
             "fc_fn_permits_available",
             "Invocation permits currently available",
             None,
-            prometheus_client::metrics::MetricType::Gauge,
+            MetricType::Gauge,
         )?;
         let host: Labels = vec![
             ("scope".into(), "host".into()),
@@ -192,17 +199,17 @@ impl Collector for PermitsGauge {
 /// together; Rust host only): `fc_fn_executing`, `fc_fn_executing_waiting`
 /// and `fc_fn_executing_limit`, once the host has a budget.
 struct ExecutingGauges {
-    budget: Arc<RwLock<Option<crate::exec::ExecBudget>>>,
+    budget: Arc<RwLock<Option<ExecBudget>>>,
 }
 
-impl std::fmt::Debug for ExecutingGauges {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for ExecutingGauges {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str("ExecutingGauges")
     }
 }
 
 impl Collector for ExecutingGauges {
-    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), std::fmt::Error> {
+    fn encode(&self, mut encoder: DescriptorEncoder) -> Result<(), fmt::Error> {
         let Some(budget) = self.budget.read().clone() else {
             return Ok(());
         };
@@ -302,7 +309,7 @@ impl FnMetrics {
         registry.register_collector(Box::new(PermitsGauge {
             permits: permits.clone(),
         }));
-        let budget: Arc<RwLock<Option<crate::exec::ExecBudget>>> = Arc::new(RwLock::new(None));
+        let budget: Arc<RwLock<Option<ExecBudget>>> = Arc::new(RwLock::new(None));
         registry.register_collector(Box::new(ExecutingGauges {
             budget: budget.clone(),
         }));
@@ -326,9 +333,9 @@ impl FnMetrics {
     }
 
     /// The Prometheus scrape, OpenMetrics text.
-    pub fn encode(&self) -> Result<String, std::fmt::Error> {
+    pub fn encode(&self) -> Result<String, fmt::Error> {
         let mut out = String::new();
-        prometheus_client::encoding::text::encode(&mut out, &self.registry)?;
+        text::encode(&mut out, &self.registry)?;
         Ok(out)
     }
 
@@ -340,7 +347,7 @@ impl FnMetrics {
 
     /// The executing budget the host's runtimes share, for
     /// `fc_fn_executing*`.
-    pub fn budget_ready(&self, budget: crate::exec::ExecBudget) {
+    pub fn budget_ready(&self, budget: ExecBudget) {
         *self.budget.write() = Some(budget);
     }
 
@@ -410,9 +417,9 @@ impl FnMetrics {
         &self,
         address: &FunctionAddress,
         client_id: Option<&str>,
-        consumption: crate::invoke::Consumption,
+        consumption: Consumption,
     ) {
-        if consumption == crate::invoke::Consumption::default() {
+        if consumption == Consumption::default() {
             return;
         }
         let rendered = address.render();
@@ -437,8 +444,7 @@ impl FnMetrics {
     // ── cardinality: an address leaving desired state drops its series ──
 
     pub fn sweep_dead_addresses(&self, currently_desired: &HashSet<FunctionAddress>) {
-        let previous =
-            std::mem::replace(&mut *self.known_addresses.lock(), currently_desired.clone());
+        let previous = mem::replace(&mut *self.known_addresses.lock(), currently_desired.clone());
         for address in previous.difference(currently_desired) {
             let rendered = address.render();
             let by_address = labels(&[("address", &rendered)]);
@@ -485,6 +491,8 @@ impl ReconcileObserver for FnMetrics {
 mod tests {
     use super::*;
     use crate::clock::SystemClock;
+    use crate::exec::ExecBudget;
+    use crate::invoke::Consumption;
 
     fn metrics() -> FnMetrics {
         FnMetrics::new(Arc::new(FunctionRegistry::new(10, Arc::new(SystemClock))))
@@ -513,7 +521,7 @@ mod tests {
     async fn the_shared_executing_budget_is_exposed_once_the_host_has_one() {
         let m = metrics();
         assert!(!m.encode().unwrap().contains("fc_fn_executing"));
-        let budget = crate::exec::ExecBudget::new(3);
+        let budget = ExecBudget::new(3);
         m.budget_ready(budget.clone());
         // Scraped from inside a guest's poll: that guest holds a permit.
         let observed = budget.run(async { m.encode().unwrap() }).await;
@@ -546,7 +554,7 @@ mod tests {
     fn consumption_is_exported_per_function_and_client() {
         let m = metrics();
         let a = FunctionAddress::parse("a.b.c").unwrap();
-        let used = |fuel, memory| crate::invoke::Consumption {
+        let used = |fuel, memory| Consumption {
             fuel: Some(fuel),
             peak_memory_bytes: Some(memory),
         };
@@ -554,7 +562,7 @@ mod tests {
         m.consumed(&a, Some("clt_1"), used(60_000, 1 << 20));
         m.consumed(&a, None, used(5, 1));
         // A runtime that meters nothing adds no series.
-        m.consumed(&a, Some("clt_2"), crate::invoke::Consumption::default());
+        m.consumed(&a, Some("clt_2"), Consumption::default());
         let text = m.encode().unwrap();
         for series in [
             r#"fc_fn_fuel_total{address="a.b.c",client="clt_1"} 100000"#,
@@ -590,7 +598,7 @@ mod tests {
         m.consumed(
             &gone,
             Some("clt_1"),
-            crate::invoke::Consumption {
+            Consumption {
                 fuel: Some(10),
                 peak_memory_bytes: Some(1 << 20),
             },

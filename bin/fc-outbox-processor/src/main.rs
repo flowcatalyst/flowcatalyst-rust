@@ -61,10 +61,15 @@ use fc_outbox::setup;
 use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
 
 use fc_common::config::env_or_parse;
+use fc_common::diagnostics;
+use fc_common::diagnostics::Exposition;
+use fc_common::logging;
+use tokio::net::TcpListener;
+use tokio::time;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    fc_common::logging::init_logging("fc-outbox-processor");
+    logging::init_logging("fc-outbox-processor");
 
     info!("Starting FlowCatalyst Outbox Processor");
 
@@ -122,7 +127,7 @@ async fn main() -> Result<()> {
         .route("/ready", get(ready_handler))
         .with_state(Arc::clone(&processor));
 
-    let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await?;
+    let metrics_listener = TcpListener::bind(metrics_addr).await?;
     let metrics_handle = {
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
@@ -157,7 +162,7 @@ async fn main() -> Result<()> {
 
     let _ = shutdown_tx.send(());
 
-    let _ = tokio::time::timeout(Duration::from_secs(30), async {
+    let _ = time::timeout(Duration::from_secs(30), async {
         let _ = processor_handle.await;
         let _ = metrics_handle.await;
         if let Some(handle) = admin_handle {
@@ -167,7 +172,7 @@ async fn main() -> Result<()> {
     .await;
 
     info!("FlowCatalyst Outbox Processor shutdown complete");
-    fc_common::logging::shutdown();
+    logging::shutdown();
     Ok(())
 }
 
@@ -193,11 +198,7 @@ async fn metrics_handler(State(p): State<Processor>) -> String {
         m.blocked_groups,
     );
     // The tokio runtime and the process (CPU, RSS, fds, threads, panics).
-    fc_common::diagnostics::render_prometheus(
-        &mut out,
-        None,
-        fc_common::diagnostics::Exposition::Prometheus,
-    );
+    diagnostics::render_prometheus(&mut out, None, Exposition::Prometheus);
     out
 }
 

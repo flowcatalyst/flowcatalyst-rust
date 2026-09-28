@@ -363,14 +363,16 @@ impl<F: Future> Future for Until<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
     use std::time::{Duration, Instant};
+    use tokio::time;
 
     /// Blocks its thread for `busy` inside one poll, then waits `idle`
     /// without holding anything, then blocks for `busy` again.
     async fn work(busy: Duration, idle: Duration) {
-        std::thread::sleep(busy);
-        tokio::time::sleep(idle).await;
-        std::thread::sleep(busy);
+        thread::sleep(busy);
+        time::sleep(idle).await;
+        thread::sleep(busy);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -391,7 +393,7 @@ mod tests {
     async fn a_guest_waiting_on_io_holds_no_permit() {
         let budget = ExecBudget::new(1);
         let sleeper = tokio::spawn(budget.run(work(Duration::ZERO, Duration::from_millis(400))));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         let started = Instant::now();
         budget
             .run(work(Duration::from_millis(10), Duration::ZERO))
@@ -407,9 +409,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a_stopped_wait_gives_the_future_back_without_running_it() {
         let budget = ExecBudget::new(1);
-        let hog =
-            tokio::spawn(budget.run(async { std::thread::sleep(Duration::from_millis(500)) }));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let hog = tokio::spawn(budget.run(async { thread::sleep(Duration::from_millis(500)) }));
+        time::sleep(Duration::from_millis(50)).await;
         let stop = CancellationToken::new();
         let ran = Arc::new(AtomicUsize::new(0));
         let waiter = {
@@ -422,7 +423,7 @@ mod tests {
                     .until(stop.clone()),
             )
         };
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert_eq!(budget.waiting(), 1);
         let started = Instant::now();
         stop.cancel();
@@ -437,12 +438,11 @@ mod tests {
     async fn a_lane_queues_its_guests_before_they_queue_for_a_permit() {
         let budget = ExecBudget::new(2);
         let lane = Lane::new();
-        let first = tokio::spawn(budget.run_on(&lane, async {
-            std::thread::sleep(Duration::from_millis(200))
-        }));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let first =
+            tokio::spawn(budget.run_on(&lane, async { thread::sleep(Duration::from_millis(200)) }));
+        time::sleep(Duration::from_millis(50)).await;
         let second = tokio::spawn(budget.run_on(&lane, async {}));
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         // The second waits for its lane, not in the permit queue.
         assert_eq!((budget.executing(), budget.waiting()), (1, 0));
         first.await.unwrap();

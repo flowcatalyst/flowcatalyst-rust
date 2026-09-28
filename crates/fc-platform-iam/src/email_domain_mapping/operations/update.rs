@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EmailDomainMappingUpdated;
+use crate::email_domain_mapping::entity;
 use crate::email_domain_mapping::entity::ScopeType;
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::identity_provider::repository::IdentityProviderRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -62,7 +65,7 @@ pub struct TwoFactorPolicyUpdate {
     pub remember_device_days: Option<i32>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateEmailDomainMappingCommand {}
+impl AuditMasked for UpdateEmailDomainMappingCommand {}
 
 pub struct UpdateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
@@ -111,11 +114,7 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         _command: &UpdateEmailDomainMappingCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(
@@ -177,10 +176,7 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
             mapping.remember_device_days = days;
         }
         // The resulting policy, not just the change, must hold.
-        crate::email_domain_mapping::entity::validate_two_factor(
-            mapping.require_2fa,
-            &mapping.allowed_2fa_methods,
-        )?;
+        entity::validate_two_factor(mapping.require_2fa, &mapping.allowed_2fa_methods)?;
         mapping.updated_at = chrono::Utc::now();
 
         // The mapping as saved, on the provider it now routes to (a move

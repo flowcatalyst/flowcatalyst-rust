@@ -14,6 +14,8 @@ pub use domains::DomainDeps;
 pub use events::{IdentityProviderCreated, IdentityProviderDeleted, IdentityProviderUpdated};
 pub use update::{UpdateIdentityProviderCommand, UpdateIdentityProviderUseCase};
 
+use fc_platform_core::shared::encryption_service;
+use fc_platform_core::shared::secret_ref;
 use fc_platform_core::usecase::UseCaseError;
 
 /// The command carries the client secret in its stored form: the handler
@@ -23,8 +25,7 @@ use fc_platform_core::usecase::UseCaseError;
 fn require_sealed_secret(secret_ref: Option<&str>) -> Result<(), UseCaseError> {
     match secret_ref {
         Some(s)
-            if !fc_platform_core::shared::encryption_service::is_encrypted_ref(s)
-                && !fc_platform_core::shared::secret_ref::is_secret_reference(s) =>
+            if !encryption_service::is_encrypted_ref(s) && !secret_ref::is_secret_reference(s) =>
         {
             Err(UseCaseError::validation(
                 "CLIENT_SECRET_NOT_ENCRYPTED",

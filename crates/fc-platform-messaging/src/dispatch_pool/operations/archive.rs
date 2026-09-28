@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::DispatchPoolArchived;
 use crate::dispatch_pool::entity::DispatchPoolStatus;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -19,7 +21,7 @@ pub struct ArchiveDispatchPoolCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ArchiveDispatchPoolCommand {}
+impl AuditMasked for ArchiveDispatchPoolCommand {}
 
 /// Use case for archiving a dispatch pool.
 pub struct ArchiveDispatchPoolUseCase<U: UnitOfWork> {
@@ -54,10 +56,7 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
-            fc_platform_core::shared::caller_reach::check_scope_access(
-                ctx.caller(),
-                target.client_id.as_deref(),
-            )?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
         }
         Ok(())
     }

@@ -17,6 +17,7 @@ use super::entity::{
 };
 use fc_platform_core::shared::enum_str::{decode, decode_opt};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use std::collections::HashSet;
 
 #[derive(sqlx::FromRow)]
 struct InstanceRow {
@@ -268,10 +269,7 @@ impl ScheduledJobInstanceRepository {
     /// Which of `jobs` (id, tracks-completion) have an active instance, in
     /// one query: QUEUED or IN_FLIGHT, or DELIVERED and not yet completed
     /// for a job that tracks completion (Go `HasActiveInstance`).
-    pub async fn active_job_ids(
-        &self,
-        jobs: &[(String, bool)],
-    ) -> Result<std::collections::HashSet<String>> {
+    pub async fn active_job_ids(&self, jobs: &[(String, bool)]) -> Result<HashSet<String>> {
         if jobs.is_empty() {
             return Ok(Default::default());
         }
@@ -332,7 +330,7 @@ impl ScheduledJobInstanceRepository {
         &self,
         job_ids: &[String],
         tracking: &[String],
-    ) -> Result<std::collections::HashSet<String>> {
+    ) -> Result<HashSet<String>> {
         if job_ids.is_empty() {
             return Ok(Default::default());
         }

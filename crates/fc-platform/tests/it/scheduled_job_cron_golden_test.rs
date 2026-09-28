@@ -18,11 +18,12 @@ use serde_json::Value;
 
 use fc_platform::scheduled_job::cron::CronSpec;
 use fc_platform::scheduled_job::scheduler::poller::{latest_slot_in_window, next_slot_after};
+use std::fs;
 
 fn golden() -> Value {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/scheduled_job/cron-go-golden.json");
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
 #[test]

@@ -16,8 +16,18 @@ use super::operations::move_provider::{
     MoveMappingToProviderCommand, MoveMappingToProviderUseCase,
 };
 use super::repository::EmailDomainMappingRepository;
+use crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase;
+use crate::email_domain_mapping::operations::DeleteEmailDomainMappingUseCase;
+use crate::email_domain_mapping::operations::TwoFactorPolicyInput;
+use crate::email_domain_mapping::operations::TwoFactorPolicyUpdate;
+use crate::email_domain_mapping::operations::UpdateEmailDomainMappingUseCase;
 use crate::identity_provider::repository::IdentityProviderRepository;
+use crate::role::repository::RoleRepository;
+use axum::http::StatusCode;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -159,22 +169,10 @@ pub struct EmailDomainMappingsState {
     pub idp_repo: Arc<IdentityProviderRepository>,
     /// Role definitions (the role ceiling now applies to the identity
     /// provider's `allowedRoleIds`).
-    pub role_repo: Arc<crate::role::repository::RoleRepository>,
-    pub create_use_case: Arc<
-        crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub update_use_case: Arc<
-        crate::email_domain_mapping::operations::UpdateEmailDomainMappingUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub delete_use_case: Arc<
-        crate::email_domain_mapping::operations::DeleteEmailDomainMappingUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub role_repo: Arc<RoleRepository>,
+    pub create_use_case: Arc<CreateEmailDomainMappingUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateEmailDomainMappingUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteEmailDomainMappingUseCase<PgUnitOfWork>>,
 }
 
 /// Create a new email domain mapping
@@ -185,7 +183,7 @@ pub struct EmailDomainMappingsState {
     operation_id = "createEmailDomainMapping",
     request_body = CreateEmailDomainMappingRequest,
     responses(
-        (status = 201, description = "Email domain mapping created", body = fc_platform_core::shared::api_common::CreatedResponse),
+        (status = 201, description = "Email domain mapping created", body = CreatedResponse),
         (status = 409, description = "Duplicate email domain")
     ),
     security(("bearer_auth" = []))
@@ -194,19 +192,11 @@ pub async fn create_email_domain_mapping(
     State(state): State<EmailDomainMappingsState>,
     auth: Authenticated,
     Json(req): Json<CreateEmailDomainMappingRequest>,
-) -> Result<
-    (
-        axum::http::StatusCode,
-        Json<fc_platform_core::shared::api_common::CreatedResponse>,
-    ),
-    PlatformError,
-> {
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     use crate::email_domain_mapping::operations::CreateEmailDomainMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_create_email_domain_mappings(
-        &auth.0,
-    )?;
+    checks::can_create_email_domain_mappings(&auth.0)?;
 
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
@@ -219,7 +209,7 @@ pub async fn create_email_domain_mapping(
         // Role sync lives on the identity provider (Go's 040).
         allowed_role_ids: Vec::new(),
         sync_roles_from_idp: false,
-        two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyInput {
+        two_factor: TwoFactorPolicyInput {
             require_2fa: req.require_2fa.unwrap_or(false),
             allowed_2fa_methods: req.allowed_2fa_methods.unwrap_or_default(),
             remember_device_enabled: req.remember_device_enabled.unwrap_or(false),
@@ -229,10 +219,8 @@ pub async fn create_email_domain_mapping(
     let ctx = ExecutionContext::from_auth(&auth.0);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
     Ok((
-        axum::http::StatusCode::CREATED,
-        Json(fc_platform_core::shared::api_common::CreatedResponse::new(
-            event.mapping_id,
-        )),
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.mapping_id)),
     ))
 }
 
@@ -251,9 +239,7 @@ pub async fn list_email_domain_mappings(
     State(state): State<EmailDomainMappingsState>,
     auth: Authenticated,
 ) -> Result<Json<EmailDomainMappingsListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_email_domain_mappings(
-        &auth.0,
-    )?;
+    checks::can_read_email_domain_mappings(&auth.0)?;
 
     let mappings = state.edm_repo.find_all().await?;
     let total = mappings.len();
@@ -302,9 +288,7 @@ pub async fn get_email_domain_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_email_domain_mappings(
-        &auth.0,
-    )?;
+    checks::can_read_email_domain_mappings(&auth.0)?;
 
     let edm = state
         .edm_repo
@@ -373,18 +357,16 @@ pub async fn update_email_domain_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<UpdateEmailDomainMappingRequest>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::email_domain_mapping::operations::UpdateEmailDomainMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_email_domain_mappings(
-        &auth.0,
-    )?;
+    checks::can_update_email_domain_mappings(&auth.0)?;
 
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,
         identity_provider_id: req.identity_provider_id,
-        scope_type: fc_platform_core::shared::enum_str::parse_opt(req.scope_type.as_deref())?,
+        scope_type: enum_str::parse_opt(req.scope_type.as_deref())?,
         // An explicit null clears: passed as blank, which the use case reads
         // as "no link".
         primary_client_id: req.primary_client_id.map(Option::unwrap_or_default),
@@ -393,7 +375,7 @@ pub async fn update_email_domain_mapping(
         granted_client_ids: req.granted_client_ids,
         required_oidc_tenant_id: req.required_oidc_tenant_id.map(Option::unwrap_or_default),
         allowed_role_ids: None,
-        two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyUpdate {
+        two_factor: TwoFactorPolicyUpdate {
             require_2fa: req.require_2fa,
             allowed_2fa_methods: req.allowed_2fa_methods,
             remember_device_enabled: req.remember_device_enabled,
@@ -402,7 +384,7 @@ pub async fn update_email_domain_mapping(
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete an email domain mapping
@@ -424,18 +406,16 @@ pub async fn delete_email_domain_mapping(
     State(state): State<EmailDomainMappingsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::email_domain_mapping::operations::DeleteEmailDomainMappingCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_email_domain_mappings(
-        &auth.0,
-    )?;
+    checks::can_delete_email_domain_mappings(&auth.0)?;
 
     let cmd = DeleteEmailDomainMappingCommand { mapping_id: id };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ─── Go-parity lookup routes (formerly lookup_api.rs) ─────────────────────────
@@ -558,10 +538,7 @@ pub async fn get_email_domain_mapping_by_domain(
     Path(domain): Path<String>,
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
-    checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
-    )?;
+    checks::require_permission(&auth.0, permissions::admin::EMAIL_DOMAIN_MAPPING_READ)?;
     let m = state
         .edm_repo
         .find_by_email_domain(&domain)

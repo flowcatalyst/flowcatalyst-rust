@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RoleCreated;
+use crate::role::ceiling;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new role.
@@ -46,7 +48,7 @@ pub struct CreateRoleCommand {
     pub cross_application: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateRoleCommand {}
+impl AuditMasked for CreateRoleCommand {}
 
 /// Use case for creating a new role.
 pub struct CreateRoleUseCase<U: UnitOfWork> {
@@ -107,7 +109,7 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
         command: &CreateRoleCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(crate::role::ceiling::require_permissions(
+        Ok(ceiling::require_permissions(
             Some(ctx.caller()),
             command.permissions.iter().map(String::as_str),
         )?)

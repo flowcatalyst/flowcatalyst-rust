@@ -6,7 +6,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
+use aws_sdk_sqs::config::timeout::TimeoutConfig;
+use aws_sdk_sqs::config::Builder;
+use aws_sdk_sqs::types::MessageSystemAttributeName;
 use fc_common::{Message, QueuedMessage};
+use std::time::Duration;
+use std::time::Instant;
 
 /// SQS's ceiling on a message's visibility timeout (12 hours, Go
 /// `sqs.MaxVisibility`). A larger `ChangeMessageVisibility` is rejected, and
@@ -33,11 +38,11 @@ pub struct SqsQueueConsumer {
     /// redelivery, and a failed delete obviously needs the same guard. Every
     /// redelivery within the TTL is batch-deleted without re-routing to the
     /// mediator. Entries age out after `PENDING_DELETE_TTL`.
-    pending_delete_ids: Mutex<HashMap<String, std::time::Instant>>,
+    pending_delete_ids: Mutex<HashMap<String, Instant>>,
     /// Maps receipt handle -> SQS message ID so `ack` (which only receives the
     /// handle) can record the message ID in `pending_delete_ids`. Entries are
     /// pruned periodically to prevent unbounded growth.
-    receipt_to_message_id: Mutex<HashMap<String, (String, std::time::Instant)>>,
+    receipt_to_message_id: Mutex<HashMap<String, (String, Instant)>>,
     /// Total messages polled from queue
     total_polled: AtomicU64,
     /// Total messages successfully ACKed
@@ -58,7 +63,7 @@ impl SqsQueueConsumer {
 
     /// How long to remember an acked SQS MessageId so redeliveries are
     /// short-circuited to DeleteMessage without re-routing to the mediator.
-    const PENDING_DELETE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+    const PENDING_DELETE_TTL: Duration = Duration::from_secs(15 * 60);
 
     pub fn new(
         client: Client,
@@ -137,8 +142,8 @@ impl QueueConsumer for SqsQueueConsumer {
         let max_per_poll = max_messages.min(10) as i32; // SQS max is 10
 
         // Java: 25s per-request API call timeout to prevent indefinite blocking
-        let timeout_config = aws_sdk_sqs::config::timeout::TimeoutConfig::builder()
-            .operation_timeout(std::time::Duration::from_secs(25))
+        let timeout_config = TimeoutConfig::builder()
+            .operation_timeout(Duration::from_secs(25))
             .build();
 
         let result = self
@@ -148,10 +153,10 @@ impl QueueConsumer for SqsQueueConsumer {
             .max_number_of_messages(max_per_poll)
             .visibility_timeout(self.visibility_timeout_seconds)
             .wait_time_seconds(self.wait_time_seconds)
-            .message_system_attribute_names(aws_sdk_sqs::types::MessageSystemAttributeName::All)
+            .message_system_attribute_names(MessageSystemAttributeName::All)
             .message_attribute_names("All")
             .customize()
-            .config_override(aws_sdk_sqs::config::Builder::default().timeout_config(timeout_config))
+            .config_override(Builder::default().timeout_config(timeout_config))
             .send()
             .await
             .map_err(QueueError::sqs)?;
@@ -201,10 +206,7 @@ impl QueueConsumer for SqsQueueConsumer {
                         if map.len() > 1000 {
                             map.retain(|_, (_, ts)| ts.elapsed() < Self::PENDING_DELETE_TTL);
                         }
-                        map.insert(
-                            receipt_handle.clone(),
-                            (msg_id.clone(), std::time::Instant::now()),
-                        );
+                        map.insert(receipt_handle.clone(), (msg_id.clone(), Instant::now()));
                     }
                     messages.push(QueuedMessage {
                         message,
@@ -257,7 +259,7 @@ impl QueueConsumer for SqsQueueConsumer {
         if let Some(ref id) = msg_id {
             self.pending_delete_ids
                 .lock()
-                .insert(id.clone(), std::time::Instant::now());
+                .insert(id.clone(), Instant::now());
         }
 
         let result = self

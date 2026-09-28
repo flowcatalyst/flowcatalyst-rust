@@ -28,17 +28,30 @@ use utoipa::{IntoParams, ToSchema};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
 use crate::auth::jwks_cache::{JwksCache, JwksError};
+use crate::auth::login_backoff;
+use crate::auth::login_backoff::BackoffDecision;
+use crate::auth::login_backoff::BackoffPolicy;
+use crate::auth::oauth_api;
+use crate::auth::oidc_login_state::OidcLoginState;
 use crate::auth::oidc_login_state_repository::OidcLoginStateRepository;
 use crate::auth::oidc_sync_service::OidcIdentity;
 use crate::auth::oidc_sync_service::OidcSyncService;
+use crate::auth::password_reset_api;
+use axum::extract::Path;
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::middleware::ClientIp;
+use fc_platform_core::shared::secret_ref::SecretRefError;
 use fc_platform_core::shared::secret_ref::SecretResolver;
 use fc_platform_core::usecase::unit_of_work::{PgUnitOfWork, UnitOfWork};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::ExecutionContext;
 use fc_platform_iam::auth::auth_service::AuthService;
+use fc_platform_iam::email_domain_mapping::entity::EmailDomainMapping;
 use fc_platform_iam::email_domain_mapping::entity::ScopeType;
 use fc_platform_iam::identity_provider::entity::{IdentityProvider, IdentityProviderType};
+use fc_platform_iam::login_attempt::repository::LoginAttemptRepository;
 use fc_platform_iam::principal::operations::events::UserLoggedIn;
+use fc_platform_iam::principal::repository::PrincipalRepository;
 use fc_platform_iam::{
     auth::{
         config_repository::AnchorDomainRepository, oauth_client_repository::OAuthClientRepository,
@@ -46,6 +59,9 @@ use fc_platform_iam::{
     email_domain_mapping::repository::EmailDomainMappingRepository,
     identity_provider::repository::IdentityProviderRepository,
 };
+use jsonwebtoken::errors;
+use std::collections::BTreeSet;
+use std::time::Duration;
 
 /// OIDC Login API State
 #[derive(Clone)]
@@ -78,9 +94,9 @@ pub struct OidcLoginApiState {
 /// create a password.
 #[derive(Clone)]
 pub struct PasswordSetupHint {
-    pub principal_repo: Arc<fc_platform_iam::principal::repository::PrincipalRepository>,
-    pub login_attempt_repo: Arc<fc_platform_iam::login_attempt::repository::LoginAttemptRepository>,
-    pub backoff_policy: Arc<crate::auth::login_backoff::BackoffPolicy>,
+    pub principal_repo: Arc<PrincipalRepository>,
+    pub login_attempt_repo: Arc<LoginAttemptRepository>,
+    pub backoff_policy: Arc<BackoffPolicy>,
 }
 
 /// Go `withPasswordSetupRequired` (auth/login/endpoint.go:230-254): true when
@@ -102,20 +118,14 @@ impl PasswordSetupHint {
         if email.is_empty() {
             return false;
         }
-        match crate::auth::login_backoff::check(
-            &hint.login_attempt_repo,
-            &hint.backoff_policy,
-            email,
-            ip,
-        )
-        .await
+        match login_backoff::check(&hint.login_attempt_repo, &hint.backoff_policy, email, ip).await
         {
-            Ok(crate::auth::login_backoff::BackoffDecision::Allow) => {}
+            Ok(BackoffDecision::Allow) => {}
             _ => return false,
         }
         matches!(
             hint.principal_repo.find_by_email(email).await,
-            Ok(Some(p)) if crate::auth::password_reset_api::password_setup_eligible(&p)
+            Ok(Some(p)) if password_reset_api::password_setup_eligible(&p)
         )
     }
 }
@@ -224,10 +234,7 @@ fn coded_error(status: StatusCode, code: &str, message: impl Into<String>) -> Re
 /// is settable by any tenant admin, so a mapping to one that pins no tenant
 /// binds the login to nobody. Such rows predate the save-time rule; a login
 /// through one is refused.
-fn tenant_not_pinned(
-    idp: &IdentityProvider,
-    mapping: &fc_platform_iam::email_domain_mapping::entity::EmailDomainMapping,
-) -> bool {
+fn tenant_not_pinned(idp: &IdentityProvider, mapping: &EmailDomainMapping) -> bool {
     idp.oidc_multi_tenant && !mapping.is_tenant_pinned()
 }
 
@@ -247,7 +254,7 @@ fn tenant_not_pinned(
 )]
 pub async fn check_domain(
     State(state): State<OidcLoginApiState>,
-    fc_platform_core::shared::middleware::ClientIp(ip): fc_platform_core::shared::middleware::ClientIp,
+    ClientIp(ip): ClientIp,
     Json(body): Json<DomainCheckRequest>,
 ) -> Response {
     let ip = ip.as_deref();
@@ -536,7 +543,7 @@ pub async fn oidc_login(
     let code_challenge = generate_code_challenge(&code_verifier);
 
     // Build login state with actual IDP and mapping IDs
-    let login_state = crate::auth::oidc_login_state::OidcLoginState {
+    let login_state = OidcLoginState {
         oauth_client_id: params.oauth_client_id,
         oauth_redirect_uri: params.oauth_redirect_uri,
         oauth_scope: params.oauth_scope,
@@ -544,7 +551,7 @@ pub async fn oidc_login(
         oauth_code_challenge: params.oauth_code_challenge,
         oauth_code_challenge_method: params.oauth_code_challenge_method,
         oauth_nonce: params.oauth_nonce,
-        ..crate::auth::oidc_login_state::OidcLoginState::new(
+        ..OidcLoginState::new(
             &oidc_state,
             &domain,
             &idp.id,
@@ -828,7 +835,7 @@ pub async fn oidc_callback(
 
         // Extract application codes from role strings (e.g., "ondemand:admin" → "ondemand")
         let applications: Vec<String> = {
-            let mut codes = std::collections::BTreeSet::new();
+            let mut codes = BTreeSet::new();
             for role in &roles {
                 if let Some(idx) = role.find(':') {
                     if idx > 0 {
@@ -877,7 +884,7 @@ pub async fn oidc_callback(
             email: String,
             identity_provider_id: String,
         }
-        impl fc_platform_core::usecase::AuditMasked for OidcLoginCommand {}
+        impl AuditMasked for OidcLoginCommand {}
         let command = OidcLoginCommand {
             email: claims.email.clone(),
             identity_provider_id: idp.id.clone(),
@@ -1020,7 +1027,7 @@ enum TokenExchangeError {
     #[error("No ID token in response")]
     MissingIdToken,
     #[error("Cannot use the IDP client secret: {0}")]
-    ClientSecret(#[source] fc_platform_core::shared::secret_ref::SecretRefError),
+    ClientSecret(#[source] SecretRefError),
 }
 
 async fn exchange_code_for_tokens_from_idp(
@@ -1074,7 +1081,7 @@ async fn exchange_code_for_tokens_from_idp(
     let response = client
         .post(&token_endpoint)
         .form(&params)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(TokenExchangeError::Http)?;
@@ -1124,7 +1131,7 @@ enum IdTokenError {
     #[error("Missing client ID on IDP")]
     MissingClientId,
     #[error("Invalid ID token header: {0}")]
-    InvalidHeader(#[source] jsonwebtoken::errors::Error),
+    InvalidHeader(#[source] errors::Error),
     #[error(transparent)]
     Jwks(#[from] JwksError),
     #[error("No matching key found in JWKS for kid: {0:?}")]
@@ -1132,11 +1139,11 @@ enum IdTokenError {
     #[error("Missing '{0}' in RSA JWK")]
     MissingRsaComponent(&'static str),
     #[error("Invalid RSA key components: {0}")]
-    InvalidRsaKey(#[source] jsonwebtoken::errors::Error),
+    InvalidRsaKey(#[source] errors::Error),
     #[error("Unsupported JWK key type: {0}")]
     UnsupportedKeyType(String),
     #[error("JWT signature validation failed: {0}")]
-    Signature(#[source] jsonwebtoken::errors::Error),
+    Signature(#[source] errors::Error),
     #[error("Missing {0} claim")]
     MissingClaim(&'static str),
     #[error("Invalid issuer for multi-tenant IDP: {0}")]
@@ -1355,7 +1362,7 @@ fn determine_redirect_url(
     state: &OidcLoginApiState,
     host: &str,
     uri: &Uri,
-    login_state: &crate::auth::oidc_login_state::OidcLoginState,
+    login_state: &OidcLoginState,
 ) -> String {
     let base_url = get_external_base_url(state, host, uri);
 
@@ -1470,7 +1477,7 @@ pub struct InteractionLoginResponse {
 /// can render the appropriate login/consent UI.
 pub async fn get_interaction(
     State(state): State<OidcLoginApiState>,
-    axum::extract::Path(uid): axum::extract::Path<String>,
+    Path(uid): Path<String>,
 ) -> Response {
     // Look up the OIDC login state by interaction_uid
     let login_states = match state.oidc_login_state_repo.find_all().await {
@@ -1535,7 +1542,7 @@ pub async fn post_interaction_login(
     State(state): State<OidcLoginApiState>,
     Host(host): Host,
     uri: Uri,
-    axum::extract::Path(uid): axum::extract::Path<String>,
+    Path(uid): Path<String>,
     Json(req): Json<InteractionLoginRequest>,
 ) -> Response {
     // Look up the OIDC login state by interaction_uid
@@ -1760,10 +1767,7 @@ pub async fn session_end(
             }
         };
 
-        if !crate::auth::oauth_api::matches_redirect_uri(
-            redirect_uri,
-            &client.post_logout_redirect_uris,
-        ) {
+        if !oauth_api::matches_redirect_uri(redirect_uri, &client.post_logout_redirect_uris) {
             return reject("not in the client's registered post_logout_redirect_uris");
         }
 
@@ -1922,6 +1926,7 @@ pub(crate) async fn portal_verify_callback(
 mod tests {
     use super::*;
     use crate::auth::jwks_cache::{JwkKey, Jwks};
+    use fc_platform_iam::auth::auth_service::AuthConfig;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
 
@@ -1931,8 +1936,7 @@ mod tests {
     /// the key its JWKS (seeded, no network) publishes.
     async fn multi_tenant_idp() -> (IdentityProvider, JwksCache, EncodingKey) {
         use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, RsaPublicKey};
-        let (private_pem, public_pem) =
-            fc_platform_iam::auth::auth_service::AuthConfig::generate_rsa_keys(None).unwrap();
+        let (private_pem, public_pem) = AuthConfig::generate_rsa_keys(None).unwrap();
         let public = RsaPublicKey::from_public_key_pem(&public_pem).unwrap();
         let jwk = JwkKey {
             kty: "RSA".to_string(),

@@ -8,6 +8,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
+use std::collections::HashMap;
 
 /// User identity for human users
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +141,7 @@ pub struct Principal {
 
     /// Client ID → identifier mapping (for JWT "id:identifier" claims)
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub client_identifier_map: std::collections::HashMap<String, String>,
+    pub client_identifier_map: HashMap<String, String>,
 
     /// Accessible application IDs (loaded from iam_principal_application_access)
     #[serde(default)]
@@ -147,7 +150,7 @@ pub struct Principal {
     /// Accessible application ID → application code (for the JWT
     /// `applications` claim's "id:code" pairs; Go `ApplicationCodeMap`)
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub application_code_map: std::collections::HashMap<String, String>,
+    pub application_code_map: HashMap<String, String>,
 
     /// Access to every application, present and future
     /// (`iam_principals.all_applications`): the application-axis analogue of
@@ -204,9 +207,7 @@ impl Principal {
         let now = Utc::now();
 
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Principal,
-            ),
+            id: tsid::generate(EntityType::Principal),
             principal_type: PrincipalType::User,
             scope,
             client_id: None,
@@ -217,9 +218,9 @@ impl Principal {
             service_account_id: None,
             roles: vec![],
             assigned_clients: vec![],
-            client_identifier_map: std::collections::HashMap::new(),
+            client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
-            application_code_map: std::collections::HashMap::new(),
+            application_code_map: HashMap::new(),
             all_applications: true,
             created_at: now,
             updated_at: now,
@@ -241,9 +242,7 @@ impl Principal {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Principal,
-            ),
+            id: tsid::generate(EntityType::Principal),
             principal_type: PrincipalType::Service,
             scope,
             client_id: None,
@@ -254,9 +253,9 @@ impl Principal {
             service_account_id: Some(service_account_id.into()),
             roles: vec![],
             assigned_clients: vec![],
-            client_identifier_map: std::collections::HashMap::new(),
+            client_identifier_map: HashMap::new(),
             accessible_application_ids: vec![],
-            application_code_map: std::collections::HashMap::new(),
+            application_code_map: HashMap::new(),
             all_applications: false,
             created_at: now,
             updated_at: now,
@@ -381,9 +380,7 @@ impl ClientAccessGrant {
         let now = Utc::now();
         Self {
             // `gnt_`, as Go's `tsid.ClientAccessGrant`.
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ClientAccessGrant,
-            ),
+            id: tsid::generate(EntityType::ClientAccessGrant),
             principal_id: principal_id.into(),
             client_id: client_id.into(),
             granted_by: granted_by.into(),
@@ -398,6 +395,8 @@ impl ClientAccessGrant {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::thread;
+    use std::time::Duration;
 
     // ── PrincipalType / UserScope enum roundtrips ─────────────────────────
 
@@ -525,7 +524,7 @@ mod tests {
     fn assign_role_appends_and_updates_timestamp() {
         let mut p = Principal::new_user("a@b.com", UserScope::Client);
         let before = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         p.assign_role("admin");
         assert_eq!(p.roles.len(), 1);
         assert_eq!(p.roles[0].role, "admin");
@@ -560,7 +559,7 @@ mod tests {
         let mut p = Principal::new_user("a@b.com", UserScope::Client);
         p.assign_role_with_source("role-manual", AssignmentSource::AdminAssigned);
         let before = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
 
         let removed = p.remove_roles_by_source(AssignmentSource::IdpSync);
         assert_eq!(removed, 0);
@@ -617,14 +616,14 @@ mod tests {
         let mut p = Principal::new_user("a@b.com", UserScope::Client);
         assert!(p.active);
         let t0 = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
 
         p.deactivate();
         assert!(!p.active);
         assert!(p.updated_at > t0);
 
         let t1 = p.updated_at;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(2));
         p.activate();
         assert!(p.active);
         assert!(p.updated_at > t1);

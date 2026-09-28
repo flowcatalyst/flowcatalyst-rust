@@ -1,6 +1,8 @@
 //! CorsAllowedOrigin Entity
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,9 +24,7 @@ impl CorsAllowedOrigin {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::CorsOrigin,
-            ),
+            id: tsid::generate(EntityType::CorsOrigin),
             origin: origin.into(),
             description,
             created_by,

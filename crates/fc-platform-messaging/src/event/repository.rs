@@ -6,7 +6,11 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ContextData, Event, EventFilterOptions, EventRead, CLOUDEVENTS_SPEC_VERSION};
+use fc_platform_core::shared::api_common::DecodedCursor;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::error::Result;
+use std::collections::HashSet;
+use std::slice;
 
 /// Row mapping for msg_events table
 #[derive(sqlx::FromRow)]
@@ -191,7 +195,7 @@ impl EventRepository {
 
     /// Store one event, idempotently: see [`Self::insert_many`].
     pub async fn insert(&self, event: &Event) -> Result<()> {
-        self.insert_many(std::slice::from_ref(event)).await?;
+        self.insert_many(slice::from_ref(event)).await?;
         Ok(())
     }
 
@@ -289,8 +293,8 @@ impl EventRepository {
             .filter_map(|e| e.deduplication_id.as_deref())
             .filter(|d| !d.is_empty())
             .collect();
-        let stored: std::collections::HashSet<String> = if dedup_ids.is_empty() {
-            std::collections::HashSet::new()
+        let stored: HashSet<String> = if dedup_ids.is_empty() {
+            HashSet::new()
         } else {
             sqlx::query_as::<_, (String,)>(
                 "SELECT DISTINCT deduplication_id FROM msg_events WHERE deduplication_id = ANY($1)",
@@ -302,7 +306,7 @@ impl EventRepository {
             .map(|(d,)| d)
             .collect()
         };
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         Ok(events
             .iter()
             .filter(
@@ -317,12 +321,9 @@ impl EventRepository {
     /// Which of `ids` already name a stored event, across every partition
     /// (one query). Ingest uses it to acknowledge a re-sent event whose
     /// caller-supplied id is stored without writing it again.
-    pub async fn find_existing_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<std::collections::HashSet<String>> {
+    pub async fn find_existing_ids(&self, ids: &[String]) -> Result<HashSet<String>> {
         if ids.is_empty() {
-            return Ok(std::collections::HashSet::new());
+            return Ok(HashSet::new());
         }
         let rows =
             sqlx::query_as::<_, (String,)>("SELECT DISTINCT id FROM msg_events WHERE id = ANY($1)")
@@ -409,7 +410,7 @@ impl EventRepository {
     /// up to `fetch_limit` rows so the caller can detect `hasMore` cheaply.
     pub async fn find_recent_with_cursor(
         &self,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<Event>> {
         let rows = if let Some(c) = cursor {
@@ -528,9 +529,9 @@ impl EventRepository {
     /// most 200 (Go `DistinctValues`).
     pub async fn distinct_read_values(&self, column: &str) -> Result<Vec<String>> {
         if !["application", "subdomain", "type"].contains(&column) {
-            return Err(fc_platform_core::shared::error::PlatformError::internal(
-                format!("event repo: column {column:?} not allowed"),
-            ));
+            return Err(PlatformError::internal(format!(
+                "event repo: column {column:?} not allowed"
+            )));
         }
         Ok(sqlx::query_scalar::<_, String>(&format!(
             "SELECT DISTINCT {column} FROM msg_events_read WHERE {column} IS NOT NULL \
@@ -555,7 +556,7 @@ impl EventRepository {
         event_types: &[String],
         correlation_id: Option<&str>,
         search: Option<&str>,
-        cursor: Option<&fc_platform_core::shared::api_common::DecodedCursor>,
+        cursor: Option<&DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<EventRead>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(

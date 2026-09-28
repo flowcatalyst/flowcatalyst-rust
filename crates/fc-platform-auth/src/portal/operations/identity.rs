@@ -15,8 +15,10 @@ use super::events::{
     IdentityAppGranted, IdentityAppRevoked, IdentityDeleted, IdentityEnsured, IdentityStatusSet,
 };
 use super::{load_client_app, not_found};
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use fc_platform_iam::client::repository::ClientRepository;
+use fc_platform_iam::portal;
 use fc_platform_iam::portal::entity::{IdentitySource, IdentityStatus, PortalApp, PortalIdentity};
 use fc_platform_iam::portal::repository::{PortalAppRepository, PortalIdentityRepository};
 
@@ -37,7 +39,7 @@ pub struct EnsureCommand {
     pub portal_app_id: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for EnsureCommand {}
+impl AuditMasked for EnsureCommand {}
 
 /// Idempotently create — or reactivate — the (client, email) identity, grant
 /// the named app, and emit `IdentityEnsured`. Re-ensuring keeps the id,
@@ -158,7 +160,7 @@ impl<U: UnitOfWork> UseCase for EnsurePortalIdentityUseCase<U> {
         command: &EnsureCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -187,7 +189,7 @@ pub struct AppGrantCommand {
     pub portal_app_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AppGrantCommand {}
+impl AuditMasked for AppGrantCommand {}
 
 fn validate_app_grant(cmd: &AppGrantCommand) -> Result<(), UseCaseError> {
     if cmd.client_id.trim().is_empty()
@@ -261,7 +263,7 @@ impl<U: UnitOfWork> UseCase for GrantPortalIdentityAppUseCase<U> {
         command: &AppGrantCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -330,7 +332,7 @@ impl<U: UnitOfWork> UseCase for RevokePortalIdentityAppUseCase<U> {
         command: &AppGrantCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -365,7 +367,7 @@ pub struct SetStatusCommand {
     pub status: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SetStatusCommand {}
+impl AuditMasked for SetStatusCommand {}
 
 /// Suspend (DISABLED) or reactivate (ACTIVE) an identity and emit
 /// `IdentityStatusSet`.
@@ -441,7 +443,7 @@ impl<U: UnitOfWork> UseCase for SetPortalIdentityStatusUseCase<U> {
         command: &SetStatusCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)
@@ -469,7 +471,7 @@ pub struct DeleteCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteCommand {}
+impl AuditMasked for DeleteCommand {}
 
 /// Remove the identity — offboarding is deleting the row.
 pub struct DeletePortalIdentityUseCase<U: UnitOfWork> {
@@ -523,7 +525,7 @@ impl<U: UnitOfWork> UseCase for DeletePortalIdentityUseCase<U> {
         command: &DeleteCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_iam::portal::can_write_portal_users(
+        Ok(portal::can_write_portal_users(
             ctx.caller(),
             &command.client_id,
         )?)

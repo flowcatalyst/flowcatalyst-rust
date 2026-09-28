@@ -25,7 +25,9 @@
 //!
 //! Run with `ROUTE_INVENTORY=1 ... -- --nocapture` to print the route table.
 
+use crate::support::sources;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::env;
 use std::fs;
 
 /// Routes that authenticate no one, or only optionally: `"METHOD /path"`.
@@ -364,13 +366,13 @@ fn find_code(s: &str, from: usize, ch: u8) -> Option<usize> {
 
 impl Source {
     fn load() -> Self {
-        let paths = crate::support::sources::rs_files();
+        let paths = sources::rs_files();
         let fn_re = regex::Regex::new(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:async[ \t]+)?fn[ \t]+([A-Za-z_][A-Za-z0-9_]*)")
             .unwrap();
         let mut files = HashMap::new();
         let mut fns = Vec::new();
         for p in paths {
-            let rel = crate::support::sources::strip_src(&p)
+            let rel = sources::strip_src(&p)
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
@@ -811,7 +813,7 @@ fn the_route_scan_finds_the_platform_surface() {
     }
     assert!(routes.len() > 200, "only {} routes found", routes.len());
 
-    if std::env::var("ROUTE_INVENTORY").is_ok() {
+    if env::var("ROUTE_INVENTORY").is_ok() {
         let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for r in &routes {
             let h = &src.fns[r.handler];

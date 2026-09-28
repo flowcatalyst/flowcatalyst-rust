@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::UserUpdated;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -52,7 +54,7 @@ pub struct UpdateUserCommand {
     pub email: Option<String>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for UpdateUserCommand {}
+impl AuditMasked for UpdateUserCommand {}
 
 /// Use case for updating an existing user.
 pub struct UpdateUserUseCase<U: UnitOfWork> {
@@ -113,11 +115,9 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         )
         .await?;
         if (command.scope.is_some() || command.client_id.is_some()) && !ctx.caller().is_anchor() {
-            return Err(UseCaseError::verbatim(
-                fc_platform_core::shared::error::PlatformError::forbidden(
-                    "Only anchor users can change a principal's scope or client",
-                ),
-            ));
+            return Err(UseCaseError::verbatim(PlatformError::forbidden(
+                "Only anchor users can change a principal's scope or client",
+            )));
         }
         Ok(())
     }

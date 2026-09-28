@@ -24,7 +24,10 @@ use super::operations::{EnsureCommand, EnsurePortalIdentityUseCase};
 use super::repository::PortalOidcState;
 use super::PortalState;
 use crate::auth::oidc_login_api::{portal_handshake, portal_verify_callback};
+use axum::extract::Query;
+use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
+use fc_platform_iam::identity_provider::entity::IdentityProvider;
 use fc_platform_iam::identity_provider::entity::IdentityProviderType;
 
 /// How long a parked OIDC login state lives (the OIDC bridge's TTL).
@@ -46,10 +49,7 @@ fn resolve_failed() -> Response {
 /// Go `Bridge.ResolveByProviderID`'s guards, all fail-closed: the IdP must
 /// exist, be OIDC, be fully configured, and a multi-tenant one must bound
 /// the emails it may assert.
-async fn resolve_provider(
-    portal: &PortalState,
-    provider_id: &str,
-) -> Option<fc_platform_iam::identity_provider::entity::IdentityProvider> {
+async fn resolve_provider(portal: &PortalState, provider_id: &str) -> Option<IdentityProvider> {
     let idp = portal
         .identity_providers
         .find_by_id(provider_id)
@@ -106,10 +106,9 @@ pub async fn intercept(State(s): State<PortalLoginState>, req: Request, next: Ne
     if req.method() != Method::GET || !req.uri().path().ends_with("/oidc/callback") {
         return next.run(req).await;
     }
-    let query: HashMap<String, String> =
-        axum::extract::Query::<HashMap<String, String>>::try_from_uri(req.uri())
-            .map(|q| q.0)
-            .unwrap_or_default();
+    let query: HashMap<String, String> = Query::<HashMap<String, String>>::try_from_uri(req.uri())
+        .map(|q| q.0)
+        .unwrap_or_default();
     let (Some(state_param), Some(code)) = (
         query.get("state").filter(|v| !v.is_empty()),
         query.get("code").filter(|v| !v.is_empty()),
@@ -269,9 +268,7 @@ pub async fn complete(
                 .into_result()
             {
                 Ok(e) => e,
-                Err(e) => {
-                    return fc_platform_core::shared::error::PlatformError::from(e).into_response()
-                }
+                Err(e) => return PlatformError::from(e).into_response(),
             };
             match portal.identities.find_by_id(&event.identity_id).await {
                 Ok(Some(i)) => i,

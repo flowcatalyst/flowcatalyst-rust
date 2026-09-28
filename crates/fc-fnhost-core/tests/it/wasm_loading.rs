@@ -9,6 +9,7 @@ use std::path::Path;
 use fc_fnhost_core::wasm::cwasm::{CwasmCache, Source};
 use fc_fnhost_core::wasm::engine::{self, EngineSettings};
 use serde_json::json;
+use std::fs;
 use support::wasm::{
     artifact, entry, guest, manifest, sha256_hex, sums, WasmHarness, ADDR, GUESTS,
 };
@@ -97,7 +98,7 @@ async fn the_entrypoint_must_be_the_incoming_handler_and_exported() {
         "no export at all"
     );
 
-    let echo = std::fs::read(guest("echo")).unwrap();
+    let echo = fs::read(guest("echo")).unwrap();
     for entrypoint in [
         "handle",
         "wasi:http/outgoing-handler",
@@ -200,7 +201,7 @@ async fn a_jvm_version_stays_runtime_unsupported() {
 // ── the .cwasm cache ────────────────────────────────────────────────────
 
 fn cwasm_files(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
+    let mut names: Vec<String> = fs::read_dir(dir)
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
@@ -217,7 +218,7 @@ fn the_cache_compiles_once_hits_after_and_recreates_a_corrupt_file() {
     let dir = tempfile::tempdir().unwrap();
     let engine = engine::engine(&EngineSettings::default()).unwrap();
     let cache = CwasmCache::new(dir.path(), &engine::fingerprint(&engine));
-    let bytes = std::fs::read(guest("pure")).unwrap();
+    let bytes = fs::read(guest("pure")).unwrap();
     let digest = sha256_hex(&bytes);
 
     let (_, first) = cache.load(&engine, &digest, &bytes).unwrap();
@@ -233,22 +234,22 @@ fn the_cache_compiles_once_hits_after_and_recreates_a_corrupt_file() {
     // A corrupted file (same length, one byte flipped) fails its checksum:
     // it is never mapped, and is compiled again.
     let path = cache.path_for(&digest);
-    let mut cwasm = std::fs::read(&path).unwrap();
+    let mut cwasm = fs::read(&path).unwrap();
     let middle = cwasm.len() / 2;
     cwasm[middle] ^= 0xFF;
-    std::fs::write(&path, &cwasm).unwrap();
+    fs::write(&path, &cwasm).unwrap();
     let (_, corrupt) = cache.load(&engine, &digest, &bytes).unwrap();
     assert_eq!(corrupt, Source::Replaced);
     let (_, after) = cache.load(&engine, &digest, &bytes).unwrap();
     assert_eq!(after, Source::Hit, "the recreated file is good");
 
     // A truncated file, and a missing checksum, are recreated too.
-    std::fs::write(&path, &cwasm[..100]).unwrap();
+    fs::write(&path, &cwasm[..100]).unwrap();
     assert_eq!(
         cache.load(&engine, &digest, &bytes).unwrap().1,
         Source::Replaced
     );
-    std::fs::remove_file(
+    fs::remove_file(
         dir.path()
             .join("cwasm")
             .join(engine::fingerprint(&engine))
@@ -270,7 +271,7 @@ fn a_different_engine_config_uses_its_own_cache_directory() {
         ..EngineSettings::default()
     })
     .unwrap();
-    let bytes = std::fs::read(guest("pure")).unwrap();
+    let bytes = fs::read(guest("pure")).unwrap();
     let digest = sha256_hex(&bytes);
     let a = CwasmCache::new(dir.path(), &engine::fingerprint(&speed));
     let b = CwasmCache::new(dir.path(), &engine::fingerprint(&size));
@@ -300,7 +301,7 @@ async fn a_second_host_over_the_same_cache_loads_the_cwasm_without_rewriting_it(
     let files = cwasm_files(&cwasm_dir);
     assert_eq!(files.len(), 2, "{files:?}");
     let cwasm = cwasm_dir.join(files.iter().find(|f| f.ends_with(".cwasm")).unwrap());
-    let written = std::fs::metadata(&cwasm).unwrap().modified().unwrap();
+    let written = fs::metadata(&cwasm).unwrap().modified().unwrap();
     first.close().await;
     let dir = {
         let WasmHarness { dir, .. } = first;
@@ -311,7 +312,7 @@ async fn a_second_host_over_the_same_cache_loads_the_cwasm_without_rewriting_it(
     assert_eq!(second.get("/x").await.status, 200);
     assert_eq!(second.runtime.cwasm_dir(), cwasm_dir);
     assert_eq!(
-        std::fs::metadata(&cwasm).unwrap().modified().unwrap(),
+        fs::metadata(&cwasm).unwrap().modified().unwrap(),
         written,
         "loaded from the cache, not compiled and rewritten"
     );

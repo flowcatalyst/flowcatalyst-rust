@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use super::events::OAuthClientSecretRotated;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -32,7 +34,7 @@ pub struct RotateOAuthClientSecretCommand {
     pub grace_seconds: Option<i64>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for RotateOAuthClientSecretCommand {}
+impl AuditMasked for RotateOAuthClientSecretCommand {}
 
 /// How long the outgoing secret keeps working after a rotation unless the
 /// caller says otherwise (Go's `DefaultSecretGrace`, 24h).
@@ -88,11 +90,7 @@ impl<U: UnitOfWork> UseCase for RotateOAuthClientSecretUseCase<U> {
         _command: &RotateOAuthClientSecretCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

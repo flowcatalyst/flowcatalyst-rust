@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::tsid;
+use fc_platform_core::shared::tsid::EntityType;
 
 /// Webhook authentication type — matches TypeScript WebhookAuthType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -336,9 +338,7 @@ impl ServiceAccount {
         // the account's (`service_account_table_id`) and the principal's as
         // `principalId`.
         Self {
-            id: fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::Principal,
-            ),
+            id: tsid::generate(EntityType::Principal),
             code: code.into(),
             name: name.into(),
             description: None,
@@ -352,9 +352,7 @@ impl ServiceAccount {
             all_applications: false,
             accessible_application_ids: vec![],
             webhook_credentials: WebhookCredentials::none(),
-            service_account_table_id: Some(fc_platform_core::shared::tsid::generate(
-                fc_platform_core::shared::tsid::EntityType::ServiceAccount,
-            )),
+            service_account_table_id: Some(tsid::generate(EntityType::ServiceAccount)),
             roles: vec![],
             last_used_at: None,
             created_at: now,
@@ -449,6 +447,7 @@ impl ServiceAccount {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::enum_str;
     use std::str::FromStr;
 
     #[test]
@@ -729,10 +728,7 @@ mod tests {
 
     #[test]
     fn signing_algorithm_writes_hmac_sha256_and_reads_legacy_sha256() {
-        fc_platform_core::shared::enum_str::assert_str_enum(
-            SigningAlgorithm::ALL,
-            SigningAlgorithm::as_str,
-        );
+        enum_str::assert_str_enum(SigningAlgorithm::ALL, SigningAlgorithm::as_str);
         assert_eq!(SigningAlgorithm::HmacSha256.as_str(), "HMAC_SHA256");
         assert_eq!("SHA256".parse(), Ok(SigningAlgorithm::HmacSha256));
         assert!("sha256".parse::<SigningAlgorithm>().is_err());
@@ -740,10 +736,7 @@ mod tests {
 
     #[test]
     fn assignment_source_spellings() {
-        fc_platform_core::shared::enum_str::assert_str_enum(
-            AssignmentSource::ALL,
-            AssignmentSource::as_str,
-        );
+        enum_str::assert_str_enum(AssignmentSource::ALL, AssignmentSource::as_str);
         // Every value the production table holds, plus the other ports' values.
         for s in [
             "ADMIN_ASSIGNED",

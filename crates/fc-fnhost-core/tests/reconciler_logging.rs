@@ -11,39 +11,40 @@ use std::sync::Arc;
 use chrono::Utc;
 use fc_fnhost_core::clock::{ManualClock, SharedClock};
 use fc_fnhost_core::loader::Loaders;
+use fc_fnhost_core::logging::SlogJsonLayer;
 use fc_fnhost_core::reconciler::{PinnedLoad, Reconciler};
 use fc_fnhost_core::registry::FunctionRegistry;
 use fc_fnhost_core::signature::Signatures;
 use fc_function_abi::FunctionAddress;
+use std::io;
+use std::io::Write;
 use support::fakes::{self, Answer, FakeControlPlane, FakeLoader, FakeStore};
+use tracing::subscriber;
+use tracing::subscriber::DefaultGuard;
 
 struct CaptureWriter(Arc<parking_lot::Mutex<Vec<u8>>>);
 
-impl std::io::Write for CaptureWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for CaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().extend_from_slice(buf);
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
 /// Lines captured on this thread, and the guard keeping the capture on.
-fn capture() -> (
-    Arc<parking_lot::Mutex<Vec<u8>>>,
-    tracing::subscriber::DefaultGuard,
-) {
+fn capture() -> (Arc<parking_lot::Mutex<Vec<u8>>>, DefaultGuard) {
     use tracing_subscriber::layer::SubscriberExt;
     let lines = Arc::new(parking_lot::Mutex::new(Vec::<u8>::new()));
     let writer = {
         let lines = lines.clone();
         move || CaptureWriter(lines.clone())
     };
-    let subscriber =
-        tracing_subscriber::registry().with(fc_fnhost_core::logging::SlogJsonLayer::new(writer));
-    (lines, tracing::subscriber::set_default(subscriber))
+    let subscriber = tracing_subscriber::registry().with(SlogJsonLayer::new(writer));
+    (lines, subscriber::set_default(subscriber))
 }
 
 fn count(lines: &parking_lot::Mutex<Vec<u8>>, message: &str) -> usize {

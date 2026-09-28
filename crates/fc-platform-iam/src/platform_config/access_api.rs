@@ -11,8 +11,11 @@ use utoipa::ToSchema;
 use super::access_entity::PlatformConfigAccess;
 use super::access_repository::PlatformConfigAccessRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
+use axum::http::StatusCode;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -65,16 +68,10 @@ pub struct ConfigAccessState {
     pub access_repo: Arc<PlatformConfigAccessRepository>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
-    pub grant_access_use_case: Arc<
-        super::operations::GrantPlatformConfigAccessUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub revoke_access_use_case: Arc<
-        super::operations::RevokePlatformConfigAccessUseCase<
-            fc_platform_core::usecase::PgUnitOfWork,
-        >,
-    >,
+    pub grant_access_use_case:
+        Arc<super::operations::GrantPlatformConfigAccessUseCase<PgUnitOfWork>>,
+    pub revoke_access_use_case:
+        Arc<super::operations::RevokePlatformConfigAccessUseCase<PgUnitOfWork>>,
 }
 
 /// List config access grants for an application
@@ -96,7 +93,7 @@ pub async fn list_access(
     auth: Authenticated,
     Path(app_code): Path<String>,
 ) -> Result<Json<AccessListResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_platform_config(&auth.0)?;
+    checks::can_read_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -128,11 +125,11 @@ pub async fn create_access(
     auth: Authenticated,
     Path(app_code): Path<String>,
     Json(req): Json<CreateAccessRequest>,
-) -> Result<(axum::http::StatusCode, Json<AccessResponse>), PlatformError> {
+) -> Result<(StatusCode, Json<AccessResponse>), PlatformError> {
     use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_platform_config(&auth.0)?;
+    checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -167,7 +164,7 @@ pub async fn create_access(
         .find_by_application_and_role(&app_code, &req.role_code)
         .await?
         .ok_or_else(|| PlatformError::internal("Access grant committed but row not found"))?;
-    Ok((axum::http::StatusCode::CREATED, Json(access.into())))
+    Ok((StatusCode::CREATED, Json(access.into())))
 }
 
 /// Update a config access grant
@@ -196,7 +193,7 @@ pub async fn update_access(
     use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_platform_config(&auth.0)?;
+    checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -254,11 +251,11 @@ pub async fn delete_access(
     State(state): State<ConfigAccessState>,
     auth: Authenticated,
     Path((app_code, role_code)): Path<(String, String)>,
-) -> Result<axum::http::StatusCode, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     use crate::platform_config::operations::RevokePlatformConfigAccessCommand;
     use fc_platform_core::usecase::{ExecutionContext, UseCase};
 
-    fc_platform_core::shared::authorization_service::checks::can_update_platform_config(&auth.0)?;
+    checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -274,5 +271,5 @@ pub async fn delete_access(
         .run(cmd, ctx)
         .await
         .into_result()?;
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }

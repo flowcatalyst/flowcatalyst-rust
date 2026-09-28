@@ -20,8 +20,10 @@ use utoipa::ToSchema;
 use super::operations::sync::{SyncAppDocsCommand, SyncAppDocsUseCase, SyncDocInput};
 use super::platform_docs::{platform_doc, platform_docs};
 use super::repository::AppDocsRepository;
+use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
 use crate::shared::authorization_service::ApplicationAccessService;
+use fc_platform_core::permissions;
 use fc_platform_core::shared::api_common::SyncResultResponse;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
@@ -93,11 +95,10 @@ pub async fn list_docs(
     State(state): State<DocsState>,
     auth: Authenticated,
 ) -> Result<Json<DocListResponse>, PlatformError> {
-    checks::require_permission(&auth.0, fc_platform_core::permissions::admin::DOCS_READ)?;
+    checks::require_permission(&auth.0, permissions::admin::DOCS_READ)?;
     let (summaries, apps) =
         tokio::try_join!(state.repo.summaries(), state.application_repo.find_all())?;
-    let apps: HashMap<String, crate::application::entity::Application> =
-        apps.into_iter().map(|a| (a.id.clone(), a)).collect();
+    let apps: HashMap<String, Application> = apps.into_iter().map(|a| (a.id.clone(), a)).collect();
     let mut groups: Vec<ApplicationDocs> = Vec::new();
     let mut current: Option<String> = None;
     for s in summaries {
@@ -145,7 +146,7 @@ pub async fn get_platform_doc(
     auth: Authenticated,
     Path(slug): Path<String>,
 ) -> Result<Json<DocResponse>, PlatformError> {
-    checks::require_permission(&auth.0, fc_platform_core::permissions::admin::DOCS_READ)?;
+    checks::require_permission(&auth.0, permissions::admin::DOCS_READ)?;
     let d = platform_doc(&slug).ok_or_else(|| doc_not_found(&slug))?;
     Ok(Json(DocResponse {
         slug: d.slug.to_string(),
@@ -167,7 +168,7 @@ pub async fn get_application_doc(
     auth: Authenticated,
     Path((app_code, slug)): Path<(String, String)>,
 ) -> Result<Json<DocResponse>, PlatformError> {
-    checks::require_permission(&auth.0, fc_platform_core::permissions::admin::DOCS_READ)?;
+    checks::require_permission(&auth.0, permissions::admin::DOCS_READ)?;
     let app = state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -199,10 +200,7 @@ pub async fn sync_app_docs(
     Path(app_code): Path<String>,
     Json(req): Json<SyncDocsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    checks::require_permission(
-        &auth.0,
-        fc_platform_core::permissions::application_service::DOCS_SYNC,
-    )?;
+    checks::require_permission(&auth.0, permissions::application_service::DOCS_SYNC)?;
     let app = state
         .app_access
         .require_application_access(&auth.0, &app_code)

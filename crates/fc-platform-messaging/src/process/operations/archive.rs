@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::ProcessArchived;
 use crate::process::repository::ProcessRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -16,7 +18,7 @@ pub struct ArchiveProcessCommand {
     pub process_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ArchiveProcessCommand {}
+impl AuditMasked for ArchiveProcessCommand {}
 
 pub struct ArchiveProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
@@ -55,11 +57,7 @@ impl<U: UnitOfWork> UseCase for ArchiveProcessUseCase<U> {
         _command: &ArchiveProcessCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::can_write_processes(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::can_write_processes(ctx.caller())?)
     }
 
     async fn execute(

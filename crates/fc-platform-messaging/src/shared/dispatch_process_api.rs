@@ -61,15 +61,21 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn, Instrument};
 
 use crate::dispatch_job::delivery_credentials::{DeliveryCredentials, Resolved};
+use crate::dispatch_job::entity::DispatchStatus;
 use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchJob, ErrorType};
 use crate::dispatch_job::repository::{
     DispatchJobRepository, NewDispatchAttempt, SETTLED_DEFAULT_REASON,
 };
 use crate::scheduler::DispatchAuthService;
+use axum::http::header;
 use fc_common::DispatchMode;
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::capped_body::{read_capped, DELIVERY_RESPONSE_CAP};
 use fc_platform_core::shared::webhook_signer;
+use reqwest::header::AUTHORIZATION;
+use reqwest::header::RETRY_AFTER;
+use reqwest::redirect::Policy;
+use serde_json::value::RawValue;
 
 /// `X-FlowCatalyst-Client: {clientId}:{clientCode}` (Go
 /// `processing.clientHeader`).
@@ -226,7 +232,7 @@ pub struct DispatchProcessState {
 /// two-minute outer ceiling; each delivery sets its own per-job timeout.
 pub fn delivery_http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(Policy::none())
         .timeout(DELIVERY_CLIENT_CEILING)
         .build()
         .expect("the delivery HTTP client builds")
@@ -238,7 +244,7 @@ pub fn delivery_http_client() -> reqwest::Client {
 /// prefix removed (a header without it is compared whole, and fails).
 fn bearer(headers: &HeaderMap) -> &str {
     let raw = headers
-        .get(axum::http::header::AUTHORIZATION)
+        .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     raw.strip_prefix("Bearer ").unwrap_or(raw)
@@ -477,7 +483,7 @@ async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> LostClaim {
             ));
         }
     };
-    if job.status != crate::dispatch_job::entity::DispatchStatus::Processing {
+    if job.status != DispatchStatus::Processing {
         info!(job_id = %job_id, status = ?job.status, "dispatch process: already claimed, skipping duplicate delivery");
         return LostClaim::Answer(reply(StatusCode::OK, true, Some("already claimed")));
     }
@@ -627,7 +633,7 @@ pub fn build_payload(job: &DispatchJob, client_code: Option<&str>) -> Vec<u8> {
         // Embedded as JSON when it parses (member order kept, as Go's
         // RawMessage), otherwise as a string so nothing is dropped.
         Some(payload) => {
-            let data = match serde_json::from_str::<&serde_json::value::RawValue>(payload) {
+            let data = match serde_json::from_str::<&RawValue>(payload) {
                 Ok(raw) => compact_json(raw.get()),
                 Err(_) => serde_json::to_string(payload).unwrap_or_default(),
             };
@@ -857,9 +863,9 @@ pub fn parse_deferral(body: &[u8]) -> Option<Duration> {
 }
 
 /// `Retry-After` in (possibly fractional) seconds, else 30s.
-fn retry_after_or_default(headers: &reqwest::header::HeaderMap) -> Duration {
+fn retry_after_or_default(headers: &HeaderMap) -> Duration {
     headers
-        .get(reqwest::header::RETRY_AFTER)
+        .get(RETRY_AFTER)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<f64>().ok())
         .filter(|s| *s > 0.0 && s.is_finite())
@@ -878,7 +884,7 @@ pub fn apply_credentials(
 ) -> reqwest::RequestBuilder {
     let mut request = request;
     if let Some(token) = &credentials.bearer_token {
-        request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+        request = request.header(AUTHORIZATION, format!("Bearer {token}"));
     }
     if let Some(secret) = &credentials.signing_secret {
         for (name, value) in webhook_signer::signature_headers(secret, at, body) {

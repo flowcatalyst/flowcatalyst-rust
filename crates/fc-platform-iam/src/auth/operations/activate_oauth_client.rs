@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use super::events::OAuthClientActivated;
 use crate::auth::oauth_client_repository::OAuthClientRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -16,7 +18,7 @@ pub struct ActivateOAuthClientCommand {
     pub oauth_client_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ActivateOAuthClientCommand {}
+impl AuditMasked for ActivateOAuthClientCommand {}
 
 pub struct ActivateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
@@ -56,11 +58,7 @@ impl<U: UnitOfWork> UseCase for ActivateOAuthClientUseCase<U> {
         _command: &ActivateOAuthClientCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

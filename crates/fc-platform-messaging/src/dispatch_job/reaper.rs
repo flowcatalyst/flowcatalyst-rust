@@ -19,6 +19,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::repository::DispatchJobRepository;
+use fc_platform_core::shared::error;
+use tokio::time;
+use tokio::time::Instant;
+use tokio::time::MissedTickBehavior;
 
 /// How often the sweep runs (Go `DefaultReaperInterval`).
 pub const DEFAULT_REAPER_INTERVAL: Duration = Duration::from_secs(2 * 60);
@@ -32,7 +36,7 @@ pub const DEFAULT_PROCESSING_LIVE_AFTER: Duration = Duration::from_secs(45 * 60)
 pub async fn sweep_once(
     repo: &DispatchJobRepository,
     processing_live_after: Duration,
-) -> fc_platform_core::shared::error::Result<Vec<String>> {
+) -> error::Result<Vec<String>> {
     let live_before = Utc::now()
         - chrono::Duration::from_std(processing_live_after)
             .unwrap_or_else(|_| chrono::Duration::minutes(45));
@@ -51,8 +55,8 @@ pub async fn run_reaper(
         processing_live_after_secs = processing_live_after.as_secs(),
         "dispatch-job group reaper started"
     );
-    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut tick = time::interval_at(Instant::now() + interval, interval);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,

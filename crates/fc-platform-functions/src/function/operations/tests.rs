@@ -17,77 +17,77 @@ use serde_json::json;
 use super::access::tests::caller;
 use super::events::{SecretSet, VersionPublished, VersionRetired};
 use super::*;
+use crate::function::domain_repository::FunctionDomainRepository;
 use crate::function::entity::{Function, FunctionVersion, SecretValue, SignerIdentity};
+use crate::function::host_repository::FunctionHostRepository;
+use crate::function::policy_repository::ClientPolicyRepository;
+use crate::function::repository::FunctionRepository;
+use crate::function::route_repository::FunctionRouteRepository;
+use crate::function::settings_repository::FunctionSettingsRepository;
+use crate::function::trigger_object_repository::TriggerObjectRepository;
+use crate::function::version_repository::FunctionVersionRepository;
+use crate::function::ClientCeilings;
+use crate::function::Digest;
+use crate::function::FunctionLimits;
+use crate::function::JsonNode;
+use crate::function::Manifest;
+use crate::function::PoolUrlTemplate;
 use crate::function::{FunctionAddress, FunctionOwner, Runtime};
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::usecase::unit_of_work::{AuditRow, InMemoryUnitOfWork};
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use fc_platform_iam::application::repository::ApplicationRepository;
+use fc_platform_iam::client::repository::ClientRepository;
+use fc_platform_iam::service_account::repository::ServiceAccountRepository;
+use fc_platform_messaging::dispatch_pool::repository::DispatchPoolRepository;
+use fc_platform_messaging::event_type::repository::EventTypeRepository;
+use fc_platform_messaging::subscription::repository::SubscriptionRepository;
+use fc_platform_scheduled_jobs::scheduled_job::ScheduledJobRepository;
+use sqlx::postgres::PgPoolOptions;
+use std::time::Duration;
 
 fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .acquire_timeout(std::time::Duration::from_millis(1))
+    let pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(1))
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .unwrap();
-    let functions = Arc::new(crate::function::repository::FunctionRepository::new(&pool));
-    let versions =
-        Arc::new(crate::function::version_repository::FunctionVersionRepository::new(&pool));
-    let domains =
-        Arc::new(crate::function::domain_repository::FunctionDomainRepository::new(&pool));
-    let routes = Arc::new(crate::function::route_repository::FunctionRouteRepository::new(&pool));
-    let limits = crate::function::FunctionLimits::defaults();
+    let functions = Arc::new(FunctionRepository::new(&pool));
+    let versions = Arc::new(FunctionVersionRepository::new(&pool));
+    let domains = Arc::new(FunctionDomainRepository::new(&pool));
+    let routes = Arc::new(FunctionRouteRepository::new(&pool));
+    let limits = FunctionLimits::defaults();
     FunctionOperations {
         functions: functions.clone(),
         versions: versions.clone(),
-        applications: Arc::new(
-            fc_platform_iam::application::repository::ApplicationRepository::new(&pool),
-        ),
-        clients: Arc::new(fc_platform_iam::client::repository::ClientRepository::new(
-            &pool,
-        )),
-        settings: Arc::new(
-            crate::function::settings_repository::FunctionSettingsRepository::new(&pool, None),
-        ),
-        policies: Arc::new(crate::function::policy_repository::ClientPolicyRepository::new(&pool)),
+        applications: Arc::new(ApplicationRepository::new(&pool)),
+        clients: Arc::new(ClientRepository::new(&pool)),
+        settings: Arc::new(FunctionSettingsRepository::new(&pool, None)),
+        policies: Arc::new(ClientPolicyRepository::new(&pool)),
         domains: domains.clone(),
         routes: routes.clone(),
         trigger_sync: TriggerSync::new(
-            Arc::new(
-                fc_platform_messaging::subscription::repository::SubscriptionRepository::new(&pool),
-            ),
-            Arc::new(
-                fc_platform_messaging::dispatch_pool::repository::DispatchPoolRepository::new(
-                    &pool,
-                ),
-            ),
-            Arc::new(fc_platform_scheduled_jobs::scheduled_job::ScheduledJobRepository::new(&pool)),
-            Arc::new(
-                crate::function::trigger_object_repository::TriggerObjectRepository::new(&pool),
-            ),
-            Arc::new(fc_platform_iam::application::repository::ApplicationRepository::new(&pool)),
+            Arc::new(SubscriptionRepository::new(&pool)),
+            Arc::new(DispatchPoolRepository::new(&pool)),
+            Arc::new(ScheduledJobRepository::new(&pool)),
+            Arc::new(TriggerObjectRepository::new(&pool)),
+            Arc::new(ApplicationRepository::new(&pool)),
             versions.clone(),
             functions.clone(),
             routes.clone(),
-            Arc::new(
-                crate::function::settings_repository::FunctionSettingsRepository::new(&pool, None),
-            ),
-            crate::function::PoolUrlTemplate::parse(crate::function::PoolUrlTemplate::DEFAULT)
-                .unwrap(),
+            Arc::new(FunctionSettingsRepository::new(&pool, None)),
+            PoolUrlTemplate::parse(PoolUrlTemplate::DEFAULT).unwrap(),
         ),
         limits,
         signatures: fc_function_signing::Signatures::Off,
         artifacts: None,
         publish_checks: PublishChecks {
-            event_types: Arc::new(
-                fc_platform_messaging::event_type::repository::EventTypeRepository::new(&pool),
-            ),
-            service_accounts: Arc::new(
-                fc_platform_iam::service_account::repository::ServiceAccountRepository::new(&pool),
-            ),
+            event_types: Arc::new(EventTypeRepository::new(&pool)),
+            service_accounts: Arc::new(ServiceAccountRepository::new(&pool)),
             versions,
             functions,
             domains,
             routes,
-            hosts: Arc::new(crate::function::host_repository::FunctionHostRepository::new(&pool)),
+            hosts: Arc::new(FunctionHostRepository::new(&pool)),
             limits,
         },
         unit_of_work: Arc::new(InMemoryUnitOfWork::new()),
@@ -589,24 +589,21 @@ async fn publish_validates_the_ref_and_digest_before_anything_else() {
 }
 
 fn published_version(f: &Function, signer: Option<SignerIdentity>) -> FunctionVersion {
-    let defaults = crate::function::FunctionLimits::defaults();
-    let manifest = crate::function::Manifest::parse_strict(
+    let defaults = FunctionLimits::defaults();
+    let manifest = Manifest::parse_strict(
         Some(
-            &crate::function::JsonNode::parse(
-                r#"{"runtime":"wasm","entrypoint":"handle","pool":"edge"}"#,
-            )
-            .unwrap(),
+            &JsonNode::parse(r#"{"runtime":"wasm","entrypoint":"handle","pool":"edge"}"#).unwrap(),
         ),
         Runtime::Wasm,
         &defaults,
-        &crate::function::ClientCeilings::of(&defaults),
+        &ClientCeilings::of(&defaults),
     )
     .unwrap();
     let mut v = FunctionVersion::publish(
         &f.id,
         3,
         "platform://fnc_1/abc",
-        crate::function::Digest::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
+        Digest::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
         Some("{\"bundle\":true}".into()),
         signer,
         manifest,
@@ -663,7 +660,7 @@ async fn publish_and_retire_write_one_event_and_one_audit_row() {
     let command = PublishCommand {
         signature_bundle: Some("{\"bundle\":true}".into()),
         manifest: Some(
-            crate::function::JsonNode::parse(
+            JsonNode::parse(
                 r#"{"runtime":"wasm","entrypoint":"handle","apiKey":"sk_live_1","config":["A"]}"#,
             )
             .unwrap(),

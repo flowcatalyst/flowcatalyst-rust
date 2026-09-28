@@ -26,7 +26,13 @@ use tracing::{debug, error};
 use super::domain_event::{DomainEvent, RecordedEvent};
 use super::error::UseCaseError;
 use super::result::Committed;
+use crate::shared::error::PlatformError;
+use crate::shared::tsid;
+use crate::shared::tsid::EntityType;
 use fc_common::audit_redaction::{redacted_command_json, AuditMasked};
+use std::any;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync;
 
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
@@ -62,10 +68,10 @@ pub struct DbTx<'t> {
 #[async_trait]
 pub trait Persist<A: HasId + Send + Sync>: Send + Sync {
     /// Upsert the aggregate's rows within the given transaction.
-    async fn persist(&self, aggregate: &A, tx: &mut DbTx<'_>) -> crate::shared::error::Result<()>;
+    async fn persist(&self, aggregate: &A, tx: &mut DbTx<'_>) -> Result<(), PlatformError>;
 
     /// Delete the aggregate's rows within the given transaction.
-    async fn delete(&self, aggregate: &A, tx: &mut DbTx<'_>) -> crate::shared::error::Result<()>;
+    async fn delete(&self, aggregate: &A, tx: &mut DbTx<'_>) -> Result<(), PlatformError>;
 }
 
 /// A read a repository makes under a row lock (`SELECT … FOR UPDATE`),
@@ -81,7 +87,7 @@ pub trait LockedRead<Q: Send + Sync>: Send + Sync {
         &self,
         query: &Q,
         tx: &mut DbTx<'_>,
-    ) -> crate::shared::error::Result<Self::Output>;
+    ) -> Result<Self::Output, PlatformError>;
 }
 
 /// A write on a transaction-scoped unit of work whose `run` has already
@@ -104,7 +110,7 @@ const UNIQUE_VIOLATION: &str = "23505";
 
 /// The aggregate a write failure names: its type's short name and its id.
 fn aggregate_subject<A: HasId>(aggregate: &A) -> String {
-    let type_name = std::any::type_name::<A>();
+    let type_name = any::type_name::<A>();
     let short = type_name
         .split('<')
         .next()
@@ -117,33 +123,33 @@ fn aggregate_subject<A: HasId>(aggregate: &A) -> String {
 
 /// Whether a repository write failed on a unique key: the database's
 /// unique violation, or a repository's own `Duplicate`.
-fn is_unique_violation(e: &crate::shared::error::PlatformError) -> bool {
+fn is_unique_violation(e: &PlatformError) -> bool {
     match e {
-        crate::shared::error::PlatformError::Duplicate { .. } => true,
-        crate::shared::error::PlatformError::Sqlx(sqlx::Error::Database(db)) => {
+        PlatformError::Duplicate { .. } => true,
+        PlatformError::Sqlx(sqlx::Error::Database(db)) => {
             db.code().as_deref() == Some(UNIQUE_VIOLATION)
         }
-        crate::shared::error::PlatformError::NotFound { .. }
-        | crate::shared::error::PlatformError::BusinessRule { .. }
-        | crate::shared::error::PlatformError::Concurrency { .. }
-        | crate::shared::error::PlatformError::Validation { .. }
-        | crate::shared::error::PlatformError::Unauthorized { .. }
-        | crate::shared::error::PlatformError::Forbidden { .. }
-        | crate::shared::error::PlatformError::Sqlx(_)
-        | crate::shared::error::PlatformError::Json(_)
-        | crate::shared::error::PlatformError::Configuration { .. }
-        | crate::shared::error::PlatformError::EventTypeNotFound { .. }
-        | crate::shared::error::PlatformError::SubscriptionNotFound { .. }
-        | crate::shared::error::PlatformError::ClientNotFound { .. }
-        | crate::shared::error::PlatformError::PrincipalNotFound { .. }
-        | crate::shared::error::PlatformError::ServiceAccountNotFound { .. }
-        | crate::shared::error::PlatformError::InvalidCredentials
-        | crate::shared::error::PlatformError::TokenExpired
-        | crate::shared::error::PlatformError::InvalidToken { .. }
-        | crate::shared::error::PlatformError::Internal { .. }
-        | crate::shared::error::PlatformError::TooManyRequests { .. }
-        | crate::shared::error::PlatformError::Coded { .. }
-        | crate::shared::error::PlatformError::SessionEndpoint { .. } => false,
+        PlatformError::NotFound { .. }
+        | PlatformError::BusinessRule { .. }
+        | PlatformError::Concurrency { .. }
+        | PlatformError::Validation { .. }
+        | PlatformError::Unauthorized { .. }
+        | PlatformError::Forbidden { .. }
+        | PlatformError::Sqlx(_)
+        | PlatformError::Json(_)
+        | PlatformError::Configuration { .. }
+        | PlatformError::EventTypeNotFound { .. }
+        | PlatformError::SubscriptionNotFound { .. }
+        | PlatformError::ClientNotFound { .. }
+        | PlatformError::PrincipalNotFound { .. }
+        | PlatformError::ServiceAccountNotFound { .. }
+        | PlatformError::InvalidCredentials
+        | PlatformError::TokenExpired
+        | PlatformError::InvalidToken { .. }
+        | PlatformError::Internal { .. }
+        | PlatformError::TooManyRequests { .. }
+        | PlatformError::Coded { .. }
+        | PlatformError::SessionEndpoint { .. } => false,
     }
 }
 
@@ -157,16 +163,11 @@ fn is_unique_violation(e: &crate::shared::error::PlatformError) -> bool {
 ///   duplicate, and a concurrent writer took the key between that check and
 ///   this persist, so the caller is told what the check would have said.
 /// - Anything else is a failed commit, naming the aggregate.
-fn write_failure<A: HasId>(
-    what: &str,
-    aggregate: &A,
-    e: crate::shared::error::PlatformError,
-) -> UseCaseError {
+fn write_failure<A: HasId>(what: &str, aggregate: &A, e: PlatformError) -> UseCaseError {
     let subject = aggregate_subject(aggregate);
     match e {
-        e @ crate::shared::error::PlatformError::BusinessRule { .. } => UseCaseError::from(e),
-        e @ (crate::shared::error::PlatformError::Duplicate { .. }
-        | crate::shared::error::PlatformError::Sqlx(_))
+        e @ PlatformError::BusinessRule { .. } => UseCaseError::from(e),
+        e @ (PlatformError::Duplicate { .. } | PlatformError::Sqlx(_))
             if is_unique_violation(&e) =>
         {
             UseCaseError::business_rule(
@@ -174,27 +175,27 @@ fn write_failure<A: HasId>(
                 format!("{subject} conflicts with an existing row on a unique key"),
             )
         }
-        e @ (crate::shared::error::PlatformError::NotFound { .. }
-        | crate::shared::error::PlatformError::Duplicate { .. }
-        | crate::shared::error::PlatformError::Concurrency { .. }
-        | crate::shared::error::PlatformError::Validation { .. }
-        | crate::shared::error::PlatformError::Unauthorized { .. }
-        | crate::shared::error::PlatformError::Forbidden { .. }
-        | crate::shared::error::PlatformError::Sqlx(_)
-        | crate::shared::error::PlatformError::Json(_)
-        | crate::shared::error::PlatformError::Configuration { .. }
-        | crate::shared::error::PlatformError::EventTypeNotFound { .. }
-        | crate::shared::error::PlatformError::SubscriptionNotFound { .. }
-        | crate::shared::error::PlatformError::ClientNotFound { .. }
-        | crate::shared::error::PlatformError::PrincipalNotFound { .. }
-        | crate::shared::error::PlatformError::ServiceAccountNotFound { .. }
-        | crate::shared::error::PlatformError::InvalidCredentials
-        | crate::shared::error::PlatformError::TokenExpired
-        | crate::shared::error::PlatformError::InvalidToken { .. }
-        | crate::shared::error::PlatformError::Internal { .. }
-        | crate::shared::error::PlatformError::TooManyRequests { .. }
-        | crate::shared::error::PlatformError::Coded { .. }
-        | crate::shared::error::PlatformError::SessionEndpoint { .. }) => {
+        e @ (PlatformError::NotFound { .. }
+        | PlatformError::Duplicate { .. }
+        | PlatformError::Concurrency { .. }
+        | PlatformError::Validation { .. }
+        | PlatformError::Unauthorized { .. }
+        | PlatformError::Forbidden { .. }
+        | PlatformError::Sqlx(_)
+        | PlatformError::Json(_)
+        | PlatformError::Configuration { .. }
+        | PlatformError::EventTypeNotFound { .. }
+        | PlatformError::SubscriptionNotFound { .. }
+        | PlatformError::ClientNotFound { .. }
+        | PlatformError::PrincipalNotFound { .. }
+        | PlatformError::ServiceAccountNotFound { .. }
+        | PlatformError::InvalidCredentials
+        | PlatformError::TokenExpired
+        | PlatformError::InvalidToken { .. }
+        | PlatformError::Internal { .. }
+        | PlatformError::TooManyRequests { .. }
+        | PlatformError::Coded { .. }
+        | PlatformError::SessionEndpoint { .. }) => {
             UseCaseError::commit(format!("Failed to {what} {subject}: {e}"))
         }
     }
@@ -448,9 +449,7 @@ impl PgUnitOfWork {
                  client_id, performed_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
-        .bind(crate::shared::tsid::generate(
-            crate::shared::tsid::EntityType::AuditLog,
-        ))
+        .bind(tsid::generate(EntityType::AuditLog))
         .bind(&row.entity_type)
         .bind(&row.entity_id)
         .bind(&row.operation)
@@ -1317,10 +1316,10 @@ impl PgUnitOfWork {
 /// produces a [`Committed`] without persisting.
 #[cfg(any(test, feature = "test-support"))]
 pub struct InMemoryUnitOfWork {
-    pub committed_events: std::sync::Mutex<Vec<String>>,
+    pub committed_events: sync::Mutex<Vec<String>>,
     /// The `operation_json` each commit would write to `aud_logs` —
     /// redacted exactly as the Postgres implementations redact it.
-    pub committed_audits: std::sync::Mutex<Vec<Option<serde_json::Value>>>,
+    pub committed_audits: sync::Mutex<Vec<Option<serde_json::Value>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1334,8 +1333,8 @@ impl Default for InMemoryUnitOfWork {
 impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {
-            committed_events: std::sync::Mutex::new(Vec::new()),
-            committed_audits: std::sync::Mutex::new(Vec::new()),
+            committed_events: sync::Mutex::new(Vec::new()),
+            committed_audits: sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1490,6 +1489,8 @@ impl UnitOfWork for InMemoryUnitOfWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::error;
+    use sqlx::postgres::PgPoolOptions;
 
     struct Counter;
 
@@ -1501,7 +1502,7 @@ mod tests {
             &self,
             _query: &&'static str,
             _tx: &mut DbTx<'_>,
-        ) -> crate::shared::error::Result<i32> {
+        ) -> error::Result<i32> {
             Ok(1)
         }
     }
@@ -1510,7 +1511,7 @@ mod tests {
     /// released at once, so only a scoped unit of work performs one.
     #[tokio::test]
     async fn a_locked_read_needs_a_transaction_scoped_unit_of_work() {
-        let pool = sqlx::postgres::PgPoolOptions::new()
+        let pool = PgPoolOptions::new()
             .connect_lazy("postgres://nobody@127.0.0.1:1/none")
             .unwrap();
         let err = PgUnitOfWork::new(pool)

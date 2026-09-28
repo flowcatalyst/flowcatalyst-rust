@@ -37,11 +37,15 @@ use crate::application::repository::ApplicationRepository;
 use crate::principal::entity::{Principal, PrincipalSyncBatch};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
+use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::Authority;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
+use std::slice;
 
 /// A single principal definition in the sync payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +84,7 @@ pub struct SyncPrincipalsCommand {
 
 /// The hashes ride `principals[].passwordHash`, which the audit name rule
 /// masks.
-impl fc_platform_core::usecase::AuditMasked for SyncPrincipalsCommand {}
+impl AuditMasked for SyncPrincipalsCommand {}
 
 /// Whether `caller` may administer `target` (Java `Access.administers`,
 /// Go `blockNonClientTarget` + `CanAccessScope`): an anchor reaches every
@@ -95,7 +99,7 @@ pub fn administers(caller: &impl Authority, target: &Principal) -> bool {
     }
     match target.client_id.as_deref() {
         Some(client_id) => caller.can_access_client(client_id),
-        None => caller.has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        None => caller.has_permission(permissions::ADMIN_ALL),
     }
 }
 
@@ -176,7 +180,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
             .find_by_code(&command.application_code)
             .await?
         {
-            fc_platform_core::shared::authorization_service::checks::require_caller_application_access(
+            checks::require_caller_application_access(
                 ctx.caller(),
                 &command.application_code,
                 Some(app),
@@ -339,7 +343,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         // rollup, atomic with the batch write.
         self.unit_of_work
             .commit_all_with_events(
-                std::slice::from_ref(&batch),
+                slice::from_ref(&batch),
                 &*self.principal_repo,
                 row_events,
                 rollup,
@@ -393,6 +397,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
 mod tests {
     use super::*;
     use crate::role::ceiling::test_caller as ctx;
+    use fc_common::audit_redaction;
 
     #[test]
     fn test_command_serialization() {
@@ -449,7 +454,7 @@ mod tests {
             }],
             remove_unlisted: false,
         };
-        let json = fc_common::audit_redaction::redacted_command_json(&command).unwrap();
+        let json = audit_redaction::redacted_command_json(&command).unwrap();
         assert_eq!(json["principals"][0]["passwordHash"], "***");
     }
 }

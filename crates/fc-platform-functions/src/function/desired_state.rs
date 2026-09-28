@@ -55,6 +55,7 @@ use super::route_repository::FunctionRouteRepository;
 use super::settings_repository::FunctionSettingsRepository;
 use super::version_repository::{CorruptVersion, FunctionVersionRepository};
 use super::{java_is_blank, DnsLabel, EndpointAuth, FunctionOwner, JsonNode, Manifest, LIVE_ALIAS};
+use axum::http::StatusCode;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_iam::service_account::outbound_credentials::OutboundCredentialsResolver;
 
@@ -217,7 +218,7 @@ pub fn etag_matches(header: Option<&str>, etag: &str) -> bool {
 /// `CorruptFunctionVersionException`, the house `500 CORRUPT_ROW`).
 pub fn corrupt_row(version_id: &str, cause: &str) -> PlatformError {
     PlatformError::Coded {
-        status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "CORRUPT_ROW".to_string(),
         message: format!("function version {version_id} has a corrupt row: {cause}"),
         details: Default::default(),

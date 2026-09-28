@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::events::{ProcessCreated, ProcessDeleted, ProcessUpdated, ProcessesSynced};
 use crate::process::entity::{Process, ProcessCode, ProcessCodeError, ProcessSource};
 use crate::process::repository::ProcessRepository;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
@@ -38,7 +39,7 @@ pub struct SyncProcessesCommand {
     pub remove_unlisted: bool,
 }
 
-impl fc_platform_core::usecase::AuditMasked for SyncProcessesCommand {}
+impl AuditMasked for SyncProcessesCommand {}
 
 /// A listed code that is not a process code (checked when the sync reaches
 /// it, as it creates the process). The sync keeps its own code and its

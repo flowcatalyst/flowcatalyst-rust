@@ -84,6 +84,9 @@ tokio = { workspace = true, features = ["full"] }
 rsa = { version = "0.9", features = ["pem"] }
 
 [lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
 # A `_ =>` arm over one of our own enums hides a new variant from every
 # match that should decide what it means. List the variants instead; an
 # `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.

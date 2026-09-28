@@ -38,3 +38,8 @@ mysql = ["dep:sqlx", "sqlx/mysql"]
 mongo = ["dep:mongodb", "dep:bson", "dep:futures"]
 standby = ["dep:fc-standby"]
 admin = ["dep:axum"]
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

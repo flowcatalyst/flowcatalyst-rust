@@ -15,8 +15,14 @@ use testcontainers_modules::postgres::Postgres;
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::domain::{Principal, UserScope};
+use fc_platform::event_type::entity::EventTypeCode;
+use fc_platform::scheduled_job::cron_migration;
+use fc_platform::seed::platform_event_types;
+use fc_platform::shared::database;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use fc_platform::shared::secret_backfill::ColumnReport;
 use fc_platform::subscription::entity::EventTypeBinding;
+use fc_platform::usecase::AuditMasked;
 use fc_platform::{Application, AuditLog, AuthRole, Client, ClientStatus, Event, EventType};
 use fc_platform::{
     ApplicationRepository, AuditLogRepository, ClientRepository, EventRepository,
@@ -30,6 +36,8 @@ use fc_platform::{
     ConnectionRepository, DispatchJobRepository, DispatchPoolRepository, ServiceAccountRepository,
     SubscriptionRepository,
 };
+use std::slice;
+use std::time::Duration;
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
@@ -253,7 +261,7 @@ async fn test_role_crud() {
 
     // Find by codes
     let roles = repo
-        .find_by_codes(std::slice::from_ref(&role.name))
+        .find_by_codes(slice::from_ref(&role.name))
         .await
         .expect("Failed to find roles");
     assert_eq!(roles.len(), 1);
@@ -267,10 +275,7 @@ async fn test_event_type_crud() {
     let (pool, _container) = setup_test_db().await;
     let repo = EventTypeRepository::new(&pool);
 
-    let code = fc_platform::event_type::entity::EventTypeCode::parse(
-        "orders:fulfillment:shipment:shipped",
-    )
-    .expect("valid code");
+    let code = EventTypeCode::parse("orders:fulfillment:shipment:shipped").expect("valid code");
     let event_type = EventType::new(code, "Shipment Shipped");
     repo.insert(&event_type)
         .await
@@ -571,7 +576,7 @@ async fn test_unit_of_work_commit() {
     struct CreateClientCommand {
         name: String,
     }
-    impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
+    impl AuditMasked for CreateClientCommand {}
     let command = CreateClientCommand {
         name: "UoW Test Client".to_string(),
     };
@@ -614,7 +619,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
     struct CreateClientCommand {
         name: String,
     }
-    impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
+    impl AuditMasked for CreateClientCommand {}
 
     let uow = PgUnitOfWork::new(pool.clone());
     let ctx = ExecutionContext::system("test-principal-id");
@@ -946,7 +951,7 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     struct SyncEventTypesCommand {
         application_code: String,
     }
-    impl fc_platform::usecase::AuditMasked for SyncEventTypesCommand {}
+    impl AuditMasked for SyncEventTypesCommand {}
 
     let ctx = ExecutionContext::system("test-principal-id");
     let event = EventTypesSynced {
@@ -1311,7 +1316,7 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     let plain = PlatformConfig::new("orders", "email", "smtp_host", "smtp.example.com");
     config_repo.insert(&plain).await.unwrap();
 
-    let counts = |reports: &[fc_platform::shared::secret_backfill::ColumnReport]| {
+    let counts = |reports: &[ColumnReport]| {
         reports
             .iter()
             .map(|r| (r.column.clone(), r.unencrypted, r.encrypted))
@@ -1531,7 +1536,7 @@ async fn crons_of(pool: &sqlx::PgPool, id: &str) -> Vec<String> {
 /// Pretend the migration has not run yet (it ran, over no jobs, at setup).
 async fn forget_cron_migration(pool: &sqlx::PgPool) {
     sqlx::query("DELETE FROM _schema_migrations WHERE migration_id = $1")
-        .bind(fc_platform::scheduled_job::cron_migration::MIGRATION_ID)
+        .bind(cron_migration::MIGRATION_ID)
         .execute(pool)
         .await
         .unwrap();
@@ -1647,7 +1652,7 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
 
     let (pool, _container) = setup_test_db().await;
     let store = PostgresRateLimitStore::new(pool.clone());
-    let policy = RateLimitPolicy::new(std::time::Duration::from_secs(60), 3);
+    let policy = RateLimitPolicy::new(Duration::from_secs(60), 3);
     let mut decisions = Vec::new();
     for _ in 0..4 {
         decisions.push(
@@ -1681,9 +1686,9 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
 #[ignore = "requires Docker"]
 async fn platform_event_type_catalogue_seeds_as_go() {
     let (pool, _container) = setup_test_db().await;
-    let defs = fc_platform::seed::platform_event_types::definitions();
+    let defs = platform_event_types::definitions();
 
-    fc_platform::shared::database::seed_platform_event_types(&pool)
+    database::seed_platform_event_types(&pool)
         .await
         .expect("first seed");
     sqlx::query(
@@ -1692,7 +1697,7 @@ async fn platform_event_type_catalogue_seeds_as_go() {
     .execute(&pool)
     .await
     .unwrap();
-    fc_platform::shared::database::seed_platform_event_types(&pool)
+    database::seed_platform_event_types(&pool)
         .await
         .expect("second seed");
 

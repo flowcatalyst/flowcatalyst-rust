@@ -24,7 +24,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::shared::error;
 use crate::shared::error::PlatformError;
+use axum::http::StatusCode;
+use std::error::Error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 /// Macro for creating error detail maps.
 ///
@@ -199,7 +205,7 @@ impl UseCaseError {
     pub fn not_found_verbatim(code: impl Into<String>, message: impl Into<String>) -> Self {
         let mut details = HashMap::new();
         details.insert(
-            crate::shared::error::VERBATIM_CODE.to_string(),
+            error::VERBATIM_CODE.to_string(),
             serde_json::Value::Bool(true),
         );
         Self::new(ErrorKind::NotFound, code, message, details)
@@ -366,13 +372,13 @@ impl UseCaseError {
     }
 }
 
-impl std::fmt::Display for UseCaseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for UseCaseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] {}", self.code(), self.message())
     }
 }
 
-impl std::error::Error for UseCaseError {}
+impl Error for UseCaseError {}
 
 /// Lets use-case code apply `?` to repository calls.
 ///
@@ -469,7 +475,7 @@ impl From<UseCaseError> for PlatformError {
         // does (shared/httperror/HttpError.java:47-49).
         match kind {
             ErrorKind::Validation => PlatformError::Coded {
-                status: axum::http::StatusCode::BAD_REQUEST,
+                status: StatusCode::BAD_REQUEST,
                 code,
                 message,
                 details,
@@ -477,7 +483,7 @@ impl From<UseCaseError> for PlatformError {
             // A conflict that carries details (Java's `VERSION_DIGEST_EXISTS`
             // with `details.version`) keeps them in the body.
             ErrorKind::BusinessRule if !details.is_empty() => PlatformError::Coded {
-                status: axum::http::StatusCode::CONFLICT,
+                status: StatusCode::CONFLICT,
                 code,
                 message,
                 details,
@@ -486,14 +492,14 @@ impl From<UseCaseError> for PlatformError {
             // Unintercepted, a no-op is the historical conflict: same code,
             // same status.
             ErrorKind::Unchanged if !details.is_empty() => PlatformError::Coded {
-                status: axum::http::StatusCode::CONFLICT,
+                status: StatusCode::CONFLICT,
                 code,
                 message,
                 details,
             },
             ErrorKind::Unchanged => PlatformError::BusinessRule { code, message },
             ErrorKind::NotFound => PlatformError::Coded {
-                status: axum::http::StatusCode::NOT_FOUND,
+                status: StatusCode::NOT_FOUND,
                 code,
                 message,
                 details,
@@ -502,7 +508,7 @@ impl From<UseCaseError> for PlatformError {
             // Java's envelope for an authorization error: its own code
             // (`SCOPE_FORBIDDEN`, `FORBIDDEN`, …) and message.
             ErrorKind::Forbidden => PlatformError::Coded {
-                status: axum::http::StatusCode::FORBIDDEN,
+                status: StatusCode::FORBIDDEN,
                 code,
                 message,
                 details,
@@ -511,19 +517,19 @@ impl From<UseCaseError> for PlatformError {
                 message: format!("{}: {}", code, message),
             },
             ErrorKind::Unprocessable => PlatformError::Coded {
-                status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                status: StatusCode::UNPROCESSABLE_ENTITY,
                 code,
                 message,
                 details,
             },
             ErrorKind::Unavailable => PlatformError::Coded {
-                status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                status: StatusCode::SERVICE_UNAVAILABLE,
                 code,
                 message,
                 details,
             },
             ErrorKind::PreconditionFailed => PlatformError::Coded {
-                status: axum::http::StatusCode::PRECONDITION_FAILED,
+                status: StatusCode::PRECONDITION_FAILED,
                 code,
                 message,
                 details,
@@ -602,7 +608,7 @@ impl From<ValidationError> for UseCaseError {
         match e.pointer() {
             None => UseCaseError::validation(e.code(), e.message()),
             Some(pointer) => {
-                let mut details = std::collections::HashMap::new();
+                let mut details = HashMap::new();
                 details.insert(
                     "pointer".to_string(),
                     serde_json::Value::String(pointer.to_string()),
@@ -623,6 +629,8 @@ impl From<ValidationError> for PlatformError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body;
+    use std::str;
 
     #[test]
     fn test_validation_error() {
@@ -659,9 +667,7 @@ mod tests {
         use axum::response::IntoResponse;
         let resp = err.into_response();
         let status = resp.status().as_u16();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             body.get("code").is_none(),
@@ -684,9 +690,7 @@ mod tests {
                 .map(|c| format!("{c:?}"))
                 .unwrap_or_default();
             let status = resp.status().as_u16();
-            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-                .await
-                .unwrap();
+            let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
             (status, String::from_utf8(bytes.to_vec()).unwrap(), contract)
         }
         let cases = || {
@@ -726,11 +730,9 @@ mod tests {
             details! { "field" => "name" },
         ))
         .into_response();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let bytes = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         assert_eq!(
-            std::str::from_utf8(&bytes).unwrap(),
+            str::from_utf8(&bytes).unwrap(),
             r#"{"error":"BAD","message":"bad","details":{"field":"name"}}"#
         );
     }

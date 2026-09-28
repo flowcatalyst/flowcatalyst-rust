@@ -14,6 +14,7 @@ use super::repository::MfaRepository;
 use fc_platform_core::shared::email_service::{EmailMessage, EmailService};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use std::result;
 
 /// Digits in an email PIN.
 const EMAIL_PIN_LENGTH: u32 = 6;
@@ -89,7 +90,7 @@ impl MfaService {
         &self,
         principal_id: &str,
         account: &str,
-    ) -> std::result::Result<TotpEnrollment, EnrollError> {
+    ) -> result::Result<TotpEnrollment, EnrollError> {
         let enc = self
             .encryption
             .as_ref()
@@ -122,7 +123,7 @@ impl MfaService {
         &self,
         principal_id: &str,
         code: &str,
-    ) -> std::result::Result<bool, EnrollError> {
+    ) -> result::Result<bool, EnrollError> {
         let enc = self
             .encryption
             .as_ref()
@@ -158,7 +159,7 @@ impl MfaService {
         &self,
         principal_id: &str,
         email: &str,
-    ) -> std::result::Result<(), EnrollError> {
+    ) -> result::Result<(), EnrollError> {
         match self
             .repo
             .find_method(principal_id, MethodType::EmailPin)
@@ -182,7 +183,7 @@ impl MfaService {
         &self,
         principal_id: &str,
         code: &str,
-    ) -> std::result::Result<bool, EnrollError> {
+    ) -> result::Result<bool, EnrollError> {
         if !self
             .verify_email_pin(principal_id, code, EmailPinPurpose::Enroll)
             .await?
@@ -399,7 +400,7 @@ impl MfaService {
     }
 }
 
-fn decrypt(enc: &EncryptionService, method: &Method) -> std::result::Result<String, EnrollError> {
+fn decrypt(enc: &EncryptionService, method: &Method) -> result::Result<String, EnrollError> {
     let stored = method
         .secret_encrypted
         .as_deref()

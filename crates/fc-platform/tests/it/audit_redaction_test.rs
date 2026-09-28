@@ -19,7 +19,7 @@ use support::{assert_status, TestApp};
 /// SECRET config values are sealed at rest, and the routes read the key
 /// from the environment when they are built.
 async fn setup() -> TestApp {
-    crate::support::set_app_key();
+    support::set_app_key();
     TestApp::setup().await
 }
 

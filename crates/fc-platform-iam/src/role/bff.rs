@@ -16,17 +16,22 @@ use utoipa::{IntoParams, ToSchema};
 use crate::application::repository::ApplicationRepository;
 use crate::role::api::RolePermissionsState;
 use crate::role::entity::AuthRole;
+use crate::role::entity::RoleSource;
 use crate::role::operations::DefinePermissionCommand;
 use crate::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase, UpdateRoleCommand,
     UpdateRoleUseCase,
 };
+use crate::role::permission_repository::PermissionCatalogRepository;
 use crate::role::repository::RoleRepository;
+use crate::shared::role_sync_service::RoleSyncService;
+use fc_platform_core::permissions;
 use fc_platform_core::shared::api_common::CreatedResponse;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
+use std::collections::HashSet;
 
 // ── Response DTOs ──────────────────────────────────────────────────────────
 
@@ -167,10 +172,10 @@ pub struct BffRolesState {
     pub role_repo: Arc<RoleRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub unit_of_work: Arc<PgUnitOfWork>,
-    pub role_sync_service: Arc<crate::shared::role_sync_service::RoleSyncService>,
+    pub role_sync_service: Arc<RoleSyncService>,
     /// The persistent permission catalogue (`iam_permissions`), merged into
     /// the catalogue listing as Go does.
-    pub permission_repo: Arc<crate::role::permission_repository::PermissionCatalogRepository>,
+    pub permission_repo: Arc<PermissionCatalogRepository>,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -281,7 +286,7 @@ async fn permission_catalog(
     app: &str,
 ) -> Result<Vec<BffPermissionResponse>, PlatformError> {
     let role_derived = |roles: &[AuthRole], app: &str| {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         let mut out = Vec::new();
         for role in roles {
             if role.application_code == "platform" {
@@ -335,7 +340,7 @@ async fn permission_catalog(
             }
             Some(entry)
         });
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     Ok(base
         .into_iter()
         .chain(catalogue)
@@ -446,11 +451,8 @@ pub async fn create_role(
     State(state): State<BffRolesState>,
     auth: Authenticated,
     Json(req): Json<BffCreateRoleRequest>,
-) -> Result<(axum::http::StatusCode, Json<CreatedResponse>), PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_administer_bff_roles(
-        &auth.0,
-        fc_platform_core::permissions::iam::ROLE_CREATE,
-    )?;
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
+    checks::can_administer_bff_roles(&auth.0, permissions::iam::ROLE_CREATE)?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -459,12 +461,10 @@ pub async fn create_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
-        source: crate::role::entity::RoleSource::Database,
+        source: RoleSource::Database,
         // Owner ruling 15: a super-admin may use another application's
         // permissions through the admin API.
-        cross_application: auth
-            .0
-            .has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        cross_application: auth.0.has_permission(permissions::ADMIN_ALL),
     };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -472,7 +472,7 @@ pub async fn create_role(
     let event = use_case.run(cmd, ctx).await.into_result()?;
 
     Ok((
-        axum::http::StatusCode::CREATED,
+        StatusCode::CREATED,
         Json(CreatedResponse::new(event.role_id)),
     ))
 }
@@ -498,11 +498,8 @@ pub async fn update_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
     Json(req): Json<BffUpdateRoleRequest>,
-) -> Result<axum::http::StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_administer_bff_roles(
-        &auth.0,
-        fc_platform_core::permissions::iam::ROLE_UPDATE,
-    )?;
+) -> Result<StatusCode, PlatformError> {
+    checks::can_administer_bff_roles(&auth.0, permissions::iam::ROLE_UPDATE)?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -520,16 +517,14 @@ pub async fn update_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
-        cross_application: auth
-            .0
-            .has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        cross_application: auth.0.has_permission(permissions::ADMIN_ALL),
     };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
     let use_case = UpdateRoleUseCase::new(state.role_repo.clone(), state.unit_of_work.clone());
     use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Delete role
@@ -551,11 +546,8 @@ pub async fn delete_role(
     State(state): State<BffRolesState>,
     auth: Authenticated,
     Path(role_name): Path<String>,
-) -> Result<axum::http::StatusCode, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_administer_bff_roles(
-        &auth.0,
-        fc_platform_core::permissions::iam::ROLE_DELETE,
-    )?;
+) -> Result<StatusCode, PlatformError> {
+    checks::can_administer_bff_roles(&auth.0, permissions::iam::ROLE_DELETE)?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -573,7 +565,7 @@ pub async fn delete_role(
     let use_case = DeleteRoleUseCase::new(state.role_repo.clone(), state.unit_of_work.clone());
     use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(axum::http::StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Permissions registry ──────────────────────────────────────────────────
@@ -843,7 +835,7 @@ pub async fn sync_platform_roles(
     State(state): State<BffRolesState>,
     auth: Authenticated,
 ) -> Result<axum::Json<SyncPlatformRolesResponse>, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_sync_platform_roles(&auth.0)?;
+    checks::can_sync_platform_roles(&auth.0)?;
 
     let counts = state
         .role_sync_service

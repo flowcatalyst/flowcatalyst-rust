@@ -8,7 +8,10 @@ use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping}
 use crate::principal::entity::ClientAccessGrant;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase;
 use fc_platform_core::usecase::unit_of_work::HasId;
+use fc_platform_core::usecase::DbTx;
+use fc_platform_core::usecase::Persist;
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
@@ -451,12 +454,8 @@ impl HasId for ClientAccessGrant {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ClientAccessGrant> for ClientAccessGrantRepository {
-    async fn persist(
-        &self,
-        g: &ClientAccessGrant,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ClientAccessGrant> for ClientAccessGrantRepository {
+    async fn persist(&self, g: &ClientAccessGrant, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query(
             "INSERT INTO iam_client_access_grants (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -476,11 +475,7 @@ impl fc_platform_core::usecase::Persist<ClientAccessGrant> for ClientAccessGrant
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        g: &ClientAccessGrant,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, g: &ClientAccessGrant, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM iam_client_access_grants WHERE id = $1")
             .bind(&g.id)
             .execute(&mut **tx.inner)
@@ -498,12 +493,8 @@ impl HasId for AnchorDomain {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<AnchorDomain> for AnchorDomainRepository {
-    async fn persist(
-        &self,
-        d: &AnchorDomain,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<AnchorDomain> for AnchorDomainRepository {
+    async fn persist(&self, d: &AnchorDomain, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO tnt_anchor_domains (id, domain, created_at, updated_at)
@@ -521,11 +512,7 @@ impl fc_platform_core::usecase::Persist<AnchorDomain> for AnchorDomainRepository
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        d: &AnchorDomain,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, d: &AnchorDomain, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM tnt_anchor_domains WHERE id = $1")
             .bind(&d.id)
             .execute(&mut **tx.inner)
@@ -543,12 +530,8 @@ impl HasId for ClientAuthConfig {
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<ClientAuthConfig> for ClientAuthConfigRepository {
-    async fn persist(
-        &self,
-        c: &ClientAuthConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<ClientAuthConfig> for ClientAuthConfigRepository {
+    async fn persist(&self, c: &ClientAuthConfig, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         let additional_client_ids_json =
             serde_json::to_value(&c.additional_client_ids).unwrap_or_default();
@@ -590,11 +573,7 @@ impl fc_platform_core::usecase::Persist<ClientAuthConfig> for ClientAuthConfigRe
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        c: &ClientAuthConfig,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, c: &ClientAuthConfig, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM tnt_client_auth_configs WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)
@@ -691,19 +670,15 @@ impl IdpRoleMappingRepository {
     }
 }
 
-impl fc_platform_core::usecase::HasId for IdpRoleMapping {
+impl usecase::HasId for IdpRoleMapping {
     fn id(&self) -> &str {
         &self.id
     }
 }
 
 #[async_trait]
-impl fc_platform_core::usecase::Persist<IdpRoleMapping> for IdpRoleMappingRepository {
-    async fn persist(
-        &self,
-        m: &IdpRoleMapping,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+impl Persist<IdpRoleMapping> for IdpRoleMappingRepository {
+    async fn persist(&self, m: &IdpRoleMapping, tx: &mut DbTx<'_>) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
             "INSERT INTO oauth_idp_role_mappings (id, idp_role_name, internal_role_name, created_at, updated_at)
@@ -722,11 +697,7 @@ impl fc_platform_core::usecase::Persist<IdpRoleMapping> for IdpRoleMappingReposi
         Ok(())
     }
 
-    async fn delete(
-        &self,
-        m: &IdpRoleMapping,
-        tx: &mut fc_platform_core::usecase::DbTx<'_>,
-    ) -> Result<()> {
+    async fn delete(&self, m: &IdpRoleMapping, tx: &mut DbTx<'_>) -> Result<()> {
         sqlx::query("DELETE FROM oauth_idp_role_mappings WHERE id = $1")
             .bind(&m.id)
             .execute(&mut **tx.inner)

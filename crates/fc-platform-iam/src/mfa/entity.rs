@@ -3,6 +3,7 @@
 //! remembered ("trusted") devices. Federated (OIDC) users never have any.
 
 use chrono::{DateTime, Utc};
+use fc_common::tsid;
 use serde::Serialize;
 
 /// TSID prefixes, as Go's `tsid` (mfm/mrc/mep/mtd).
@@ -46,7 +47,7 @@ pub struct Method {
 impl Method {
     pub fn new(principal_id: &str, method: MethodType) -> Self {
         Self {
-            id: fc_common::tsid::generate_with_prefix(METHOD_ID_PREFIX),
+            id: tsid::generate_with_prefix(METHOD_ID_PREFIX),
             principal_id: principal_id.to_string(),
             method,
             secret_encrypted: None,

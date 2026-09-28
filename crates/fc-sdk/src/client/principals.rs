@@ -1,6 +1,7 @@
 //! Principal (user/service) management operations.
 
 use super::{ClientError, FlowCatalystClient};
+use crate::client::SyncResult;
 use serde::{Deserialize, Serialize};
 
 /// Request to create a user principal.
@@ -392,7 +393,7 @@ impl Principals<'_> {
         app_code: &str,
         req: &SyncPrincipalsRequest,
         remove_unlisted: bool,
-    ) -> Result<crate::client::SyncResult, ClientError> {
+    ) -> Result<SyncResult, ClientError> {
         let query = if remove_unlisted {
             "?removeUnlisted=true"
         } else {

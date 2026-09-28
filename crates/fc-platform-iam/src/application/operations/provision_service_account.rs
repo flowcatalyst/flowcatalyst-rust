@@ -10,6 +10,7 @@
 //! [`PgUnitOfWork::run_as`](fc_platform_core::usecase::PgUnitOfWork::run_as) with this
 //! command.
 
+use fc_platform_core::usecase::AuditMasked;
 use serde::{Deserialize, Serialize};
 
 /// Go `ProvisionServiceAccountCommand`.
@@ -19,4 +20,4 @@ pub struct ProvisionServiceAccountCommand {
     pub application_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ProvisionServiceAccountCommand {}
+impl AuditMasked for ProvisionServiceAccountCommand {}

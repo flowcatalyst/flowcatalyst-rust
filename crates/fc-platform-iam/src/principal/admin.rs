@@ -9,7 +9,10 @@
 
 use std::collections::HashSet;
 
+use crate::application::entity::Application;
+use crate::auth::password_reset_emailer::ResetOptions;
 use crate::identity_provider::entity::IdentityProviderType;
+use crate::mfa::entity::Method;
 use crate::principal::api::{
     assert_assignable_roles, assignment_source_label, bounded_role_set, client_application_ids,
     derive_user_scope, load_administered_user, load_user_to_shape, notify_new_user,
@@ -21,10 +24,14 @@ use crate::principal::api::{
     SetApplicationAccessResponse, StatusChangeResponse, UpdatePrincipalRequest,
 };
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
+use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::parse_opt;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
+use std::collections::HashMap;
+use std::slice;
 
 /// `POST /api/principals/users`: create a user, the tier derived from the
 /// requested scope and the email domain (Go `createUser`).
@@ -37,7 +44,7 @@ pub async fn create_user(
 
     // Go `createUser`: the user-write permission first; the tier bound once
     // the scope is derived below.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     let domain = req
         .email
@@ -87,10 +94,7 @@ pub async fn create_user(
             "Client administrators can only create client-scope users",
         ));
     }
-    fc_platform_core::shared::authorization_service::checks::require_user_admin(
-        ctx,
-        primary_client_id.as_deref(),
-    )?;
+    checks::require_user_admin(ctx, primary_client_id.as_deref())?;
     // Before anything is written: a rejected redirect must not leave a user
     // whose invite was never minted (Go createUser).
     let invite_redirect = resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
@@ -179,7 +183,7 @@ pub async fn detail(
     // as a missing one.
     let is_self = ctx.principal_id == id;
     if !is_self {
-        fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+        checks::can_read_principals(ctx)?;
     }
     let principal = state
         .principal_repo
@@ -188,7 +192,7 @@ pub async fn detail(
         .or_not_found("Principal", id)?;
     if !is_self {
         if let Some(cid) = principal.client_id.as_deref() {
-            if !fc_platform_core::shared::caller_reach::reaches_client(ctx, cid) {
+            if !caller_reach::reaches_client(ctx, cid) {
                 return Err(PlatformError::not_found("Principal", id));
             }
         }
@@ -199,7 +203,7 @@ pub async fn detail(
     let methods: Vec<String> = match state.mfa_repo.find_methods(&principal.id).await {
         Ok(methods) => methods
             .into_iter()
-            .filter(crate::mfa::entity::Method::is_confirmed)
+            .filter(Method::is_confirmed)
             .map(|m| m.method.as_str().to_string())
             .collect(),
         Err(_) => Vec::new(),
@@ -216,7 +220,7 @@ pub async fn list(
     ctx: &AuthContext,
     query: &PrincipalsQuery,
 ) -> Result<PrincipalListResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+    checks::can_read_principals(ctx)?;
 
     // Validate client_id access upfront
     if let Some(ref client_id) = query.client_id {
@@ -310,7 +314,7 @@ pub async fn update(
 
     // The permission before anything is loaded, as Go's `update`
     // (principal/api/api.go:1026-1032): without it, nothing is touched.
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     // The use case applies the per-resource rules after loading the target
     // (Go `update`): the user's reach, and anchor-only scope/client changes.
@@ -341,7 +345,7 @@ pub async fn role_assignments(
     ctx: &AuthContext,
     id: &str,
 ) -> Result<RolesListResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+    checks::can_read_principals(ctx)?;
 
     let principal = state
         .principal_repo
@@ -384,7 +388,7 @@ pub async fn assign_role(
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(ctx)?;
+    checks::can_assign_principal_roles(ctx)?;
 
     // Additive assign: take existing roles + new role, run through UoW.
     // Loaded to shape the set, as Go's controller does; the use case applies
@@ -392,7 +396,7 @@ pub async fn assign_role(
     let principal = load_user_to_shape(state, id).await?;
     if !ctx.is_anchor() {
         let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
-        assert_assignable_roles(state, std::slice::from_ref(&role), &allowed).await?;
+        assert_assignable_roles(state, slice::from_ref(&role), &allowed).await?;
     }
     let mut roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     if !roles.iter().any(|r| r == &role) {
@@ -428,7 +432,7 @@ pub async fn set_roles(
 ) -> Result<BatchAssignRolesResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(ctx)?;
+    checks::can_assign_principal_roles(ctx)?;
 
     // Loaded to shape the set, as Go's controller does; the use case applies
     // the reach rule and the role ceiling.
@@ -484,7 +488,7 @@ pub async fn remove_role(
 ) -> Result<PrincipalResponse, PlatformError> {
     use crate::principal::operations::AssignUserRolesCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_assign_principal_roles(ctx)?;
+    checks::can_assign_principal_roles(ctx)?;
 
     // Loaded to shape the set, as Go's controller does; the use case applies
     // the reach rule and the role ceiling.
@@ -530,7 +534,7 @@ pub async fn client_grants(
     // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251),
     // then the grant rows themselves, each with its own id and date, oldest
     // first. An unknown principal has no grants.
-    fc_platform_core::shared::authorization_service::checks::require_anchor_scope(ctx)?;
+    checks::require_anchor_scope(ctx)?;
     let grants = state
         .client_access_grant_repo
         .find_by_principal(id)
@@ -551,7 +555,7 @@ pub async fn grant_client_access(
 ) -> Result<ClientAccessGrantResponse, PlatformError> {
     use crate::principal::operations::GrantClientAccessCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_grant_client_access(ctx)?;
+    checks::can_grant_client_access(ctx)?;
 
     let cmd = GrantClientAccessCommand {
         user_id: id.to_string(),
@@ -582,7 +586,7 @@ pub async fn revoke_client_access(
 ) -> Result<(), PlatformError> {
     use crate::principal::operations::RevokeClientAccessCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_revoke_client_access(ctx)?;
+    checks::can_revoke_client_access(ctx)?;
 
     let cmd = RevokeClientAccessCommand {
         user_id: id.to_string(),
@@ -605,7 +609,7 @@ pub async fn delete(
 ) -> Result<(), PlatformError> {
     use crate::principal::operations::DeleteUserCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_delete_principals(ctx)?;
+    checks::can_delete_principals(ctx)?;
 
     let cmd = DeleteUserCommand {
         principal_id: id.to_string(),
@@ -623,7 +627,7 @@ pub async fn activate(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ActivateUserCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     let cmd = ActivateUserCommand {
         principal_id: id.to_string(),
@@ -646,7 +650,7 @@ pub async fn deactivate(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::DeactivateUserCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     let cmd = DeactivateUserCommand {
         principal_id: id.to_string(),
@@ -676,7 +680,7 @@ pub async fn reset_password(
 ) -> Result<StatusChangeResponse, PlatformError> {
     use crate::principal::operations::ResetPasswordCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     let cmd = ResetPasswordCommand {
         principal_id: id.to_string(),
@@ -706,7 +710,7 @@ pub async fn send_password_reset(
     id: &str,
     reset_2fa: bool,
 ) -> Result<StatusChangeResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     let emailer = &state.password_reset_emailer;
 
@@ -736,7 +740,7 @@ pub async fn send_password_reset(
     emailer
         .send_reset_email_with(
             &principal,
-            crate::auth::password_reset_emailer::ResetOptions {
+            ResetOptions {
                 reset_2fa,
                 ..Default::default()
             },
@@ -768,7 +772,7 @@ pub async fn check_email_domain(
 ) -> Result<CheckEmailDomainResponse, PlatformError> {
     // Go `checkEmailDomain`: the user read permission, no anchor reach (a
     // client administrator's create form calls it).
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+    checks::can_read_principals(ctx)?;
 
     // Go checkEmailDomain (principal/api/api.go).
     let email = email.trim().to_lowercase();
@@ -870,7 +874,7 @@ pub async fn application_access(
     ctx: &AuthContext,
     id: &str,
 ) -> Result<ApplicationAccessListResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+    checks::can_read_principals(ctx)?;
 
     let principal = state
         .principal_repo
@@ -909,7 +913,7 @@ pub async fn application_access(
 /// `resolveApplications`).
 fn access_rows(
     ids: &[String],
-    apps: &std::collections::HashMap<String, crate::application::entity::Application>,
+    apps: &HashMap<String, Application>,
 ) -> Vec<ApplicationAccessResponse> {
     ids.iter()
         .filter_map(|id| apps.get(id))
@@ -931,7 +935,7 @@ pub async fn set_application_access(
 ) -> Result<SetApplicationAccessResponse, PlatformError> {
     use crate::principal::operations::AssignApplicationAccessCommand;
 
-    fc_platform_core::shared::authorization_service::checks::can_write_principals(ctx)?;
+    checks::can_write_principals(ctx)?;
 
     // Loaded to shape the set, as Go's controller does; the use case applies
     // the reach rule.
@@ -942,9 +946,7 @@ pub async fn set_application_access(
     // and again by the use case, which gets the scope resolved here.
     let application_scope = if req.all_applications == Some(true) {
         let scope = state.app_access.scope_for(&ctx.principal_id).await?;
-        fc_platform_core::shared::authorization_service::checks::require_all_applications_grantor(
-            Some(&scope),
-        )?;
+        checks::require_all_applications_grantor(Some(&scope))?;
         Some(scope)
     } else {
         None
@@ -1039,7 +1041,7 @@ pub async fn available_applications(
     ctx: &AuthContext,
     id: &str,
 ) -> Result<AvailableApplicationsResponse, PlatformError> {
-    fc_platform_core::shared::authorization_service::checks::can_read_principals(ctx)?;
+    checks::can_read_principals(ctx)?;
 
     let principal = state
         .principal_repo
@@ -1051,7 +1053,7 @@ pub async fn available_applications(
     // client the caller does not reach answers the same 404 as a missing
     // one.
     if let Some(ref cid) = principal.client_id {
-        if !fc_platform_core::shared::caller_reach::reaches_client(ctx, cid) {
+        if !caller_reach::reaches_client(ctx, cid) {
             return Err(PlatformError::not_found("Principal", id));
         }
     }

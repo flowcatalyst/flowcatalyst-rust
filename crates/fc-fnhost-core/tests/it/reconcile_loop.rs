@@ -14,8 +14,10 @@ use fc_fnhost_core::reconcile_loop::ReconcileLoop;
 use fc_fnhost_core::reconciler::Reconciler;
 use fc_fnhost_core::registry::FunctionRegistry;
 use fc_fnhost_core::signature::Signatures;
+use std::time::Instant;
 use support::fakes::{Answer, FakeControlPlane, FakeStore};
 use tokio::sync::Semaphore;
+use tokio::time;
 
 fn reconciler(control: Arc<FakeControlPlane>) -> Arc<Reconciler> {
     Arc::new(Reconciler::new(
@@ -34,7 +36,7 @@ async fn wait_for(mut condition: impl FnMut() -> bool) {
         if condition() {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
     panic!("condition never became true");
 }
@@ -52,13 +54,13 @@ async fn triggers_during_a_run_coalesce_into_exactly_one_more_run() {
     );
     lp.start();
     // run 1 is now blocked in the control plane; trigger many times
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     for _ in 0..10 {
         lp.trigger();
     }
     gate.add_permits(100);
     wait_for(|| control.fetches.load(Ordering::SeqCst) == 2).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         control.fetches.load(Ordering::SeqCst),
         2,
@@ -79,9 +81,9 @@ async fn close_cancels_a_run_blocked_in_the_control_plane() {
         Duration::from_secs(3600),
     );
     lp.start();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     assert!(lp.is_alive());
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     lp.close().await;
     assert!(started.elapsed() < Duration::from_secs(5));
     assert!(!lp.is_alive());
@@ -114,7 +116,7 @@ async fn the_interval_is_measured_from_the_end_of_a_run() {
     );
     lp.start();
     wait_for(|| control.fetches.load(Ordering::SeqCst) == 1).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         control.fetches.load(Ordering::SeqCst),
         1,

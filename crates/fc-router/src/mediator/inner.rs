@@ -16,6 +16,10 @@ use crate::http_pool::{HostKey, HostPoolRegistry};
 use crate::warning::WarningService;
 
 use super::{HttpMediatorConfig, HttpVersion};
+use reqwest::redirect::Policy;
+use tokio::runtime::Handle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// State shared by the mediator's public methods and the background sweep.
 pub(super) struct MediatorInner {
@@ -73,7 +77,7 @@ pub(super) fn make_client_builder(
             // receive nothing and the router would record a false
             // success. Disabling it hands the 3xx back to `response`,
             // which classifies it as a permanent configuration error.
-            .redirect(reqwest::redirect::Policy::none());
+            .redirect(Policy::none());
         match http_version {
             HttpVersion::Http1 => {
                 builder = builder.http1_only();
@@ -106,15 +110,15 @@ pub(super) fn make_client_builder(
 /// No-ops outside a tokio runtime (some test paths build a mediator just
 /// to inspect its API without a runtime in scope).
 pub(super) fn spawn_sweep_task(inner: &Arc<MediatorInner>) {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+    let Ok(handle) = Handle::try_current() else {
         debug!("HttpMediator built outside tokio runtime; host-pool sweep task not spawned");
         return;
     };
     let interval = inner.config.host_pool_sizing.sweep_interval;
     let weak: Weak<MediatorInner> = Arc::downgrade(inner);
     handle.spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut ticker = time::interval(interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // Skip the immediate first tick — the registry is empty at startup.
         ticker.tick().await;
         loop {

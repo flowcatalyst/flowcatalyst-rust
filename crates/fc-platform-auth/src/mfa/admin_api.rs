@@ -12,8 +12,10 @@ use axum::{
 };
 
 use super::login_api::{email_of, TwoFactorLogin};
+use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::principal::api::StatusChangeResponse;
@@ -47,7 +49,7 @@ pub async fn reset_two_factor(
 /// server-rendered `fc-web` UI.
 pub async fn reset_user_two_factor(
     state: &TwoFactorLogin,
-    ctx: &fc_platform_core::shared::authorization_service::AuthContext,
+    ctx: &AuthContext,
     id: &str,
 ) -> Result<StatusChangeResponse, PlatformError> {
     // Coarse permission gate before any load (Go PR-3(a)).
@@ -67,7 +69,7 @@ pub async fn reset_user_two_factor(
     }
     let in_scope = match p.client_id.as_deref() {
         Some(client_id) => ctx.can_access_client(client_id),
-        None => ctx.is_anchor() || ctx.has_permission(fc_platform_core::permissions::ADMIN_ALL),
+        None => ctx.is_anchor() || ctx.has_permission(permissions::ADMIN_ALL),
     };
     if !in_scope {
         return Err(PlatformError::not_found("Principal", id));

@@ -173,17 +173,21 @@ impl FunctionRegistry {
 mod tests {
     use super::*;
     use crate::clock::SystemClock;
+    use crate::invoke::InvocationContext;
+    use crate::invoke::InvokeError;
+    use crate::invoke::Invoker;
     use crate::loader::FunctionInstance;
     use async_trait::async_trait;
+    use std::any::Any;
 
     struct Nothing;
 
     #[async_trait]
-    impl crate::invoke::Invoker for Nothing {
+    impl Invoker for Nothing {
         async fn invoke(
             &self,
-            _context: crate::invoke::InvocationContext,
-        ) -> Result<fc_function_abi::Response, crate::invoke::InvokeError> {
+            _context: InvocationContext,
+        ) -> Result<fc_function_abi::Response, InvokeError> {
             Ok(fc_function_abi::Response::ack())
         }
     }
@@ -191,7 +195,7 @@ mod tests {
     #[async_trait]
     impl FunctionInstance for Nothing {
         async fn close(&self) {}
-        fn as_any(&self) -> &dyn std::any::Any {
+        fn as_any(&self) -> &dyn Any {
             self
         }
     }

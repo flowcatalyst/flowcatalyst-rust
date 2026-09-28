@@ -47,8 +47,10 @@ use fc_platform_core::shared::api_common::PaginatedResponse;
 use fc_platform_core::shared::authorization_service::{checks, AuthContext};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase, UseCaseError};
 use fc_platform_iam::shared::authorization_service::ApplicationAccessService;
+use std::collections::HashMap;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -157,7 +159,7 @@ fn page_query(params: &QueryParams) -> Result<(u32, u32), PlatformError> {
     let page = int("page");
     let sizes = [int("size"), int("limit"), int("pageSize"), int("page_size")];
     if !errors.is_empty() {
-        let mut details = std::collections::HashMap::new();
+        let mut details = HashMap::new();
         details.insert("errors".to_string(), serde_json::Value::Array(errors));
         return Err(PlatformError::Coded {
             status: StatusCode::BAD_REQUEST,
@@ -609,7 +611,7 @@ pub async fn update_function(
                 .into_committed()
         })
         .await
-        .map(fc_platform_core::usecase::Committed::into_inner)
+        .map(Committed::into_inner)
     {
         // A no-op (already that status, same description): nothing written.
         Ok(_) => Ok(StatusCode::NO_CONTENT),

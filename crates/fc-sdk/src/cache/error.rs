@@ -1,5 +1,7 @@
 //! Cache errors.
 
+use std::error;
+use std::time::Duration;
 use thiserror::Error;
 
 /// Errors that can be returned by a [`super::Cache`] implementation.
@@ -16,12 +18,12 @@ pub enum CacheError {
 
     /// TTL is larger than the backend (or the platform clock) can represent.
     #[error("cache TTL {0:?} is too large for this backend")]
-    TtlTooLarge(std::time::Duration),
+    TtlTooLarge(Duration),
 
     /// Backend-level I/O failure (network, query, etc.). Custom [`super::Cache`]
     /// implementations box their native error into this variant.
     #[error("cache backend error: {0}")]
-    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Backend(#[source] Box<dyn error::Error + Send + Sync>),
 
     /// Stored bytes could not be decoded into the requested type.
     #[error("cache value deserialization failed: {0}")]

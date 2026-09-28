@@ -37,9 +37,13 @@ use crate::role::ceiling;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::{principal::repository::PrincipalRepository, role::repository::RoleRepository};
 use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::error;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
 };
+use std::slice;
 
 /// One user in a platform-level sync.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,7 +78,7 @@ pub struct SyncUsersCommand {
 /// The hashes ride `principals[].passwordHash`, which the audit name rule
 /// masks (`passwordhash` suffix, fc-common audit_redaction.rs); there is no
 /// top-level field to declare.
-impl fc_platform_core::usecase::AuditMasked for SyncUsersCommand {}
+impl AuditMasked for SyncUsersCommand {}
 
 pub struct SyncUsersUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
@@ -120,7 +124,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         _command: &SyncUsersCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(fc_platform_core::shared::authorization_service::checks::require_anchor(ctx.caller())?)
+        Ok(checks::require_anchor(ctx.caller())?)
     }
 
     async fn execute(
@@ -257,7 +261,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
         // rollup, atomic with the batch write.
         self.unit_of_work
             .commit_all_with_events(
-                std::slice::from_ref(&batch),
+                slice::from_ref(&batch),
                 &*self.principal_repo,
                 row_events,
                 rollup,
@@ -274,7 +278,7 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
 pub async fn password_hashes_ignored<'a>(
     principal_repo: &PrincipalRepository,
     entries: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
-) -> fc_platform_core::shared::error::Result<Vec<String>> {
+) -> error::Result<Vec<String>> {
     let mut with_hash: Vec<String> = Vec::new();
     for (email, hash) in entries {
         let email = email.to_lowercase();
@@ -298,6 +302,7 @@ pub async fn password_hashes_ignored<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_common::audit_redaction;
 
     /// integral `SyncUsersToFlowCatalystCommand.php:589-599` through the
     /// Laravel SDK's `SyncPrincipalEntry::toArray()`: `active` omitted,
@@ -329,7 +334,7 @@ mod tests {
                 password_hash: Some("$2y$10$secret".to_string()),
             }],
         };
-        let json = fc_common::audit_redaction::redacted_command_json(&command).unwrap();
+        let json = audit_redaction::redacted_command_json(&command).unwrap();
         assert_eq!(json["principals"][0]["passwordHash"], "***");
         assert_eq!(json["principals"][0]["email"], "jo@inhance.test");
     }

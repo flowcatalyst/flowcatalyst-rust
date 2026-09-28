@@ -10,6 +10,7 @@ pub use fc_platform_core::shared::middleware::*;
 
 use crate::{auth::auth_service::AuthService, shared::authorization_service::AuthorizationService};
 use fc_platform_core::shared::authorization_service::AuthContext;
+use fc_platform_core::shared::error;
 use std::sync::Arc;
 
 /// Application state containing shared services
@@ -21,18 +22,12 @@ pub struct AppState {
 
 #[async_trait::async_trait]
 impl TokenAuthenticator for AppState {
-    async fn bearer_context(
-        &self,
-        token: &str,
-    ) -> fc_platform_core::shared::error::Result<AuthContext> {
+    async fn bearer_context(&self, token: &str) -> error::Result<AuthContext> {
         let claims = self.auth_service.validate_token(token)?;
         self.authz_service.build_context(&claims).await
     }
 
-    async fn session_context(
-        &self,
-        token: &str,
-    ) -> fc_platform_core::shared::error::Result<Option<AuthContext>> {
+    async fn session_context(&self, token: &str) -> error::Result<Option<AuthContext>> {
         let Ok(session) = self.auth_service.validate_session_token(token) else {
             return Ok(None);
         };
@@ -50,9 +45,12 @@ mod tests {
     use crate::role::repository::RoleRepository;
     use crate::shared::authorization_service::AuthorizationService;
     use axum::extract::FromRequestParts;
+    use axum::http::HeaderMap;
+    use axum::http::HeaderValue;
     use axum::http::{header, request::Parts, Request, StatusCode};
     use axum::response::IntoResponse;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
 
     // ─── Test Helpers ──────────────────────────────────────────────────────
@@ -77,7 +75,7 @@ mod tests {
     /// The DB won't be called for principals with empty roles
     /// (resolve_permissions short-circuits before querying).
     fn test_authz_service() -> AuthorizationService {
-        let pool = sqlx::postgres::PgPoolOptions::new()
+        let pool = PgPoolOptions::new()
             .connect_lazy("postgres://invalid:invalid@localhost/invalid")
             .expect("lazy pool should not fail to construct");
         let role_repo = Arc::new(RoleRepository::new(&pool));
@@ -455,15 +453,15 @@ mod tests {
 
     #[test]
     fn test_session_cookie_name_must_match_exactly() {
-        let mut headers = axum::http::HeaderMap::new();
+        let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            axum::http::HeaderValue::from_static("fc_session_old=a; x=1"),
+            HeaderValue::from_static("fc_session_old=a; x=1"),
         );
         assert_eq!(extract_session_cookie(&headers), None);
         headers.insert(
             header::COOKIE,
-            axum::http::HeaderValue::from_static("fc_session_old=a; fc_session=b"),
+            HeaderValue::from_static("fc_session_old=a; fc_session=b"),
         );
         assert_eq!(extract_session_cookie(&headers), Some("b".to_string()));
     }
@@ -707,10 +705,10 @@ mod tests {
         // Attacker spoofs the leftmost; ALB appends the real client. With
         // hops=1 we read the rightmost (ALB-added), so spoofing achieves
         // nothing.
-        let mut headers = axum::http::HeaderMap::new();
+        let mut headers = HeaderMap::new();
         headers.insert(
             "x-forwarded-for",
-            axum::http::HeaderValue::from_static("evil.attacker, real.client"),
+            HeaderValue::from_static("evil.attacker, real.client"),
         );
         assert_eq!(
             extract_trusted_client_ip(&headers),
@@ -720,8 +718,8 @@ mod tests {
 
     #[test]
     fn extract_trusted_client_ip_falls_back_to_x_real_ip() {
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert("x-real-ip", axum::http::HeaderValue::from_static("9.9.9.9"));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", HeaderValue::from_static("9.9.9.9"));
         assert_eq!(
             extract_trusted_client_ip(&headers),
             Some("9.9.9.9".to_string())
@@ -730,7 +728,7 @@ mod tests {
 
     #[test]
     fn extract_trusted_client_ip_returns_none_when_no_headers() {
-        let headers = axum::http::HeaderMap::new();
+        let headers = HeaderMap::new();
         assert_eq!(extract_trusted_client_ip(&headers), None);
     }
 

@@ -7,9 +7,12 @@ use std::sync::Arc;
 
 use super::repository::{DispatchJobActionsRepository, JobStatusFlip, JobsRequeue};
 use fc_platform_core::impl_domain_event;
+use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+use std::slice;
 
 const SOURCE: &str = "platform:messaging";
 
@@ -46,9 +49,7 @@ pub const COMPLETED_EVENT: &str = "platform:messaging:dispatch-job:completed";
 pub fn reaches(caller: &impl Authority, client_id: Option<&str>) -> bool {
     match client_id {
         Some(c) => caller.can_access_client(c),
-        None => {
-            caller.is_anchor() || caller.has_permission(fc_platform_core::permissions::ADMIN_ALL)
-        }
+        None => caller.is_anchor() || caller.has_permission(permissions::ADMIN_ALL),
     }
 }
 
@@ -72,7 +73,7 @@ pub struct ResendCommand {
     pub jobs: Vec<(String, chrono::DateTime<chrono::Utc>)>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for ResendCommand {}
+impl AuditMasked for ResendCommand {}
 
 pub struct RequeueDispatchJobsUseCase<U: UnitOfWork> {
     repo: Arc<DispatchJobActionsRepository>,
@@ -148,7 +149,7 @@ pub struct StatusFlipCommand {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl fc_platform_core::usecase::AuditMasked for StatusFlipCommand {}
+impl AuditMasked for StatusFlipCommand {}
 
 pub struct SettleDispatchJobUseCase<U: UnitOfWork> {
     repo: Arc<DispatchJobActionsRepository>,
@@ -184,7 +185,7 @@ impl<U: UnitOfWork> UseCase for SettleDispatchJobUseCase<U> {
     ) -> Result<(), UseCaseError> {
         if let Some(head) = self
             .repo
-            .heads(std::slice::from_ref(&command.id))
+            .heads(slice::from_ref(&command.id))
             .await?
             .into_iter()
             .next()

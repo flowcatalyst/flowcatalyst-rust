@@ -9,6 +9,8 @@ use crate::{
     email_domain_mapping::repository::EmailDomainMappingRepository,
     identity_provider::repository::IdentityProviderRepository,
 };
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -20,7 +22,7 @@ pub struct DeleteIdentityProviderCommand {
     pub idp_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeleteIdentityProviderCommand {}
+impl AuditMasked for DeleteIdentityProviderCommand {}
 
 /// Use case for deleting an identity provider.
 pub struct DeleteIdentityProviderUseCase<U: UnitOfWork> {
@@ -64,11 +66,7 @@ impl<U: UnitOfWork> UseCase for DeleteIdentityProviderUseCase<U> {
         _command: &DeleteIdentityProviderCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

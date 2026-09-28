@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ApplicationCreated;
 use crate::application::entity::{Application, ApplicationType};
 use crate::application::repository::ApplicationRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
 /// Command for creating a new application.
@@ -57,7 +59,7 @@ fn is_valid_code(code: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
-impl fc_platform_core::usecase::AuditMasked for CreateApplicationCommand {}
+impl AuditMasked for CreateApplicationCommand {}
 
 /// Use case for creating a new application.
 pub struct CreateApplicationUseCase<U: UnitOfWork> {
@@ -114,11 +116,7 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         _command: &CreateApplicationCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

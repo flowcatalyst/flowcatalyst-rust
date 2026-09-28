@@ -22,6 +22,7 @@ use sqlx::postgres::{PgArgumentBuffer, PgTypeInfo, PgTypeKind};
 use sqlx::{Encode, Postgres, Type, TypeInfo};
 
 use super::rows::oid;
+use std::net::IpAddr;
 
 /// One statement parameter, as the guest gave it.
 #[derive(Debug, Clone, PartialEq)]
@@ -411,10 +412,10 @@ fn inet_bytes(text: &str, cidr: bool) -> Option<Vec<u8>> {
         Some((a, b)) => (a, Some(b.parse::<u8>().ok()?)),
         None => (text, None),
     };
-    let ip: std::net::IpAddr = addr.parse().ok()?;
+    let ip: IpAddr = addr.parse().ok()?;
     let (family, octets, max): (u8, Vec<u8>, u8) = match ip {
-        std::net::IpAddr::V4(v4) => (2, v4.octets().to_vec(), 32),
-        std::net::IpAddr::V6(v6) => (3, v6.octets().to_vec(), 128),
+        IpAddr::V4(v4) => (2, v4.octets().to_vec(), 32),
+        IpAddr::V6(v6) => (3, v6.octets().to_vec(), 128),
     };
     let bits = bits.unwrap_or(max);
     if bits > max {
@@ -428,6 +429,7 @@ fn inet_bytes(text: &str, cidr: bool) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::numeric;
 
     fn ty(oid: u32) -> PgTypeInfo {
         PgTypeInfo::with_oid(Oid(oid))
@@ -476,7 +478,7 @@ mod tests {
         assert_eq!(bytes(Param::Null, oid::UUID), Ok(None));
         assert_eq!(
             bytes(Param::Decimal("12.50".into()), oid::NUMERIC),
-            Ok(Some(crate::db::numeric::encode("12.50").unwrap()))
+            Ok(Some(numeric::encode("12.50").unwrap()))
         );
         // A typed value in a text placeholder: its text.
         assert_eq!(

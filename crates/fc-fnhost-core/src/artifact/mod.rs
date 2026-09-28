@@ -30,6 +30,7 @@ pub use oci::{OciSource, RegistryCredentials};
 pub use platform::PlatformSource;
 
 use crate::digest::Digest;
+use std::error;
 
 /// Why a fetch failed. [`ArtifactError::simple_name`] is Java's record
 /// simple name, which the heartbeat carries as `ARTIFACT:<Name>`.
@@ -95,7 +96,7 @@ impl fmt::Display for ArtifactError {
     }
 }
 
-impl std::error::Error for ArtifactError {}
+impl error::Error for ArtifactError {}
 
 /// A fetched artifact: a regular file under the cache directory, named
 /// `<cache>/sha256/<hex>`, whose bytes hash to the requested digest.

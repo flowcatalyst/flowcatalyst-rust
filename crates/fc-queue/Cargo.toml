@@ -40,3 +40,8 @@ tracing-subscriber = { workspace = true }
 reqwest = { workspace = true }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

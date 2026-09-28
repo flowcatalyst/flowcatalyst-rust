@@ -18,13 +18,23 @@ use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::localstack::LocalStack;
 use testcontainers_modules::postgres::Postgres;
 
+use aws_sdk_sqs::config::Credentials;
+use aws_sdk_sqs::types::MessageSystemAttributeName;
+use aws_sdk_sqs::types::QueueAttributeName;
 use fc_platform::scheduler::destination::DestinationResolver;
+use fc_platform::scheduler::dispatcher;
 use fc_platform::scheduler::{
     DispatchAuthService, DispatchPublisher, DispatchQueueKind, DispatchQueueSettings,
     DispatchScheduler, PoolCodeResolver, PostgresDispatchPublisher, PublishItem, PublishOutcome,
     SchedulerConfig, SqsDispatchPublisher, SubscriptionPriorityCache,
 };
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
+use fc_queue::sqs_publisher::AwsSqsBatchApi;
+use fc_queue::sqs_publisher::QueueAddressing;
+use fc_queue::sqs_publisher::SqsFifoPublisher;
+use std::future;
+use std::slice;
+use tokio::time;
 
 const APP_KEY: &str = "scheduler-test-app-key";
 const ENDPOINT: &str = "http://fc-platform:8080/api/dispatch/process";
@@ -309,7 +319,7 @@ async fn only_unpublished_jobs_revert_and_only_while_queued() {
         .execute(&pool)
         .await
         .unwrap();
-    fc_platform::scheduler::dispatcher::revert_unpublished(&pool, std::slice::from_ref(&a.id))
+    dispatcher::revert_unpublished(&pool, slice::from_ref(&a.id))
         .await
         .unwrap();
     assert_eq!(status(&pool, &a.id).await, "PROCESSING");
@@ -328,7 +338,7 @@ impl DispatchPublisher for DiesMidPublish {
             .lock()
             .unwrap()
             .extend(items.into_iter().map(|i| i.job_id));
-        std::future::pending().await
+        future::pending().await
     }
     fn describe(&self) -> String {
         "dies mid-publish".into()
@@ -356,7 +366,7 @@ async fn a_worker_dying_mid_publish_leaves_its_claim_pending() {
     let s = scheduler(&pool, dying.clone(), 100);
     let poll = s.poller().poll_once();
     assert!(
-        tokio::time::timeout(Duration::from_millis(500), poll)
+        time::timeout(Duration::from_millis(500), poll)
             .await
             .is_err(),
         "the publish never returns"
@@ -670,9 +680,7 @@ async fn the_scheduler_publishes_to_its_tenants_sqs_fifo_queue() {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_config::Region::new("us-east-1"))
         .endpoint_url(&endpoint)
-        .credentials_provider(aws_sdk_sqs::config::Credentials::new(
-            "test", "test", None, None, "test",
-        ))
+        .credentials_provider(Credentials::new("test", "test", None, None, "test"))
         .load()
         .await;
     let client = aws_sdk_sqs::Client::new(&aws);
@@ -693,9 +701,9 @@ async fn the_scheduler_publishes_to_its_tenants_sqs_fifo_queue() {
     let DispatchQueueKind::Sqs { region, account_id } = settings.kind.clone() else {
         unreachable!()
     };
-    let fifo = fc_queue::sqs_publisher::SqsFifoPublisher::new(
-        fc_queue::sqs_publisher::AwsSqsBatchApi::new(client.clone()),
-        fc_queue::sqs_publisher::QueueAddressing::Composed { region, account_id },
+    let fifo = SqsFifoPublisher::new(
+        AwsSqsBatchApi::new(client.clone()),
+        QueueAddressing::Composed { region, account_id },
     );
     let publisher = Arc::new(SqsDispatchPublisher::new(fifo, resolver(&pool, &settings)));
     let report = scheduler(&pool, publisher, 100)
@@ -718,11 +726,9 @@ async fn the_scheduler_publishes_to_its_tenants_sqs_fifo_queue() {
     let out = client
         .receive_message()
         .queue_url(&url)
-        .message_system_attribute_names(
-            aws_sdk_sqs::types::MessageSystemAttributeName::MessageGroupId,
-        )
+        .message_system_attribute_names(MessageSystemAttributeName::MessageGroupId)
         // LocalStack 3.0 answers the older attribute selector only.
-        .attribute_names(aws_sdk_sqs::types::QueueAttributeName::All)
+        .attribute_names(QueueAttributeName::All)
         .wait_time_seconds(2)
         .send()
         .await
@@ -739,7 +745,7 @@ async fn the_scheduler_publishes_to_its_tenants_sqs_fifo_queue() {
     assert!(auth.verify(&j.id, body["authToken"].as_str().unwrap()));
     assert_eq!(
         m.attributes()
-            .and_then(|a| a.get(&aws_sdk_sqs::types::MessageSystemAttributeName::MessageGroupId))
+            .and_then(|a| a.get(&MessageSystemAttributeName::MessageGroupId))
             .map(String::as_str),
         Some("orders-1")
     );

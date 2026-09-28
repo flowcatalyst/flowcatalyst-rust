@@ -10,6 +10,7 @@ use fc_sdk::usecase::audit::redact;
 use fc_sdk::usecase::{AuditMasked, Audited, EventMetadata};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::fs;
 
 struct Vector {
     name: String,
@@ -24,7 +25,7 @@ fn vectors() -> Vec<Vector> {
         "/tests/fixtures/audit-redaction-vectors.json"
     );
     let cases: Vec<Value> =
-        serde_json::from_slice(&std::fs::read(path).expect("read vectors")).expect("parse");
+        serde_json::from_slice(&fs::read(path).expect("read vectors")).expect("parse");
     assert!(!cases.is_empty());
     cases
         .into_iter()

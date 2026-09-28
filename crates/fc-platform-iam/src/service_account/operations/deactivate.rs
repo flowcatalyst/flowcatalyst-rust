@@ -7,6 +7,8 @@ use std::sync::Arc;
 use super::events::ServiceAccountDeactivated;
 use crate::service_account::repository::ServiceAccountRepository;
 use crate::service_account::ServiceAccount;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -19,7 +21,7 @@ pub struct DeactivateServiceAccountCommand {
     pub id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for DeactivateServiceAccountCommand {}
+impl AuditMasked for DeactivateServiceAccountCommand {}
 
 /// Use case for deactivating a service account. Flips `active=false` on
 /// the SA without touching its OAuth client — that's the caller's
@@ -61,11 +63,7 @@ impl<U: UnitOfWork> UseCase for DeactivateServiceAccountUseCase<U> {
         _command: &DeactivateServiceAccountCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

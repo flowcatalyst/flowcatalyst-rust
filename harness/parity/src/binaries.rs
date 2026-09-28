@@ -11,6 +11,8 @@
 //! debug-build password hashing makes every login step crawl).
 
 use anyhow::{bail, Context, Result};
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -44,9 +46,9 @@ pub fn resolve_go(go_src: &Path, go_bin_dir: Option<&Path>, out_dir: &Path) -> R
         tracing::info!(dir = %dir.display(), "using prebuilt Go binaries");
         return Ok(b);
     }
-    let src = std::fs::canonicalize(go_src)
+    let src = fs::canonicalize(go_src)
         .with_context(|| format!("Go source tree {} not found", go_src.display()))?;
-    std::fs::create_dir_all(out_dir)?;
+    fs::create_dir_all(out_dir)?;
     let before = git(&src, &["status", "--porcelain"])?;
     let commit = git(&src, &["rev-parse", "--short", "HEAD"])?;
     let t0 = Instant::now();
@@ -121,7 +123,7 @@ pub fn resolve_rust(workspace: &Path, rust_bin_dir: Option<&Path>) -> Result<Rus
         });
     }
     let t0 = Instant::now();
-    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+    let status = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .args(["build", "--release", "-p", "fc-server"])
         .current_dir(workspace)
         .status()
@@ -129,7 +131,7 @@ pub fn resolve_rust(workspace: &Path, rust_bin_dir: Option<&Path>) -> Result<Rus
     if !status.success() {
         bail!("cargo build --release -p fc-server failed");
     }
-    let target = std::env::var_os("CARGO_TARGET_DIR")
+    let target = env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("target"));
     tracing::info!(elapsed = ?t0.elapsed(), "built Rust fc-server");

@@ -9,6 +9,7 @@ use crate::permissions;
 use crate::principal_kind::{PrincipalType, UserScope};
 use crate::shared::error::{PlatformError, Result};
 use std::collections::HashSet;
+use std::result;
 
 /// Authorization context for a request
 #[derive(Debug, Clone)]
@@ -69,7 +70,7 @@ impl AuthContext {
     /// belongs to that user: it may be narrowed or delegated to an OAuth
     /// client, so it never stands in for the user's own session (Java
     /// S2.1, S2.4).
-    pub fn require_session_user(&self) -> std::result::Result<(), PlatformError> {
+    pub fn require_session_user(&self) -> result::Result<(), PlatformError> {
         if self.via_session_cookie() && self.principal_type == PrincipalType::User {
             Ok(())
         } else {
@@ -100,7 +101,7 @@ impl AuthContext {
 
         // 4-level wildcard pattern matching
         for pattern in &self.permissions {
-            if crate::permissions::matches_pattern(permission, pattern) {
+            if permissions::matches_pattern(permission, pattern) {
                 return true;
             }
         }
@@ -229,6 +230,9 @@ impl ApplicationScope {
 /// Common authorization checks
 pub mod checks {
     use super::*;
+    use crate::shared::caller_reach;
+    use crate::usecase::Caller;
+    use axum::http::StatusCode;
 
     /// Require anchor scope
     pub fn require_anchor(context: &impl Authority) -> Result<()> {
@@ -249,7 +253,7 @@ pub mod checks {
             Ok(())
         } else {
             Err(PlatformError::Coded {
-                status: axum::http::StatusCode::FORBIDDEN,
+                status: StatusCode::FORBIDDEN,
                 code: "PERMISSION_REQUIRED".to_string(),
                 message: format!("permission required: {permission}"),
                 details: Default::default(),
@@ -266,7 +270,7 @@ pub mod checks {
             Ok(())
         } else {
             Err(PlatformError::Coded {
-                status: axum::http::StatusCode::FORBIDDEN,
+                status: StatusCode::FORBIDDEN,
                 code: "ANCHOR_REQUIRED".to_string(),
                 message: "anchor scope required".to_string(),
                 details: Default::default(),
@@ -1160,7 +1164,7 @@ pub mod checks {
     /// anchor or super-admin; otherwise 403 `SCOPE_FORBIDDEN`. One rule,
     /// kept in [`crate::shared::caller_reach::check_scope_access`].
     pub fn check_scope_access(context: &impl Authority, client_id: Option<&str>) -> Result<()> {
-        crate::shared::caller_reach::require_scope_access(context, client_id)
+        caller_reach::require_scope_access(context, client_id)
     }
     /// Sync endpoints: admin path. Application-scoped sync uses the
     /// application_service permission below.
@@ -1367,7 +1371,7 @@ pub mod checks {
     /// application; an unresolved scope none) against `application`, with
     /// the same 404 as a missing application.
     pub fn require_caller_application_access<A: ScopedApplication>(
-        caller: &crate::usecase::Caller,
+        caller: &Caller,
         app_code: &str,
         application: Option<A>,
     ) -> Result<A> {

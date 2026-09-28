@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use super::events::ApplicationServiceAccountProvisioned;
 use crate::application::repository::ApplicationRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
 };
@@ -35,7 +37,7 @@ pub struct AttachServiceAccountToApplicationCommand {
     pub service_principal_id: String,
 }
 
-impl fc_platform_core::usecase::AuditMasked for AttachServiceAccountToApplicationCommand {}
+impl AuditMasked for AttachServiceAccountToApplicationCommand {}
 
 pub struct AttachServiceAccountToApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
@@ -84,11 +86,7 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
         _command: &AttachServiceAccountToApplicationCommand,
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(
-            fc_platform_core::shared::authorization_service::checks::require_anchor_scope(
-                ctx.caller(),
-            )?,
-        )
+        Ok(checks::require_anchor_scope(ctx.caller())?)
     }
 
     async fn execute(

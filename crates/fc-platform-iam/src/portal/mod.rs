@@ -28,19 +28,21 @@ pub mod repository;
 
 pub use entity::{is_portal_subject, trimmed_or_none, PortalApp, PortalIdentity};
 
+use crate::auth::oauth_entity::OAuthClient;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::Authority;
+use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::usecase::UseCaseError;
 use repository::PortalAppRepository;
+use std::result;
 
 // ── The portal flags on OAuth clients (Go auth/api + auth/operations) ────
 
 /// Go `validatePlaneFlags`: a portal app can only be linked to a portal
 /// client. (Rust has no `apiAccess` flag, so Go's portal + apiAccess
 /// conflict cannot arise.)
-pub fn validate_oauth_client_plane(
-    client: &crate::auth::oauth_entity::OAuthClient,
-) -> std::result::Result<(), fc_platform_core::usecase::UseCaseError> {
+pub fn validate_oauth_client_plane(client: &OAuthClient) -> result::Result<(), UseCaseError> {
     let is_portal = client
         .portal_client_id
         .as_deref()
@@ -48,7 +50,7 @@ pub fn validate_oauth_client_plane(
     // Go validatePlaneFlags: portal identities never carry platform
     // authority, so a portal client cannot be an API-access client.
     if client.api_access && is_portal {
-        return Err(fc_platform_core::usecase::UseCaseError::validation(
+        return Err(UseCaseError::validation(
             "PORTAL_API_ACCESS_CONFLICT",
             "a portal client cannot have apiAccess — portal identities never carry platform authority",
         ));
@@ -59,7 +61,7 @@ pub fn validate_oauth_client_plane(
         .is_some_and(|a| !a.is_empty())
         && !is_portal
     {
-        return Err(fc_platform_core::usecase::UseCaseError::validation(
+        return Err(UseCaseError::validation(
             "PORTAL_APP_REQUIRES_PORTAL_CLIENT",
             "a portal app can only be linked to a portal client (portalClientId)",
         ));
@@ -80,8 +82,8 @@ pub async fn resolve_oauth_client_portal_app(
         return Ok(());
     };
     let app = apps.find_by_id(app_id).await?.ok_or_else(|| {
-        PlatformError::from(fc_platform_core::usecase::UseCaseError::not_found(
-            fc_platform_core::shared::error::not_found_code("PortalApp"),
+        PlatformError::from(UseCaseError::not_found(
+            error::not_found_code("PortalApp"),
             format!("PortalApp not found: {app_id}"),
         ))
     })?;
@@ -90,12 +92,10 @@ pub async fn resolve_oauth_client_portal_app(
         .map(str::trim)
         .is_some_and(|pc| !pc.is_empty() && pc != app.client_id)
     {
-        return Err(PlatformError::from(
-            fc_platform_core::usecase::UseCaseError::validation(
-                "PORTAL_APP_CLIENT_MISMATCH",
-                "portalAppId belongs to a different client than portalClientId",
-            ),
-        ));
+        return Err(PlatformError::from(UseCaseError::validation(
+            "PORTAL_APP_CLIENT_MISMATCH",
+            "portalAppId belongs to a different client than portalClientId",
+        )));
     }
     *portal_client_id = Some(app.client_id);
     Ok(())
@@ -161,18 +161,16 @@ pub fn can_write_portal_users(ctx: &impl Authority, client_id: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::principal_kind::PrincipalType;
     use fc_platform_core::principal_kind::UserScope;
+    use fc_platform_core::shared::authorization_service::AuthContext;
     use fc_platform_core::shared::authorization_service::Credential;
     use std::collections::HashSet;
 
-    fn ctx(
-        scope: UserScope,
-        clients: &[&str],
-        perms: &[&str],
-    ) -> fc_platform_core::shared::authorization_service::AuthContext {
-        fc_platform_core::shared::authorization_service::AuthContext {
+    fn ctx(scope: UserScope, clients: &[&str], perms: &[&str]) -> AuthContext {
+        AuthContext {
             principal_id: "prn_1".into(),
-            principal_type: fc_platform_core::principal_kind::PrincipalType::User,
+            principal_type: PrincipalType::User,
             scope,
             email: None,
             name: "x".into(),

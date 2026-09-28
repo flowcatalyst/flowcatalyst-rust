@@ -30,12 +30,15 @@
 
 use std::sync::Arc;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use fc_sdk::client::FlowCatalystClient;
 use fc_sdk::lock::MemoryLockProvider;
 use fc_sdk::scheduled_jobs::{
     HandlerError, HandlerFuture, LogOptions, RunResult, ScheduledJobRunner,
 };
+use std::env;
+use std::error;
+use tokio::net::TcpListener;
 
 #[derive(Clone)]
 struct AppState {
@@ -43,16 +46,17 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base_url = std::env::var("FC_BASE_URL")?;
-    let token = std::env::var("FC_TOKEN")?;
+async fn main() -> Result<(), Box<dyn error::Error>> {
+    let base_url = env::var("FC_BASE_URL")?;
+    let token = env::var("FC_TOKEN")?;
 
     let client = FlowCatalystClient::new(base_url).with_token(token);
 
     let runner = ScheduledJobRunner::builder(client, Arc::new(MemoryLockProvider::new()))
         .handler("daily-rollup", |ctx| {
             Box::pin(async move {
-                ctx.log("starting daily rollup", LogOptions::default()).await;
+                ctx.log("starting daily rollup", LogOptions::default())
+                    .await;
 
                 // ── your work goes here ──
                 let processed = 42usize;
@@ -75,10 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }) as HandlerFuture
         })
         .on_error(|err, env| {
-            eprintln!(
-                "scheduled-job runner error on {}: {err:?}",
-                env.instance_id,
-            );
+            eprintln!("scheduled-job runner error on {}: {err:?}", env.instance_id,);
         })
         .build();
 
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/scheduled-jobs", post(handle_firing))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4001").await?;
+    let listener = TcpListener::bind("0.0.0.0:4001").await?;
     println!("scheduled-jobs runner listening on http://0.0.0.0:4001");
     axum::serve(listener, app).await?;
     Ok(())
@@ -100,7 +101,10 @@ async fn handle_firing(
     Json(envelope): Json<serde_json::Value>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match state.runner.process(envelope) {
-        RunResult::Accepted => (StatusCode::ACCEPTED, Json(serde_json::json!({ "ok": true }))),
+        RunResult::Accepted => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({ "ok": true })),
+        ),
         RunResult::BadRequest(msg) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": msg })),
