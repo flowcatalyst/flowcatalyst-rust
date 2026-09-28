@@ -42,7 +42,7 @@ use serde_json::Value;
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{Repositories, RoleRepository};
 use fc_platform::shared::server_setup::{
-    build_platform_routes, init_auth_services, AuthInitConfig, PlatformRoutesConfig,
+    init_auth_services, AuthInitConfig, PlatformContext, PlatformRoutesConfig,
 };
 use fc_platform::usecase::PgUnitOfWork;
 
@@ -157,7 +157,7 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
         .unwrap()
         .expect("platform application")
         .id;
-    let routes = build_platform_routes(
+    let ctx = PlatformContext::new(
         &repos,
         &auth_services,
         &unit_of_work,
@@ -176,7 +176,7 @@ async fn start_platform(database_url: &str, api_port: u16, slot: HostSlot) -> Re
         },
         platform_application_id,
     );
-    let (router, _openapi) = routes.build();
+    let (router, _openapi) = fc_platform::router::build(&ctx);
     let router = router.layer(AuthLayer::new(AppState {
         auth_service: auth_services.auth.clone(),
         authz_service: auth_services.authz.clone(),

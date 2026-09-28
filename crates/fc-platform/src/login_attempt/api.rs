@@ -2,8 +2,7 @@
 
 use axum::{
     extract::{Query, State},
-    routing::get,
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -104,7 +103,7 @@ pub struct LoginAttemptsState {
     ),
     security(("bearer_auth" = []))
 )]
-async fn list_login_attempts(
+pub(super) async fn list_login_attempts(
     State(state): State<LoginAttemptsState>,
     auth: Authenticated,
     Query(query): Query<LoginAttemptsQuery>,
@@ -152,10 +151,4 @@ async fn list_login_attempts(
         has_more,
         next_cursor,
     }))
-}
-
-pub fn login_attempts_router(state: LoginAttemptsState) -> Router {
-    Router::new()
-        .route("/", get(list_login_attempts))
-        .with_state(state)
 }

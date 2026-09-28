@@ -21,7 +21,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::scheduled_job::entity::{
     CompletionStatus, InstanceStatus, LogLevel, ScheduledJobStatus, TriggerKind,
@@ -1062,24 +1061,3 @@ pub async fn post_instance_complete(
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
-
-pub fn scheduled_jobs_router(state: ScheduledJobsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_scheduled_job, list_scheduled_jobs))
-        .routes(routes!(
-            get_scheduled_job,
-            update_scheduled_job,
-            delete_scheduled_job
-        ))
-        .routes(routes!(get_scheduled_job_by_code))
-        .routes(routes!(pause_scheduled_job))
-        .routes(routes!(resume_scheduled_job))
-        .routes(routes!(archive_scheduled_job))
-        .routes(routes!(fire_scheduled_job))
-        .routes(routes!(list_instances_for_job))
-        .routes(routes!(get_instance))
-        .routes(routes!(list_instance_logs))
-        .routes(routes!(post_instance_log))
-        .routes(routes!(post_instance_complete))
-        .with_state(state)
-}

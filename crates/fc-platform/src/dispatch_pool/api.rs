@@ -5,8 +5,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -502,23 +501,4 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
         Ok(_event) => Ok(StatusCode::NO_CONTENT),
         Err(err) => Err(err.into()),
     }
-}
-
-/// Create dispatch pools router
-pub fn dispatch_pools_router<U: UnitOfWork + Clone>(state: DispatchPoolsState<U>) -> Router {
-    Router::new()
-        .route(
-            "/",
-            post(create_dispatch_pool::<U>).get(list_dispatch_pools::<U>),
-        )
-        .route(
-            "/{id}",
-            get(get_dispatch_pool::<U>)
-                .put(update_dispatch_pool::<U>)
-                .delete(delete_dispatch_pool::<U>),
-        )
-        .route("/{id}/archive", post(archive_dispatch_pool::<U>))
-        .route("/{id}/suspend", post(suspend_dispatch_pool::<U>))
-        .route("/{id}/activate", post(activate_dispatch_pool::<U>))
-        .with_state(state)
 }

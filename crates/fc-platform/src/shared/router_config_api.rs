@@ -21,7 +21,6 @@ use axum::{extract::State, Json};
 use serde::Serialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::dispatch_pool::router_config_repository::{
     RouterConfigRepository, RouterPoolRow, RouterSubscriptionRow,
@@ -179,12 +178,6 @@ pub async fn get_router_config(
         &subscriptions,
         &clients,
     )))
-}
-
-pub fn router_config_router(state: RouterConfigState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(get_router_config))
-        .with_state(state)
 }
 
 #[cfg(test)]

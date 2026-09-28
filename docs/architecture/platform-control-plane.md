@@ -197,10 +197,10 @@ The `can_write_*` form exists for endpoints that accept create/update/delete in 
 
 ### Router assembly
 
-`crates/fc-platform/src/router.rs::PlatformRoutes::build()` composes the final Axum router:
+`crates/fc-platform/src/router.rs::build(&PlatformContext)` composes the final Axum router. Each route module (`client`, `principal`, …, `shared`) exposes `routes(ctx) -> AggregateRoutes` in its `routes.rs`: it builds its own state from the `PlatformContext` (built once per process) and returns its documented and plain routes at their full paths, with any per-group layers (rate limits, error mapping) applied. `router.rs` lists the modules, then adds the cross-cutting pieces:
 
-1. **OpenAPI routes** — nested first via `utoipa-axum` so they appear in the generated spec.
-2. **Plain routes** — BFF, monitoring, public, dispatch-process.
+1. **Documented routes** — every module's `utoipa-axum` routes, merged in module order so they appear in the generated spec.
+2. **Plain routes** — the developer portal (which needs the finished spec), then every module's plain routes.
 3. **Auth middleware layer** — `AuthLayer` extracts bearer tokens or session cookies, populates `AuthContext` for downstream handlers.
 4. **CORS layer** — driven by `cors_origins_cache` populated from `tnt_cors_allowed_origins` (refreshed every 60 s).
 5. **SPA fallback** — `/assets/*` with `Cache-Control: public, max-age=31536000, immutable`; unmatched GET routes fall through to embedded `index.html`. Toggled per binary: `fc-server` serves the SPA from `FC_STATIC_DIR` (default `/app/frontend/dist`), `fc-dev` embeds it or uses `FC_STATIC_DIR`.
@@ -386,7 +386,7 @@ This is one of the few infrastructure-write paths exempt from UoW — it runs at
 
 ## Code references
 
-- Top-level router: `crates/fc-platform/src/router.rs::PlatformRoutes`.
+- Top-level router: `crates/fc-platform/src/router.rs::build`; the modules' `*/routes.rs`; `shared/platform_context.rs`.
 - Use case framework: `crates/fc-platform/src/usecase/{mod,result,context,error}.rs`.
 - UoW: `crates/fc-platform/src/usecase/unit_of_work.rs::PgUnitOfWork`.
 - UoW seal: search for `pub(in crate::usecase) fn success` in `usecase/result.rs`.

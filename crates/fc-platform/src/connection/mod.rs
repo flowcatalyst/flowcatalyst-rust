@@ -7,8 +7,10 @@ pub mod api;
 pub mod entity;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 pub mod sync_plan;
 
-pub use api::{connections_router, ConnectionsState};
+pub use api::ConnectionsState;
 pub use entity::{Connection, ConnectionStatus};
 pub use repository::ConnectionRepository;
+pub use routes::{connections_router, routes};

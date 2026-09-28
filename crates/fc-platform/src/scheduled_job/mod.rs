@@ -7,12 +7,14 @@
 //! lifecycle), so they bypass UoW. Same for instance log entries.
 
 pub mod api;
+pub mod bff;
 pub mod cron;
 pub mod cron_migration;
 pub mod entity;
 pub mod instance_repository;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 pub mod scheduler;
 
 pub use entity::{
@@ -21,3 +23,4 @@ pub use entity::{
 };
 pub use instance_repository::{InstanceListFilters, ScheduledJobInstanceRepository};
 pub use repository::ScheduledJobRepository;
+pub use routes::routes;

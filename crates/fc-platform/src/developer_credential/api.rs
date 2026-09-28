@@ -14,7 +14,6 @@ use base64::Engine;
 use rand::Rng;
 use serde::Serialize;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::operations::{
     RevokeDeveloperCredentialCommand, RevokeDeveloperCredentialUseCase,
@@ -256,15 +255,4 @@ pub async fn revoke_credential(
         .await
         .into_result()?;
     Ok(())
-}
-
-/// Nested at `/api/principals` beside the principal routes.
-pub fn developer_credentials_router(state: DeveloperCredentialsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(list_developer_users))
-        .routes(routes!(
-            set_developer_credential,
-            revoke_developer_credential
-        ))
-        .with_state(state)
 }

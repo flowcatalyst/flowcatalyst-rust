@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 // rand::Rng removed — now using rand::RngCore directly
 // Client secrets are stored as `hashed:v1:` refs (EncryptionService::hash_secret).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -939,24 +938,6 @@ pub async fn revoke_oauth_client_previous_secret(
     Ok(Json(SuccessResponse::with_message(
         "Previous client secret revoked",
     )))
-}
-
-/// Create OAuth clients router
-pub fn oauth_clients_router(state: OAuthClientsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_oauth_client, list_oauth_clients))
-        .routes(routes!(
-            get_oauth_client,
-            update_oauth_client,
-            delete_oauth_client
-        ))
-        .routes(routes!(get_oauth_client_by_client_id))
-        .routes(routes!(activate_oauth_client))
-        .routes(routes!(deactivate_oauth_client))
-        .routes(routes!(regenerate_oauth_client_secret))
-        .routes(routes!(rotate_oauth_client_secret))
-        .routes(routes!(revoke_oauth_client_previous_secret))
-        .with_state(state)
 }
 
 #[cfg(test)]

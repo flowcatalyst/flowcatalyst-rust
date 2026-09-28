@@ -27,15 +27,18 @@ pub mod policy;
 pub mod repository;
 pub mod reset_approval;
 pub mod reset_approval_api;
+pub mod routes;
 pub mod self_service_api;
 pub mod service;
 pub mod token;
 
-pub use account_api::{account_router, AccountState};
-pub use admin_api::two_factor_admin_router;
-pub use login_api::{two_factor_login_router, TwoFactorLogin};
+pub use account_api::AccountState;
+pub use login_api::TwoFactorLogin;
 pub use policy::TwoFactorPolicy;
 pub use repository::MfaRepository;
-pub use self_service_api::two_factor_self_service_router;
+pub use routes::{
+    account_router, routes, two_factor_admin_router, two_factor_login_router,
+    two_factor_self_service_router,
+};
 pub use service::MfaService;
 pub use token::MfaTokenIssuer;

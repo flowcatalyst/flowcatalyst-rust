@@ -10,7 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
@@ -716,18 +715,4 @@ pub async fn delete_subscription(
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Create subscriptions router
-pub fn subscriptions_router(state: SubscriptionsState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_subscription, list_subscriptions))
-        .routes(routes!(
-            get_subscription,
-            update_subscription,
-            delete_subscription
-        ))
-        .routes(routes!(pause_subscription))
-        .routes(routes!(resume_subscription))
-        .with_state(state)
 }

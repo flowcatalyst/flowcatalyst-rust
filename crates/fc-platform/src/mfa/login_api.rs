@@ -17,8 +17,7 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
-    Json, Router,
+    Json,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::{Deserialize, Serialize};
@@ -530,7 +529,7 @@ struct VerifyRequest {
 }
 
 /// `POST /auth/2fa/verify` (Go `handle2FAVerify`).
-async fn verify(
+pub(super) async fn verify(
     State(s): State<Arc<TwoFactorLogin>>,
     ClientIp(ip): ClientIp,
     jar: CookieJar,
@@ -636,7 +635,7 @@ struct TokenOnly {
 /// `POST /auth/2fa/challenge/email` (Go `handle2FAChallengeEmail`). Budgeted
 /// per IP and per address (owner ruling 7): over budget nothing is sent and
 /// the answer is the same.
-async fn challenge_email(
+pub(super) async fn challenge_email(
     State(s): State<Arc<TwoFactorLogin>>,
     ClientIp(ip): ClientIp,
     body: Bytes,
@@ -688,7 +687,10 @@ struct EnrollConfirmRequest {
 }
 
 /// `POST /auth/2fa/enroll/totp/begin`.
-async fn enroll_totp_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) -> Response {
+pub(super) async fn enroll_totp_begin(
+    State(s): State<Arc<TwoFactorLogin>>,
+    body: Bytes,
+) -> Response {
     let req: TokenOnly = match decode(&body) {
         Ok(r) => r,
         Err(resp) => return *resp,
@@ -720,7 +722,7 @@ async fn enroll_totp_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) ->
 
 /// `POST /auth/2fa/enroll/totp/confirm`: enrols, then finishes the sign-in
 /// with a first recovery-code set.
-async fn enroll_totp_confirm(
+pub(super) async fn enroll_totp_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
     ClientIp(ip): ClientIp,
     jar: CookieJar,
@@ -755,7 +757,10 @@ async fn enroll_totp_confirm(
 }
 
 /// `POST /auth/2fa/enroll/email/begin`.
-async fn enroll_email_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) -> Response {
+pub(super) async fn enroll_email_begin(
+    State(s): State<Arc<TwoFactorLogin>>,
+    body: Bytes,
+) -> Response {
     let req: TokenOnly = match decode(&body) {
         Ok(r) => r,
         Err(resp) => return *resp,
@@ -790,7 +795,7 @@ async fn enroll_email_begin(State(s): State<Arc<TwoFactorLogin>>, body: Bytes) -
 }
 
 /// `POST /auth/2fa/enroll/email/confirm`.
-async fn enroll_email_confirm(
+pub(super) async fn enroll_email_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
     ClientIp(ip): ClientIp,
     jar: CookieJar,
@@ -830,16 +835,4 @@ async fn enroll_email_confirm(
     .await;
     let codes = s.ensure_recovery_codes(&p).await;
     s.complete_login(jar, &p, codes, ip.as_deref()).await
-}
-
-/// The token-gated `/auth/2fa/*` routes, nested under `/auth`.
-pub fn two_factor_login_router(state: Arc<TwoFactorLogin>) -> Router {
-    Router::new()
-        .route("/2fa/verify", post(verify))
-        .route("/2fa/challenge/email", post(challenge_email))
-        .route("/2fa/enroll/totp/begin", post(enroll_totp_begin))
-        .route("/2fa/enroll/totp/confirm", post(enroll_totp_confirm))
-        .route("/2fa/enroll/email/begin", post(enroll_email_begin))
-        .route("/2fa/enroll/email/confirm", post(enroll_email_confirm))
-        .with_state(state)
 }

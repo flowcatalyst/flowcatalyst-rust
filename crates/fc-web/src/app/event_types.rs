@@ -21,6 +21,7 @@
 use std::sync::Arc;
 
 use fc_platform::event_type::access::{ensure_can_create, ensure_modifiable, ensure_visible};
+use fc_platform::event_type::bff::platform_sync_command;
 use fc_platform::event_type::entity::{SchemaType, SpecVersionStatus};
 use fc_platform::event_type::operations::{
     ArchiveEventTypeCommand, ArchiveEventTypeUseCase, CreateEventTypeCommand,
@@ -28,34 +29,32 @@ use fc_platform::event_type::operations::{
     DeprecateSchemaUseCase, FinaliseSchemaCommand, FinaliseSchemaUseCase, SyncEventTypesUseCase,
     UpdateEventTypeCommand, UpdateEventTypeUseCase,
 };
-use fc_platform::shared::bff_event_types_api::platform_sync_command;
 use fc_platform::usecase::UseCase;
 use fc_platform::{
-    AuthContext, EventType, EventTypeStatus, ExecutionContext, PlatformError, SpecVersion, checks,
+    checks, AuthContext, EventType, EventTypeStatus, ExecutionContext, PlatformError, SpecVersion,
 };
 use serde::Deserialize;
 use topcoat::{
-    Result,
     context::Cx,
     icon::{icon, iconify::iconify_icon},
     router::{
-        Method,
         content::Form,
-        error::{RouterErrorExt, SeeOther, see_other},
+        error::{see_other, RouterErrorExt, SeeOther},
         page, path_param, query_params,
         request::method,
-        route,
+        route, Method,
     },
-    runtime::{Event, Signal, shard, signal},
-    view::{Length, View, component, view},
+    runtime::{shard, signal, Event, Signal},
+    view::{component, view, Length, View},
+    Result,
 };
 
 use crate::auth::{auth, permit, platform_error};
 use crate::ui::drawer::DrawerSize;
 use crate::ui::{
-    Btn, FlashKind, Pager, Severity, code_chips, confirm_dialog, detail_field, detail_value,
-    drawer_frame, drawer_header, empty_state, filter_select, form_field, json_block, list_query,
-    page_header, paginator, set_flash, table_toolbar, tag,
+    code_chips, confirm_dialog, detail_field, detail_value, drawer_frame, drawer_header,
+    empty_state, filter_select, form_field, json_block, list_query, page_header, paginator,
+    set_flash, table_toolbar, tag, Btn, FlashKind, Pager, Severity,
 };
 
 path_param!(id);

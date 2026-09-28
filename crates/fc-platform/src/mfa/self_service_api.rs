@@ -18,8 +18,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -66,7 +65,7 @@ struct StatusResponse {
 }
 
 /// `GET /auth/2fa/status`.
-async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
+pub(super) async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -101,7 +100,10 @@ async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Res
 }
 
 /// `POST /auth/2fa/methods/totp/begin`.
-async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
+pub(super) async fn totp_begin(
+    State(s): State<Arc<TwoFactorLogin>>,
+    auth: OptionalAuth,
+) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -132,7 +134,7 @@ struct CodeRequest {
 
 /// `POST /auth/2fa/methods/totp/confirm`: the first recovery-code set
 /// comes back (empty when the user already had codes).
-async fn totp_confirm(
+pub(super) async fn totp_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
     body: Bytes,
@@ -162,7 +164,10 @@ async fn totp_confirm(
 }
 
 /// `POST /auth/2fa/methods/email/begin`.
-async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
+pub(super) async fn email_begin(
+    State(s): State<Arc<TwoFactorLogin>>,
+    auth: OptionalAuth,
+) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -193,7 +198,7 @@ async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -
 }
 
 /// `POST /auth/2fa/methods/email/confirm`.
-async fn email_confirm(
+pub(super) async fn email_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
     body: Bytes,
@@ -232,7 +237,7 @@ async fn email_confirm(
 
 /// `DELETE /auth/2fa/methods/{method}`. A user whose domain requires 2FA
 /// can't remove their last confirmed factor.
-async fn remove_method(
+pub(super) async fn remove_method(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
     Path(method): Path<String>,
@@ -279,7 +284,7 @@ async fn remove_method(
 
 /// `POST /auth/2fa/recovery-codes/regenerate`: only for authenticator-app
 /// users.
-async fn regenerate_recovery_codes(
+pub(super) async fn regenerate_recovery_codes(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
 ) -> Response {
@@ -314,7 +319,7 @@ async fn regenerate_recovery_codes(
 }
 
 /// `GET /auth/2fa/trusted-devices`.
-async fn list_trusted_devices(
+pub(super) async fn list_trusted_devices(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
 ) -> Response {
@@ -329,7 +334,7 @@ async fn list_trusted_devices(
 }
 
 /// `DELETE /auth/2fa/trusted-devices/{id}` (only the caller's own).
-async fn revoke_trusted_device(
+pub(super) async fn revoke_trusted_device(
     State(s): State<Arc<TwoFactorLogin>>,
     auth: OptionalAuth,
     Path(id): Path<String>,
@@ -342,22 +347,4 @@ async fn revoke_trusted_device(
         return server_error("REVOKE_FAILED", "could not revoke device");
     }
     Json(json!({ "message": "Device removed." })).into_response()
-}
-
-/// The session-gated `/auth/2fa/*` routes, nested under `/auth`.
-pub fn two_factor_self_service_router(state: Arc<TwoFactorLogin>) -> Router {
-    Router::new()
-        .route("/2fa/status", get(status))
-        .route("/2fa/methods/totp/begin", post(totp_begin))
-        .route("/2fa/methods/totp/confirm", post(totp_confirm))
-        .route("/2fa/methods/email/begin", post(email_begin))
-        .route("/2fa/methods/email/confirm", post(email_confirm))
-        .route("/2fa/methods/{method}", delete(remove_method))
-        .route(
-            "/2fa/recovery-codes/regenerate",
-            post(regenerate_recovery_codes),
-        )
-        .route("/2fa/trusted-devices", get(list_trusted_devices))
-        .route("/2fa/trusted-devices/{id}", delete(revoke_trusted_device))
-        .with_state(state)
 }

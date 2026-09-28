@@ -1,218 +1,25 @@
-//! Centralized Platform Router Builder
+//! The platform router: the route modules, then the cross-cutting layers.
 //!
-//! Eliminates duplicated route wiring across binary crates (fc-server,
-//! fc-dev). Each binary still constructs the state
-//! objects and adds its own middleware/static-file layers on top.
+//! Every route lives in its module's `routes(ctx)` (e.g. `client::routes`),
+//! which builds its own state from the [`PlatformContext`] and returns its
+//! routes at their full paths, with any per-route-group layers (rate
+//! limits, error mapping) applied there. This file only lists the modules
+//! and adds what spans all of them: the OpenAPI documents and Swagger UI,
+//! `/health`, Go's extractor-rejection envelope, the SPA, and the
+//! profile-only gate. It imports no handler or state type
+//! (`tests/route_wiring_convention_test.rs`).
+//!
+//! The binaries add their own layers on top (`AuthLayer`, tracing, CORS).
 
 use axum::{
     response::{IntoResponse, Json},
     routing::get,
     Router,
 };
-use utoipa_axum::router::OpenApiRouter;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::api::{
-    admin_platform_config_router,
-    anchor_domains_router,
-    application_roles_sdk_router,
-    applications_router,
-    audit_logs_router,
-    auth_router,
-    bff_dashboard_router,
-    bff_event_types_router,
-    // Plain Router routes
-    bff_roles_router,
-    bff_scheduled_jobs_router,
-    client_auth_configs_router,
-    client_selection_router,
-    clients_router,
-    config_access_router,
-    connections_router,
-    cors_router,
-    debug_dispatch_jobs_router,
-    debug_events_router,
-    dispatch_jobs_api_router,
-    dispatch_jobs_router,
-    dispatch_pools_router,
-    dispatch_process_router,
-    email_domain_mappings_router,
-    event_types_router,
-    events_api_router,
-    // OpenApiRouter routes
-    events_router,
-    filter_options_router,
-    identity_providers_router,
-    idp_role_mappings_router,
-    login_attempts_router,
-    me_router,
-    monitoring_router,
-    oauth_clients_router,
-    oauth_router,
-    oidc_login_router,
-    password_reset_router,
-    principals_router,
-    processes_router,
-    public_router,
-    roles_router,
-    scheduled_jobs_router,
-    sdk_audit_batch_router,
-    sdk_dispatch_jobs_batch_router,
-    sdk_events_batch_router,
-    sdk_sync_router,
-    service_accounts_router,
-    subscriptions_router,
-    well_known_router,
-    ApplicationRolesSdkState,
-    ApplicationsState,
-    AuditLogsState,
-    AuthConfigState,
-    AuthState,
-    BffDashboardState,
-    BffEventTypesState,
-    BffRolesState,
-    BffScheduledJobsState,
-    ClientSelectionState,
-    ClientsState,
-    ConfigAccessState,
-    ConnectionsState,
-    CorsState,
-    DebugState,
-    DispatchJobsState,
-    DispatchPoolsState,
-    DispatchProcessState,
-    EmailDomainMappingsState,
-    EventTypesState,
-    EventsState,
-    FilterOptionsState,
-    IdentityProvidersState,
-    LoginAttemptsState,
-    MeState,
-    MonitoringState,
-    OAuthClientsState,
-    OAuthState,
-    OidcLoginApiState,
-    PasswordResetApiState,
-    PlatformConfigState,
-    PrincipalsState,
-    ProcessesState,
-    PublicApiState,
-    RolesState,
-    ScheduledJobsState,
-    SdkAuditBatchState,
-    SdkDispatchJobsState,
-    SdkEventsState,
-    SdkSyncState,
-    ServiceAccountsState,
-    SubscriptionsState,
-    WellKnownState,
-};
-use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
-use crate::shared::rate_limit_middleware::{
-    rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
-};
-use crate::shared::rate_limit_store::{
-    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
-    DistributedEmailLimitState, DistributedIpLimitState,
-};
-use crate::usecase::UnitOfWork;
+use crate::shared::platform_context::{AggregateRoutes, PlatformContext};
 use std::sync::Arc;
-
-/// Dependencies handed to `build()` so the Developer-portal BFF state can be
-/// finalised once the platform's own OpenAPI document has been computed.
-pub struct BffDeveloperDeps {
-    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
-    pub openapi_spec_repo: Arc<crate::application_openapi_spec::repository::OpenApiSpecRepository>,
-    pub event_type_repo: Arc<crate::event_type::repository::EventTypeRepository>,
-    pub principal_repo: Arc<crate::PrincipalRepository>,
-    pub sync_openapi_use_case: Arc<
-        crate::application_openapi_spec::operations::SyncOpenApiSpecUseCase<
-            crate::usecase::PgUnitOfWork,
-        >,
-    >,
-    pub platform_application_id: String,
-}
-
-// =============================================================================
-// Route path constants
-// =============================================================================
-
-// BFF routes
-pub const PATH_BFF_DEVELOPER: &str = "/bff/developer";
-pub const PATH_BFF_EVENTS: &str = "/bff/events";
-pub const PATH_BFF_DISPATCH_JOBS: &str = "/bff/dispatch-jobs";
-pub const PATH_BFF_FILTER_OPTIONS: &str = "/bff/filter-options";
-pub const PATH_BFF_ROLES: &str = "/bff/roles";
-/// Temporary (docs/spec/audit-redaction.md, Java repo): the redact-existing sweep.
-pub const PATH_BFF_AUDIT_LOGS: &str = "/bff/audit-logs";
-pub const PATH_BFF_EVENT_TYPES: &str = "/bff/event-types";
-pub const PATH_BFF_SCHEDULED_JOBS: &str = "/bff/scheduled-jobs";
-pub const PATH_BFF_DASHBOARD: &str = "/bff/dashboard";
-pub const PATH_BFF_DEBUG_EVENTS: &str = "/bff/debug/events";
-pub const PATH_BFF_DEBUG_DISPATCH_JOBS: &str = "/bff/debug/dispatch-jobs";
-
-// API routes (single programmable surface; gated by permissions, not URL tier)
-pub const PATH_API_EVENTS: &str = "/api/events";
-pub const PATH_API_EVENT_TYPES: &str = "/api/event-types";
-pub const PATH_API_PROCESSES: &str = "/api/processes";
-pub const PATH_BFF_PROCESSES: &str = "/bff/processes";
-pub const PATH_API_CLIENTS: &str = "/api/clients";
-pub const PATH_API_PRINCIPALS: &str = "/api/principals";
-pub const PATH_API_ROLES: &str = "/api/roles";
-pub const PATH_API_SUBSCRIPTIONS: &str = "/api/subscriptions";
-pub const PATH_API_OAUTH_CLIENTS: &str = "/api/oauth-clients";
-// Audit logs admin CRUD reuses the same prefix as batch ingest; the two routers
-// occupy non-overlapping sub-paths, so both nest at `/api/audit-logs`.
-pub const PATH_API_ANCHOR_DOMAINS: &str = "/api/anchor-domains";
-pub const PATH_API_AUTH_CONFIGS: &str = "/api/auth-configs";
-pub const PATH_API_IDP_ROLE_MAPPINGS: &str = "/api/idp-role-mappings";
-pub const PATH_API_DISPATCH_JOBS: &str = "/api/dispatch-jobs";
-pub const PATH_API_DISPATCH_POOLS: &str = "/api/dispatch-pools";
-pub const PATH_API_SCHEDULED_JOBS: &str = "/api/scheduled-jobs";
-pub const PATH_API_SERVICE_ACCOUNTS: &str = "/api/service-accounts";
-pub const PATH_API_CONNECTIONS: &str = "/api/connections";
-pub const PATH_API_CORS: &str = "/api/platform/cors";
-pub const PATH_API_IDENTITY_PROVIDERS: &str = "/api/identity-providers";
-pub const PATH_API_EMAIL_DOMAIN_MAPPINGS: &str = "/api/email-domain-mappings";
-// Admin config reuses `/api/config`; shared with platform_config_router on
-// non-overlapping sub-paths.
-pub const PATH_API_CONFIG_ACCESS: &str = "/api/config-access";
-pub const PATH_API_LOGIN_ATTEMPTS: &str = "/api/login-attempts";
-
-// Monitoring
-pub const PATH_MONITORING: &str = "/api/monitoring";
-
-// Auth routes
-pub const PATH_AUTH: &str = "/auth";
-/// User-facing "me" routes (my clients, my applications, etc.). Mounted under
-/// `/api/me` to match the TypeScript platform — note this is distinct from the
-/// OIDC session-user endpoint `/auth/me` served by `auth_router`.
-pub const PATH_API_ME: &str = "/api/me";
-pub const PATH_AUTH_CLIENT: &str = "/auth/client";
-pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
-
-// Portal identity plane (Go portalidentity/api + portalauth): the admin
-// surface and the public portal login surface.
-pub const PATH_API_PORTAL_USERS: &str = "/api/portal-users";
-pub const PATH_API_PORTAL_APPS: &str = "/api/portal-apps";
-pub const PATH_PORTAL: &str = "/portal";
-
-// OAuth / OIDC
-pub const PATH_OAUTH: &str = "/oauth";
-pub const PATH_WELL_KNOWN: &str = "/.well-known";
-
-// NOTE: the legacy `/api/sdk/*` tier was consolidated into `/api/*`. Batch
-// ingest endpoints (events, dispatch-jobs) now live under their resource's
-// main router; all other SDK-tier CRUD was duplicative and has been removed.
-
-// Dispatch processing (internal callback from message router)
-pub const PATH_API_DISPATCH: &str = "/api/dispatch";
-
-// Public / shared API routes
-pub const PATH_API_APPLICATIONS: &str = "/api/applications";
-pub const PATH_API_AUDIT_LOGS: &str = "/api/audit-logs";
-pub const PATH_API_CONFIG: &str = "/api/config";
-pub const PATH_API_PUBLIC: &str = "/api/public";
 
 // Health
 pub const PATH_HEALTH: &str = "/health";
@@ -227,565 +34,173 @@ pub const PATH_OPENAPI_SPEC: &str = "/q/openapi";
 /// shapes are useful even though they aren't programmable.
 pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 
-// =============================================================================
-// PlatformRoutes
-// =============================================================================
+/// Assemble the full platform router and its published OpenAPI document
+/// from `ctx`.
+///
+/// The returned `Router` includes all API routes, the health endpoint,
+/// Swagger UI, and SPA serving (if `static_dir` is set). It does **not**
+/// include auth middleware, CORS, or tracing layers: the binaries add those.
+pub fn build(ctx: &PlatformContext) -> (Router, serde_json::Value) {
+    // The route modules, in order. The order is part of the OpenAPI
+    // document: utoipa keeps the first component schema of a name
+    // (`StatusChangeResponse` is two types), and axum lists a path's
+    // methods in the `Allow` header in the order they were merged.
+    let AggregateRoutes { documented, plain } = AggregateRoutes::new()
+        .merge(crate::event::routes(ctx))
+        .merge(crate::event_type::routes(ctx))
+        .merge(crate::process::routes(ctx))
+        .merge(crate::scheduled_job::routes(ctx))
+        .merge(crate::dispatch_job::routes(ctx))
+        .merge(crate::client::routes(ctx))
+        .merge(crate::principal::routes(ctx))
+        .merge(crate::mfa::routes(ctx))
+        .merge(crate::developer_credential::routes(ctx))
+        .merge(crate::role::routes(ctx))
+        .merge(crate::subscription::routes(ctx))
+        .merge(crate::auth::routes(ctx))
+        .merge(crate::audit::routes(ctx))
+        .merge(crate::shared::routes(ctx))
+        .merge(crate::function::routes(ctx))
+        .merge(crate::dispatch_job_actions::routes(ctx))
+        .merge(crate::app_docs::routes(ctx))
+        .merge(crate::application::routes(ctx))
+        .merge(crate::email_domain_mapping::routes(ctx))
+        .merge(crate::service_account::routes(ctx))
+        .merge(crate::platform_config::routes(ctx))
+        .merge(crate::webauthn::routes(ctx))
+        .merge(crate::dispatch_pool::routes(ctx))
+        .merge(crate::connection::routes(ctx))
+        .merge(crate::cors::routes(ctx))
+        .merge(crate::identity_provider::routes(ctx))
+        .merge(crate::login_attempt::routes(ctx))
+        .merge(crate::portal::routes(ctx));
 
-/// Holds all pre-constructed API state structs and assembles the full
-/// platform router. Binaries create this after building repos/services,
-/// call `build()`, then layer on middleware and static files.
-pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
-    // -- OpenApiRouter routes (collected in Swagger) --
-    pub events: EventsState,
-    pub event_types: EventTypesState,
-    pub processes: ProcessesState,
-    pub dispatch_jobs: DispatchJobsState,
-    pub scheduled_jobs: ScheduledJobsState,
-    /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
-    pub functions: crate::function::api::FunctionsState,
-    /// `/control/functions/*`: what a function host calls (not in Swagger).
-    pub function_control: crate::function::control_api::FunctionControlState,
-    pub filter_options: FilterOptionsState,
-    pub clients: ClientsState,
-    pub principals: PrincipalsState,
-    pub roles: RolesState,
-    pub subscriptions: SubscriptionsState,
-    pub oauth_clients: OAuthClientsState,
-    pub audit_logs: AuditLogsState,
-    pub monitoring: MonitoringState,
-    pub auth: AuthState,
+    // 1. The documented routes (auto-collected in the OpenAPI spec).
+    let (router, mut openapi) = documented.split_for_parts();
 
-    // -- Plain Router routes (NOT in Swagger) --
-    pub bff_roles: BffRolesState,
-    /// Temporary (docs/spec/audit-redaction.md, Java repo).
-    pub bff_audit_logs: crate::shared::bff_audit_logs_api::BffAuditLogsState,
-    pub bff_event_types: BffEventTypesState,
-    pub bff_scheduled_jobs: BffScheduledJobsState,
-    pub bff_dashboard: BffDashboardState,
-    pub debug: DebugState,
-    pub auth_config: AuthConfigState,
-    pub applications: ApplicationsState<U>,
-    pub dispatch_pools: DispatchPoolsState<U>,
-    pub service_accounts: ServiceAccountsState<U>,
-    pub connections: ConnectionsState,
-    pub cors: CorsState,
-    pub identity_providers: IdentityProvidersState,
-    pub email_domain_mappings: EmailDomainMappingsState,
-    pub platform_config: PlatformConfigState,
-    pub config_access: ConfigAccessState,
-    pub login_attempts: LoginAttemptsState,
-    pub me: MeState,
-    pub sdk_events: SdkEventsState,
-    pub sdk_dispatch_jobs: SdkDispatchJobsState,
-    pub oidc_login: OidcLoginApiState,
-    pub oauth: OAuthState,
-    pub well_known: WellKnownState,
-    pub client_selection: ClientSelectionState,
-    pub application_roles_sdk: ApplicationRolesSdkState,
-    pub sdk_sync: SdkSyncState,
-    pub sdk_audit_batch: SdkAuditBatchState,
-    pub public: PublicApiState,
-    pub password_reset: PasswordResetApiState,
-    /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
-    /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
-    pub portal: crate::portal::PortalState,
-    pub webauthn: crate::webauthn::WebauthnApiState,
-    /// Two-factor sign-in and self-service (`/auth/2fa/*`).
-    pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
-    /// `/api/principals/developer-users`, `…/{id}/developer-credential`.
-    pub developer_credentials: crate::developer_credential::api::DeveloperCredentialsState,
-    /// `/api/reset-approvals`.
-    pub reset_approvals: crate::mfa::reset_approval_api::ResetApprovalsState,
-    /// `/auth/change-password*`, `/auth/login-history`.
-    pub account: Arc<crate::mfa::AccountState>,
-    /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
-    /// is constructed inside `build()` so the platform's own OpenAPI document
-    /// (returned by `build()` itself) can be stored against the seeded
-    /// `code='platform'` application row without an HTTP self-call.
-    pub bff_developer: BffDeveloperDeps,
-    /// Optional — dispatch processing endpoint state. None when dispatch processing
-    /// is not needed (e.g., tests or standalone platform server without router).
-    pub dispatch_process: Option<DispatchProcessState>,
-    /// Routes Go serves that Rust lacked (`shared::go_routes`).
-    pub go_routes: crate::shared::go_routes::GoRoutesState,
+    // Capture the full spec (including `/bff/*` paths) before we
+    // strip BFF entries from the public surface. Served at
+    // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
+    // once at boot since the spec is fixed for the process lifetime.
+    let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
+        .map(axum::body::Bytes::from)
+        .unwrap_or_default();
 
-    /// Optional static directory for SPA serving. When set, serves:
-    /// - `/assets/*` with immutable cache headers (Vite hashed assets)
-    /// - SPA fallback (index.html) for unmatched GET requests
-    /// - Explicit SPA routes for paths that conflict with API nests (e.g., /auth/login)
-    pub static_dir: Option<String>,
+    // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
+    // frontend and intentionally not part of the programmable surface; it
+    // shouldn't appear in Swagger or `/q/openapi`. Some BFF routers share
+    // handlers with their `/api/*` siblings and have to be mounted via
+    // `OpenApiRouter` for routing, so we filter post-build rather than
+    // requiring every contributor to remember the convention.
+    openapi
+        .paths
+        .paths
+        .retain(|path, _| !path.starts_with("/bff/"));
 
-    /// Distributed rate-limit store (Redis when reachable, Postgres
-    /// fallback). Used to enforce cluster-wide per-IP + per-`client_id`
-    /// limits on the OAuth/auth edge — see `RateLimitPolicies`.
-    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
-    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
-}
+    // The operations Go documents that are routed through the plain
+    // routes (`shared::openapi_contract`).
+    openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
 
-impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
-    /// Assemble the full platform router and OpenAPI spec.
-    ///
-    /// The returned `Router` includes all API routes, the health endpoint,
-    /// Swagger UI, and SPA serving (if `static_dir` is set).
-    /// It does **not** include auth middleware, CORS, or tracing layers.
-    pub fn build(self) -> (Router, serde_json::Value) {
-        // Per-IP rate limiters: separate buckets so a high-volume OAuth
-        // client doesn't starve the auth login flow (and vice versa). The
-        // limits compose with — they don't replace — the per-account
-        // backoff in `auth::login_backoff`.
-        let auth_ip_limit = IpRateLimiterState::new(&RateLimitConfig::auth_default_from_env());
-        let oauth_ip_limit =
-            IpRateLimiterState::new(&RateLimitConfig::oauth_token_default_from_env());
-        let auth_layer = axum::middleware::from_fn_with_state(auth_ip_limit, rate_limit_per_ip);
-        let oauth_layer = axum::middleware::from_fn_with_state(oauth_ip_limit, rate_limit_per_ip);
+    // 3. Set OpenAPI metadata
+    openapi.info.title = "FlowCatalyst Platform API".to_string();
+    openapi.info.version = fc_common::BUILD_VERSION.to_string();
+    // No `info.description`: Go's document has none.
+    openapi.info.description = None;
+    // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
+    // metadata (its author as contact, "MIT OR Apache-2.0" as license),
+    // so these must be set explicitly or the published spec advertises
+    // the wrong license.
+    openapi.info.contact = Some(
+        utoipa::openapi::ContactBuilder::new()
+            .name(Some("FlowCatalyst"))
+            .email(Some("support@flowcatalyst.io"))
+            .build(),
+    );
+    openapi.info.license = Some(
+        utoipa::openapi::LicenseBuilder::new()
+            .name(env!("CARGO_PKG_LICENSE"))
+            .identifier(Some(env!("CARGO_PKG_LICENSE")))
+            .build(),
+    );
 
-        // Distributed (cluster-wide) per-IP limiters layered on top of the
-        // in-memory governor above. The two compose: governor rejects bursts
-        // at this instance (sub-ms, no I/O), the distributed store catches a
-        // single source spreading load across replicas. One layer per
-        // (bucket, policy) so each route group's limits can be tuned
-        // independently via env.
-        let distributed_oauth_token_layer = axum::middleware::from_fn_with_state(
-            DistributedIpLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::OAUTH_TOKEN_IP,
-                policy: self.rate_limit_policies.oauth_token_ip,
-            },
-            distributed_rate_limit_per_ip,
-        );
-        let distributed_password_reset_layer = axum::middleware::from_fn_with_state(
-            DistributedIpLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::PASSWORD_RESET_IP,
-                policy: self.rate_limit_policies.password_reset_ip,
-            },
-            distributed_rate_limit_per_ip,
-        );
-        // S2.7: the reset request is budgeted per address too, and over
-        // budget it answers exactly as it always does, so the limit can't
-        // be used to tell a known address from an unknown one.
-        let distributed_password_reset_email_layer = axum::middleware::from_fn_with_state(
-            DistributedEmailLimitState {
-                store: self.rate_limit_store.clone(),
-                bucket: Bucket::PASSWORD_RESET_EMAIL,
-                policy: self.rate_limit_policies.password_reset_email,
-                path_suffix: "/request",
-                over_budget: password_reset_requested_response,
-            },
-            distributed_rate_limit_per_email,
-        );
+    // 2. The published document, reshaped to Go's document conventions
+    //    (one `default` ErrorModel response, optional members not
+    //    nullable, no orphan schemas); see
+    //    `shared::openapi_contract::shape_as_go_contract`. Served as JSON
+    //    (utoipa's model cannot read back every schema it writes, e.g.
+    //    `{}`), fixed for the process lifetime.
+    let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
+    crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
 
-        // Portal identity plane (Go wire_routes.go:261-291): the portal
-        // routes sit behind the OIDC bridge's per-IP governor
-        // (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST), and its hooks answer the
-        // portal-subject requests of the shared reset-token and OIDC
-        // callback routes.
-        let portal_login = crate::portal::login_api::PortalLoginState {
-            portal: self.portal.clone(),
-            oidc: self.oidc_login.clone(),
-        };
-        let portal_ip_layer = axum::middleware::from_fn_with_state(
-            IpRateLimiterState::new(&crate::portal::login_api::portal_ip_rate_config()),
-            rate_limit_per_ip,
-        );
-        let portal_reset_hook = axum::middleware::from_fn_with_state(
-            self.portal.passwords.clone(),
-            crate::portal::password::intercept,
-        );
-        let portal_oidc_hook = axum::middleware::from_fn_with_state(
-            portal_login.clone(),
-            crate::portal::oidc::intercept,
-        );
+    // Snapshot the platform's own OpenAPI document for the Developer
+    // portal. Compile-time-derived from utoipa, so a single capture at
+    // boot is correct for the lifetime of this binary; "Sync All" pushes
+    // this value into the seeded `code='platform'` application row.
+    let platform_openapi = Arc::new(openapi.clone());
 
-        // 1. OpenApiRouter routes (auto-collected in Swagger spec)
-        let (router, mut openapi) = OpenApiRouter::new()
-            // Same cursor-paginated read handlers serve both /api/events
-            // (bearer-auth, SDK consumers) and /bff/events (cookie-auth,
-            // SPA). The previous `admin_events_router` wrapped a duplicate
-            // offset+COUNT(*) path on the same `msg_events_read`; gone now.
-            //
-            // `events_api_router` excludes `batch_create_events` — SDK
-            // callers use the bulk-insert `sdk_events_batch_router::POST
-            // /batch` mounted further down at the same prefix. The two must
-            // not both register POST /batch (axum panics on overlap).
-            .nest(PATH_API_EVENTS, events_api_router(self.events.clone()))
-            .nest(PATH_BFF_EVENTS, events_router(self.events))
-            .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
-            .nest(PATH_API_PROCESSES, processes_router(self.processes.clone()))
-            .nest(PATH_BFF_PROCESSES, processes_router(self.processes))
-            .nest(
-                PATH_API_SCHEDULED_JOBS,
-                scheduled_jobs_router(self.scheduled_jobs),
-            )
-            // Cursor-paginated read handlers serve both API + BFF tiers.
-            // The API tier excludes `batch_create_dispatch_jobs` so it
-            // doesn't collide with `sdk_dispatch_jobs_batch_router::POST
-            // /batch` mounted at the same prefix below.
-            .nest(
-                PATH_API_DISPATCH_JOBS,
-                dispatch_jobs_api_router(self.dispatch_jobs.clone()),
-            )
-            .nest(
-                PATH_BFF_DISPATCH_JOBS,
-                dispatch_jobs_router(self.dispatch_jobs),
-            )
-            .nest(
-                PATH_BFF_FILTER_OPTIONS,
-                filter_options_router(self.filter_options),
-            )
-            .nest(PATH_API_CLIENTS, clients_router(self.clients))
-            .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
-            .nest(
-                PATH_API_PRINCIPALS,
-                crate::mfa::two_factor_admin_router(self.two_factor.clone()),
-            )
-            .nest(
-                "/api/reset-approvals",
-                crate::mfa::reset_approval_api::reset_approvals_router(self.reset_approvals),
-            )
-            .nest(
-                PATH_API_PRINCIPALS,
-                crate::developer_credential::developer_credentials_router(
-                    self.developer_credentials,
-                ),
-            )
-            .nest(PATH_API_ROLES, roles_router(self.roles))
-            .nest(
-                PATH_API_SUBSCRIPTIONS,
-                subscriptions_router(self.subscriptions),
-            )
-            .nest(
-                PATH_API_OAUTH_CLIENTS,
-                oauth_clients_router(self.oauth_clients),
-            )
-            .nest(PATH_API_AUDIT_LOGS, audit_logs_router(self.audit_logs))
-            .nest(PATH_MONITORING, monitoring_router(self.monitoring))
-            // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
-            // so the SDK code generators produce typed bindings for them.
-            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
-            // The function API: full paths under five prefixes, so merged.
-            .merge(crate::function::api::functions_router(self.functions))
-            // Go-parity routes, at their full paths (`shared::go_routes`).
-            .merge(crate::shared::go_routes::go_routes_router(self.go_routes))
-            .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
-            .nest(
-                PATH_AUTH,
-                crate::webauthn::webauthn_router(self.webauthn).layer(auth_layer.clone()),
-            )
-            .split_for_parts();
-
-        // Capture the full spec (including `/bff/*` paths) before we
-        // strip BFF entries from the public surface. Served at
-        // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
-        // once at boot since the spec is fixed for the process lifetime.
-        let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
-            .map(axum::body::Bytes::from)
-            .unwrap_or_default();
-
-        // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
-        // frontend and intentionally not part of the programmable surface; it
-        // shouldn't appear in Swagger or `/q/openapi`. Some BFF routers share
-        // handlers with their `/api/*` siblings and have to be mounted via
-        // `OpenApiRouter` for routing, so we filter post-build rather than
-        // requiring every contributor to remember the convention.
-        openapi
-            .paths
-            .paths
-            .retain(|path, _| !path.starts_with("/bff/"));
-
-        // The operations Go documents that are routed through the plain
-        // routers below (`shared::openapi_contract`).
-        openapi.merge(crate::shared::openapi_contract::documented_plain_routes());
-
-        // 3. Set OpenAPI metadata
-        openapi.info.title = "FlowCatalyst Platform API".to_string();
-        openapi.info.version = fc_common::BUILD_VERSION.to_string();
-        // No `info.description`: Go's document has none.
-        openapi.info.description = None;
-        // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
-        // metadata (its author as contact, "MIT OR Apache-2.0" as license),
-        // so these must be set explicitly or the published spec advertises
-        // the wrong license.
-        openapi.info.contact = Some(
-            utoipa::openapi::ContactBuilder::new()
-                .name(Some("FlowCatalyst"))
-                .email(Some("support@flowcatalyst.io"))
-                .build(),
-        );
-        openapi.info.license = Some(
-            utoipa::openapi::LicenseBuilder::new()
-                .name(env!("CARGO_PKG_LICENSE"))
-                .identifier(Some(env!("CARGO_PKG_LICENSE")))
-                .build(),
-        );
-
-        // 2. The published document, reshaped to Go's document conventions
-        //    (one `default` ErrorModel response, optional members not
-        //    nullable, no orphan schemas); see
-        //    `shared::openapi_contract::shape_as_go_contract`. Served as JSON
-        //    (utoipa's model cannot read back every schema it writes, e.g.
-        //    `{}`), fixed for the process lifetime.
-        let mut openapi = serde_json::to_value(&openapi).unwrap_or(serde_json::Value::Null);
-        crate::shared::openapi_contract::shape_as_go_contract(&mut openapi);
-
-        // Snapshot the platform's own OpenAPI document for the Developer
-        // portal. Compile-time-derived from utoipa, so a single capture at
-        // boot is correct for the lifetime of this binary; "Sync All" pushes
-        // this value into the seeded `code='platform'` application row.
-        let platform_openapi = Arc::new(openapi.clone());
-        let bff_developer_state = BffDeveloperState {
-            application_repo: self.bff_developer.application_repo,
-            openapi_spec_repo: self.bff_developer.openapi_spec_repo,
-            event_type_repo: self.bff_developer.event_type_repo,
-            principal_repo: self.bff_developer.principal_repo,
-            sync_openapi_use_case: self.bff_developer.sync_openapi_use_case,
+    // 4. The plain routes (not in the OpenAPI document), after the
+    //    developer portal, which needs the document.
+    let app = Router::new()
+        .merge(router)
+        .merge(crate::shared::routes::developer_portal_routes(
+            ctx,
             platform_openapi,
-            platform_application_id: self.bff_developer.platform_application_id,
-        };
+        ))
+        .merge(plain);
 
-        // 4. Merge plain Router routes (not in Swagger)
-        let app = Router::new()
-            .merge(router)
-            .nest(
-                PATH_BFF_DEVELOPER,
-                bff_developer_router(bff_developer_state),
-            )
-            // BFF
-            .nest(PATH_BFF_ROLES, bff_roles_router(self.bff_roles).into())
-            // Temporary (docs/spec/audit-redaction.md, Java repo).
-            .nest(
-                PATH_BFF_AUDIT_LOGS,
-                crate::shared::bff_audit_logs_api::bff_audit_logs_router(self.bff_audit_logs)
-                    .into(),
-            )
-            .nest(
-                PATH_BFF_EVENT_TYPES,
-                bff_event_types_router(self.bff_event_types).into(),
-            )
-            .nest(
-                PATH_BFF_SCHEDULED_JOBS,
-                bff_scheduled_jobs_router(self.bff_scheduled_jobs),
-            )
-            .nest(PATH_BFF_DASHBOARD, bff_dashboard_router(self.bff_dashboard))
-            .nest(
-                PATH_BFF_DEBUG_EVENTS,
-                debug_events_router(self.debug.clone()),
-            )
-            .nest(
-                PATH_BFF_DEBUG_DISPATCH_JOBS,
-                debug_dispatch_jobs_router(self.debug),
-            )
-            // API — auth config
-            .nest(
-                PATH_API_ANCHOR_DOMAINS,
-                anchor_domains_router(self.auth_config.clone()),
-            )
-            .nest(
-                PATH_API_AUTH_CONFIGS,
-                client_auth_configs_router(self.auth_config.clone()),
-            )
-            .nest(
-                PATH_API_IDP_ROLE_MAPPINGS,
-                idp_role_mappings_router(self.auth_config),
-            )
-            // API — domain aggregates
-            .nest(
-                PATH_API_APPLICATIONS,
-                applications_router(self.applications),
-            )
-            .nest(
-                PATH_API_DISPATCH_POOLS,
-                dispatch_pools_router(self.dispatch_pools),
-            )
-            .nest(
-                PATH_API_SERVICE_ACCOUNTS,
-                service_accounts_router(self.service_accounts),
-            )
-            .nest(
-                PATH_API_CONNECTIONS,
-                connections_router(self.connections).into(),
-            )
-            .nest(PATH_API_CORS, cors_router(self.cors))
-            .nest(
-                PATH_API_IDENTITY_PROVIDERS,
-                identity_providers_router(self.identity_providers),
-            )
-            .nest(
-                PATH_API_EMAIL_DOMAIN_MAPPINGS,
-                email_domain_mappings_router(self.email_domain_mappings).into(),
-            )
-            .nest(
-                PATH_API_CONFIG,
-                admin_platform_config_router(self.platform_config).into(),
-            )
-            .nest(
-                PATH_API_CONFIG_ACCESS,
-                config_access_router(self.config_access).into(),
-            )
-            .nest(
-                PATH_API_LOGIN_ATTEMPTS,
-                login_attempts_router(self.login_attempts),
-            )
-            // Auth
-            .nest(PATH_API_ME, me_router(self.me))
-            .nest(
-                PATH_AUTH,
-                oidc_login_router(self.oidc_login)
-                    .layer(portal_oidc_hook)
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_OAUTH,
-                oauth_router(self.oauth)
-                    .layer(axum::middleware::map_response(
-                        crate::auth::oauth_api::oauth_errors_no_store,
-                    ))
-                    .layer(distributed_oauth_token_layer)
-                    .layer(oauth_layer.clone()),
-            )
-            .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
-            // Two-factor: the step-token routes are public and rate-limited
-            // like `/auth/login`; the self-service ones need a session.
-            .nest(
-                PATH_AUTH,
-                crate::mfa::two_factor_login_router(self.two_factor.clone())
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_AUTH,
-                crate::mfa::two_factor_self_service_router(self.two_factor),
-            )
-            .nest(PATH_AUTH, crate::mfa::account_router(self.account))
-            .nest(
-                PATH_AUTH_CLIENT,
-                client_selection_router(self.client_selection).layer(auth_layer.clone()),
-            )
-            // `/auth/password-setup/request` spends the reset budgets in its
-            // own buckets inside the handler (silent over budget).
-            .nest(
-                "/auth/password-setup",
-                crate::api::password_setup_router(self.password_reset.clone())
-                    .layer(auth_layer.clone()),
-            )
-            .nest(
-                PATH_AUTH_PASSWORD_RESET,
-                password_reset_router(self.password_reset)
-                    .layer(portal_reset_hook)
-                    .layer(distributed_password_reset_email_layer)
-                    .layer(distributed_password_reset_layer)
-                    .layer(auth_layer.clone()),
-            )
-            // Portal identity plane.
-            .nest(
-                PATH_API_PORTAL_USERS,
-                crate::portal::api::portal_users_router(self.portal.clone()),
-            )
-            .nest(
-                PATH_API_PORTAL_APPS,
-                crate::portal::api::portal_apps_router(self.portal),
-            )
-            .nest(
-                PATH_PORTAL,
-                crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
-            )
-            // Batch ingest endpoints (merged into resource routers)
-            .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
-            .nest(
-                PATH_API_DISPATCH_JOBS,
-                sdk_dispatch_jobs_batch_router(self.sdk_dispatch_jobs),
-            )
-            // Shared API
-            .nest(
-                PATH_API_APPLICATIONS,
-                application_roles_sdk_router(self.application_roles_sdk),
-            )
-            // sdk_sync_router moved up into the OpenAPI chain so its routes
-            // appear in /q/openapi and SDK generators pick them up.
-            .nest(
-                PATH_API_AUDIT_LOGS,
-                sdk_audit_batch_router(self.sdk_audit_batch),
-            )
-            // Go's SPA-bootstrap alias of `/api/public/platform`.
-            .nest(
-                PATH_API_CONFIG,
-                crate::shared::public_api::platform_info_router(self.public.clone()),
-            )
-            // Public
-            .nest(PATH_API_PUBLIC, public_router(self.public))
-            // The function host control plane (desired state, heartbeat,
-            // emit, artifact download), gated on the host role.
-            .merge(crate::function::control_api::function_control_router(
-                self.function_control,
-            ));
+    // Go's spec routes (internal/server/wire_spec.go): the programmable
+    // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
+    let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
 
-        // Dispatch processing (optional — only when message router callback is needed)
-        let app = if let Some(dispatch_process) = self.dispatch_process {
-            app.nest(PATH_API_DISPATCH, dispatch_process_router(dispatch_process))
-        } else {
-            app
-        };
-
-        // Go's spec routes (internal/server/wire_spec.go): the programmable
-        // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
-        let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
-
-        let app = app
-            // Health
-            .route(PATH_HEALTH, get(health_handler))
-            // The function manifest's JSON Schema: unauthenticated, as in
-            // Java (Platform.java:724-727), because an editor fetches it
-            // with no token.
-            .merge(crate::function::schema::function_manifest_schema_router())
-            // Java's function API contract, verbatim and unauthenticated
-            // (FunctionOpenApiRoutes.java).
-            .merge(crate::function::openapi::functions_openapi_router())
-            // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
-            .merge(
-                SwaggerUi::new(PATH_SWAGGER_UI)
-                    .external_url_unchecked(PATH_OPENAPI_SPEC, openapi.clone()),
-            )
-            // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
-            // into Swagger UI to keep the default UI aligned with the SDK
-            // contract. Body is pre-serialised at boot.
-            .route(
-                PATH_OPENAPI_SPEC_FULL,
-                get({
-                    let body = openapi_full_bytes;
-                    move || {
-                        let body = body.clone();
-                        async move {
-                            (
-                                [(axum::http::header::CONTENT_TYPE, "application/json")],
-                                body,
-                            )
-                        }
+    let app = app
+        // Health
+        .route(PATH_HEALTH, get(health_handler))
+        // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
+        .merge(
+            SwaggerUi::new(PATH_SWAGGER_UI)
+                .external_url_unchecked(PATH_OPENAPI_SPEC, openapi.clone()),
+        )
+        // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
+        // into Swagger UI to keep the default UI aligned with the SDK
+        // contract. Body is pre-serialised at boot.
+        .route(
+            PATH_OPENAPI_SPEC_FULL,
+            get({
+                let body = openapi_full_bytes;
+                move || {
+                    let body = body.clone();
+                    async move {
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            body,
+                        )
                     }
-                }),
-            );
+                }
+            }),
+        );
 
-        // Extractor rejections (unreadable body, query or path) answer in
-        // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
-        let app = app.layer(axum::middleware::from_fn(
-            crate::shared::rejection::go_rejections,
-        ));
+    // Extractor rejections (unreadable body, query or path) answer in
+    // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
+    let app = app.layer(axum::middleware::from_fn(
+        crate::shared::rejection::go_rejections,
+    ));
 
-        // SPA serving (if static_dir is configured). No static_dir: no root
-        // handler. The binary can add its own (fc-dev uses embedded assets,
-        // fc-server may redirect to Swagger).
-        let app = match self.static_dir {
-            Some(ref static_dir) => serve_spa(app, static_dir),
-            None => app,
-        };
+    // SPA serving (if static_dir is configured). No static_dir: no root
+    // handler. The binary can add its own (fc-dev uses embedded assets,
+    // fc-server may redirect to Swagger).
+    let app = match ctx.config.static_dir {
+        Some(ref static_dir) => serve_spa(app, static_dir),
+        None => app,
+    };
 
-        // A USER with no platform role reaches only its own profile (Go
-        // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
-        // which installs the auth services it authenticates with.
-        let app = app.layer(axum::middleware::from_fn(
-            crate::shared::profile_only::profile_only_without_role,
-        ));
+    // A USER with no platform role reaches only its own profile (Go
+    // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
+    // which installs the auth services it authenticates with.
+    let app = app.layer(axum::middleware::from_fn(
+        crate::shared::profile_only::profile_only_without_role,
+    ));
 
-        (app, openapi)
-    }
+    (app, openapi)
 }
 
 /// Serve the SPA in `static_dir` under `app`: hashed `/assets/*` immutable,
@@ -851,16 +266,6 @@ pub fn serve_spa(app: Router, static_dir: &str) -> Router {
         tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
         app
     }
-}
-
-/// `POST /auth/password-reset/request`'s one answer — for a known address,
-/// an unknown one, and one over its budget alike (the handler's silent
-/// success; `password_reset_email_budget_is_silent` pins the two equal).
-fn password_reset_requested_response() -> axum::response::Response {
-    Json(serde_json::json!({
-        "message": "If an account exists, a reset email has been sent."
-    }))
-    .into_response()
 }
 
 /// The platform API listener's timeouts (owner ruling 10): keep-alive idle

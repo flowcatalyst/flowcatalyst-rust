@@ -12,7 +12,6 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::dispatch_job::api::{DispatchJobReadResponse, DispatchJobsQuery, DispatchJobsState};
 use crate::event::api::{EventListItem, EventsQuery, EventsState};
@@ -121,16 +120,4 @@ pub async fn bff_dispatch_jobs_by_event(
     checks::can_read_dispatch_jobs(&auth.0)?;
     crate::dispatch_job::api::get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id))
         .await
-}
-
-/// Full-path router; merged at the root.
-pub fn read_aliases_router(state: ReadAliasesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(api_list_events_raw))
-        .routes(routes!(bff_list_events_raw))
-        .routes(routes!(api_list_dispatch_jobs_raw))
-        .routes(routes!(bff_list_dispatch_jobs_raw))
-        .routes(routes!(api_dispatch_jobs_by_event))
-        .routes(routes!(bff_dispatch_jobs_by_event))
-        .with_state(state)
 }

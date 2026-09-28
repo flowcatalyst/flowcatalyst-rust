@@ -7,3 +7,6 @@ pub mod entity;
 pub mod operations;
 pub mod platform_docs;
 pub mod repository;
+pub mod routes;
+
+pub use routes::routes;

@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -456,15 +455,4 @@ pub async fn get_pool_stats(
         aggregate_success_rate,
         aggregate_throughput_per_sec: total_throughput,
     }))
-}
-
-/// Create monitoring router
-pub fn monitoring_router(state: MonitoringState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(get_standby_status))
-        .routes(routes!(get_dashboard))
-        .routes(routes!(get_circuit_breakers))
-        .routes(routes!(get_in_flight_messages))
-        .routes(routes!(get_pool_stats))
-        .with_state(state)
 }

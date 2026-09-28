@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::warn;
 use utoipa::ToSchema;
-use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
@@ -643,14 +642,3 @@ pub async fn delete_credential(
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
-
-pub fn webauthn_router(state: WebauthnApiState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(register_begin))
-        .routes(routes!(register_complete))
-        .routes(routes!(authenticate_begin))
-        .routes(routes!(authenticate_complete))
-        .routes(routes!(list_credentials))
-        .routes(routes!(delete_credential))
-        .with_state(state)
-}

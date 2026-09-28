@@ -10,8 +10,10 @@ pub mod entity;
 pub mod gate;
 pub mod operations;
 pub mod repository;
+pub mod routes;
 pub mod webauthn_service;
 
-pub use api::{webauthn_router, WebauthnApiState};
+pub use api::WebauthnApiState;
+pub use routes::{routes, webauthn_router};
 pub use ceremony_repository::WebauthnCeremonyRepository;
 pub use webauthn_service::WebauthnService;

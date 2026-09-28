@@ -6,3 +6,6 @@
 pub mod api;
 pub mod operations;
 pub mod repository;
+pub mod routes;
+
+pub use routes::routes;

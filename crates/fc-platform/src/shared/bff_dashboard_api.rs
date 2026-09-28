@@ -14,7 +14,7 @@
 //! Frontend renders the message-plane numbers with a `~` prefix to make the
 //! approximation explicit.
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{extract::State, Json};
 use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
@@ -126,10 +126,4 @@ pub async fn get_dashboard_stats(
         audit_logs_approx: by_name.remove("aud_logs").unwrap_or(0),
         login_attempts_approx: by_name.remove("iam_login_attempts").unwrap_or(0),
     }))
-}
-
-pub fn bff_dashboard_router(state: BffDashboardState) -> Router {
-    Router::new()
-        .route("/stats", get(get_dashboard_stats))
-        .with_state(state)
 }

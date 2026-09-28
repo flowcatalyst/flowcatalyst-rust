@@ -11,7 +11,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::process::entity::{Process, ProcessStatus};
 use crate::process::operations::{
@@ -363,13 +362,4 @@ pub async fn delete_process(
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-pub fn processes_router(state: ProcessesState) -> OpenApiRouter {
-    OpenApiRouter::new()
-        .routes(routes!(create_process, list_processes))
-        .routes(routes!(get_process, update_process, delete_process))
-        .routes(routes!(get_process_by_code))
-        .routes(routes!(archive_process))
-        .with_state(state)
 }
