@@ -382,8 +382,36 @@ Measured with `crates/fc-router/tests/throughput_bench.rs`: in process, with
 a target that answers at once, so only the router's own work counts
 (routing, tracking, the pool, spans, the recorder).
 
-OVERHEAD_TABLE
+200 000 messages per run, median of five runs, runs of each build
+interleaved. The machine was shared with heavy parallel builds (load average
+300 to 600), so single runs spread by ±30%; treat differences under ~10% as
+noise.
 
-A real delivery is an HTTP exchange costing tens of microseconds of CPU and
-milliseconds of wall time, so the added per-message cost is a small fraction
-of a deployed router's work.
+| Build (macOS arm64, 4 runtime workers) | No subscriber | Production JSON layer at INFO |
+|---|---|---|
+| `main` before this work | 233k msg/s, 9.1 µs CPU/msg | 198k msg/s, 8.8 µs CPU/msg |
+| this branch | 233k msg/s, 12.2 µs CPU/msg | 119k msg/s (spread 88k–191k), 14.2 µs CPU/msg |
+| this branch, `FC_ROUTER_FLIGHT_RECORDER_EVENTS=0` | 238k msg/s, 11.1 µs CPU/msg | 168k msg/s, 11.9 µs CPU/msg |
+
+| Build (Linux aarch64 container, 4 CPUs, this branch) | No subscriber | JSON at INFO |
+|---|---|---|
+| stable tokio | 88k msg/s, 18.3 µs CPU/msg | 73k msg/s, 24.3 µs CPU/msg |
+| `--cfg tokio_unstable` + `taskdump` (the image) | 90k msg/s, 18.8 µs CPU/msg | 59k msg/s, 25.1 µs CPU/msg |
+
+Reading them:
+
+- **Spans** cost nothing without a subscriber (the rate is unchanged) and a
+  few microseconds of CPU per message when the JSON layer formats them: the
+  `router.dispatch` span's fields are rendered once per message. On a quieter
+  run of the same bench (load ~140) that was 250k → 185k msg/s, about
+  1.4 µs of wall time per message at the in-process ceiling.
+- **The flight recorder** costs about 1 µs of CPU per message (four or five
+  events, each a short mutex push with no formatting).
+- **Task dumps** (the build flag): no difference beyond run-to-run noise
+  (+3% CPU/msg at the medians), as tokio documents.
+- A deployed router's messages are HTTP deliveries (TLS, a connection pool,
+  tens of microseconds of CPU and milliseconds of wall time each) and its
+  throughput is bounded by pool concurrency and the targets, not by this
+  in-process path, so the added cost is a few percent of its CPU per
+  message.
+
