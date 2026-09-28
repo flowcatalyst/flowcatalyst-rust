@@ -63,6 +63,11 @@ Liveness should be loose (a stuck SQS connection isn't a reason to restart the p
 
 ## Metrics
 
+Runtime diagnostics (tokio runtime and process series, panics, supervised
+task restarts, task dumps, the router's flight recorder and the span fields
+every log line carries) are in
+[diagnosing-stuck-processes.md](diagnosing-stuck-processes.md).
+
 All binaries expose Prometheus metrics at `:9090/metrics`. Scrape with Prometheus, push to whatever (Cortex, Mimir, Cloudwatch via the exporter, Datadog Agent, etc.).
 
 ### Router metrics

@@ -105,13 +105,21 @@ pub async fn task_dump(_handle: &Handle, _timeout: Duration) -> Result<String, T
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn answers_by_build() {
+        // A task parked in a known place, for the dump to show.
+        let parked = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
         let r = task_dump(&Handle::current(), Duration::from_secs(5)).await;
         if TASKDUMP_AVAILABLE {
-            assert!(r.unwrap().starts_with("tokio task dump"));
+            let text = r.unwrap();
+            println!("{}", text.lines().take(40).collect::<Vec<_>>().join("\n"));
+            assert!(text.starts_with("tokio task dump"));
+            assert!(text.contains("sleep"), "the parked task's frame: {text}");
         } else {
             assert_eq!(r, Err(TaskDumpError::NotAvailable));
         }
+        parked.abort();
     }
 }

@@ -89,6 +89,7 @@ Values are omitted; the task holds a webhook URL with a secret in it.
 | `FLOWCATALYST_DEV_MODE` | Go: an HTTP/1.1 mediator, nothing else | **Differs:** Rust's dev mode swaps in a built-in LocalStack config, and (owner ruling 2) it alone mounts the mock, benchmark and seed routes and allows Basic auth. Not set in production. |
 | `FC_ALB_*` | ALB self-registration | `fc-server` (feature `alb`): `FC_ALB_ENABLED`, `_TARGET_GROUP_ARN`, `_TARGET_ID`, `_TARGET_PORT`. It lacks Go's `FC_ALB_INSTANCE_IP`, `FC_ALB_REGION` and `FC_ALB_DEREGISTRATION_DELAY_SECONDS`. Not used in production (the ECS service registers targets). |
 | `FC_LOG_LEVEL` | Log level | Honoured when `RUST_LOG` is unset |
+| `FC_ROUTER_FLIGHT_RECORDER_EVENTS` | Not read (Go has no flight recorder) | Rust-only: events the router's flight recorder keeps, default 16384, `0` off ([diagnosing-stuck-processes.md](../operations/diagnosing-stuck-processes.md)) |
 
 ## C. Config sources (`FLOWCATALYST_CONFIG_URL`)
 

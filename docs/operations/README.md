@@ -17,6 +17,7 @@ For internal architecture see [../architecture/](../architecture/). For building
 | Setting up an IDP (Entra, Keycloak, …) | [identity-and-auth.md](identity-and-auth.md) |
 | Wiring up monitoring | [observability.md](observability.md) |
 | Responding to an incident | [runbooks.md](runbooks.md) |
+| Diagnosing a stuck router, pipeline or function host | [diagnosing-stuck-processes.md](diagnosing-stuck-processes.md) |
 
 ## At-a-glance checklist for a fresh production deploy
 

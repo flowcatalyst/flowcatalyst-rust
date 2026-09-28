@@ -17,6 +17,18 @@ For deployment shape (which binary, which subsystem toggles), see [topologies.md
 | `FC_EXTERNAL_BASE_URL` | `EXTERNAL_BASE_URL` | `http://localhost:{port}` | The OIDC issuer / external URL used in token claims and OIDC redirects |
 | `FC_DEV_MODE` | — | `false` | Enable dev data seeding |
 
+## Diagnostics (every binary)
+
+The full guide is [diagnosing-stuck-processes.md](diagnosing-stuck-processes.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `FC_ROUTER_FLIGHT_RECORDER_EVENTS` | `16384` | Router: events the flight recorder keeps (`0` = off) |
+| `FC_DIAGNOSTICS_PLATFORM_URL` | `FC_ROUTER_PLATFORM_URL`, else the in-process platform | fc-server: the platform that verifies tokens for `:9090/diagnostics/*` (none: 401) |
+| `FC_LOG_SPAN_EVENTS` | unset | `close` logs a line (with its duration) whenever a span closes; debugging only |
+| `FC_TOKIO_CONSOLE` / `FC_TOKIO_CONSOLE_BIND` | `false` / `127.0.0.1:6669` | tokio-console server (builds with the `tokio-console` feature) |
+| `FC_OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME` | `false`, `http://localhost:4318`, the binary's name | OTLP/HTTP span export (builds with the `otel` feature) |
+
 ---
 
 ## Database

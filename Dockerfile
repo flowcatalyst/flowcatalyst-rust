@@ -44,12 +44,26 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ── Stage 3: Build Rust dependencies (cached layer) ─────────────────
 FROM chef AS builder
 
+# Tokio task dumps (GET /diagnostics/task-dump; see
+# docs/operations/diagnosing-stuck-processes.md): tokio's `taskdump` feature
+# needs `--cfg tokio_unstable`, so the image is built with both. It costs
+# nothing measurable until a dump is asked for (tokio's own docs, and
+# crates/fc-router/tests/throughput_bench.rs on Linux). Build with
+# --build-arg FC_TASKDUMP=0 for an image on stable tokio only; its
+# /diagnostics/task-dump then answers 501. The flags must be the same for
+# the cook and the build, or the cooked dependencies are thrown away.
+ARG FC_TASKDUMP=1
+ENV FC_TASKDUMP=${FC_TASKDUMP}
+
 COPY --from=planner /app/recipe.json recipe.json
 # fc-dev's optional `web` dependency lives outside the workspace, so the
 # recipe does not carry it; cargo still reads its manifest to resolve the
 # lockfile (it is never built here).
 COPY crates/fc-web ./crates/fc-web
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN if [ "$FC_TASKDUMP" = "1" ]; then \
+      export RUSTFLAGS="--cfg tokio_unstable" FEATURES="--features fc-server/taskdump"; \
+    fi; \
+    cargo chef cook --release --recipe-path recipe.json $FEATURES
 
 # Copy source and build
 COPY Cargo.toml Cargo.lock ./
@@ -66,7 +80,10 @@ COPY docs/published ./docs/published
 # means the workspace package version.
 ARG FC_BUILD_VERSION=
 ENV FC_BUILD_VERSION=${FC_BUILD_VERSION}
-RUN cargo build --release --bin fc-server
+RUN if [ "$FC_TASKDUMP" = "1" ]; then \
+      export RUSTFLAGS="--cfg tokio_unstable" FEATURES="--features taskdump"; \
+    fi; \
+    cargo build --release -p fc-server --bin fc-server $FEATURES
 
 # ── Stage 4: Runtime — distroless (no shell, no package manager) ────
 # All TLS is via rustls (no OpenSSL needed). CA certs are bundled.
