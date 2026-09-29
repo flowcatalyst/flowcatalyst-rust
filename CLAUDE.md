@@ -24,7 +24,7 @@ Missing either is a privilege-escalation bug.
 ## UoW Invariant (Sealed)
 
 `UseCase::execute` returns `Result<Committed<Event>, UseCaseError>`.
-`Committed<T>` (`usecase/result.rs`) is sealed: its constructor is
+`Committed<T>` (`crates/fc-platform-core/src/usecase/result.rs`) is sealed: its constructor is
 `pub(in crate::usecase)`, so the only code that can produce one is
 `UnitOfWork::commit` / `commit_delete` / `commit_all` / `emit_event` /
 `emit_events` / `commit_all_with_events` and `PgUnitOfWork::run` / `run_as`.
@@ -52,7 +52,7 @@ Aggregates can't persist themselves — `impl Persist<X> for XRepository`
 lives on the repository, not on the aggregate. Use cases write via
 `unit_of_work.commit(&agg, &*self.repo, event, &command)` (or
 `commit_delete`). Direct `repo.insert/update/delete` from a use case body
-is forbidden by convention; `tests/uow_convention_test.rs` asserts that
+is forbidden by convention; `crates/fc-platform/tests/it/uow_convention_test.rs` asserts that
 every use case's `execute` body reaches a `unit_of_work.*` call on the
 happy path, catching any regressions.
 
@@ -149,9 +149,11 @@ Import with `use` at the top of the file and write the short name
 `std::sync::Arc`; `EventType`, not `crate::event_type::entity::EventType`).
 Inline paths only to disambiguate two same-named items (or `use … as …`), and
 for handler paths inside `routes!(…)`, which stay fully qualified for the
-route-auth scanner. The codebase still has many inline paths; clean them up in
-files you touch. (Clippy's `absolute_paths` lint will enforce this once the
-existing ones are removed.)
+route-auth scanner. `clippy::absolute_paths` enforces this in every workspace
+crate (`absolute-paths-max-segments = 2`, `clippy.toml`); the `routes.rs` files
+and `router.rs` allow it, because handler paths inside `routes!(…)` and
+router.rs's `crate::<module>::routes(ctx)` list stay fully qualified for the
+route-auth and route-wiring scanners.
 
 ## Dependencies (supply chain)
 Read `docs/operations/supply-chain.md` before adding or updating a crate.
@@ -181,7 +183,7 @@ Vite hashed assets (`/assets/*`) are served with `Cache-Control: public, max-age
 ### UseCase Trait Contract
 Every write operation MUST implement the `UseCase` trait, which enforces three steps:
 1. **`validate`** — Input validation (field presence, format, length). Return `Ok(())` if none needed.
-2. **`authorize`** — May this caller act on this target? From `ctx.caller()`: a `Caller` that is the request's principal (`ExecutionContext::from_auth`, plus `.with_application_scope` where needed) or the explicit `Caller::system()` (`ExecutionContext::system(id)`). Use the `checks::*`, `caller_reach::*` and `role::ceiling` helpers (they take any `Authority`). A rule on the stored row loads it and leaves a missing row to `execute`'s 404; a handler's exact refusal carries through with `UseCaseError::verbatim`. An empty `Ok(())` needs an entry, with its reason, in `tests/use_case_shape_convention_test.rs`.
+2. **`authorize`** — May this caller act on this target? From `ctx.caller()`: a `Caller` that is the request's principal (`ExecutionContext::from_auth`, plus `.with_application_scope` where needed) or the explicit `Caller::system()` (`ExecutionContext::system(id)`). Use the `checks::*`, `caller_reach::*` and `role::ceiling` helpers (they take any `Authority`). A rule on the stored row loads it and leaves a missing row to `execute`'s 404; a handler's exact refusal carries through with `UseCaseError::verbatim`. An empty `Ok(())` needs an entry, with its reason, in `crates/fc-platform/tests/it/use_case_shape_convention_test.rs`.
 3. **`execute`** — Business logic: load aggregate, check business rules, build domain event, call `unit_of_work.commit()`.
 
 Handlers call `use_case.run(command, ctx)` which executes validate → authorize → execute in order.
@@ -358,27 +360,55 @@ newtype and its consumers — not every repository method signature.
 
 ### Where New Code Goes
 
-Adding a new aggregate? You create, in order:
+The platform is seven crates. Each keeps its modules at their historical
+paths, and `fc-platform` re-exports every one at `fc_platform::<module>`.
+
+| Crate | For |
+|---|---|
+| `crates/fc-platform-core` | the kernel: `usecase`, errors, ids, the authorization context and `checks`, extractors and `AuthLayer`, database, encryption, email, rate limiting, the permission catalogue, `directory` (the IAM lookup traits) |
+| `crates/fc-platform-iam` | tenancy, identity and access (clients, applications, principals, roles, service accounts, OAuth clients, identity providers, platform config, audit) |
+| `crates/fc-platform-auth` | the sign-in flows (OAuth/OIDC, sessions, password reset, 2FA login, passkeys, the portal login plane) |
+| `crates/fc-platform-messaging` | event types, events, subscriptions, connections, dispatch pools and jobs, processes |
+| `crates/fc-platform-scheduled-jobs` | scheduled jobs |
+| `crates/fc-platform-functions` | the function registry |
+| `crates/fc-platform` | the assembly: every aggregate's `routes.rs`, `router.rs`, the `PlatformContext`, OpenAPI, seeding, cross-aggregate endpoints |
+
+Dependencies point down only: core ← iam ← auth; core ← messaging,
+scheduled-jobs; messaging + scheduled-jobs ← functions; everything ←
+fc-platform. Messaging, scheduled jobs and functions read IAM through
+`fc_platform_core::directory` (the assembly injects iam's repositories),
+never `fc_platform_iam` directly.
+
+Adding a new aggregate? In the crate it belongs to, in order:
 1. `src/<domain>/entity.rs` — pure Rust structs, no sqlx.
 2. `src/<domain>/repository.rs` — `struct <Aggregate>Repository`, row types, all SQL, and `impl Persist<Aggregate> for <Aggregate>Repository`.
 3. `src/<domain>/operations/*.rs` — one file per use case. Call `unit_of_work.commit(...)` at the tail.
-4. `src/<domain>/api.rs` (and `bff.rs` for BFF-only handlers) — HTTP handlers. Permission checks, build Command, call `use_case.run(...)`.
-5. `src/<domain>/routes.rs` — `pub fn routes(ctx: &PlatformContext) -> AggregateRoutes`:
+4. `src/<domain>/api.rs` (and `bff.rs` for BFF-only handlers) — `pub` HTTP handlers. Permission checks, build Command, call `use_case.run(...)`.
+5. In `crates/fc-platform/src/<domain>/`: `mod.rs`
+   (`pub use fc_platform_<crate>::<domain>::*; pub mod routes;`) and
+   `routes.rs` — `pub fn routes(ctx: &PlatformContext) -> AggregateRoutes`:
    nest the handler-list routers at their prefixes (don't register literal
    full paths), put per-group layers here, build states with
-   `pub fn <x>_state(ctx)`. Handler paths in `routes!` are fully qualified
-   (`crate::<agg>::api::h`). Anything more than one state must share (a
-   cache, a limiter bucket) lives on `PlatformContext`, never built twice.
+   `pub fn <x>_state(ctx)`. Handler paths in `routes!` are fully qualified.
+   Anything more than one state must share (a cache, a limiter bucket) lives
+   on `PlatformContext`, never built twice.
 6. `router.rs` — add `.merge(crate::<agg>::routes(ctx))` to the module list,
    at the end unless it shares a path or schema name with an earlier module
    (order decides OpenAPI's first-wins schema names and the `Allow` order).
 
+A unit test that needs aggregates from a crate above the code it tests goes
+in `crates/fc-platform/src/split_tests/`. Integration tests are one `it`
+binary per crate: `cargo test -p <crate> --test it <file>::` (a few that
+change process-wide state — fc-platform's `route_table_snapshot_test` and
+`function_host_e2e_test`, fc-router's `log_correlation_test`, the
+fc-fnhost logging tests — stay their own binaries).
+
 Binaries and tests build a `PlatformContext` and call
 `fc_platform::router::build(&ctx)`. Guardrails:
-`tests/route_table_snapshot_test.rs` pins every route (methods, auth, limiter,
+`crates/fc-platform/tests/route_table_snapshot_test.rs` pins every route (methods, auth, limiter,
 OpenAPI membership) and the document bytes — regenerate with
 `UPDATE_ROUTE_SNAPSHOT=1` only for an intended change and review the diff;
-`tests/route_wiring_convention_test.rs` enforces the wiring rules above.
+`crates/fc-platform/tests/it/route_wiring_convention_test.rs` enforces the wiring rules above.
 
 If you find yourself adding SQL anywhere other than `repository.rs` (or one
 of the three infrastructure-processing files), you are in the wrong file.
