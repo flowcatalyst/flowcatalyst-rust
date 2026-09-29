@@ -155,7 +155,7 @@ pub(crate) async fn local_date(at: Option<String>) -> Result<impl View> {
 pub(crate) fn client_names(clients: &[Client]) -> HashMap<String, (String, String)> {
     clients
         .iter()
-        .map(|c| (c.id.clone(), (c.name.clone(), c.identifier.clone())))
+        .map(|c| (c.id.to_string(), (c.name.clone(), c.identifier.clone())))
         .collect()
 }
 
@@ -168,7 +168,7 @@ pub(crate) async fn reachable_clients(cx: &Cx, auth: &AuthContext) -> Result<Vec
         .find_all()
         .await
         .map_err(platform_error)?;
-    clients.retain(|c| auth.is_anchor() || auth.can_access_client(&c.id));
+    clients.retain(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()));
     clients.sort_by_key(|c| c.name.to_lowercase());
     Ok(clients)
 }
@@ -505,7 +505,7 @@ pub(crate) async fn user_list(
 
     let client_options: Vec<(String, String)> = clients
         .iter()
-        .map(|c| (c.id.clone(), c.name.clone()))
+        .map(|c| (c.id.to_string(), c.name.clone()))
         .collect();
     let role_options: Vec<(String, String)> = {
         let mut r: Vec<(String, String)> = roles
@@ -1067,8 +1067,13 @@ async fn domain_check(
             let options: Vec<(String, String)> = clients
                 .iter()
                 .filter(|cl| cl.status == fc_platform::ClientStatus::Active)
-                .filter(|cl| allowed.is_empty() || allowed.contains(&cl.id))
-                .map(|cl| (cl.id.clone(), format!("{} ({})", cl.name, cl.identifier)))
+                .filter(|cl| allowed.is_empty() || allowed.iter().any(|a| a == cl.id.as_str()))
+                .map(|cl| {
+                    (
+                        cl.id.to_string(),
+                        format!("{} ({})", cl.name, cl.identifier),
+                    )
+                })
                 .collect();
             (
                 c.requires_client_id,

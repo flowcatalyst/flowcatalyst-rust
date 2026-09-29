@@ -122,7 +122,7 @@ async fn client_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> R
     let needle = search.to_lowercase();
     let rows: Vec<Client> = all
         .into_iter()
-        .filter(|c| auth.is_anchor() || auth.can_access_client(&c.id))
+        .filter(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()))
         .filter(|c| {
             needle.is_empty()
                 || c.identifier.to_lowercase().contains(&needle)
@@ -184,11 +184,11 @@ async fn client_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> R
                         <tr><td colspan="5">"No clients found"</td></tr>
                     }
                     for c in &rows {
-                        let id = c.id.clone();
-                        let edit_id = c.id.clone();
+                        let id = c.id.to_string();
+                        let edit_id = c.id.to_string();
                         <tr class="fc-row-link" @click=$(|_e: Event| { selected.set(id.clone()); editing.set(false) })>
                             <td>
-                                <a href=(detail_href(&c.id)) onclick="event.preventDefault()" class="no-underline">
+                                <a href=(detail_href(c.id.as_str())) onclick="event.preventDefault()" class="no-underline">
                                     <code class="rounded bg-[#f1f5f9] px-2 py-0.5 text-[13px] text-[#1e293b]">(&c.identifier)</code>
                                 </a>
                             </td>
@@ -197,7 +197,7 @@ async fn client_list(cx: &Cx, open_id: String, create: Option<CreateState>) -> R
                             <td>local_date(at: c.created_at)</td>
                             <td>
                                 <a
-                                    href=(format!("{}?edit=true", detail_href(&c.id)))
+                                    href=(format!("{}?edit=true", detail_href(c.id.as_str())))
                                     class="fc-icon-btn text-[#059669]"
                                     title="Edit"
                                     onclick="event.preventDefault(); event.stopPropagation()"
@@ -300,13 +300,13 @@ async fn drawer_body(
     editing: Signal<bool>,
 ) -> Result<impl View> {
     let can_update = checks::can_update_clients(&auth).is_ok();
-    let base = detail_href(&client.id);
+    let base = detail_href(client.id.as_str());
     let form_id = "client-edit-form";
     let (start, discard) = (editing.clone(), editing.clone());
     let status = client.status;
     let available = apps.iter().filter(|a| !a.enabled).count();
     let enabled = apps.len() - available;
-    let copy_id = client.id.clone();
+    let copy_id = client.id.to_string();
 
     Ok(view! {
         drawer_header(title: client.name.clone(), subtitle: Some(client.identifier.clone()),
@@ -328,7 +328,7 @@ async fn drawer_body(
                     <div class="fc-detail-grid" :hidden=$(editing.get())>
                         detail_field(label: "Client ID",
                             <span class="inline-flex items-center gap-1">
-                                <code>(&client.id)</code>
+                                <code>(client.id.as_str())</code>
                                 <button type="button" class="fc-icon-btn h-7 w-7 text-[#059669]" title="Copy client ID" data-copy=(copy_id) onclick="navigator.clipboard.writeText(this.dataset.copy)">
                                     icon(data: iconify_icon!("lucide:copy"), size: Length::rem(0.9))
                                 </button>
@@ -344,7 +344,7 @@ async fn drawer_body(
                         detail_field(label: "Updated", local_time(at: client.updated_at))
                     </div>
                     if can_update {
-                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(&client.id) :hidden=$(!editing.get())>
+                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(client.id.as_str()) :hidden=$(!editing.get())>
                             form_field(label: "Name", for_id: "client-name", span: true,
                                 <input id="client-name" name="name" class="fc-input" value=(&client.name) required="" maxlength="255">
                             )

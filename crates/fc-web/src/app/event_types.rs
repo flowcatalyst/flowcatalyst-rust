@@ -329,13 +329,13 @@ async fn event_type_list(
                     </thead>
                     <tbody>
                         for et in &rows {
-                            let id = et.id.clone();
-                            let edit_id = et.id.clone();
+                            let id = et.id.to_string();
+                            let edit_id = et.id.to_string();
                             <tr class="fc-row-link" @click=$(|_e: Event| { selected.set(id.clone()); editing.set(false) })>
                                 <td>
                                     // A real link for new tabs and no-JS; a plain
                                     // click opens the drawer in place.
-                                    <a href=(detail_href(&et.id)) onclick="event.preventDefault()" class="no-underline">
+                                    <a href=(detail_href(et.id.as_str())) onclick="event.preventDefault()" class="no-underline">
                                         code_chips(code: et.code.clone())
                                     </a>
                                 </td>
@@ -358,7 +358,7 @@ async fn event_type_list(
                                 <td>tag(label: et.status.as_str(), severity: status_severity(et.status))</td>
                                 <td class="text-right">
                                     <a
-                                        href=(format!("{}?edit=true", detail_href(&et.id)))
+                                        href=(format!("{}?edit=true", detail_href(et.id.as_str())))
                                         class="fc-icon-btn"
                                         title="Edit"
                                         onclick="event.preventDefault(); event.stopPropagation()"
@@ -419,7 +419,7 @@ async fn drawer_body(auth: AuthContext, et: EventType, editing: Signal<bool>) ->
     let can_modify = can_write && ensure_modifiable(&auth, &et, "modify").is_ok();
     let current = et.status == EventTypeStatus::Current;
     let editable = can_modify && current;
-    let base = detail_href(&et.id);
+    let base = detail_href(et.id.as_str());
     let archivable = can_archive(&et);
     let deletable = can_delete(&et);
     let form_id = "et-edit-form";
@@ -456,7 +456,7 @@ async fn drawer_body(auth: AuthContext, et: EventType, editing: Signal<bool>) ->
                         )
                     </div>
                     if editable {
-                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(&et.id) :hidden=$(!editing.get())>
+                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(et.id.as_str()) :hidden=$(!editing.get())>
                             form_field(label: "Name", for_id: "et-name", span: true,
                                 <input id="et-name" name="name" class="fc-input" value=(&et.name) required="" maxlength="100">
                             )
@@ -937,7 +937,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         UpdateEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 UpdateEventTypeCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                     name: Some(form.name.trim().to_owned()),
                     description: Some(form.description.trim().to_owned()),
                     client_scoped: None,
@@ -948,7 +948,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&et.id);
+    let base = detail_href(et.id.as_str());
     let retry = format!("{base}?edit=true");
     finish(cx, outcome, "Event type updated", base, retry)
 }
@@ -968,7 +968,7 @@ async fn finalise_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOt
         FinaliseSchemaUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 FinaliseSchemaCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                     version: form.version.clone(),
                 },
                 ExecutionContext::from_auth(auth),
@@ -977,7 +977,7 @@ async fn finalise_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeOt
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&et.id);
+    let base = detail_href(et.id.as_str());
     let ok = format!("Schema {} finalised", form.version);
     finish(cx, outcome, &ok, base.clone(), base)
 }
@@ -992,7 +992,7 @@ async fn deprecate_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeO
         DeprecateSchemaUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeprecateSchemaCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                     version: form.version.clone(),
                 },
                 ExecutionContext::from_auth(auth),
@@ -1001,7 +1001,7 @@ async fn deprecate_schema(cx: &Cx, Form(form): Form<VersionForm>) -> Result<SeeO
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&et.id);
+    let base = detail_href(et.id.as_str());
     let ok = format!("Schema {} deprecated", form.version);
     finish(cx, outcome, &ok, base.clone(), base)
 }
@@ -1016,7 +1016,7 @@ async fn archive(cx: &Cx) -> Result<SeeOther> {
         ArchiveEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 ArchiveEventTypeCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1024,7 +1024,7 @@ async fn archive(cx: &Cx) -> Result<SeeOther> {
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&et.id);
+    let base = detail_href(et.id.as_str());
     finish(cx, outcome, "Event type archived", base.clone(), base)
 }
 
@@ -1038,7 +1038,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteEventTypeUseCase::new(deps.event_type_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeleteEventTypeCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1051,7 +1051,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         outcome,
         "Event type deleted",
         LIST.to_owned(),
-        detail_href(&et.id),
+        detail_href(et.id.as_str()),
     )
 }
 

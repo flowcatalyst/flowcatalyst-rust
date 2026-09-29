@@ -263,7 +263,7 @@ async fn load(cx: &Cx, auth: &AuthContext, id: &str) -> Result<Loaded> {
         apps,
         clients: clients
             .into_iter()
-            .map(|c| (c.id, c.name, c.identifier))
+            .map(|c| (c.id.into_string(), c.name, c.identifier))
             .collect(),
         role_defs: role_defs
             .into_iter()

@@ -109,7 +109,7 @@ async fn enrich(cx: &Cx, subs: &mut [Subscription]) -> Result<()> {
     let client_ids: Vec<String> = subs
         .iter()
         .filter(|s| s.client_identifier.is_none())
-        .filter_map(|s| s.client_id.clone())
+        .filter_map(|s| s.client_id.as_ref().map(|c| c.to_string()))
         .collect();
     let (pools, clients) = tokio::try_join!(
         async {
@@ -128,10 +128,14 @@ async fn enrich(cx: &Cx, subs: &mut [Subscription]) -> Result<()> {
         },
     )
     .map_err(platform_error)?;
-    let pools: std::collections::HashMap<String, String> =
-        pools.into_iter().map(|p| (p.id, p.code)).collect();
-    let clients: std::collections::HashMap<String, String> =
-        clients.into_iter().map(|c| (c.id, c.identifier)).collect();
+    let pools: std::collections::HashMap<String, String> = pools
+        .into_iter()
+        .map(|p| (p.id.into_string(), p.code))
+        .collect();
+    let clients: std::collections::HashMap<String, String> = clients
+        .into_iter()
+        .map(|c| (c.id.into_string(), c.identifier))
+        .collect();
     for s in subs.iter_mut() {
         if s.dispatch_pool_code.is_none() {
             s.dispatch_pool_code = s
@@ -140,7 +144,10 @@ async fn enrich(cx: &Cx, subs: &mut [Subscription]) -> Result<()> {
                 .and_then(|id| pools.get(id).cloned());
         }
         if s.client_identifier.is_none() {
-            s.client_identifier = s.client_id.as_ref().and_then(|id| clients.get(id).cloned());
+            s.client_identifier = s
+                .client_id
+                .as_ref()
+                .and_then(|id| clients.get(id.as_str()).cloned());
         }
     }
     Ok(())
@@ -321,12 +328,12 @@ async fn subscription_list(
                     </thead>
                     <tbody>
                         for s in &rows {
-                            let id = s.id.clone();
-                            let edit_id = s.id.clone();
+                            let id = s.id.to_string();
+                            let edit_id = s.id.to_string();
                             let count = s.event_types.len();
                             <tr class="fc-row-link" @click=$(|_e: Event| { selected.set(id.clone()); editing.set(false) })>
                                 <td>
-                                    <a href=(detail_href(&s.id)) onclick="event.preventDefault()" class="no-underline">
+                                    <a href=(detail_href(s.id.as_str())) onclick="event.preventDefault()" class="no-underline">
                                         <code class="rounded bg-[#f1f5f9] px-2 py-0.5 text-[13px] text-[#1e293b]">(&s.code)</code>
                                     </a>
                                 </td>
@@ -349,7 +356,7 @@ async fn subscription_list(
                                 <td>local_date(at: s.created_at)</td>
                                 <td>
                                     <a
-                                        href=(format!("{}?edit=true", detail_href(&s.id)))
+                                        href=(format!("{}?edit=true", detail_href(s.id.as_str())))
                                         class="fc-icon-btn"
                                         title="Edit"
                                         onclick="event.preventDefault(); event.stopPropagation()"
@@ -421,7 +428,7 @@ async fn drawer_body(
     let deletable = checks::can_delete_subscriptions(&auth).is_ok()
         && ensure_modifiable(&auth, &sub, "delete").is_ok();
     let active = sub.status == SubscriptionStatus::Active;
-    let base = detail_href(&sub.id);
+    let base = detail_href(sub.id.as_str());
     let form_id = "sub-edit-form";
     let (start, discard) = (editing.clone(), editing.clone());
     let actions_editing = editing.clone();
@@ -474,7 +481,7 @@ async fn drawer_body(
                         detail_field(label: "Updated", crate::ui::local_time(at: sub.updated_at))
                     </div>
                     if editable {
-                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(&sub.id) :hidden=$(!editing.get())>
+                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(sub.id.as_str()) :hidden=$(!editing.get())>
                             form_field(label: "Name", for_id: "sub-name", span: true,
                                 <input id="sub-name" name="name" class="fc-input" value=(&sub.name) required="">
                             )
@@ -828,7 +835,7 @@ async fn create_subscription(
                 .map(|r| r.to_string())
                 .unwrap_or_else(|| "—".to_owned());
             (
-                p.id,
+                p.id.into_string(),
                 p.name,
                 format!("{} ({rate}/min, {} concurrent)", p.code, p.concurrency),
             )
@@ -836,12 +843,12 @@ async fn create_subscription(
         .collect();
     state.connections = connections
         .into_iter()
-        .map(|c| (c.id, c.name, c.code))
+        .map(|c| (c.id.into_string(), c.name, c.code))
         .collect();
     state.clients = clients
         .into_iter()
-        .filter(|c| auth.can_access_client(&c.id))
-        .map(|c| (c.id, format!("{} ({})", c.name, c.identifier)))
+        .filter(|c| auth.can_access_client(c.id.as_str()))
+        .map(|c| (c.id.into_string(), format!("{} ({})", c.name, c.identifier)))
         .collect();
     Ok(view! { subscription_list(open_id: String::new(), create: Some(state)) })
 }
@@ -1054,7 +1061,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     )
     .run(
         UpdateSubscriptionCommand {
-            subscription_id: sub.id.clone(),
+            subscription_id: sub.id.to_string(),
             name: Some(form.name.trim().to_owned()),
             description: Some(form.description.trim().to_owned()).filter(|d| !d.is_empty()),
             endpoint: Some(form.endpoint.trim().to_owned()),
@@ -1079,7 +1086,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
     .into_result()
     .map(|_| ())
     .map_err(PlatformError::from);
-    let base = detail_href(&sub.id);
+    let base = detail_href(sub.id.as_str());
     let retry = format!("{base}?edit=true");
     finish(cx, outcome, "Subscription updated", base, retry)
 }
@@ -1094,7 +1101,7 @@ async fn pause(cx: &Cx) -> Result<SeeOther> {
         PauseSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 PauseSubscriptionCommand {
-                    subscription_id: sub.id.clone(),
+                    subscription_id: sub.id.to_string(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1102,7 +1109,7 @@ async fn pause(cx: &Cx) -> Result<SeeOther> {
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&sub.id);
+    let base = detail_href(sub.id.as_str());
     finish(cx, outcome, "Subscription paused", base.clone(), base)
 }
 
@@ -1116,7 +1123,7 @@ async fn resume(cx: &Cx) -> Result<SeeOther> {
         ResumeSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 ResumeSubscriptionCommand {
-                    subscription_id: sub.id.clone(),
+                    subscription_id: sub.id.to_string(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1124,7 +1131,7 @@ async fn resume(cx: &Cx) -> Result<SeeOther> {
             .into_result()
             .map(|_| ())
             .map_err(PlatformError::from);
-    let base = detail_href(&sub.id);
+    let base = detail_href(sub.id.as_str());
     finish(cx, outcome, "Subscription resumed", base.clone(), base)
 }
 
@@ -1138,7 +1145,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         DeleteSubscriptionUseCase::new(deps.subscription_repo.clone(), deps.unit_of_work.clone())
             .run(
                 DeleteSubscriptionCommand {
-                    subscription_id: sub.id.clone(),
+                    subscription_id: sub.id.to_string(),
                 },
                 ExecutionContext::from_auth(auth),
             )
@@ -1151,6 +1158,6 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         outcome,
         "Subscription deleted",
         LIST.to_owned(),
-        detail_href(&sub.id),
+        detail_href(sub.id.as_str()),
     )
 }

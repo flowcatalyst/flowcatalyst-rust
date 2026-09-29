@@ -243,12 +243,12 @@ async fn connection_list(
                     </thead>
                     <tbody>
                         for c in &rows {
-                            let id = c.id.clone();
-                            let edit_id = c.id.clone();
+                            let id = c.id.to_string();
+                            let edit_id = c.id.to_string();
                             let (created_iso, created_utc) = local_date(c.created_at);
                             <tr class="fc-row-link" @click=$(|_e: Event| { selected.set(id.clone()); editing.set(false) })>
                                 <td>
-                                    <a href=(detail_href(&c.id)) onclick="event.preventDefault()" class="no-underline">
+                                    <a href=(detail_href(c.id.as_str())) onclick="event.preventDefault()" class="no-underline">
                                         <code class="rounded bg-[#f1f5f9] px-2 py-0.5 text-[13px] text-[#1e293b]">(&c.code)</code>
                                     </a>
                                 </td>
@@ -258,7 +258,7 @@ async fn connection_list(
                                 <td><time datetime=(created_iso) data-local="date">(created_utc)</time></td>
                                 <td>
                                     <a
-                                        href=(format!("{}?edit=true", detail_href(&c.id)))
+                                        href=(format!("{}?edit=true", detail_href(c.id.as_str())))
                                         class="fc-icon-btn text-[#059669]"
                                         title="Edit"
                                         onclick="event.preventDefault(); event.stopPropagation()"
@@ -319,7 +319,7 @@ async fn drawer_body(
 ) -> Result<impl View> {
     let editable = can_update(&auth);
     let deletable = can_delete(&auth);
-    let base = detail_href(&conn.id);
+    let base = detail_href(conn.id.as_str());
     let form_id = "conn-edit-form";
     let scope = conn
         .client_identifier
@@ -365,7 +365,7 @@ async fn drawer_body(
                         detail_field(label: "Updated", <time datetime=(updated_iso) data-local="">(updated_utc)</time>)
                     </div>
                     if editable {
-                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(&conn.id) :hidden=$(!editing.get())>
+                        <form id=(form_id) method="post" action=(format!("{base}/update")) class="fc-form-grid" data-dirty-form="" data-dirty-key=(conn.id.as_str()) :hidden=$(!editing.get())>
                             form_field(label: "Name", for_id: "conn-name", span: true,
                                 <input id="conn-name" name="name" class="fc-input" value=(&conn.name)>
                             )
@@ -555,7 +555,7 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
             .await
             .map_err(platform_error)?
             .into_iter()
-            .map(|sa| (sa.id, sa.name, sa.code))
+            .map(|sa| (sa.id.into_string(), sa.name, sa.code))
             .collect();
     }
     if checks::can_read_clients(auth).is_ok() {
@@ -565,7 +565,7 @@ async fn create_connection(cx: &Cx, form: Option<Form<CreateForm>>) -> Result<im
             .await
             .map_err(platform_error)?
             .into_iter()
-            .map(|c| (c.id, c.name, c.identifier))
+            .map(|c| (c.id.into_string(), c.name, c.identifier))
             .collect();
     }
     Ok(view! { connection_list(open_id: String::new(), create: Some(state)) })
@@ -740,7 +740,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         cx,
         auth,
         UpdateConnectionCommand {
-            connection_id: conn.id.clone(),
+            connection_id: conn.id.to_string(),
             name: Some(form.name),
             description: opt(&form.description),
             external_id: opt(&form.external_id),
@@ -751,7 +751,7 @@ async fn update(cx: &Cx, Form(form): Form<UpdateForm>) -> Result<SeeOther> {
         },
     )
     .await;
-    let base = detail_href(&conn.id);
+    let base = detail_href(conn.id.as_str());
     let retry = format!("{base}?edit=true");
     finish(cx, outcome, "Connection updated", base, retry)
 }
@@ -762,8 +762,13 @@ async fn pause(cx: &Cx) -> Result<SeeOther> {
     permit(checks::require_anchor(auth))?;
     permit(checks::can_update_connections(auth))?;
     let conn = load_for_write(cx, auth).await?;
-    let outcome = run_update(cx, auth, status_command(&conn.id, ConnectionStatus::Paused)).await;
-    let base = detail_href(&conn.id);
+    let outcome = run_update(
+        cx,
+        auth,
+        status_command(conn.id.as_str(), ConnectionStatus::Paused),
+    )
+    .await;
+    let base = detail_href(conn.id.as_str());
     finish(cx, outcome, "Connection paused", base.clone(), base)
 }
 
@@ -773,8 +778,13 @@ async fn activate(cx: &Cx) -> Result<SeeOther> {
     permit(checks::require_anchor(auth))?;
     permit(checks::can_update_connections(auth))?;
     let conn = load_for_write(cx, auth).await?;
-    let outcome = run_update(cx, auth, status_command(&conn.id, ConnectionStatus::Active)).await;
-    let base = detail_href(&conn.id);
+    let outcome = run_update(
+        cx,
+        auth,
+        status_command(conn.id.as_str(), ConnectionStatus::Active),
+    )
+    .await;
+    let base = detail_href(conn.id.as_str());
     finish(cx, outcome, "Connection activated", base.clone(), base)
 }
 
@@ -792,7 +802,7 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
     )
     .run(
         DeleteConnectionCommand {
-            connection_id: conn.id.clone(),
+            connection_id: conn.id.to_string(),
         },
         ExecutionContext::from_auth(auth),
     )
@@ -805,6 +815,6 @@ async fn delete(cx: &Cx) -> Result<SeeOther> {
         outcome,
         "Connection deleted",
         LIST.to_owned(),
-        detail_href(&conn.id),
+        detail_href(conn.id.as_str()),
     )
 }

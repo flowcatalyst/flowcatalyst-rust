@@ -55,8 +55,8 @@ pub(crate) async fn client_options(cx: &Cx, auth: &AuthContext) -> Result<Vec<(S
         .map_err(platform_error)?;
     Ok(clients
         .into_iter()
-        .filter(|c| auth.is_anchor() || auth.can_access_client(&c.id))
-        .map(|c| (c.id, c.name))
+        .filter(|c| auth.is_anchor() || auth.can_access_client(c.id.as_str()))
+        .map(|c| (c.id.into_string(), c.name))
         .collect())
 }
 
