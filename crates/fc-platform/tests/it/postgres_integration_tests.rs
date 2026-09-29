@@ -1021,9 +1021,9 @@ async fn test_service_account_crud() {
     repo.insert(&svc)
         .await
         .expect("Failed to insert service account");
-    let account_id = svc.service_account_table_id.clone().expect("account id");
+    let account_id = svc.account_id().to_string();
     let mut principal = Principal::new_service(&account_id, &svc.name, UserScope::Anchor);
-    principal.id = svc.id.clone();
+    principal.id = svc.id.to_string();
     PrincipalRepository::new(&pool)
         .insert(&principal)
         .await
@@ -1031,7 +1031,7 @@ async fn test_service_account_crud() {
 
     // Find by ID
     let found = repo
-        .find_by_id(&svc.id)
+        .find_by_id(svc.id.as_str())
         .await
         .expect("Failed to find service account");
     assert!(found.is_some());
@@ -1062,7 +1062,7 @@ async fn test_connection_crud() {
         .expect("Failed to insert service account");
 
     // Create a connection
-    let conn = Connection::new("test-conn", "Test Connection", &svc.id);
+    let conn = Connection::new("test-conn", "Test Connection", svc.id.as_str());
     conn_repo
         .insert(&conn)
         .await
@@ -1077,7 +1077,7 @@ async fn test_connection_crud() {
     let found = found.unwrap();
     assert_eq!(found.code, "test-conn");
     assert_eq!(found.name, "Test Connection");
-    assert_eq!(found.service_account_id, svc.id);
+    assert_eq!(found.service_account_id, svc.id.as_str());
     assert_eq!(found.status, ConnectionStatus::Active);
 
     // Pause
@@ -1398,7 +1398,7 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
             .find(|(c, _)| *c == "oauth_identity_providers.oidc_client_secret_ref"),
         Some(("oauth_identity_providers.oidc_client_secret_ref", 1))
     );
-    let sa_row_id = sa.service_account_table_id.clone().expect("account id");
+    let sa_row_id = sa.account_id().to_string();
     let token = stored(
         "SELECT wh_auth_token_ref FROM iam_service_accounts WHERE id = $1",
         sa_row_id.clone(),

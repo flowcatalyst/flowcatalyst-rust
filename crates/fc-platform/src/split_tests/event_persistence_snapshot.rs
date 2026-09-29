@@ -16,6 +16,9 @@
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 
+use fc_platform_core::shared::id::{PrincipalId, ServiceAccountId};
+use fc_platform_iam::service_account::entity::AccountRow;
+
 use crate::usecase::unit_of_work::{AuditRow, EventRow};
 use crate::usecase::{AuditMasked, DomainEvent, ExecutionContext};
 
@@ -467,8 +470,8 @@ fn scheduled_jobs_synced() {
 /// every account does.
 fn service_account() -> crate::ServiceAccount {
     let mut sa = crate::ServiceAccount::new("orders-bot", "Orders bot", UserScope::Anchor);
-    sa.id = "prn_1".to_string();
-    sa.service_account_table_id = Some("sac_1".to_string());
+    sa.id = PrincipalId::parse("prn_1").unwrap();
+    sa.service_account_table_id = Some(AccountRow::Own(ServiceAccountId::parse("sac_1").unwrap()));
     sa
 }
 

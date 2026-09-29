@@ -287,7 +287,7 @@ pub struct ServiceAccountResponse {
 impl From<ServiceAccount> for ServiceAccountResponse {
     fn from(sa: ServiceAccount) -> Self {
         Self {
-            id: sa.service_account_table_id.unwrap_or(sa.id),
+            id: sa.account_id().to_string(),
             code: sa.code,
             name: sa.name,
             description: sa.description,
@@ -522,7 +522,7 @@ pub async fn get_service_account<U: UnitOfWork>(
 
     // Go getByID: the linked principal, and the public client_id of its
     // earliest OAuth client (by created_at, then id).
-    let principal_id = account.id.clone();
+    let principal_id = account.id.to_string();
     let mut clients = state
         .oauth_client_repo
         .find_by_service_account_principal_id(&principal_id)
@@ -685,7 +685,7 @@ pub async fn create_service_account<U: UnitOfWork>(
             Ok((
                 StatusCode::CREATED,
                 Json(CreateServiceAccountResponse {
-                    principal_id: account.id.clone(),
+                    principal_id: account.id.to_string(),
                     service_account: ServiceAccountResponse::from(account),
                     oauth: OAuthCredentials {
                         client_id: oauth_client_id,
@@ -1148,7 +1148,7 @@ pub async fn mint_service_account_token(
     // The account's `id` is its SERVICE principal's.
     let principal = state
         .principal_repo
-        .find_by_id(&sa.id)
+        .find_by_id(sa.id.as_str())
         .await?
         .ok_or_else(|| PlatformError::Coded {
             status: StatusCode::INTERNAL_SERVER_ERROR,

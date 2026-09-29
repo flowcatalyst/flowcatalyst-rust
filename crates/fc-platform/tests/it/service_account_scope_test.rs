@@ -230,13 +230,14 @@ async fn absent_scope_follows_the_client_links() {
 
     let p = principal(
         &app,
-        &app.repos
+        app.repos
             .service_account_repo
             .find_by_code("two")
             .await
             .unwrap()
             .unwrap()
-            .id,
+            .id
+            .as_str(),
     )
     .await;
     let mut granted = p.assigned_clients.clone();

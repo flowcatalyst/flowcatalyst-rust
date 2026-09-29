@@ -219,14 +219,17 @@ impl ServiceAccountSecretRegenerated {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service_account::entity::AccountRow;
     use fc_platform_core::principal_kind::UserScope;
+    use fc_platform_core::shared::id::{PrincipalId, ServiceAccountId};
 
     /// An account whose SERVICE principal (`prn_1`) and own row (`sac_1`)
     /// have different ids, as every account does.
     fn account() -> ServiceAccount {
         let mut sa = ServiceAccount::new("my-service", "My Service", UserScope::Anchor);
-        sa.id = "prn_1".to_string();
-        sa.service_account_table_id = Some("sac_1".to_string());
+        sa.id = PrincipalId::parse("prn_1").unwrap();
+        sa.service_account_table_id =
+            Some(AccountRow::Own(ServiceAccountId::parse("sac_1").unwrap()));
         sa
     }
 

@@ -210,7 +210,7 @@ pub struct ServiceAccountResponse {
 impl From<ServiceAccount> for ServiceAccountResponse {
     fn from(sa: ServiceAccount) -> Self {
         Self {
-            id: sa.id,
+            id: sa.id.into_string(),
             code: sa.code,
             name: sa.name,
             description: sa.description,
@@ -612,7 +612,9 @@ pub async fn delete_application_cascade(
             for sa in sas {
                 delete_sa_uc
                     .run(
-                        DeleteServiceAccountCommand { id: sa.id.clone() },
+                        DeleteServiceAccountCommand {
+                            id: sa.id.to_string(),
+                        },
                         ctx.clone(),
                     )
                     .await
@@ -743,7 +745,7 @@ pub async fn deactivate_application_cascade(
     let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
     for sa in &sas {
         let clients = oauth_client_repo
-            .find_by_service_account_principal_id(&sa.id)
+            .find_by_service_account_principal_id(sa.id.as_str())
             .await?;
         oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
     }
@@ -771,7 +773,9 @@ pub async fn deactivate_application_cascade(
                 }
                 deactivate_sa_uc
                     .run(
-                        DeactivateServiceAccountCommand { id: sa.id.clone() },
+                        DeactivateServiceAccountCommand {
+                            id: sa.id.to_string(),
+                        },
                         ctx.clone(),
                     )
                     .await
@@ -1049,7 +1053,7 @@ pub async fn provision_application_service_account(
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
     Ok(ServiceAccountCredentialsResponse {
-        principal_id: service_account.id,
+        principal_id: service_account.id.into_string(),
         name: service_account.name,
         oauth_client: OAuthClientCredentials {
             id: oauth_row_id,

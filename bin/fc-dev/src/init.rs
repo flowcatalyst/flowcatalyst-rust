@@ -324,7 +324,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // Bound to and granted its own application only, as provisioning does
     // (Go: all_applications false plus one access row).
     let mut sa_principal =
-        Principal::new_service(sa.id.clone(), sa_name.clone(), UserScope::Anchor)
+        Principal::new_service(sa.id.to_string(), sa_name.clone(), UserScope::Anchor)
             .with_application_id(&app_id);
     sa_principal.accessible_application_ids = vec![app_id.clone()];
     principal_repo

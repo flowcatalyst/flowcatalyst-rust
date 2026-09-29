@@ -11,6 +11,7 @@ pub mod email_service;
 pub mod encryption_service;
 pub mod enum_str;
 pub mod error;
+pub mod id;
 pub mod jsonb_text;
 pub mod log_throttle;
 pub mod middleware;

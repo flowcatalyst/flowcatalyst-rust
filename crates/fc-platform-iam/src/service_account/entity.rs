@@ -6,8 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use fc_platform_core::principal_kind::UserScope;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::{PrincipalId, ServiceAccountId};
 
 /// Webhook authentication type — matches TypeScript WebhookAuthType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,12 +244,25 @@ impl RoleAssignment {
     }
 }
 
+/// Where an account's own row (`iam_service_accounts`) lives, when its
+/// principal links to one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccountRow {
+    /// Its own `sac_…` id: every account created since the split into an
+    /// account and a SERVICE principal.
+    Own(ServiceAccountId),
+    /// A legacy account whose row is keyed by the principal's own id: the
+    /// principal's `service_account_id` is its `prn_…` id.
+    SharedWithPrincipal,
+}
+
 /// Service account entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccount {
-    /// TSID as Crockford Base32 string
-    pub id: String,
+    /// The SERVICE principal's id (`prn_…`), not the account's: see
+    /// [`ServiceAccount::service_account_table_id`].
+    pub id: PrincipalId,
 
     /// Unique code
     pub code: String,
@@ -308,9 +320,11 @@ pub struct ServiceAccount {
     #[serde(default)]
     pub webhook_credentials: WebhookCredentials,
 
-    /// The iam_service_accounts.id (separate from the principal ID which is self.id)
+    /// The account's row in `iam_service_accounts`, as the principal links
+    /// to it (separate from the principal ID which is self.id). `None` for
+    /// an account not yet stored.
     #[serde(skip)]
-    pub service_account_table_id: Option<String>,
+    pub service_account_table_id: Option<AccountRow>,
 
     /// Assigned roles (loaded from iam_principal_roles via the linked principal)
     #[serde(default)]
@@ -338,7 +352,7 @@ impl ServiceAccount {
         // the account's (`service_account_table_id`) and the principal's as
         // `principalId`.
         Self {
-            id: tsid::generate(EntityType::Principal),
+            id: PrincipalId::generate(),
             code: code.into(),
             name: name.into(),
             description: None,
@@ -352,7 +366,7 @@ impl ServiceAccount {
             all_applications: false,
             accessible_application_ids: vec![],
             webhook_credentials: WebhookCredentials::none(),
-            service_account_table_id: Some(tsid::generate(EntityType::ServiceAccount)),
+            service_account_table_id: Some(AccountRow::Own(ServiceAccountId::generate())),
             roles: vec![],
             last_used_at: None,
             created_at: now,
@@ -426,7 +440,10 @@ impl ServiceAccount {
     /// serviceaccount/operations/events.go). A legacy SERVICE principal with
     /// no account row falls back to the principal's id.
     pub fn account_id(&self) -> &str {
-        self.service_account_table_id.as_deref().unwrap_or(&self.id)
+        match &self.service_account_table_id {
+            Some(AccountRow::Own(id)) => id.as_str(),
+            Some(AccountRow::SharedWithPrincipal) | None => self.id.as_str(),
+        }
     }
 
     pub fn deactivate(&mut self) {
@@ -454,21 +471,20 @@ mod tests {
     fn test_new_service_account() {
         let sa = ServiceAccount::new("app:my-app", "My App Service Account", UserScope::Client);
 
-        assert!(!sa.id.is_empty());
         assert!(
-            sa.id.starts_with("prn_"),
+            sa.id.as_str().starts_with("prn_"),
             "the principal id should have the prn_ prefix, got: {}",
             sa.id
         );
-        assert!(sa
-            .service_account_table_id
-            .as_deref()
-            .is_some_and(|id| id.starts_with("sac_")));
+        assert!(matches!(
+            &sa.service_account_table_id,
+            Some(AccountRow::Own(id)) if id.as_str().starts_with("sac_")
+        ));
         assert_eq!(
-            sa.id.len(),
+            sa.id.as_str().len(),
             17,
             "Typed ID should be 17 chars, got: {}",
-            sa.id.len()
+            sa.id.as_str().len()
         );
         assert_eq!(sa.code, "app:my-app");
         assert_eq!(sa.name, "My App Service Account");

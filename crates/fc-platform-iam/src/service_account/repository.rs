@@ -8,7 +8,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::service_account::entity::ServiceAccount;
+use crate::service_account::entity::{AccountRow, ServiceAccount};
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
 use fc_platform_core::directory::{
     AccountReach, ServiceAccountDirectory, ServiceAccountRef, SigningAccount,
@@ -16,6 +16,7 @@ use fc_platform_core::directory::{
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::enum_str::decode_opt;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -171,10 +172,7 @@ impl ServiceAccountRepository {
     pub async fn insert(&self, account: &ServiceAccount) -> Result<()> {
         let now = Utc::now();
         let wh = &account.webhook_credentials;
-        let sa_id = account
-            .service_account_table_id
-            .as_ref()
-            .unwrap_or(&account.id);
+        let sa_id = account.account_id();
 
         sqlx::query(
             "INSERT INTO iam_service_accounts
@@ -502,7 +500,8 @@ impl ServiceAccountRepository {
 
     pub async fn update(&self, account: &ServiceAccount) -> Result<()> {
         let now = Utc::now();
-        if let Some(ref sa_table_id) = account.service_account_table_id {
+        if account.service_account_table_id.is_some() {
+            let sa_table_id = account.account_id();
             let wh = &account.webhook_credentials;
             sqlx::query(
                 "UPDATE iam_service_accounts SET
@@ -687,7 +686,7 @@ impl ServiceAccountRepository {
 
         Ok(ServiceAccount {
             // The principal ID is what gets returned to clients
-            id: principal.id,
+            id: decode_id(&principal.id, "iam_principals", "id", &principal.id)?,
             code,
             name: principal.name,
             description: sa_row.and_then(|sa| sa.description.clone()),
@@ -705,7 +704,10 @@ impl ServiceAccountRepository {
             scope,
             webhook_credentials,
             roles: grants.roles,
-            service_account_table_id: principal.service_account_id,
+            service_account_table_id: account_row(
+                &principal.id,
+                principal.service_account_id.as_deref(),
+            )?,
             last_used_at: sa_row.and_then(|sa| sa.last_used_at),
             created_at: principal.created_at,
             updated_at: principal.updated_at,
@@ -764,11 +766,27 @@ impl ServiceAccountRepository {
     }
 }
 
+/// The account row a principal's `service_account_id` names: its own `sac_…`
+/// id, or (legacy, older Go rows) the principal's own id. Anything else is a
+/// corrupt row.
+fn account_row(principal_id: &str, service_account_id: Option<&str>) -> Result<Option<AccountRow>> {
+    match service_account_id {
+        None => Ok(None),
+        Some(v) if v == principal_id => Ok(Some(AccountRow::SharedWithPrincipal)),
+        Some(v) => Ok(Some(AccountRow::Own(decode_id(
+            v,
+            "iam_principals",
+            "service_account_id",
+            principal_id,
+        )?))),
+    }
+}
+
 // ── Persist<ServiceAccount> ──────────────────────────────────────────────────
 
 impl HasId for ServiceAccount {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -786,10 +804,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
             UserScope::Partner => &sa.principal_client_ids,
             UserScope::Anchor | UserScope::Client => &[],
         };
-        let sa_table_id = sa
-            .service_account_table_id
-            .clone()
-            .unwrap_or_else(|| sa.id.clone());
+        let sa_table_id = sa.account_id();
         let wh = &sa.webhook_credentials;
 
         // 1. Upsert iam_principals (SERVICE type principal)
@@ -841,7 +856,7 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
                 last_used_at = EXCLUDED.last_used_at,
                 updated_at = EXCLUDED.updated_at"
         )
-        .bind(&sa_table_id)
+        .bind(sa_table_id)
         .bind(&sa.code)
         .bind(&sa.name)
         .bind(&sa.description)
@@ -963,9 +978,9 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(&sa.id)
         .execute(&mut **tx.inner)
         .await?;
-        if let Some(ref sa_id) = sa.service_account_table_id {
+        if sa.service_account_table_id.is_some() {
             sqlx::query("DELETE FROM iam_service_accounts WHERE id = $1")
-                .bind(sa_id)
+                .bind(sa.account_id())
                 .execute(&mut **tx.inner)
                 .await?;
         }
@@ -983,7 +998,7 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
         Ok(ServiceAccountRepository::find_by_id(self, id)
             .await?
             .map(|sa| ServiceAccountRef {
-                id: sa.id,
+                id: sa.id.into_string(),
                 code: sa.code,
             }))
     }
@@ -1001,6 +1016,32 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
 
     async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool> {
         ServiceAccountRepository::oldest_active_has_signing_secret(self, application_id).await
+    }
+}
+
+#[cfg(test)]
+mod account_row_tests {
+    use super::*;
+
+    #[test]
+    fn a_legacy_link_to_the_principals_own_id_is_shared() {
+        assert_eq!(
+            account_row("prn_0000000000001", Some("prn_0000000000001")).unwrap(),
+            Some(AccountRow::SharedWithPrincipal)
+        );
+    }
+
+    #[test]
+    fn a_sac_link_is_the_accounts_own_row() {
+        let row = account_row("prn_0000000000001", Some("sac_0000000000002")).unwrap();
+        assert!(matches!(row, Some(AccountRow::Own(id)) if id.as_str() == "sac_0000000000002"));
+    }
+
+    #[test]
+    fn no_link_is_none_and_another_principals_id_is_corrupt() {
+        assert_eq!(account_row("prn_0000000000001", None).unwrap(), None);
+        assert!(account_row("prn_0000000000001", Some("prn_0000000000009")).is_err());
+        assert!(account_row("prn_0000000000001", Some("junk")).is_err());
     }
 }
 

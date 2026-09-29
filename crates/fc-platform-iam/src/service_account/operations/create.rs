@@ -323,7 +323,7 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         // Create result with one-time secrets
         let result = CreateServiceAccountResult {
             event: event.clone(),
-            principal_id: service_account.id.clone(),
+            principal_id: service_account.id.to_string(),
             auth_token,
             signing_secret,
         };
