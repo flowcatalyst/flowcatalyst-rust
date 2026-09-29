@@ -38,6 +38,8 @@ async fn spans_are_exported_over_otlp_http() {
     });
 
     env::set_var("FC_OTEL_ENABLED", "true");
+    // Keep every span: production defaults to one trace in a thousand.
+    env::set_var("FC_OTEL_SAMPLE_RATIO", "1.0");
     env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", format!("http://{addr}"));
     logging::init_production_logging("otel-test");
 
