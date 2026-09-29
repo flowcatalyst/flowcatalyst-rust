@@ -239,21 +239,26 @@ impl<K> PartialSchema for Id<K> {
 
 impl<K> ToSchema for Id<K> {}
 
-/// Declares the marker and alias for one id: `id_kind!(ClientKind, ClientId, Client)`.
-macro_rules! id_kind {
-    ($kind:ident, $alias:ident, $entity:ident) => {
-        #[derive(Debug, Clone, Copy)]
-        pub enum $kind {}
-        impl IdKind for $kind {
-            const ENTITY: EntityType = EntityType::$entity;
-        }
-        pub type $alias = Id<$kind>;
-    };
+#[derive(Debug, Clone, Copy)]
+pub enum ClientKind {}
+impl IdKind for ClientKind {
+    const ENTITY: EntityType = EntityType::Client;
 }
+pub type ClientId = Id<ClientKind>;
 
-id_kind!(ClientKind, ClientId, Client);
-id_kind!(PrincipalKind, PrincipalId, Principal);
-id_kind!(ServiceAccountKind, ServiceAccountId, ServiceAccount);
+#[derive(Debug, Clone, Copy)]
+pub enum PrincipalKind {}
+impl IdKind for PrincipalKind {
+    const ENTITY: EntityType = EntityType::Principal;
+}
+pub type PrincipalId = Id<PrincipalKind>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ServiceAccountKind {}
+impl IdKind for ServiceAccountKind {
+    const ENTITY: EntityType = EntityType::ServiceAccount;
+}
+pub type ServiceAccountId = Id<ServiceAccountKind>;
 
 #[cfg(test)]
 mod tests {
