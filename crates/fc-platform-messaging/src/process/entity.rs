@@ -1,8 +1,7 @@
 //! Process Entity — free-form workflow documentation (typically Mermaid diagrams)
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::ProcessId;
 use serde::de;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -43,7 +42,7 @@ fc_platform_core::shared::enum_str::str_enum!(ProcessSource, "process source", {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Process {
-    pub id: String,
+    pub id: ProcessId,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -170,7 +169,7 @@ impl Process {
         let process_name = code.process_name().to_string();
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Process),
+            id: ProcessId::generate(),
             code: code.into_string(),
             name: name.into(),
             description: None,

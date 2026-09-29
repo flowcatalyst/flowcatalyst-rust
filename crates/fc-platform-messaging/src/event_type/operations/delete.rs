@@ -104,7 +104,7 @@ impl<U: UnitOfWork> UseCase for DeleteEventTypeUseCase<U> {
             ));
         }
 
-        let event = EventTypeDeleted::new(&ctx, &event_type.id, &event_type.code);
+        let event = EventTypeDeleted::new(&ctx, event_type.id.as_str(), &event_type.code);
 
         self.unit_of_work
             .commit_delete(&event_type, &*self.event_type_repo, event, &command)

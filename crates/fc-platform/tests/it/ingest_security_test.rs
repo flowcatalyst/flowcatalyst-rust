@@ -141,7 +141,7 @@ async fn create_subscription(
         .insert(&sub)
         .await
         .expect("insert subscription");
-    sub.id
+    sub.id.to_string()
 }
 
 fn event_item(event_type: &str) -> Value {
@@ -844,7 +844,7 @@ async fn create_connection(
         .insert(&connection)
         .await
         .expect("insert connection");
-    connection.id
+    connection.id.to_string()
 }
 
 /// Creating or re-pointing a subscription, or creating a connection, may

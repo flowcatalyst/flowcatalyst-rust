@@ -16,7 +16,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 
-use fc_platform_core::shared::id::{PrincipalId, ServiceAccountId};
+use fc_platform_core::shared::id::{EventTypeId, PrincipalId, ServiceAccountId};
 use fc_platform_iam::service_account::entity::AccountRow;
 
 use crate::usecase::unit_of_work::{AuditRow, EventRow};
@@ -288,7 +288,7 @@ fn identity_provider_created() {
 fn event_type_created() {
     let code = EventTypeCode::parse("orders:fulfillment:shipment:shipped").unwrap();
     let mut event_type = EventType::new(code, "Shipment shipped");
-    event_type.id = "evt_type_1".to_string();
+    event_type.id = EventTypeId::parse("evt_type_1").unwrap();
     event_type.description = Some("A shipment left the warehouse".to_string());
     event_type.client_id = Some("clt_1".to_string());
     let e = fixed!(EventTypeCreated::new(&ctx(), &event_type));

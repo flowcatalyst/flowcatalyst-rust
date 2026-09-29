@@ -243,6 +243,7 @@ pub fn leading_segment(code: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::ConnectionId;
 
     #[test]
     fn the_application_is_the_code_before_its_first_colon() {
@@ -269,7 +270,7 @@ mod tests {
     #[test]
     fn the_signer_follows_the_resolution_order() {
         let mut conn = Connection::new("conn-a", "Conn A", "sac_conn");
-        conn.id = "con_1".into();
+        conn.id = ConnectionId::parse("con_1").unwrap();
 
         // 1. The subscription's own account wins over its connection's.
         let sub = subscription(Some("sac_sub"), Some("con_1"), Some("billing"));

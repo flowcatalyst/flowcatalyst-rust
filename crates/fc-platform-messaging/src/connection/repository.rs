@@ -7,6 +7,7 @@ use super::entity::{Connection, ConnectionStatus};
 use crate::connection::sync_plan::ConnectionSyncPlan;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -34,6 +35,7 @@ struct ConnectionRow {
 impl TryFrom<ConnectionRow> for Connection {
     type Error = PlatformError;
     fn try_from(r: ConnectionRow) -> Result<Self> {
+        let id = decode_id(&r.id, "msg_connections", "id", &r.id)?;
         let client_id = decode_id_opt(
             r.client_id.as_deref(),
             "msg_connections",
@@ -50,7 +52,7 @@ impl TryFrom<ConnectionRow> for Connection {
             )));
         }
         Ok(Self {
-            id: r.id,
+            id,
             code: r.code,
             application_code: r.application_code,
             name: r.name,
@@ -257,7 +259,7 @@ impl ConnectionRepository {
 
 impl HasId for Connection {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

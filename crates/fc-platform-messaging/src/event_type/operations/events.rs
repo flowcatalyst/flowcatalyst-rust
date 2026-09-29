@@ -56,8 +56,8 @@ impl EventTypeCreated {
     /// The event for `event_type`, just created inside `ctx`.
     pub fn new(ctx: &ExecutionContext, event_type: &EventType) -> Self {
         Self {
-            metadata: Self::metadata_for(ctx, &event_type.id),
-            event_type_id: event_type.id.clone(),
+            metadata: Self::metadata_for(ctx, event_type.id.as_str()),
+            event_type_id: event_type.id.to_string(),
             code: event_type.code.clone(),
             name: event_type.name.clone(),
             description: event_type.description.clone(),

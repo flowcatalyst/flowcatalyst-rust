@@ -126,7 +126,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         // Create domain event
         let event = EventTypeUpdated::new(
             &ctx,
-            &event_type.id,
+            event_type.id.as_str(),
             &event_type.name,
             event_type.description.as_deref(),
         );

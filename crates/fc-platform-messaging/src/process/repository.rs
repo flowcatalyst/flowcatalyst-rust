@@ -6,6 +6,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use super::entity::{Process, ProcessStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -31,10 +32,11 @@ struct ProcessRow {
 impl TryFrom<ProcessRow> for Process {
     type Error = PlatformError;
     fn try_from(r: ProcessRow) -> Result<Self> {
+        let id = decode_id(&r.id, "msg_processes", "id", &r.id)?;
         let status = decode(&r.status, "msg_processes", "status", &r.id)?;
         let source = decode(&r.source, "msg_processes", "source", &r.id)?;
         Ok(Self {
-            id: r.id,
+            id,
             code: r.code,
             name: r.name,
             description: r.description,
@@ -207,7 +209,7 @@ impl ProcessRepository {
 
 impl HasId for Process {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

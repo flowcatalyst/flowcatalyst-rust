@@ -137,7 +137,7 @@ impl From<SpecVersion> for SpecVersionResponse {
 impl From<EventType> for EventTypeResponse {
     fn from(et: EventType) -> Self {
         Self {
-            id: et.id,
+            id: et.id.to_string(),
             code: et.code,
             name: et.name,
             application: et.application,

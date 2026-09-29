@@ -312,7 +312,7 @@ pub struct SubscriptionResponse {
 impl From<Subscription> for SubscriptionResponse {
     fn from(s: Subscription) -> Self {
         Self {
-            id: s.id,
+            id: s.id.to_string(),
             code: s.code,
             application_code: s.application_code,
             name: s.name,

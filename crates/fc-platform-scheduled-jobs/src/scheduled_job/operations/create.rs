@@ -184,7 +184,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
             job = job.with_target_url(u);
         }
 
-        let event = ScheduledJobCreated::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobCreated::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

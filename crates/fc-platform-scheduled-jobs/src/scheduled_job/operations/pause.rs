@@ -77,7 +77,7 @@ impl<U: UnitOfWork> UseCase for PauseScheduledJobUseCase<U> {
         // Go's `PauseScheduledJob` flips the status unconditionally: a
         // repeat is a 204 no-op, not a conflict.
         job.pause();
-        let event = ScheduledJobPaused::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobPaused::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

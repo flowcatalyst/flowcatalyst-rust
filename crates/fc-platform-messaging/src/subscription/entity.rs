@@ -3,8 +3,7 @@
 use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::SubscriptionId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,7 +94,7 @@ pub struct ConfigEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
-    pub id: String,
+    pub id: SubscriptionId,
     pub code: String,
     pub application_code: Option<String>,
     pub name: String,
@@ -164,7 +163,7 @@ impl Subscription {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Subscription),
+            id: SubscriptionId::generate(),
             code,
             application_code,
             name,
@@ -287,9 +286,8 @@ mod tests {
             "https://example.com/webhook",
         );
 
-        assert!(!sub.id.is_empty());
         assert!(
-            sub.id.starts_with("sub_"),
+            sub.id.as_str().starts_with("sub_"),
             "ID should have sub_ prefix, got: {}",
             sub.id
         );

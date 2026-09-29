@@ -8,6 +8,7 @@ use crate::dispatch_job::entity::parse_dispatch_mode;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -49,6 +50,7 @@ struct SubscriptionRow {
 impl TryFrom<SubscriptionRow> for Subscription {
     type Error = PlatformError;
     fn try_from(r: SubscriptionRow) -> Result<Self> {
+        let id = decode_id(&r.id, "msg_subscriptions", "id", &r.id)?;
         let client_id = decode_id_opt(
             r.client_id.as_deref(),
             "msg_subscriptions",
@@ -59,7 +61,7 @@ impl TryFrom<SubscriptionRow> for Subscription {
         let status = decode(&r.status, "msg_subscriptions", "status", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
         Ok(Self {
-            id: r.id,
+            id,
             code: r.code,
             application_code: r.application_code,
             name: r.name,
@@ -154,8 +156,8 @@ impl SubscriptionRepository {
     }
 
     async fn hydrate(&self, mut sub: Subscription) -> Result<Subscription> {
-        sub.event_types = self.load_event_types(&sub.id).await?;
-        sub.custom_config = self.load_custom_config(&sub.id).await?;
+        sub.event_types = self.load_event_types(sub.id.as_str()).await?;
+        sub.custom_config = self.load_custom_config(sub.id.as_str()).await?;
         Ok(sub)
     }
 
@@ -261,8 +263,10 @@ impl SubscriptionRepository {
         .bind(&sub.created_by)
         .execute(&self.pool)
         .await?;
-        self.save_event_types(&sub.id, &sub.event_types).await?;
-        self.save_custom_config(&sub.id, &sub.custom_config).await?;
+        self.save_event_types(sub.id.as_str(), &sub.event_types)
+            .await?;
+        self.save_custom_config(sub.id.as_str(), &sub.custom_config)
+            .await?;
         Ok(())
     }
 
@@ -467,8 +471,10 @@ impl SubscriptionRepository {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        self.save_event_types(&sub.id, &sub.event_types).await?;
-        self.save_custom_config(&sub.id, &sub.custom_config).await?;
+        self.save_event_types(sub.id.as_str(), &sub.event_types)
+            .await?;
+        self.save_custom_config(sub.id.as_str(), &sub.custom_config)
+            .await?;
         Ok(())
     }
 
@@ -650,7 +656,7 @@ impl SubscriptionRepository {
 
 impl HasId for Subscription {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

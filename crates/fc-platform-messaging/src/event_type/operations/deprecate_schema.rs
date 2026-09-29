@@ -127,7 +127,7 @@ impl<U: UnitOfWork> UseCase for DeprecateSchemaUseCase<U> {
         event_type.spec_versions[target_idx].updated_at = chrono::Utc::now();
         event_type.updated_at = chrono::Utc::now();
 
-        let event = SchemaDeprecated::new(&ctx, &event_type.id, &command.version);
+        let event = SchemaDeprecated::new(&ctx, event_type.id.as_str(), &command.version);
 
         self.unit_of_work
             .commit(&event_type, &*self.event_type_repo, event, &command)

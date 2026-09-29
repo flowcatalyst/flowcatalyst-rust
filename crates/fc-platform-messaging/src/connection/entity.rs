@@ -3,8 +3,7 @@
 use crate::connection::sync_plan;
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::ConnectionId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,7 +23,7 @@ fc_platform_core::shared::enum_str::str_enum!(ConnectionStatus, "connection stat
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Connection {
-    pub id: String,
+    pub id: ConnectionId,
     pub code: String,
     /// The owning application (`None`: a shared connection, usable from any
     /// application; Go 056).
@@ -51,7 +50,7 @@ impl Connection {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Connection),
+            id: ConnectionId::generate(),
             code: code.into(),
             application_code: None,
             name: name.into(),
@@ -105,9 +104,8 @@ mod tests {
     fn test_new_connection() {
         let conn = Connection::new("webhook-1", "Webhook Connection", "sa-123");
 
-        assert!(!conn.id.is_empty());
         assert!(
-            conn.id.starts_with("con_"),
+            conn.id.as_str().starts_with("con_"),
             "ID should have con_ prefix, got: {}",
             conn.id
         );

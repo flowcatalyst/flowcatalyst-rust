@@ -90,7 +90,7 @@ impl<U: UnitOfWork> UseCase for DeleteSubscriptionUseCase<U> {
             )?;
 
         // Create domain event
-        let event = SubscriptionDeleted::new(&ctx, &subscription.id, &subscription.code);
+        let event = SubscriptionDeleted::new(&ctx, subscription.id.as_str(), &subscription.code);
 
         // Atomic commit with delete
         self.unit_of_work

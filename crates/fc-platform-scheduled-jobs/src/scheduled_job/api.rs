@@ -324,7 +324,7 @@ pub struct ScheduledJobResponse {
 impl ScheduledJobResponse {
     fn from(job: ScheduledJob, has_active_instance: bool) -> Self {
         Self {
-            id: job.id,
+            id: job.id.to_string(),
             client_id: job.client_id.map(ClientId::into_string),
             application_id: job.application_id,
             code: job.code,
@@ -556,11 +556,11 @@ pub async fn list_scheduled_jobs(
         .await? as u64;
 
     // hasActiveInstance for the whole page in one query.
-    let ids: Vec<String> = visible.iter().map(|j| j.id.clone()).collect();
+    let ids: Vec<String> = visible.iter().map(|j| j.id.to_string()).collect();
     let tracking: Vec<String> = visible
         .iter()
         .filter(|j| j.tracks_completion)
-        .map(|j| j.id.clone())
+        .map(|j| j.id.to_string())
         .collect();
     let active = state
         .instance_repo
@@ -570,7 +570,7 @@ pub async fn list_scheduled_jobs(
     let data: Vec<ScheduledJobResponse> = visible
         .into_iter()
         .map(|j| {
-            let is_active = active.contains(&j.id);
+            let is_active = active.contains(j.id.as_str());
             ScheduledJobResponse::from(j, is_active)
         })
         .collect();
@@ -609,7 +609,7 @@ pub async fn get_scheduled_job(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance_for(&job.id, job.tracks_completion)
+        .has_active_instance_for(job.id.as_str(), job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))
@@ -646,7 +646,7 @@ pub async fn get_scheduled_job_by_code(
     )?;
     let active = state
         .instance_repo
-        .has_active_instance_for(&job.id, job.tracks_completion)
+        .has_active_instance_for(job.id.as_str(), job.tracks_completion)
         .await
         .unwrap_or(false);
     Ok(Json(ScheduledJobResponse::from(job, active)))

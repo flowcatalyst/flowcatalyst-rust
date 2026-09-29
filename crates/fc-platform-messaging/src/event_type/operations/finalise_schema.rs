@@ -148,7 +148,7 @@ impl<U: UnitOfWork> UseCase for FinaliseSchemaUseCase<U> {
 
         let event = SchemaFinalised::new(
             &ctx,
-            &event_type.id,
+            event_type.id.as_str(),
             &command.version,
             deprecated_version.as_deref(),
         );

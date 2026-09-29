@@ -196,7 +196,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
 
         job.record_update(Some(ctx.principal_id.clone()));
 
-        let event = ScheduledJobUpdated::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobUpdated::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

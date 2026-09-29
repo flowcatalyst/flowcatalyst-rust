@@ -250,13 +250,13 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         }
                         // Pool codes were all resolved above.
                         if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
-                            updated.dispatch_pool_id = Some(pool.id.clone());
+                            updated.dispatch_pool_id = Some(pool.id.to_string());
                             updated.dispatch_pool_code = Some(pool.code.clone());
                         }
                         updated.updated_at = chrono::Utc::now();
                         rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
                             &ctx,
-                            &updated.id,
+                            updated.id.as_str(),
                             &updated.name,
                         ))?);
                         saves.push(updated);
@@ -284,11 +284,14 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         // subscription's mode is left alone on update, as
                         // before.
                         .mode(entity::parse_dispatch_mode(input.mode.as_deref()))
-                        .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
+                        .maybe_dispatch_pool_id(pool.map(|p| p.id.to_string()))
                         .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
                         .build();
                     rows.push(RecordedEvent::of(&SubscriptionCreated::new(
-                        &ctx, &sub.id, &sub.code, &sub.name,
+                        &ctx,
+                        sub.id.as_str(),
+                        &sub.code,
+                        &sub.name,
                     ))?);
                     saves.push(sub);
                     created_count += 1;
@@ -303,7 +306,9 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                     && !synced_codes.contains(&sub.code)
                 {
                     rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
-                        &ctx, &sub.id, &sub.code,
+                        &ctx,
+                        sub.id.as_str(),
+                        &sub.code,
                     ))?);
                     deletes.push(sub.clone());
                     deleted_count += 1;
@@ -370,7 +375,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             self.connection_repo.find_by_ids(&ids),
         )?;
         let by_id: HashMap<String, Connection> =
-            by_id.into_iter().map(|c| (c.id.clone(), c)).collect();
+            by_id.into_iter().map(|c| (c.id.to_string(), c)).collect();
 
         let mut resolved = Vec::with_capacity(command.subscriptions.len());
         for input in &command.subscriptions {
@@ -395,7 +400,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                 if input
                     .connection_id
                     .as_deref()
-                    .is_some_and(|id| id != found.id)
+                    .is_some_and(|id| id != found.id.as_str())
                 {
                     return Err(UseCaseError::validation(
                         "CONNECTION_MISMATCH",
@@ -405,7 +410,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         ),
                     ));
                 }
-                resolved.push(Some(found.id.clone()));
+                resolved.push(Some(found.id.to_string()));
                 continue;
             }
             let Some(ref conn_id) = input.connection_id else {
@@ -446,7 +451,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     ),
                 ));
             }
-            resolved.push(Some(conn_id.clone()));
+            resolved.push(Some(conn_id.to_string()));
         }
         Ok(resolved)
     }

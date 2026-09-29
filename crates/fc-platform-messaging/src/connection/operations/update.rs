@@ -148,7 +148,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         }
         connection.updated_at = chrono::Utc::now();
 
-        let event = ConnectionUpdated::new(&ctx, &connection.id, &connection.name);
+        let event = ConnectionUpdated::new(&ctx, connection.id.as_str(), &connection.name);
 
         self.unit_of_work
             .commit(&connection, &*self.connection_repo, event, &command)

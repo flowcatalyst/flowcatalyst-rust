@@ -96,7 +96,7 @@ impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
         subscription.resume();
 
         // Create domain event
-        let event = SubscriptionResumed::new(&ctx, &subscription.id);
+        let event = SubscriptionResumed::new(&ctx, subscription.id.as_str());
 
         // Atomic commit
         self.unit_of_work

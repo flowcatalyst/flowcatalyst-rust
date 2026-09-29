@@ -310,7 +310,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         // Create domain event
         let event = SubscriptionCreated::new(
             &ctx,
-            &subscription.id,
+            subscription.id.as_str(),
             &subscription.code,
             &subscription.name,
         );

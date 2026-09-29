@@ -96,7 +96,7 @@ impl<U: UnitOfWork> UseCase for PauseSubscriptionUseCase<U> {
         subscription.pause();
 
         // Create domain event
-        let event = SubscriptionPaused::new(&ctx, &subscription.id);
+        let event = SubscriptionPaused::new(&ctx, subscription.id.as_str());
 
         // Atomic commit
         self.unit_of_work

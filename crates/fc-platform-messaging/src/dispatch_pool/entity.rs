@@ -2,8 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::DispatchPoolId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +24,7 @@ fc_platform_core::shared::enum_str::str_enum!(DispatchPoolStatus, "dispatch pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchPool {
-    pub id: String,
+    pub id: DispatchPoolId,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -43,7 +42,7 @@ impl DispatchPool {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::DispatchPool),
+            id: DispatchPoolId::generate(),
             code: code.into(),
             name: name.into(),
             description: None,
@@ -100,17 +99,16 @@ mod tests {
     fn test_new_dispatch_pool() {
         let pool = DispatchPool::new("default-pool", "Default Pool");
 
-        assert!(!pool.id.is_empty());
         assert!(
-            pool.id.starts_with("dpl_"),
+            pool.id.as_str().starts_with("dpl_"),
             "ID should have dpl_ prefix, got: {}",
             pool.id
         );
         assert_eq!(
-            pool.id.len(),
+            pool.id.as_str().len(),
             17,
             "Typed ID should be 17 chars, got: {}",
-            pool.id.len()
+            pool.id.as_str().len()
         );
         assert_eq!(pool.code, "default-pool");
         assert_eq!(pool.name, "Default Pool");

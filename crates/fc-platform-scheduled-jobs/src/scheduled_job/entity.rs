@@ -7,8 +7,7 @@
 
 use chrono::{DateTime, Utc};
 use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::ScheduledJobId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,7 +30,7 @@ fc_platform_core::shared::enum_str::str_enum!(ScheduledJobStatus, "scheduled job
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJob {
-    pub id: String,
+    pub id: ScheduledJobId,
     /// NULL = platform-scoped (anchor-only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<ClientId>,
@@ -97,7 +96,7 @@ impl ScheduledJob {
     pub fn new(code: impl Into<String>, name: impl Into<String>, crons: Vec<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::ScheduledJob),
+            id: ScheduledJobId::generate(),
             client_id: None,
             application_id: None,
             code: code.into(),
@@ -408,7 +407,7 @@ mod tests {
     #[test]
     fn new_active_with_defaults() {
         let job = ScheduledJob::new("daily-cleanup", "Daily Cleanup", vec!["0 0 * * *".into()]);
-        assert!(job.id.starts_with("sjb_"));
+        assert!(job.id.as_str().starts_with("sjb_"));
         assert_eq!(job.status, ScheduledJobStatus::Active);
         assert_eq!(job.timezone, "UTC");
         assert!(!job.concurrent);

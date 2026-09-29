@@ -147,7 +147,7 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
 
         process.updated_at = chrono::Utc::now();
 
-        let event = ProcessUpdated::new(&ctx, &process.id, &process.name);
+        let event = ProcessUpdated::new(&ctx, process.id.as_str(), &process.name);
 
         self.unit_of_work
             .commit(&process, &*self.process_repo, event, &command)

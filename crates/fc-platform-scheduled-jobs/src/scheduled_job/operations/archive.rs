@@ -76,7 +76,7 @@ impl<U: UnitOfWork> UseCase for ArchiveScheduledJobUseCase<U> {
 
         // Go's `ArchiveScheduledJob` flips the status unconditionally.
         job.archive();
-        let event = ScheduledJobArchived::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobArchived::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

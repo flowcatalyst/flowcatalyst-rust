@@ -128,7 +128,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         pool.updated_at = Utc::now();
 
         // Create domain event
-        let event = DispatchPoolUpdated::new(&ctx, &pool.id, &pool.name);
+        let event = DispatchPoolUpdated::new(&ctx, pool.id.as_str(), &pool.name);
 
         // Atomic commit
         self.unit_of_work

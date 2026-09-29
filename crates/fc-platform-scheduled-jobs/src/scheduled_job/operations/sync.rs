@@ -169,7 +169,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
 
         for entry in &cmd.jobs {
             match existing_by_code.remove(&entry.code) {
-                Some(job) if cmd.protected_ids.contains(&job.id) => {}
+                Some(job) if cmd.protected_ids.contains(job.id.as_str()) => {}
                 Some(mut job) => {
                     let mut changed = false;
                     if job.name != entry.name {
@@ -220,9 +220,11 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     }
                     if changed {
                         job.record_update(Some(ctx.principal_id.clone()));
-                        updated.push(job.id.clone());
+                        updated.push(job.id.to_string());
                         rows.push(RecordedEvent::of(&ScheduledJobUpdated::new(
-                            &ctx, &job.id, &job.code,
+                            &ctx,
+                            job.id.as_str(),
+                            &job.code,
                         ))?);
                         to_persist.push(job);
                     }
@@ -249,9 +251,11 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     if let Some(u) = &entry.target_url {
                         job = job.with_target_url(u);
                     }
-                    created.push(job.id.clone());
+                    created.push(job.id.to_string());
                     rows.push(RecordedEvent::of(&ScheduledJobCreated::new(
-                        &ctx, &job.id, &job.code,
+                        &ctx,
+                        job.id.as_str(),
+                        &job.code,
                     ))?);
                     to_persist.push(job);
                 }
@@ -261,12 +265,15 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         let mut archived: Vec<String> = Vec::new();
         if cmd.archive_unlisted {
             for (_, mut job) in existing_by_code.into_iter() {
-                if job.status == ScheduledJobStatus::Active && !cmd.protected_ids.contains(&job.id)
+                if job.status == ScheduledJobStatus::Active
+                    && !cmd.protected_ids.contains(job.id.as_str())
                 {
                     job.archive();
-                    archived.push(job.id.clone());
+                    archived.push(job.id.to_string());
                     rows.push(RecordedEvent::of(&ScheduledJobArchived::new(
-                        &ctx, &job.id, &job.code,
+                        &ctx,
+                        job.id.as_str(),
+                        &job.code,
                     ))?);
                     to_persist.push(job);
                 }

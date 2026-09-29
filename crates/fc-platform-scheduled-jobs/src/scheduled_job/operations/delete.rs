@@ -75,7 +75,7 @@ impl<U: UnitOfWork> UseCase for DeleteScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        let event = ScheduledJobDeleted::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobDeleted::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit_delete(&job, &*self.repo, event, &cmd)

@@ -141,7 +141,7 @@ impl SigningGuard {
             .find_by_ids(&subscription_ids)
             .await?
             .into_iter()
-            .map(|s| (s.id.clone(), s))
+            .map(|s| (s.id.to_string(), s))
             .collect();
         let subscription_of = |job: &DispatchJob| {
             non_blank(job.subscription_id.as_deref()).and_then(|id| subscriptions.get(id))
@@ -171,7 +171,7 @@ impl SigningGuard {
             .find_by_ids(&connection_ids)
             .await?
             .into_iter()
-            .map(|c| (c.id.clone(), c))
+            .map(|c| (c.id.to_string(), c))
             .collect();
         let signers: Vec<Signer> = jobs
             .iter()

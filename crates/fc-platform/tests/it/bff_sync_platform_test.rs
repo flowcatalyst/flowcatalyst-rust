@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use serde_json::json;
 
 use axum::body;
-use fc_common::tsid;
+use fc_common::tsid::{self, EntityType};
 use fc_platform::application::entity::Application;
 use fc_platform::service_account::entity::RoleAssignment;
 use support::{assert_status, TestApp};
@@ -63,7 +63,7 @@ async fn insert_event_type(app: &TestApp, code: &str, name: &str, source: &str) 
             created_at, updated_at)
          VALUES ($1, $2, $3, 'CURRENT', $4, false, $5, $6, $7, NOW(), NOW())",
     )
-    .bind(tsid::generate_untyped())
+    .bind(tsid::generate(EntityType::EventType))
     .bind(code)
     .bind(name)
     .bind(source)

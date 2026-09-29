@@ -77,7 +77,7 @@ impl<U: UnitOfWork> UseCase for DeleteDispatchPoolUseCase<U> {
             )?;
 
         // Create domain event
-        let event = DispatchPoolDeleted::new(&ctx, &pool.id, &pool.code);
+        let event = DispatchPoolDeleted::new(&ctx, pool.id.as_str(), &pool.code);
 
         // Atomic commit with delete
         self.unit_of_work

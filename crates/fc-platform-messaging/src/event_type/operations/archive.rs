@@ -99,7 +99,7 @@ impl<U: UnitOfWork> UseCase for ArchiveEventTypeUseCase<U> {
         event_type.archive();
 
         // Create domain event
-        let event = EventTypeArchived::new(&ctx, &event_type.id, &event_type.code);
+        let event = EventTypeArchived::new(&ctx, event_type.id.as_str(), &event_type.code);
 
         // Atomic commit
         self.unit_of_work

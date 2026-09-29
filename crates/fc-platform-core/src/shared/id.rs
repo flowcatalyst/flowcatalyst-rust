@@ -251,26 +251,7 @@ impl<K> PartialSchema for Id<K> {
 
 impl<K> ToSchema for Id<K> {}
 
-#[derive(Debug, Clone, Copy)]
-pub enum ClientKind {}
-impl IdKind for ClientKind {
-    const ENTITY: EntityType = EntityType::Client;
-}
-pub type ClientId = Id<ClientKind>;
-
-#[derive(Debug, Clone, Copy)]
-pub enum PrincipalKind {}
-impl IdKind for PrincipalKind {
-    const ENTITY: EntityType = EntityType::Principal;
-}
-pub type PrincipalId = Id<PrincipalKind>;
-
-#[derive(Debug, Clone, Copy)]
-pub enum ServiceAccountKind {}
-impl IdKind for ServiceAccountKind {
-    const ENTITY: EntityType = EntityType::ServiceAccount;
-}
-pub type ServiceAccountId = Id<ServiceAccountKind>;
+pub use crate::shared::ids::*;
 
 #[cfg(test)]
 mod tests {

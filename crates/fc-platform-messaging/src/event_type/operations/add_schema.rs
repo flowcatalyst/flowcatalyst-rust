@@ -160,7 +160,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
         event_type.add_schema_version(spec_version);
 
         // Create domain event
-        let event = SchemaAdded::new(&ctx, &event_type.id, version);
+        let event = SchemaAdded::new(&ctx, event_type.id.as_str(), version);
 
         self.unit_of_work
             .commit(&event_type, &*self.event_type_repo, event, &command)

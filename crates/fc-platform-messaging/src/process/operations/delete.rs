@@ -82,7 +82,7 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
             ));
         }
 
-        let event = ProcessDeleted::new(&ctx, &process.id, &process.code);
+        let event = ProcessDeleted::new(&ctx, process.id.as_str(), &process.code);
 
         self.unit_of_work
             .commit_delete(&process, &*self.process_repo, event, &command)

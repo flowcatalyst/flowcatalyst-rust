@@ -170,12 +170,12 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                 .filter(|(c, s)| syncable(s) && !listed.contains(c.code.as_str()))
                 .map(|(c, _)| c)
                 .collect();
-            let ids: Vec<String> = candidates.iter().map(|c| c.id.clone()).collect();
+            let ids: Vec<String> = candidates.iter().map(|c| c.id.to_string()).collect();
             let references = self.subscription_repo.codes_by_connection_ids(&ids).await?;
             for c in &candidates {
                 let using: Vec<&str> = references
                     .iter()
-                    .filter(|(cid, _)| *cid == c.id)
+                    .filter(|(cid, _)| cid.as_str() == c.id.as_str())
                     .map(|(_, code)| code.as_str())
                     .collect();
                 if !using.is_empty() {

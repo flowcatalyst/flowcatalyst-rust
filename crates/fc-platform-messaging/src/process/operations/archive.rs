@@ -77,7 +77,7 @@ impl<U: UnitOfWork> UseCase for ArchiveProcessUseCase<U> {
         // Go's `ArchiveProcess` archives unconditionally: a repeat is a 204.
         process.archive();
 
-        let event = ProcessArchived::new(&ctx, &process.id, &process.code);
+        let event = ProcessArchived::new(&ctx, process.id.as_str(), &process.code);
 
         self.unit_of_work
             .commit(&process, &*self.process_repo, event, &command)

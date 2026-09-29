@@ -94,7 +94,7 @@ pub struct BffEventTypeResponse {
 impl From<EventType> for BffEventTypeResponse {
     fn from(et: EventType) -> Self {
         Self {
-            id: et.id,
+            id: et.id.to_string(),
             code: et.code,
             application: et.application,
             subdomain: et.subdomain,

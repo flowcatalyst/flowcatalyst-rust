@@ -125,7 +125,7 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         process.tags = command.tags.clone();
         process.created_by = Some(ctx.principal_id.clone());
 
-        let event = ProcessCreated::new(&ctx, &process.id, &process.code, &process.name);
+        let event = ProcessCreated::new(&ctx, process.id.as_str(), &process.code, &process.name);
 
         self.unit_of_work
             .commit(&process, &*self.process_repo, event, &command)

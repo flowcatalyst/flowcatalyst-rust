@@ -100,7 +100,7 @@ pub struct DispatchPoolResponse {
 impl From<DispatchPool> for DispatchPoolResponse {
     fn from(p: DispatchPool) -> Self {
         Self {
-            id: p.id,
+            id: p.id.to_string(),
             code: p.code,
             name: p.name,
             description: p.description,

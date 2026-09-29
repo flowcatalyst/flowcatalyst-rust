@@ -285,7 +285,7 @@ fn to_bff_job(
             .application_id
             .as_ref()
             .and_then(|a| applications.get(a).cloned()),
-        id: j.id,
+        id: j.id.to_string(),
         client_id: j.client_id.map(ClientId::into_string),
         application_id: j.application_id,
         code: j.code,
@@ -388,14 +388,14 @@ pub async fn list_jobs(
         .collect();
     let keys: Vec<(String, bool)> = visible
         .iter()
-        .map(|j| (j.id.clone(), j.tracks_completion))
+        .map(|j| (j.id.to_string(), j.tracks_completion))
         .collect();
     let ((clients, applications), active) =
         tokio::try_join!(names(&state), state.instance_repo.active_job_ids(&keys))?;
     let data = visible
         .into_iter()
         .map(|j| {
-            let is_active = active.contains(&j.id);
+            let is_active = active.contains(j.id.as_str());
             to_bff_job(j, &clients, &applications, is_active)
         })
         .collect();
@@ -410,10 +410,10 @@ pub async fn get_job(
 ) -> Result<Json<BffScheduledJobResponse>, PlatformError> {
     checks::can_read_scheduled_jobs(&auth.0)?;
     let j = visible_job(&state, &auth.0, &id).await?;
-    let keys = [(j.id.clone(), j.tracks_completion)];
+    let keys = [(j.id.to_string(), j.tracks_completion)];
     let ((clients, applications), active) =
         tokio::try_join!(names(&state), state.instance_repo.active_job_ids(&keys))?;
-    let is_active = active.contains(&j.id);
+    let is_active = active.contains(j.id.as_str());
     Ok(Json(to_bff_job(j, &clients, &applications, is_active)))
 }
 

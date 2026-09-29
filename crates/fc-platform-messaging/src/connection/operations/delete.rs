@@ -93,7 +93,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
         // Business rule: cannot delete if subscriptions reference this connection
         if self
             .subscription_repo
-            .exists_by_connection_id(&connection.id)
+            .exists_by_connection_id(connection.id.as_str())
             .await?
         {
             return Err(UseCaseError::business_rule(
@@ -102,7 +102,7 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
             ));
         }
 
-        let event = ConnectionDeleted::new(&ctx, &connection.id, &connection.code);
+        let event = ConnectionDeleted::new(&ctx, connection.id.as_str(), &connection.code);
 
         self.unit_of_work
             .commit_delete(&connection, &*self.connection_repo, event, &command)

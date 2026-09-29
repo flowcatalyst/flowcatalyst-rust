@@ -89,7 +89,7 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         pool.archive();
 
         // Create domain event
-        let event = DispatchPoolArchived::new(&ctx, &pool.id, &pool.code);
+        let event = DispatchPoolArchived::new(&ctx, pool.id.as_str(), &pool.code);
 
         // Atomic commit
         self.unit_of_work

@@ -165,7 +165,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
 
             let existing_pool = existing.iter().find(|p| p.code == input.code);
             match existing_pool {
-                Some(pool) if command.protected_ids.contains(&pool.id) => {}
+                Some(pool) if command.protected_ids.contains(pool.id.as_str()) => {}
                 Some(pool) => {
                     let mut updated = pool.clone();
                     updated.name = input.name.clone();
@@ -175,7 +175,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     updated.updated_at = chrono::Utc::now();
                     rows.push(RecordedEvent::of(&DispatchPoolUpdated::new(
                         &ctx,
-                        &updated.id,
+                        updated.id.as_str(),
                         &updated.name,
                     ))?);
                     saves.push(updated);
@@ -187,7 +187,10 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     pool.rate_limit = input.rate_limit.map(|r| r as i32);
                     pool.concurrency = input.concurrency as i32;
                     rows.push(RecordedEvent::of(&DispatchPoolCreated::new(
-                        &ctx, &pool.id, &pool.code, &pool.name,
+                        &ctx,
+                        pool.id.as_str(),
+                        &pool.code,
+                        &pool.name,
                     ))?);
                     saves.push(pool);
                     created_count += 1;
@@ -200,13 +203,13 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
             for pool in &existing {
                 if !synced_codes.contains(&pool.code)
                     && pool.status != DispatchPoolStatus::Archived
-                    && !command.protected_ids.contains(&pool.id)
+                    && !command.protected_ids.contains(pool.id.as_str())
                 {
                     let mut archived = pool.clone();
                     archived.archive();
                     rows.push(RecordedEvent::of(&DispatchPoolArchived::new(
                         &ctx,
-                        &archived.id,
+                        archived.id.as_str(),
                         &archived.code,
                     ))?);
                     saves.push(archived);

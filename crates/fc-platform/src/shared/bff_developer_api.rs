@@ -373,7 +373,7 @@ pub async fn list_event_types(
                 })
                 .collect();
             DeveloperEventTypeSummary {
-                id: et.id,
+                id: et.id.to_string(),
                 code: et.code,
                 name: et.name,
                 description: et.description,

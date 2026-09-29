@@ -119,7 +119,7 @@ impl ScheduledJobPoller {
 
         let instance = ScheduledJobInstance {
             id: tsid::generate(EntityType::ScheduledJobInstance),
-            scheduled_job_id: job.id.clone(),
+            scheduled_job_id: job.id.to_string(),
             client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Cron,
@@ -137,7 +137,7 @@ impl ScheduledJobPoller {
         };
 
         self.instance_repo.insert(&instance).await?;
-        self.repo.mark_fired(&job.id, slot).await?;
+        self.repo.mark_fired(job.id.as_str(), slot).await?;
         debug!(job_id = %job.id, slot = %slot, instance_id = %instance.id, "Cron-fired scheduled job");
         Ok(true)
     }

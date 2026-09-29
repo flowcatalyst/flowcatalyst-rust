@@ -148,7 +148,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                     updated.updated_at = chrono::Utc::now();
                     rows.push(RecordedEvent::of(&EventTypeUpdated::new(
                         &ctx,
-                        &updated.id,
+                        updated.id.as_str(),
                         &updated.name,
                         updated.description.as_deref(),
                     ))?);
@@ -193,7 +193,9 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                 // CODE-managed rows (the platform's own catalogue) never.
                 if et.source == EventTypeSource::Api && !synced_codes.contains(&et.code) {
                     rows.push(RecordedEvent::of(&EventTypeDeleted::new(
-                        &ctx, &et.id, &et.code,
+                        &ctx,
+                        et.id.as_str(),
+                        &et.code,
                     ))?);
                     deletes.push(et.clone());
                     deleted_count += 1;

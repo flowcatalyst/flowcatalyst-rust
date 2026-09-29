@@ -1,6 +1,7 @@
 //! EventType Entity — matches TypeScript EventType domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::EventTypeId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::de;
@@ -119,7 +120,7 @@ impl SpecVersion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventType {
-    pub id: String,
+    pub id: EventTypeId,
     pub code: String,
     pub name: String,
     pub description: Option<String>,
@@ -258,7 +259,7 @@ impl EventType {
         let event_name = code.event_name().to_string();
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::EventType),
+            id: EventTypeId::generate(),
             code: code.into_string(),
             name: name.into(),
             description: None,

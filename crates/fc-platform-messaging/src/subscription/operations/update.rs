@@ -285,7 +285,7 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         subscription.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = SubscriptionUpdated::new(&ctx, &subscription.id, &subscription.name);
+        let event = SubscriptionUpdated::new(&ctx, subscription.id.as_str(), &subscription.name);
 
         // Atomic commit
         self.unit_of_work

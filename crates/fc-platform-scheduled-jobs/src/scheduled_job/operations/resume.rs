@@ -75,7 +75,7 @@ impl<U: UnitOfWork> UseCase for ResumeScheduledJobUseCase<U> {
 
         // Go's `ResumeScheduledJob` flips the status unconditionally.
         job.resume();
-        let event = ScheduledJobResumed::new(&ctx, &job.id, &job.code);
+        let event = ScheduledJobResumed::new(&ctx, job.id.as_str(), &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

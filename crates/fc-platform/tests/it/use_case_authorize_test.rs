@@ -356,7 +356,7 @@ async fn event_type_writes_check_the_stored_types_scope() {
         use_case
             .run(
                 UpdateEventTypeCommand {
-                    event_type_id: et.id.clone(),
+                    event_type_id: et.id.to_string(),
                     name: Some("Renamed".to_string()),
                     description: None,
                     client_scoped: None,
@@ -372,7 +372,7 @@ async fn event_type_writes_check_the_stored_types_scope() {
     assert_eq!(err.http_status_code(), 403);
     assert_eq!(err.code(), "SCOPE_FORBIDDEN");
     assert_eq!(err.message(), "anchor scope required for this resource");
-    assert_eq!(app.audit_count_for(&et.id).await, 0);
+    assert_eq!(app.audit_count_for(et.id.as_str()).await, 0);
 }
 
 /// A platform pool is an anchor's: archiving it as a client caller is 403
@@ -401,7 +401,7 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
         )
         .run(
             ArchiveDispatchPoolCommand {
-                id: pool.id.clone(),
+                id: pool.id.to_string(),
             },
             client_admin(),
         )
@@ -433,7 +433,7 @@ async fn dispatch_pool_writes_check_scope_in_the_use_case() {
         .await,
     );
     assert_eq!(err.code(), "ANCHOR_REQUIRED_FOR_PLATFORM_SWEEP");
-    assert_eq!(app.audit_count_for(&pool.id).await, 0);
+    assert_eq!(app.audit_count_for(pool.id.as_str()).await, 0);
 }
 
 // ── Platform admin ───────────────────────────────────────────────────────

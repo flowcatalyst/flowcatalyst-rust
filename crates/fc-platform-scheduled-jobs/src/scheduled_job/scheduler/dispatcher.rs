@@ -67,7 +67,7 @@ struct WebhookEnvelope<'a> {
 impl<'a> WebhookEnvelope<'a> {
     fn new(job: &'a ScheduledJob, inst: &'a ScheduledJobInstance) -> Self {
         Self {
-            job_id: &job.id,
+            job_id: job.id.as_str(),
             job_code: &job.code,
             instance_id: &inst.id,
             scheduled_for: inst.scheduled_for,
@@ -380,7 +380,7 @@ mod tests {
         let now = chrono::Utc::now();
         ScheduledJobInstance {
             id: "sji_1".into(),
-            scheduled_job_id: job.id.clone(),
+            scheduled_job_id: job.id.to_string(),
             client_id: None,
             job_code: job.code.clone(),
             trigger_kind: kind,

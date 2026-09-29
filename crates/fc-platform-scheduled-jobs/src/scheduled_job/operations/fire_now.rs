@@ -113,7 +113,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         let now = Utc::now();
         let instance = ScheduledJobInstance {
             id: tsid::generate(EntityType::ScheduledJobInstance),
-            scheduled_job_id: job.id.clone(),
+            scheduled_job_id: job.id.to_string(),
             client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Manual,
@@ -137,7 +137,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
             )));
         }
 
-        let event = ScheduledJobFiredManually::new(&ctx, &job.id, &job.code, &instance.id);
+        let event = ScheduledJobFiredManually::new(&ctx, job.id.as_str(), &job.code, &instance.id);
 
         self.unit_of_work.emit_event(event, &cmd).await
     }

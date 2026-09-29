@@ -85,7 +85,7 @@ pub struct ProcessResponse {
 impl From<Process> for ProcessResponse {
     fn from(p: Process) -> Self {
         Self {
-            id: p.id,
+            id: p.id.to_string(),
             code: p.code,
             name: p.name,
             description: p.description,

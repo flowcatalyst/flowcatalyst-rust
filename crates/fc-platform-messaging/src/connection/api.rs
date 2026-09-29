@@ -80,7 +80,7 @@ pub struct ConnectionResponse {
 impl From<Connection> for ConnectionResponse {
     fn from(c: Connection) -> Self {
         Self {
-            id: c.id,
+            id: c.id.to_string(),
             code: c.code,
             application_code: c.application_code,
             name: c.name,

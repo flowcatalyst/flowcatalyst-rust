@@ -8,6 +8,7 @@ use crate::event_type::entity::EventTypeCode;
 use crate::event_type::operations::SyncEventTypeInput;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -35,11 +36,12 @@ struct EventTypeRow {
 impl TryFrom<EventTypeRow> for EventType {
     type Error = PlatformError;
     fn try_from(r: EventTypeRow) -> Result<Self> {
+        let id = decode_id(&r.id, "msg_event_types", "id", &r.id)?;
         let status = decode(&r.status, "msg_event_types", "status", &r.id)?;
         let source = decode(&r.source, "msg_event_types", "source", &r.id)?;
         let event_name = r.code.split(':').nth(3).unwrap_or("").to_string();
         Ok(Self {
-            id: r.id,
+            id,
             code: r.code,
             name: r.name,
             description: r.description,
@@ -256,7 +258,7 @@ impl EventTypeRepository {
     }
 
     async fn hydrate(&self, mut et: EventType) -> Result<EventType> {
-        et.spec_versions = self.load_spec_versions(&et.id).await?;
+        et.spec_versions = self.load_spec_versions(et.id.as_str()).await?;
         Ok(et)
     }
 
@@ -586,7 +588,7 @@ impl EventTypeRepository {
 
 impl HasId for EventType {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

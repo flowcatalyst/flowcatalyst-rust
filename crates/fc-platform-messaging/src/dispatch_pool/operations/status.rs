@@ -99,7 +99,7 @@ impl<U: UnitOfWork> UseCase for SuspendDispatchPoolUseCase<U> {
             Err(e) => return Err(e),
         };
         pool.suspend();
-        let event = DispatchPoolSuspended::new(&ctx, &pool.id, &pool.code);
+        let event = DispatchPoolSuspended::new(&ctx, pool.id.as_str(), &pool.code);
         self.unit_of_work
             .commit(&pool, &*self.dispatch_pool_repo, event, &command)
             .await
@@ -161,7 +161,7 @@ impl<U: UnitOfWork> UseCase for ActivateDispatchPoolUseCase<U> {
             Err(e) => return Err(e),
         };
         pool.activate();
-        let event = DispatchPoolActivated::new(&ctx, &pool.id, &pool.code);
+        let event = DispatchPoolActivated::new(&ctx, pool.id.as_str(), &pool.code);
         self.unit_of_work
             .commit(&pool, &*self.dispatch_pool_repo, event, &command)
             .await

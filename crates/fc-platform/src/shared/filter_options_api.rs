@@ -191,7 +191,7 @@ pub async fn get_subscription_options(
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {
-            value: s.id,
+            value: s.id.to_string(),
             label: s.name,
         })
         .collect();
@@ -228,7 +228,7 @@ pub async fn get_dispatch_pool_options(
             }
         })
         .map(|p| FilterOption {
-            value: p.id,
+            value: p.id.to_string(),
             label: p.name,
         })
         .collect();
@@ -294,7 +294,7 @@ pub async fn get_all_options(
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {
-            value: s.id,
+            value: s.id.to_string(),
             label: s.name,
         })
         .collect();
@@ -305,7 +305,7 @@ pub async fn get_all_options(
             None => true,
         })
         .map(|p| FilterOption {
-            value: p.id,
+            value: p.id.to_string(),
             label: p.name,
         })
         .collect();
@@ -478,7 +478,7 @@ pub async fn get_dispatch_jobs_filter_options(
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {
-            value: s.id,
+            value: s.id.to_string(),
             label: s.name,
         })
         .collect();

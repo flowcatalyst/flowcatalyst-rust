@@ -15,6 +15,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 use super::entity::{ScheduledJob, ScheduledJobStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::id::decode_id_opt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -48,6 +49,7 @@ struct ScheduledJobRow {
 impl TryFrom<ScheduledJobRow> for ScheduledJob {
     type Error = PlatformError;
     fn try_from(r: ScheduledJobRow) -> Result<Self> {
+        let id = decode_id(&r.id, "msg_scheduled_jobs", "id", &r.id)?;
         let client_id = decode_id_opt(
             r.client_id.as_deref(),
             "msg_scheduled_jobs",
@@ -56,7 +58,7 @@ impl TryFrom<ScheduledJobRow> for ScheduledJob {
         )?;
         let status = decode(&r.status, "msg_scheduled_jobs", "status", &r.id)?;
         Ok(Self {
-            id: r.id,
+            id,
             client_id,
             application_id: r.application_id,
             code: r.code,
@@ -380,7 +382,7 @@ impl ScheduledJobRepository {
 
 impl HasId for ScheduledJob {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
