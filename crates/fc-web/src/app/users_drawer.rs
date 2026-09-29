@@ -22,10 +22,10 @@ use fc_platform::developer_credential::DEVELOPER_ROLE;
 use fc_platform::developer_credential::api::{revoke_credential, set_credential};
 use fc_platform::mfa::admin_api::reset_user_two_factor;
 use fc_platform::principal::admin;
+use fc_platform::principal::api::{ClientAssociationRequest, client_association};
 use fc_platform::principal::api::{
     ResetPasswordRequest, SetApplicationAccessRequest, UpdatePrincipalRequest,
 };
-use fc_platform::principal::api::{ClientAssociationRequest, client_association};
 use fc_platform::{AuthContext, PlatformError, checks};
 use serde::Deserialize;
 use topcoat::{

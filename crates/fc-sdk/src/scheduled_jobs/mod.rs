@@ -4,8 +4,8 @@
 mod runner;
 
 pub use runner::{
-    BoxedHandler, HandlerContext, HandlerError, HandlerFuture, LogOptions, OnErrorHook,
-    RunResult, RunnerError, RunnerOptions, ScheduledJobEnvelope, ScheduledJobRunner,
+    BoxedHandler, HandlerContext, HandlerError, HandlerFuture, LogOptions, OnErrorHook, RunResult,
+    RunnerError, RunnerOptions, ScheduledJobEnvelope, ScheduledJobRunner,
     ScheduledJobRunnerBuilder, TriggerKind,
 };
 

@@ -82,35 +82,59 @@ impl SyncOptions {
     }
 
     pub const fn roles_only() -> Self {
-        Self { sync_roles: true, ..Self::none() }
+        Self {
+            sync_roles: true,
+            ..Self::none()
+        }
     }
 
     pub const fn event_types_only() -> Self {
-        Self { sync_event_types: true, ..Self::none() }
+        Self {
+            sync_event_types: true,
+            ..Self::none()
+        }
     }
 
     pub const fn subscriptions_only() -> Self {
-        Self { sync_subscriptions: true, ..Self::none() }
+        Self {
+            sync_subscriptions: true,
+            ..Self::none()
+        }
     }
 
     pub const fn dispatch_pools_only() -> Self {
-        Self { sync_dispatch_pools: true, ..Self::none() }
+        Self {
+            sync_dispatch_pools: true,
+            ..Self::none()
+        }
     }
 
     pub const fn principals_only() -> Self {
-        Self { sync_principals: true, ..Self::none() }
+        Self {
+            sync_principals: true,
+            ..Self::none()
+        }
     }
 
     pub const fn processes_only() -> Self {
-        Self { sync_processes: true, ..Self::none() }
+        Self {
+            sync_processes: true,
+            ..Self::none()
+        }
     }
 
     pub const fn scheduled_jobs_only() -> Self {
-        Self { sync_scheduled_jobs: true, ..Self::none() }
+        Self {
+            sync_scheduled_jobs: true,
+            ..Self::none()
+        }
     }
 
     pub const fn openapi_only() -> Self {
-        Self { sync_openapi: true, ..Self::none() }
+        Self {
+            sync_openapi: true,
+            ..Self::none()
+        }
     }
 }
 

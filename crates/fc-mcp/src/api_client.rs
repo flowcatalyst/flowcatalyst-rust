@@ -131,7 +131,8 @@ impl ApiClient {
     /// Fetch the calling principal — id, type, scope, roles, and the
     /// clients + applications it can act against.
     pub async fn whoami(&self) -> Result<Value> {
-        self.send(self.http.get(format!("{}/me", self.base_api))).await
+        self.send(self.http.get(format!("{}/me", self.base_api)))
+            .await
     }
 
     /// List applications the calling principal has access to.

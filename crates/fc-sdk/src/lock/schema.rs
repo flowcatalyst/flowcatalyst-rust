@@ -23,10 +23,7 @@ pub async fn init_lock_schema(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 /// Create the lock table with a custom name.
-pub async fn init_lock_schema_with_table(
-    pool: &PgPool,
-    table: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn init_lock_schema_with_table(pool: &PgPool, table: &str) -> Result<(), sqlx::Error> {
     let sql = CREATE_LOCK_TABLE_SQL.replace("{table}", table);
     for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         sqlx::query(stmt).execute(pool).await?;

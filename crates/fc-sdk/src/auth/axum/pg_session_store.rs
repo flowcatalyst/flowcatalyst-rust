@@ -13,11 +13,11 @@
 use async_trait::async_trait;
 use axum::http::header::{HeaderMap, SET_COOKIE};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rand::RngCore;
-use sqlx::PgPool;
 use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::PgPool;
 
 use crate::auth::AuthError;
 
@@ -91,8 +91,8 @@ impl SessionStore for PgSessionStore {
         let sid = generate_sid();
         let payload = serde_json::to_value(session)
             .map_err(|e| AuthError::Crypto(format!("serialize session: {e}")))?;
-        let expires_at = DateTime::<Utc>::from_timestamp_millis(session.expires_at)
-            .unwrap_or_else(Utc::now);
+        let expires_at =
+            DateTime::<Utc>::from_timestamp_millis(session.expires_at).unwrap_or_else(Utc::now);
         let sql = format!(
             "INSERT INTO {0} (sid, payload, expires_at) VALUES ($1, $2, $3) \
              ON CONFLICT (sid) DO UPDATE SET payload = EXCLUDED.payload, \

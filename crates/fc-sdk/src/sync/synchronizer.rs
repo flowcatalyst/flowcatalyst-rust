@@ -33,7 +33,8 @@ use super::result::{CategorySyncResult, SyncResult};
 use crate::client::scheduled_jobs::SyncScheduledJobsRequest;
 use crate::client::{
     ClientError, FlowCatalystClient, SyncDispatchPoolsRequest, SyncEventTypesRequest,
-    SyncPrincipalsRequest, SyncResult as WireSyncResult, SyncRolesRequest, SyncSubscriptionsRequest,
+    SyncPrincipalsRequest, SyncResult as WireSyncResult, SyncRolesRequest,
+    SyncSubscriptionsRequest,
 };
 
 /// Orchestrates per-category sync calls against a `FlowCatalystClient`.
@@ -62,7 +63,10 @@ impl DefinitionSynchronizer {
         let app = set.application_code.as_str();
 
         if options.sync_roles && set.has_roles() {
-            out.roles = Some(self.run_roles(app, &set.roles, options.remove_unlisted).await);
+            out.roles = Some(
+                self.run_roles(app, &set.roles, options.remove_unlisted)
+                    .await,
+            );
         }
         if options.sync_event_types && set.has_event_types() {
             out.event_types = Some(
@@ -112,11 +116,7 @@ impl DefinitionSynchronizer {
     /// Sync multiple applications sequentially. Returns one result per
     /// input set, in the same order. Per-set errors do not abort the
     /// chain — each set is independent.
-    pub async fn sync_all(
-        &self,
-        sets: &[DefinitionSet],
-        options: &SyncOptions,
-    ) -> Vec<SyncResult> {
+    pub async fn sync_all(&self, sets: &[DefinitionSet], options: &SyncOptions) -> Vec<SyncResult> {
         let mut results = Vec::with_capacity(sets.len());
         for set in sets {
             results.push(self.sync(set, options).await);
@@ -133,7 +133,11 @@ impl DefinitionSynchronizer {
         remove_unlisted: bool,
     ) -> CategorySyncResult {
         let req = SyncRolesRequest {
-            roles: roles.iter().cloned().map(RoleDefinition::into_wire).collect(),
+            roles: roles
+                .iter()
+                .cloned()
+                .map(RoleDefinition::into_wire)
+                .collect(),
         };
         match self.client.roles().sync(app, &req, remove_unlisted).await {
             Ok(r) => from_wire(r),
@@ -296,11 +300,7 @@ impl DefinitionSynchronizer {
         }
     }
 
-    async fn run_openapi(
-        &self,
-        app: &str,
-        spec: serde_json::Value,
-    ) -> CategorySyncResult {
+    async fn run_openapi(&self, app: &str, spec: serde_json::Value) -> CategorySyncResult {
         match self.client.openapi().sync(app, spec).await {
             Ok(r) => {
                 // OpenAPI sync is one-shot: report 1 row created/updated

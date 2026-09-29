@@ -31,30 +31,31 @@ use fc_platform::event_type::operations::{
 };
 use fc_platform::usecase::UseCase;
 use fc_platform::{
-    checks, AuthContext, EventType, EventTypeStatus, ExecutionContext, PlatformError, SpecVersion,
+    AuthContext, EventType, EventTypeStatus, ExecutionContext, PlatformError, SpecVersion, checks,
 };
 use serde::Deserialize;
 use topcoat::{
+    Result,
     context::Cx,
     icon::{icon, iconify::iconify_icon},
     router::{
+        Method,
         content::Form,
-        error::{see_other, RouterErrorExt, SeeOther},
+        error::{RouterErrorExt, SeeOther, see_other},
         page, path_param, query_params,
         request::method,
-        route, Method,
+        route,
     },
-    runtime::{shard, signal, Event, Signal},
-    view::{component, view, Length, View},
-    Result,
+    runtime::{Event, Signal, shard, signal},
+    view::{Length, View, component, view},
 };
 
 use crate::auth::{auth, permit, platform_error};
 use crate::ui::drawer::DrawerSize;
 use crate::ui::{
-    code_chips, confirm_dialog, detail_field, detail_value, drawer_frame, drawer_header,
-    empty_state, filter_select, form_field, json_block, list_query, page_header, paginator,
-    set_flash, table_toolbar, tag, Btn, FlashKind, Pager, Severity,
+    Btn, FlashKind, Pager, Severity, code_chips, confirm_dialog, detail_field, detail_value,
+    drawer_frame, drawer_header, empty_state, filter_select, form_field, json_block, list_query,
+    page_header, paginator, set_flash, table_toolbar, tag,
 };
 
 path_param!(id);

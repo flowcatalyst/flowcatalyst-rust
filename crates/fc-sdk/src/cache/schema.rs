@@ -26,10 +26,7 @@ pub async fn init_cache_schema(pool: &PgPool) -> Result<(), sqlx::Error> {
 
 /// Create the cache table with a custom name (for multi-tenant deployments
 /// that need separate cache tables per service).
-pub async fn init_cache_schema_with_table(
-    pool: &PgPool,
-    table: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn init_cache_schema_with_table(pool: &PgPool, table: &str) -> Result<(), sqlx::Error> {
     let sql = CREATE_CACHE_TABLE_SQL.replace("{table}", table);
     // Split on the empty line so we can run create-table + create-index as
     // two statements (some pg drivers don't allow multi-statement queries).

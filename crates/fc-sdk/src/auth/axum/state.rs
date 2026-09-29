@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use crate::auth::TokenValidator;
 use crate::auth::oauth::OAuthClient;
+use crate::auth::TokenValidator;
 
 use super::rbac::RbacCatalogue;
 use super::session::SharedSessionStore;

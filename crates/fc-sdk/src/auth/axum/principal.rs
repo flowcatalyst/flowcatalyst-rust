@@ -169,8 +169,8 @@ impl Principal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::AccessTokenClaims;
     use crate::auth::axum::rbac::RbacBuilder;
+    use crate::auth::AccessTokenClaims;
 
     fn make_principal(roles: &[&str], catalog: Option<&RbacCatalogue>) -> Principal {
         let claims = AccessTokenClaims {
@@ -238,10 +238,7 @@ mod tests {
 
     #[test]
     fn has_any_permission_to_is_any() {
-        let rbac = RbacBuilder::new()
-            .role("a")
-            .grants(["x"])
-            .build();
+        let rbac = RbacBuilder::new().role("a").grants(["x"]).build();
         let p = make_principal(&["a"], Some(&rbac));
         assert!(p.has_any_permission_to(["y", "x"]));
         assert!(!p.has_any_permission_to(["y", "z"]));

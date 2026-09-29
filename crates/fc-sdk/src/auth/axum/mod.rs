@@ -32,7 +32,7 @@ mod pg_session_store;
 #[cfg(feature = "axum-session-redis")]
 mod redis_session_store;
 
-pub use crypto::{SessionCrypto, generate_session_secret};
+pub use crypto::{generate_session_secret, SessionCrypto};
 pub use extractor::{AuthRejection, Principal, RequireAuth, RequireBearer, RequireSession};
 pub use middleware::fc_auth_middleware;
 pub use principal::{AuthMechanism, Principal as PrincipalData};
@@ -45,9 +45,7 @@ pub use session::{
 pub use state::{AuthRoutes, AuthState};
 
 #[cfg(feature = "axum-session-postgres")]
-pub use pg_session_store::{
-    PgSessionStore, create_session_table_sql, init_session_schema,
-};
+pub use pg_session_store::{create_session_table_sql, init_session_schema, PgSessionStore};
 
 #[cfg(feature = "axum-session-redis")]
 pub use redis_session_store::RedisSessionStore;
