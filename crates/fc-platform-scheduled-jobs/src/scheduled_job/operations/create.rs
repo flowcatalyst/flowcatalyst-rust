@@ -10,6 +10,7 @@ use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::parse_client_id;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
@@ -167,7 +168,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
             .with_created_by(ctx.principal_id.clone());
 
         if let Some(c) = &cmd.client_id {
-            job = job.with_client_id(c);
+            job = job.with_client_id(parse_client_id(c)?);
         }
         job.application_id = cmd.application_id.clone();
         if let Some(d) = &cmd.description {

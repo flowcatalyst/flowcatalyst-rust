@@ -29,6 +29,8 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::PgUnitOfWork;
 
@@ -315,7 +317,7 @@ impl From<Subscription> for SubscriptionResponse {
             application_code: s.application_code,
             name: s.name,
             description: s.description,
-            client_id: s.client_id,
+            client_id: s.client_id.map(ClientId::into_string),
             client_identifier: s.client_identifier,
             client_scoped: s.client_scoped,
             event_types: s.event_types.iter().map(|e| e.into()).collect(),
@@ -510,7 +512,7 @@ pub async fn list_subscriptions(
         .into_iter()
         .filter(|s| {
             s.client_id
-                .as_deref()
+                .as_id_str()
                 .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|s| s.into())

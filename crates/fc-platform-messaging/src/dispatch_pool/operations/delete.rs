@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::events::DispatchPoolDeleted;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
 use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -55,7 +56,7 @@ impl<U: UnitOfWork> UseCase for DeleteDispatchPoolUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(target) = self.dispatch_pool_repo.find_by_id(&command.id).await? {
-            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_id_str())?;
         }
         Ok(())
     }

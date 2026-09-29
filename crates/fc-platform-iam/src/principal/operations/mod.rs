@@ -2,16 +2,6 @@
 //!
 //! Use cases for user (principal) management.
 
-use fc_platform_core::shared::id::ClientId;
-use fc_platform_core::usecase::UseCaseError;
-
-/// A client id named in a command: a malformed one is the caller's mistake, a
-/// 400 with its own code, not a database foreign-key failure.
-pub(crate) fn parse_client_id(raw: &str) -> Result<ClientId, UseCaseError> {
-    ClientId::parse(raw.trim())
-        .map_err(|e| UseCaseError::validation("INVALID_CLIENT_ID", e.to_string()))
-}
-
 pub mod access;
 pub mod activate;
 pub mod assign_application_access;

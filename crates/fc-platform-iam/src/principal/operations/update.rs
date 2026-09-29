@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserUpdated;
-use super::parse_client_id;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::parse_client_id;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,

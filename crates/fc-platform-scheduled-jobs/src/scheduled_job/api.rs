@@ -41,6 +41,8 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
@@ -323,7 +325,7 @@ impl ScheduledJobResponse {
     fn from(job: ScheduledJob, has_active_instance: bool) -> Self {
         Self {
             id: job.id,
-            client_id: job.client_id,
+            client_id: job.client_id.map(ClientId::into_string),
             application_id: job.application_id,
             code: job.code,
             name: job.name,
@@ -602,7 +604,7 @@ pub async fn get_scheduled_job(
         .or_not_found("ScheduledJob", &id)?;
     check_read_access(
         &auth,
-        job.client_id.as_deref(),
+        job.client_id.as_id_str(),
         "No access to this scheduled job",
     )?;
     let active = state
@@ -639,7 +641,7 @@ pub async fn get_scheduled_job_by_code(
         .or_not_found("ScheduledJob", &code)?;
     check_read_access(
         &auth,
-        job.client_id.as_deref(),
+        job.client_id.as_id_str(),
         "No access to this scheduled job",
     )?;
     let active = state
@@ -849,7 +851,7 @@ pub async fn list_instances_for_job(
     if let Some(job) = state.repo.find_by_id(&id).await? {
         check_read_access(
             &auth,
-            job.client_id.as_deref(),
+            job.client_id.as_id_str(),
             "No access to this scheduled job",
         )?;
     }

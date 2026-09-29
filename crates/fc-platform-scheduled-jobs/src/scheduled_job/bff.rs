@@ -30,6 +30,8 @@ use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 
 #[derive(Clone)]
@@ -275,13 +277,16 @@ fn to_bff_job(
     active: bool,
 ) -> BffScheduledJobResponse {
     BffScheduledJobResponse {
-        client_name: j.client_id.as_ref().and_then(|c| clients.get(c).cloned()),
+        client_name: j
+            .client_id
+            .as_ref()
+            .and_then(|c| clients.get(c.as_str()).cloned()),
         application_name: j
             .application_id
             .as_ref()
             .and_then(|a| applications.get(a).cloned()),
         id: j.id,
-        client_id: j.client_id,
+        client_id: j.client_id.map(ClientId::into_string),
         application_id: j.application_id,
         code: j.code,
         name: j.name,
@@ -314,7 +319,7 @@ async fn visible_job(
         .repo
         .find_by_id(id)
         .await?
-        .filter(|j| can_view(auth, j.client_id.as_deref()))
+        .filter(|j| can_view(auth, j.client_id.as_id_str()))
         .ok_or_else(|| PlatformError::not_found("ScheduledJob", id))
 }
 
@@ -379,7 +384,7 @@ pub async fn list_jobs(
     )?;
     let visible: Vec<ScheduledJob> = rows
         .into_iter()
-        .filter(|j| can_view(&auth.0, j.client_id.as_deref()))
+        .filter(|j| can_view(&auth.0, j.client_id.as_id_str()))
         .collect();
     let keys: Vec<(String, bool)> = visible
         .iter()

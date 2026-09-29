@@ -28,6 +28,8 @@ use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCase};
 
@@ -104,7 +106,7 @@ impl From<DispatchPool> for DispatchPoolResponse {
             description: p.description,
             rate_limit: p.rate_limit,
             concurrency: p.concurrency,
-            client_id: p.client_id,
+            client_id: p.client_id.map(ClientId::into_string),
             client_identifier: p.client_identifier,
             status: p.status.as_str().to_string(),
             created_at: p.created_at.to_rfc3339(),
@@ -225,7 +227,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     // Check access
     if !auth.0.is_anchor() {
         if let Some(ref client_id) = pool.client_id {
-            if !auth.0.can_access_client(client_id) {
+            if !auth.0.can_access_client(client_id.as_str()) {
                 return Err(PlatformError::forbidden("No access to this dispatch pool"));
             }
         }
@@ -267,7 +269,7 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
         .into_iter()
         .filter(|p| {
             p.client_id
-                .as_deref()
+                .as_id_str()
                 .is_none_or(|cid| caller_reach::reaches_client(&auth.0, cid))
         })
         .map(|p| p.into())

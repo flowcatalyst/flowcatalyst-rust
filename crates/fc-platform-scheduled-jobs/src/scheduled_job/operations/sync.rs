@@ -22,6 +22,7 @@ use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
 use crate::scheduled_job::ScheduledJobRepository;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::parse_client_id;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -234,7 +235,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                         .with_delivery_max_attempts(entry.delivery_max_attempts)
                         .with_created_by(ctx.principal_id.clone());
                     if let Some(c) = &cmd.client_id {
-                        job = job.with_client_id(c);
+                        job = job.with_client_id(parse_client_id(c)?);
                     }
                     if let Some(d) = &entry.description {
                         job = job.with_description(d);

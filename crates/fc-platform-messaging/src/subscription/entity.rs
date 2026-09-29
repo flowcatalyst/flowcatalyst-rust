@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,7 @@ pub struct Subscription {
     pub application_code: Option<String>,
     pub name: String,
     pub description: Option<String>,
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub client_identifier: Option<String>,
     pub client_scoped: bool,
     pub event_types: Vec<EventTypeBinding>,
@@ -144,7 +145,7 @@ impl Subscription {
         #[builder(into)] endpoint: String,
         application_code: Option<String>,
         description: Option<String>,
-        client_id: Option<String>,
+        client_id: Option<ClientId>,
         #[builder(default)] event_types: Vec<EventTypeBinding>,
         connection_id: Option<String>,
         queue: Option<String>,
@@ -219,8 +220,8 @@ impl Subscription {
         self.description = Some(desc.into());
         self
     }
-    pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
-        self.client_id = Some(id.into());
+    pub fn with_client_id(mut self, id: ClientId) -> Self {
+        self.client_id = Some(id);
         self
     }
     pub fn with_dispatch_pool_id(mut self, id: impl Into<String>) -> Self {
@@ -251,7 +252,7 @@ impl Subscription {
     pub fn matches_client(&self, client_id: Option<&str>) -> bool {
         match (&self.client_id, client_id) {
             (None, _) => true,
-            (Some(sub_client), Some(event_client)) => sub_client == event_client,
+            (Some(sub_client), Some(event_client)) => sub_client.as_str() == event_client,
             (Some(_), None) => false,
         }
     }
@@ -273,6 +274,7 @@ impl Subscription {
 mod tests {
     use super::*;
     use fc_platform_core::shared::enum_str;
+    use fc_platform_core::shared::id::OptionIdExt;
     use std::str::FromStr;
     use std::thread;
     use std::time::Duration;
@@ -325,7 +327,7 @@ mod tests {
             .with_endpoint("https://b.com")
             .with_connection_id("conn-1")
             .with_description("Test subscription")
-            .with_client_id("client-1")
+            .with_client_id(ClientId::parse("clt_1").unwrap())
             .with_dispatch_pool_id("pool-1")
             .with_service_account_id("sa-1")
             .with_mode(DispatchMode::BlockOnError)
@@ -335,7 +337,7 @@ mod tests {
         assert_eq!(sub.endpoint, "https://b.com");
         assert_eq!(sub.connection_id, Some("conn-1".to_string()));
         assert_eq!(sub.description, Some("Test subscription".to_string()));
-        assert_eq!(sub.client_id, Some("client-1".to_string()));
+        assert_eq!(sub.client_id.as_id_str(), Some("clt_1"));
         assert_eq!(sub.dispatch_pool_id, Some("pool-1".to_string()));
         assert_eq!(sub.service_account_id, Some("sa-1".to_string()));
         assert_eq!(sub.mode, DispatchMode::BlockOnError);
@@ -376,12 +378,12 @@ mod tests {
     fn test_subscription_matches_client() {
         let sub_no_client = Subscription::new("s1", "Sub", "https://a.com");
         // No client_id on subscription means it matches any client
-        assert!(sub_no_client.matches_client(Some("client-1")));
+        assert!(sub_no_client.matches_client(Some("clt_1")));
         assert!(sub_no_client.matches_client(None));
 
-        let sub_with_client =
-            Subscription::new("s2", "Sub", "https://a.com").with_client_id("client-1");
-        assert!(sub_with_client.matches_client(Some("client-1")));
+        let sub_with_client = Subscription::new("s2", "Sub", "https://a.com")
+            .with_client_id(ClientId::parse("clt_1").unwrap());
+        assert!(sub_with_client.matches_client(Some("clt_1")));
         assert!(!sub_with_client.matches_client(Some("client-2")));
         assert!(!sub_with_client.matches_client(None));
     }
@@ -593,7 +595,8 @@ mod tests {
 
     #[test]
     fn client_scoped_subscription_matches_only_its_client() {
-        let s = Subscription::new("scoped", "Scoped", "https://x.com").with_client_id("clt_a");
+        let s = Subscription::new("scoped", "Scoped", "https://x.com")
+            .with_client_id(ClientId::parse("clt_a").unwrap());
         assert!(s.matches_client(Some("clt_a")));
         assert!(!s.matches_client(Some("clt_b")));
         // Event without a client cannot match a client-scoped subscription.

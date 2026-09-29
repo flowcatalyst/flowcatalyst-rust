@@ -134,7 +134,7 @@ async fn create_subscription(
     account: Option<&str>,
 ) -> String {
     let mut sub = fc_platform::Subscription::new(code, code, "https://receiver.example.test/hook");
-    sub.client_id = client_id.map(str::to_string);
+    sub.client_id = client_id.map(|c| ClientId::parse(c).unwrap());
     sub.service_account_id = account.map(str::to_string);
     app.repos
         .subscription_repo
@@ -838,7 +838,7 @@ async fn create_connection(
     client_id: Option<&str>,
 ) -> String {
     let mut connection = fc_platform::Connection::new(code, code, account);
-    connection.client_id = client_id.map(str::to_string);
+    connection.client_id = client_id.map(|c| ClientId::parse(c).unwrap());
     app.repos
         .connection_repo
         .insert(&connection)

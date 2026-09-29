@@ -19,6 +19,7 @@ use fc_platform_core::directory::ApplicationDirectory;
 use fc_platform_core::impl_domain_event;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::domain_event::EventMetadata;
+use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -152,7 +153,7 @@ impl<U: UnitOfWork> SyncConnectionsUseCase<U> {
                 }
                 None => {
                     let mut c = Connection::new(&code, input.name.trim(), &service_account);
-                    c.client_id = command.client_id.clone();
+                    c.client_id = parse_client_id_opt(command.client_id.as_deref())?;
                     c.description = input.description.clone();
                     c.external_id = input.external_id.clone();
                     saves.push((c, SOURCE_API.to_string()));

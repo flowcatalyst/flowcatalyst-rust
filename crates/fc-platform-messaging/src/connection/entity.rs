@@ -2,6 +2,7 @@
 
 use crate::connection::sync_plan;
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ pub struct Connection {
     pub external_id: Option<String>,
     pub status: ConnectionStatus,
     pub service_account_id: String,
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub client_identifier: Option<String>,
     /// Who authored it: `UI` (an admin), or `API`/`CODE` (an application's
     /// sync); see `sync_plan::SOURCE_*`.
@@ -74,8 +75,8 @@ impl Connection {
         self.external_id = Some(id.into());
         self
     }
-    pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
-        self.client_id = Some(id.into());
+    pub fn with_client_id(mut self, id: ClientId) -> Self {
+        self.client_id = Some(id);
         self
     }
     pub fn with_client_identifier(mut self, id: impl Into<String>) -> Self {
@@ -97,6 +98,7 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::OptionIdExt;
     use std::str::FromStr;
 
     #[test]
@@ -125,12 +127,12 @@ mod tests {
         let conn = Connection::new("c1", "Connection 1", "sa-1")
             .with_description("A test connection")
             .with_external_id("ext-123")
-            .with_client_id("client-1")
+            .with_client_id(ClientId::parse("clt_1").unwrap())
             .with_client_identifier("client-ident-1");
 
         assert_eq!(conn.description, Some("A test connection".to_string()));
         assert_eq!(conn.external_id, Some("ext-123".to_string()));
-        assert_eq!(conn.client_id, Some("client-1".to_string()));
+        assert_eq!(conn.client_id.as_id_str(), Some("clt_1"));
         assert_eq!(conn.client_identifier, Some("client-ident-1".to_string()));
     }
 

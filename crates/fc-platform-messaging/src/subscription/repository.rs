@@ -8,6 +8,7 @@ use crate::dispatch_job::entity::parse_dispatch_mode;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id_opt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -48,6 +49,12 @@ struct SubscriptionRow {
 impl TryFrom<SubscriptionRow> for Subscription {
     type Error = PlatformError;
     fn try_from(r: SubscriptionRow) -> Result<Self> {
+        let client_id = decode_id_opt(
+            r.client_id.as_deref(),
+            "msg_subscriptions",
+            "client_id",
+            &r.id,
+        )?;
         let source = decode(&r.source, "msg_subscriptions", "source", &r.id)?;
         let status = decode(&r.status, "msg_subscriptions", "status", &r.id)?;
         let mode = parse_dispatch_mode(Some(&r.mode));
@@ -57,7 +64,7 @@ impl TryFrom<SubscriptionRow> for Subscription {
             application_code: r.application_code,
             name: r.name,
             description: r.description,
-            client_id: r.client_id,
+            client_id,
             client_identifier: r.client_identifier,
             client_scoped: r.client_scoped,
             event_types: vec![], // loaded separately

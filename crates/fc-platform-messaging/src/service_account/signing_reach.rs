@@ -37,6 +37,7 @@ use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::UseCaseError;
 
 /// The account facts the check reads (fc-platform-iam: its repository
@@ -232,7 +233,7 @@ pub async fn require_usable_signers(
             }
             None => {}
             Some(connection) => {
-                if !caller_reach::reaches_scope(caller, connection.client_id.as_deref()) {
+                if !caller_reach::reaches_scope(caller, connection.client_id.as_id_str()) {
                     return Err(UseCaseError::forbidden(
                         "CONNECTION_OUT_OF_REACH",
                         format!(

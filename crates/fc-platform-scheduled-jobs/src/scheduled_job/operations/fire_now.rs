@@ -21,6 +21,7 @@ use crate::scheduled_job::entity::{
 };
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::shared::caller_reach;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::AuditMasked;
@@ -81,7 +82,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
         if let Some(job) = self.repo.find_by_id(&command.scheduled_job_id).await? {
-            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_deref())?;
+            caller_reach::check_scope_access(ctx.caller(), job.client_id.as_id_str())?;
         }
         Ok(())
     }
@@ -113,7 +114,7 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         let instance = ScheduledJobInstance {
             id: tsid::generate(EntityType::ScheduledJobInstance),
             scheduled_job_id: job.id.clone(),
-            client_id: job.client_id.clone(),
+            client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Manual,
             scheduled_for: None,

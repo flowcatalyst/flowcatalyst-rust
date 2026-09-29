@@ -7,6 +7,8 @@ use super::entity::{Connection, ConnectionStatus};
 use crate::connection::sync_plan::ConnectionSyncPlan;
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id_opt;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -32,6 +34,12 @@ struct ConnectionRow {
 impl TryFrom<ConnectionRow> for Connection {
     type Error = PlatformError;
     fn try_from(r: ConnectionRow) -> Result<Self> {
+        let client_id = decode_id_opt(
+            r.client_id.as_deref(),
+            "msg_connections",
+            "client_id",
+            &r.id,
+        )?;
         let status = decode(&r.status, "msg_connections", "status", &r.id)?;
         // X-06: a source outside the known set is a loud read error (the
         // column's CHECK allows only these).
@@ -50,7 +58,7 @@ impl TryFrom<ConnectionRow> for Connection {
             external_id: r.external_id,
             status,
             service_account_id: r.service_account_id,
-            client_id: r.client_id,
+            client_id,
             client_identifier: r.client_identifier,
             source: r.source,
             created_at: r.created_at,
@@ -396,7 +404,7 @@ impl Persist<ConnectionSyncPlan> for ConnectionRepository {
                 external_ids.push(c.external_id.clone());
                 statuses.push(c.status.as_str().to_string());
                 service_accounts.push(c.service_account_id.clone());
-                client_ids.push(c.client_id.clone());
+                client_ids.push(c.client_id.as_id_str().map(String::from));
                 identifiers.push(c.client_identifier.clone());
                 created.push(c.created_at);
                 sources.push(source.clone());

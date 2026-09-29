@@ -8,6 +8,7 @@ use super::events::DispatchPoolCreated;
 use crate::dispatch_pool::entity::DispatchPool;
 use crate::dispatch_pool::repository::DispatchPoolRepository;
 use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::parse_client_id;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
@@ -151,7 +152,7 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         }
 
         if let Some(ref client_id) = command.client_id {
-            pool = pool.with_client_id(client_id);
+            pool = pool.with_client_id(parse_client_id(client_id)?);
         }
 
         pool.rate_limit = command.rate_limit;

@@ -18,6 +18,7 @@ use fc_platform_core::directory::ApplicationAccess;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::enum_str;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::PgUnitOfWork;
 
@@ -87,7 +88,7 @@ impl From<Connection> for ConnectionResponse {
             external_id: c.external_id,
             status: c.status.as_str().to_string(),
             service_account_id: c.service_account_id,
-            client_id: c.client_id,
+            client_id: c.client_id.map(ClientId::into_string),
             client_identifier: c.client_identifier,
             source: c.source,
             created_at: c.created_at.to_rfc3339(),

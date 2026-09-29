@@ -10,6 +10,7 @@
 //! Or run all (including ignored):
 //!   cargo test -p fc-platform --test it postgres_integration_tests:: -- --include-ignored
 
+use fc_platform_core::shared::id::ClientId;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
@@ -1503,7 +1504,7 @@ async fn test_dispatch_pool_find_anchor_by_codes() {
         .await
         .unwrap();
     let mut scoped = DispatchPool::new("scoped", "Client pool");
-    scoped.client_id = Some("clt_0000000000001".to_string());
+    scoped.client_id = Some(ClientId::parse("clt_0000000000001").unwrap());
     repo.insert(&scoped).await.unwrap();
 
     let codes = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();

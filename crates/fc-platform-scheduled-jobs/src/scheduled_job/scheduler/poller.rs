@@ -29,6 +29,7 @@ use crate::scheduled_job::entity::{
 use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use tokio::time;
@@ -119,7 +120,7 @@ impl ScheduledJobPoller {
         let instance = ScheduledJobInstance {
             id: tsid::generate(EntityType::ScheduledJobInstance),
             scheduled_job_id: job.id.clone(),
-            client_id: job.client_id.clone(),
+            client_id: job.client_id.as_id_str().map(String::from),
             job_code: job.code.clone(),
             trigger_kind: TriggerKind::Cron,
             scheduled_for: Some(slot),

@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserCreated;
-use super::parse_client_id;
 use crate::auth::password_service::PasswordService;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::portal::policy;
@@ -16,6 +15,7 @@ use fc_platform_core::details;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::parse_client_id;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use std::sync::OnceLock;

@@ -27,6 +27,20 @@ pub use unit_of_work::{
 };
 pub use use_case::UseCase;
 
+use crate::shared::id::ClientId;
+
+/// A client id named in a command: a malformed one is the caller's mistake, a
+/// 400 with its own code, not a database foreign-key failure.
+pub fn parse_client_id(raw: &str) -> Result<ClientId, UseCaseError> {
+    ClientId::parse(raw.trim())
+        .map_err(|e| UseCaseError::validation("INVALID_CLIENT_ID", e.to_string()))
+}
+
+/// [`parse_client_id`] for an optional command field.
+pub fn parse_client_id_opt(raw: Option<&str>) -> Result<Option<ClientId>, UseCaseError> {
+    raw.map(parse_client_id).transpose()
+}
+
 /// A command's declared audit-masked fields (see `fc_common::audit_redaction`).
 /// Every command a unit of work audits implements it; most declare none.
 pub use fc_common::audit_redaction::AuditMasked;

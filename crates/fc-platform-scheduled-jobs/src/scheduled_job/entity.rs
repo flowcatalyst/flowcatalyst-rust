@@ -6,6 +6,7 @@
 //! aggregate; see `repository.rs` for direct-write infrastructure methods.
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ pub struct ScheduledJob {
     pub id: String,
     /// NULL = platform-scoped (anchor-only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     /// The application the job belongs to (Java `ScheduledJob.applicationId`):
     /// its oldest active service account signs the job's firings. `None` for
     /// a job no application owns.
@@ -120,8 +121,8 @@ impl ScheduledJob {
         }
     }
 
-    pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
-        self.client_id = Some(id.into());
+    pub fn with_client_id(mut self, id: ClientId) -> Self {
+        self.client_id = Some(id);
         self
     }
     pub fn with_application_id(mut self, id: impl Into<String>) -> Self {

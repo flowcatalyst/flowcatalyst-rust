@@ -99,6 +99,18 @@ pub fn decode_id<K: IdKind>(
     Id::parse(value.clone()).map_err(|_| corrupt_value(table, column, &value, row_id))
 }
 
+/// [`decode_id`] for a nullable column.
+pub fn decode_id_opt<K: IdKind>(
+    value: Option<&str>,
+    table: &str,
+    column: &str,
+    row_id: &str,
+) -> Result<Option<Id<K>>, PlatformError> {
+    value
+        .map(|v| decode_id(v, table, column, row_id))
+        .transpose()
+}
+
 impl<K> Id<K> {
     pub fn as_str(&self) -> &str {
         &self.0

@@ -11,6 +11,7 @@ use crate::connection::repository::ConnectionRepository;
 use crate::service_account::signing_reach;
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
+use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -161,7 +162,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         let mut connection = Connection::new(&code, name, &command.service_account_id);
         connection.application_code = command.application_code.clone();
         connection.description = command.description.clone();
-        connection.client_id = command.client_id.clone();
+        connection.client_id = parse_client_id_opt(command.client_id.as_deref())?;
         if let Some(ref ext_id) = command.external_id {
             connection.external_id = Some(ext_id.clone());
         }

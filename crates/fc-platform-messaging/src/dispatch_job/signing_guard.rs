@@ -46,6 +46,7 @@ use fc_platform_core::directory::{
 };
 use fc_platform_core::shared::authorization_service::{ApplicationScope, AuthContext};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::OptionIdExt;
 
 pub struct SigningGuard {
     subscriptions: Arc<SubscriptionRepository>,
@@ -150,7 +151,9 @@ impl SigningGuard {
         if !caller.is_anchor() {
             for job in jobs {
                 if let Some(sub) = subscription_of(job) {
-                    if sub.client_id.is_none() || sub.client_id != job.client_id {
+                    if sub.client_id.is_none()
+                        || sub.client_id.as_id_str() != job.client_id.as_deref()
+                    {
                         return Err(PlatformError::forbidden_code(
                             "FORBIDDEN",
                             format!("No access to subscription: {}", sub.id),

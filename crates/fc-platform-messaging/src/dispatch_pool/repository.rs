@@ -6,6 +6,7 @@ use sqlx::PgPool;
 use super::entity::{DispatchPool, DispatchPoolStatus};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id_opt;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -29,6 +30,12 @@ struct DispatchPoolRow {
 impl TryFrom<DispatchPoolRow> for DispatchPool {
     type Error = PlatformError;
     fn try_from(r: DispatchPoolRow) -> Result<Self> {
+        let client_id = decode_id_opt(
+            r.client_id.as_deref(),
+            "msg_dispatch_pools",
+            "client_id",
+            &r.id,
+        )?;
         let status = decode(&r.status, "msg_dispatch_pools", "status", &r.id)?;
         Ok(Self {
             id: r.id,
@@ -37,7 +44,7 @@ impl TryFrom<DispatchPoolRow> for DispatchPool {
             description: r.description,
             rate_limit: r.rate_limit,
             concurrency: r.concurrency,
-            client_id: r.client_id,
+            client_id,
             client_identifier: r.client_identifier,
             status,
             created_at: r.created_at,

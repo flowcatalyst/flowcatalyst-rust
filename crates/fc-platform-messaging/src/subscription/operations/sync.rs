@@ -22,6 +22,8 @@ use crate::{
     subscription::entity::{EventTypeBinding, Subscription},
 };
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -269,7 +271,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         .endpoint(&input.target)
                         .maybe_connection_id(connection_id)
                         .application_code(command.application_code.clone())
-                        .maybe_client_id(command.client_id.clone())
+                        .maybe_client_id(parse_client_id_opt(command.client_id.as_deref())?)
                         .source(SubscriptionSource::Api)
                         .maybe_description(input.description.clone())
                         .event_types(bindings)
@@ -378,7 +380,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     by_code.iter().find(|c| {
                         c.code == code
                             && c.application_code.as_deref() == namespace
-                            && c.client_id.as_deref() == client_id
+                            && c.client_id.as_id_str() == client_id
                     })
                 };
                 let found = client
@@ -420,7 +422,7 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             })?;
             if connection
                 .client_id
-                .as_deref()
+                .as_id_str()
                 .is_some_and(|cid| Some(cid) != client)
             {
                 return Err(UseCaseError::validation(

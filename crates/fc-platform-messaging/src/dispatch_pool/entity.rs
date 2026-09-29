@@ -1,6 +1,7 @@
 //! DispatchPool Entity — matches TypeScript DispatchPool domain
 
 use chrono::{DateTime, Utc};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,7 @@ pub struct DispatchPool {
     /// `None` means concurrency-only (no rate limit applied by the message router).
     pub rate_limit: Option<i32>,
     pub concurrency: i32,
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
     pub client_identifier: Option<String>,
     pub status: DispatchPoolStatus,
     pub created_at: DateTime<Utc>,
@@ -60,8 +61,8 @@ impl DispatchPool {
         self.description = Some(desc.into());
         self
     }
-    pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
-        self.client_id = Some(id.into());
+    pub fn with_client_id(mut self, id: ClientId) -> Self {
+        self.client_id = Some(id);
         self
     }
     pub fn with_rate_limit(mut self, rate: Option<u32>) -> Self {
@@ -92,6 +93,7 @@ impl DispatchPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::OptionIdExt;
     use std::str::FromStr;
 
     #[test]
@@ -177,12 +179,12 @@ mod tests {
     fn test_dispatch_pool_builder_methods() {
         let pool = DispatchPool::new("pool", "Pool")
             .with_description("A test pool")
-            .with_client_id("client-1")
+            .with_client_id(ClientId::parse("clt_1").unwrap())
             .with_rate_limit(Some(200))
             .with_concurrency(20);
 
         assert_eq!(pool.description, Some("A test pool".to_string()));
-        assert_eq!(pool.client_id, Some("client-1".to_string()));
+        assert_eq!(pool.client_id.as_id_str(), Some("clt_1"));
         assert_eq!(pool.rate_limit, Some(200));
         assert_eq!(pool.concurrency, 20);
     }

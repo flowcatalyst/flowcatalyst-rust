@@ -14,6 +14,7 @@ use crate::{
 };
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
+use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use std::sync::OnceLock;
@@ -279,7 +280,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
             .endpoint(&command.endpoint)
             .maybe_connection_id(command.connection_id.clone())
             .maybe_description(command.description.clone())
-            .maybe_client_id(command.client_id.clone())
+            .maybe_client_id(parse_client_id_opt(command.client_id.as_deref())?)
             .event_types(
                 command
                     .event_types

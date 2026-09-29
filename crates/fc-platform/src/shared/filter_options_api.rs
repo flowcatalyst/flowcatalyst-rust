@@ -187,7 +187,7 @@ pub async fn get_subscription_options(
     let options: Vec<FilterOption> = subscriptions
         .into_iter()
         .filter(|s| match &s.client_id {
-            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid),
+            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid.as_str()),
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {
@@ -223,7 +223,7 @@ pub async fn get_dispatch_pool_options(
         .into_iter()
         .filter(|p| {
             match &p.client_id {
-                Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid),
+                Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid.as_str()),
                 None => true, // Anchor-level pools visible to all
             }
         })
@@ -290,7 +290,7 @@ pub async fn get_all_options(
     let subscription_options: Vec<FilterOption> = subscriptions
         .into_iter()
         .filter(|s| match &s.client_id {
-            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid),
+            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid.as_str()),
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {
@@ -301,7 +301,7 @@ pub async fn get_all_options(
     let pool_options: Vec<FilterOption> = pools
         .into_iter()
         .filter(|p| match &p.client_id {
-            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid),
+            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid.as_str()),
             None => true,
         })
         .map(|p| FilterOption {
@@ -474,7 +474,7 @@ pub async fn get_dispatch_jobs_filter_options(
     let subscription_options: Vec<FilterOption> = subscriptions
         .into_iter()
         .filter(|s| match &s.client_id {
-            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid),
+            Some(cid) => auth.0.is_anchor() || auth.0.can_access_client(cid.as_str()),
             None => auth.0.is_anchor(),
         })
         .map(|s| FilterOption {

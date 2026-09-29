@@ -58,6 +58,9 @@ use crate::function::trigger_object_repository::{
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{Manifest, PoolUrlTemplate, ScheduleSpec, SubscriptionSpec, LIVE_ALIAS};
 use fc_platform_core::directory::ApplicationDirectory;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::usecase::parse_client_id_opt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::DomainEvent;
 use fc_platform_core::usecase::HasId;
@@ -435,7 +438,7 @@ impl TriggerSync {
         current.name == subscription_name(f, spec)
             && current.endpoint == self.endpoint_for(manifest, f, spec.path.value())
             && current.application_code.as_deref() == Some(application_code)
-            && current.client_id.as_deref() == f.owner.client_id_or_none()
+            && current.client_id.as_id_str() == f.owner.client_id_or_none()
             && pool.id.is_some()
             && current.dispatch_pool_id == pool.id
             && current.dispatch_pool_code.as_deref() == Some(pool.code.as_str())
@@ -789,7 +792,7 @@ impl TriggerSync {
     ) -> Result<(), UseCaseError> {
         let endpoint = self.endpoint_for(manifest, f, spec.path.value());
         let name = subscription_name(f, spec);
-        let client_id = f.owner.client_id_or_none().map(str::to_string);
+        let client_id = parse_client_id_opt(f.owner.client_id_or_none())?;
         // No manifest filter: a binding's filter has no column.
         let binding = EventTypeBinding::new(spec.event_type.clone());
         let binding_input = vec![EventTypeBindingInput {
@@ -866,7 +869,7 @@ impl TriggerSync {
                     code: key.to_string(),
                     name,
                     description: None,
-                    client_id,
+                    client_id: client_id.map(ClientId::into_string),
                     endpoint,
                     connection_id: None,
                     event_types: binding_input,
@@ -948,7 +951,7 @@ impl TriggerSync {
             None => {
                 // Scoped to the function's owner: no client for a platform
                 // function, never a platform-wide default.
-                let client_id = f.owner.client_id_or_none().map(str::to_string);
+                let client_id = parse_client_id_opt(f.owner.client_id_or_none())?;
                 let mut job = ScheduledJob::new(key, d.name.clone(), d.crons.clone())
                     .with_timezone(d.timezone.clone())
                     .with_application_id(f.application_id.clone())
@@ -961,7 +964,7 @@ impl TriggerSync {
                     code: key.to_string(),
                     name: d.name.clone(),
                     description: None,
-                    client_id,
+                    client_id: client_id.map(ClientId::into_string),
                     application_id: Some(f.application_id.clone()),
                     crons: d.crons.clone(),
                     timezone: d.timezone.clone(),

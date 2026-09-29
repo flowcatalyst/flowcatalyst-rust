@@ -7,12 +7,13 @@
 use crate::subscription::entity::Subscription;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 
 /// Whether a subscription appears in the caller's list: a client-owned one
 /// to callers with access to that client, an anchor-level one to anchor
 /// users only.
 pub fn is_listed(auth: &AuthContext, subscription: &Subscription) -> bool {
-    match subscription.client_id.as_deref() {
+    match subscription.client_id.as_id_str() {
         Some(cid) => auth.can_access_client(cid),
         None => auth.is_anchor(),
     }
@@ -24,7 +25,7 @@ pub fn ensure_visible(
     auth: &AuthContext,
     subscription: &Subscription,
 ) -> Result<(), PlatformError> {
-    match subscription.client_id.as_deref() {
+    match subscription.client_id.as_id_str() {
         Some(cid) if !auth.can_access_client(cid) => {
             Err(PlatformError::forbidden("No access to this subscription"))
         }
