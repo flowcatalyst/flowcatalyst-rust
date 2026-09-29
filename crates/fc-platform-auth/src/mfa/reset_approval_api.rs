@@ -89,7 +89,10 @@ pub async fn list_reset_approvals(
     checks::can_write_principals(&auth.0)?;
     let scope = (!auth.0.is_anchor()).then_some(auth.0.accessible_clients.as_slice());
     let pending = state.approvals.list_pending(scope).await?;
-    let ids: Vec<String> = pending.iter().map(|r| r.principal_id.clone()).collect();
+    let ids: Vec<String> = pending
+        .iter()
+        .map(|r| r.principal_id().to_string())
+        .collect();
     let people = state
         .principal_repo
         .find_names_and_emails_by_ids(&ids)
@@ -97,15 +100,15 @@ pub async fn list_reset_approvals(
     let requests = pending
         .into_iter()
         .map(|r| {
-            let (name, email) = people.get(&r.principal_id).cloned().unwrap_or_default();
+            let (name, email) = people.get(r.principal_id()).cloned().unwrap_or_default();
             ResetApprovalDto {
-                id: r.id,
-                principal_id: r.principal_id,
+                id: r.id().to_string(),
+                principal_id: r.principal_id().to_string(),
                 email,
                 name,
-                client_id: r.client_id,
-                expires_at: r.expires_at,
-                created_at: r.created_at,
+                client_id: r.client_id().map(str::to_string),
+                expires_at: r.expires_at(),
+                created_at: r.created_at(),
             }
         })
         .collect();
@@ -143,25 +146,25 @@ pub async fn approve_reset_approval(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     let request = load(&state, &id).await?;
-    can_write_principals_of_client(&auth.0, request.client_id.as_deref())?;
+    can_write_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
-        .decide(&request.id, Decision::Approved, &auth.0.principal_id)
+        .decide(request.id(), Decision::Approved, &auth.0.principal_id)
         .await?
     {
         return Err(already_decided());
     }
     let principal = state
         .principal_repo
-        .find_by_id(&request.principal_id)
+        .find_by_id(request.principal_id())
         .await?
-        .ok_or_else(|| PlatformError::not_found("Principal", &request.principal_id))?;
+        .ok_or_else(|| PlatformError::not_found("Principal", request.principal_id()))?;
     if let Err(e) = state
         .emailer
         .send_reset_email_with(
             &principal,
             ResetOptions {
-                reset_2fa: request.reset_2fa,
+                reset_2fa: request.reset_2fa(),
                 ..Default::default()
             },
         )
@@ -190,10 +193,10 @@ pub async fn deny_reset_approval(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     let request = load(&state, &id).await?;
-    can_write_principals_of_client(&auth.0, request.client_id.as_deref())?;
+    can_write_principals_of_client(&auth.0, request.client_id())?;
     if !state
         .approvals
-        .decide(&request.id, Decision::Denied, &auth.0.principal_id)
+        .decide(request.id(), Decision::Denied, &auth.0.principal_id)
         .await?
     {
         return Err(already_decided());

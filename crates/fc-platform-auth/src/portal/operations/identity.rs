@@ -402,9 +402,12 @@ impl<U: UnitOfWork> SetPortalIdentityStatusUseCase<U> {
         if !cmd.client_id.is_empty() && ident.client_id != cmd.client_id {
             return Err(not_found("PortalIdentity", &cmd.id));
         }
-        ident.status = IdentityStatus::parse(&cmd.status).unwrap_or(IdentityStatus::Active);
-        // `validate` accepted only a status that parses, so this is the
-        // command's status.
+        // `validate` already refused a status that doesn't parse; parse again
+        // rather than default, so a caller that skips `validate` can't turn a
+        // bad status into ACTIVE.
+        ident.status = IdentityStatus::parse(&cmd.status).ok_or_else(|| {
+            UseCaseError::validation("STATUS_INVALID", "status must be ACTIVE or DISABLED")
+        })?;
         let event = IdentityStatusSet::new(ctx, &ident.id, &ident.client_id, ident.status);
         Ok((ident, event))
     }
