@@ -299,9 +299,10 @@ turn needs `--cfg tokio_unstable`, on Linux x86/x86_64/aarch64. A cfg flag
 cannot be set per Cargo profile on stable, so it is a build choice:
 
 - **The production image has them.** `Dockerfile` builds with
-  `RUSTFLAGS="--cfg tokio_unstable"` and `--features taskdump` unless
-  `--build-arg FC_TASKDUMP=0` (then `/diagnostics/task-dump` answers 501).
-  The cook and the build use the same flags, so the dependency layer caches.
+  `RUSTFLAGS="-C link-arg=-fuse-ld=lld --cfg tokio_unstable"` and
+  `--features taskdump` unless `--build-arg FC_TASKDUMP=0` (then only the
+  lld flag, and `/diagnostics/task-dump` answers 501). The cook and the
+  build use the same flags, so the dependency layer caches.
 - **Every other build is stable tokio**: local builds, CI, `fc-dev`. They
   answer 501. To build one by hand on Linux:
   `RUSTFLAGS="--cfg tokio_unstable" cargo build --release -p fc-server --features taskdump`

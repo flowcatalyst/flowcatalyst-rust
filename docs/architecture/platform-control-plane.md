@@ -21,12 +21,35 @@ The most-violated boundary in early Rust ports was "aggregates persist themselve
 
 ---
 
+## The platform crates
+
+The platform is seven crates (docs/plans/build-speed-2026-09-28.md, section
+12). Each keeps its modules at their historical paths, and `fc-platform`
+re-exports every one at `fc_platform::<module>`, so the binaries, fc-web and
+the tests name them as before.
+
+| Crate | Holds | Depends on |
+|---|---|---|
+| `fc-platform-core` | `usecase` (the UoW seal), the kernel half of `shared` (errors, ids, the authorization context and `checks`, the request extractors and `AuthLayer`, the pool and migration runner, encryption, email, rate limiting), the permission catalogue (`permissions`), the principal kinds, the IAM lookup traits (`directory`) | – |
+| `fc-platform-iam` | tenancy, identity and access: `client`, `application`, `principal`, `role`, `service_account`, `identity_provider`, `email_domain_mapping`, `platform_config`, `cors`, `audit`, …; the IAM half of `auth` (OAuth clients, auth configs, `auth_service`, password hashing, the reset emailer), `mfa` (2FA state) and `portal` (identities, apps) | core |
+| `fc-platform-auth` | the sign-in flows: `auth` (token endpoint, OIDC login, sessions, refresh tokens), `mfa` (login, self-service), `webauthn`, `portal` (login plane), client selection, `/api/me` | core, iam |
+| `fc-platform-messaging` | `event_type`, `event`, `subscription`, `connection`, `dispatch_pool`, `dispatch_job`, the scheduler, `process`, the ingest endpoints | core |
+| `fc-platform-scheduled-jobs` | `scheduled_job` | core |
+| `fc-platform-functions` | `function` | core, messaging, scheduled-jobs |
+| `fc-platform` | the assembly: every aggregate's `routes.rs`, `router.rs`, the `PlatformContext` and server setup, the OpenAPI documents, the startup seeding, the cross-aggregate endpoints in `shared` | all of them |
+
+Messaging, the scheduled jobs and the functions read IAM facts (a client's
+name, an application's code, signing accounts, outbound credentials, the
+application scope) through the traits in `fc_platform_core::directory`, which
+iam implements and the assembly injects; so an IAM edit rebuilds only auth and
+the assembly.
+
 ## Aggregate-per-directory
 
-Every aggregate lives in its own directory under `crates/fc-platform/src/`. The layout is intentionally repetitive — a new aggregate is mechanical to add:
+Every aggregate lives in its own directory under its crate's `src/` (the table above). The layout is intentionally repetitive — a new aggregate is mechanical to add:
 
 ```
-crates/fc-platform/src/<aggregate>/
+crates/fc-platform-<domain>/src/<aggregate>/
 ├── entity.rs         # the domain struct + factory/mutator methods
 ├── repository.rs     # sqlx row struct, persist/find/delete, impl Persist<Entity>
 ├── api.rs            # axum handlers; thin adapters
@@ -36,6 +59,9 @@ crates/fc-platform/src/<aggregate>/
     ├── create_*.rs   # one file per UseCase
     ├── update_*.rs
     └── delete_*.rs
+crates/fc-platform/src/<aggregate>/
+├── mod.rs            # `pub use fc_platform_<domain>::<aggregate>::*;` + `pub mod routes;`
+└── routes.rs         # routes(ctx): builds the states from the PlatformContext
 ```
 
 Current aggregates (mid-2026):

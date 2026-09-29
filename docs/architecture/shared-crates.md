@@ -161,9 +161,9 @@ Trade-offs:
 
 ## fc-platform — control plane
 
-The big one (40+ KLoC). Owns aggregates, repositories, use cases, the UoW seal, every API router, the OIDC bridge, the scheduler, all the auth machinery. Full architecture in [platform-control-plane.md](platform-control-plane.md).
+The big one (150 KLoC), split into seven crates: `fc-platform-core` (the kernel: use cases and the UoW seal, errors, the authorization context, middleware, database), `fc-platform-iam`, `fc-platform-auth`, `fc-platform-messaging`, `fc-platform-scheduled-jobs`, `fc-platform-functions`, and the `fc-platform` assembly (every API router, the context, OpenAPI, seeding). Full architecture, with the crate table, in [platform-control-plane.md](platform-control-plane.md).
 
-Public surface in `lib.rs`: every module is re-exported at top level so binaries can compose them — `fc_platform::api`, `fc_platform::repository`, `fc_platform::service`, `fc_platform::usecase`, `fc_platform::shared`, `fc_platform::seed`, and one module per aggregate.
+Public surface in `fc-platform`'s `lib.rs`: every module of every platform crate is re-exported at its historical path so binaries can compose them — `fc_platform::api`, `fc_platform::repository`, `fc_platform::service`, `fc_platform::usecase`, `fc_platform::shared`, `fc_platform::seed`, and one module per aggregate.
 
 ---
 

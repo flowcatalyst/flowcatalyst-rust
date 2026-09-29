@@ -921,3 +921,275 @@ figures on this shared machine; wall in brackets):
 | `cargo test -p fc-platform --no-run` after an edit | 155 s (36–41 s) | ≈35 s (≈20–25 s) |
 | `target/` after `cargo test -p fc-platform` (macOS) | 20–21 GB | ≈9–10 GB |
 | cold test build in a new worktree | 340 s, 1,882 s CPU | part B changes little here: system OpenSSL (−10 % CPU) and sccache (−15 % compile time) are the cold-build levers (section 5) |
+
+## 12. Part B as built (2026-09-29, branch `perf/build-speed-b`)
+
+The owner approved part B on 2026-09-28. Behaviour is unchanged: the
+tests, the Docker suite, the route-table snapshot (byte-identical), the
+event persistence snapshots, the convention tests and the API parity
+harness gate every step (12.6). The numbers are `scripts/build-bench/`'s,
+rerun unchanged apart from the merged test binary's `it:<filter>` subject.
+
+### 12.1 Step 1: one test binary per crate
+
+Each crate's integration tests are modules of one `tests/it` binary
+(`tests/it/main.rs`, one `mod` per former file; `cargo test -p <crate>
+--test it <file>::` runs one former file, `-- --ignored` still selects the
+Docker tests). The listings of the merged binaries match the old ones test
+for test, ignored status included.
+
+| Crate | Binaries before | After |
+|---|---:|---|
+| fc-platform | 66 | `it` + `route_table_snapshot_test` + `function_host_e2e_test` |
+| fc-router | 19 | `it` + `log_correlation_test` + `throughput_bench` |
+| fc-fnhost-core | 18 | `it` + `wasm_logging`, `wasm_pdk`, `listener_logging`, `reconciler_logging` |
+| fc-fnhost-js | 5 | `it` + `js_logging` |
+| fc-server, fc-queue, fc-function-abi, fc-function-model, fc-sdk | 6, 5, 4, 3, 3 | `it` each |
+| fc-common and the single-file crates | – | unchanged |
+
+Kept apart, because each changes process-wide state its neighbours would
+see: the route-table snapshot (removes `FLOWCATALYST_APP_KEY`, sets the
+limiter variables) and the function-host e2e test (dev mode, signatures,
+artifact store); the tests that install a global or thread-local tracing
+subscriber (a thread-local one shares callsite interest with the tests
+beside it: `listener_logging` fails merged); fc-common's panic-hook and
+OTel tests; the throughput bench.
+
+The app key: the files that set `FLOWCATALYST_APP_KEY` three ways call
+`support::set_app_key()` (one key, `support::APP_KEY`, set once per
+process). The merged tests pass with the key set and unset beforehand.
+`portal_login_is_budgeted_per_client_and_email` sets
+`FC_RL_PORTAL_LOGIN_PER_15MIN` around its setup, as before; only portal
+tests log in to the portal, and they shared a binary already.
+
+### 12.2 Steps 2–6: the crate split
+
+| Crate | Lines | Files | Depends on (platform crates) |
+|---|---:|---:|---|
+| `fc-platform-core` | 13,300 | 36 | – |
+| `fc-platform-iam` | 54,600 | 205 | core |
+| `fc-platform-auth` | 20,300 | 57 | core, iam |
+| `fc-platform-messaging` | 28,900 | 100 | core |
+| `fc-platform-scheduled-jobs` | 6,800 | 24 | core |
+| `fc-platform-functions` | 16,000 | 44 | core, messaging, scheduled-jobs (iam: dev only) |
+| `fc-platform` (assembly) | 13,300 | 90 | all of them |
+
+`fc-platform` re-exports every module at its old path (`pub use
+fc_platform_core::usecase;`, a facade `principal/mod.rs` with `pub use
+fc_platform_iam::principal::*;` and the aggregate's `routes.rs`), so the
+binaries, fc-web, the harnesses and the tests compile unchanged. Modules
+keep their paths inside their new crate; the moved files' `crate::` paths
+were rewritten to the crate that owns each item
+(`scripts/build-bench/split_rewrite.py`, which resolves a path through the
+re-exports to its definition), and a few modules are split across two
+crates, the upper half re-exporting the lower (`auth`, `mfa`, `portal`:
+iam's model, auth's flows; `shared::authorization_service`,
+`shared::middleware`: core's context and extractors, iam's services and
+`AppState`; `shared::database`: core's runner, the assembly's seeding).
+
+The order: core; then scheduled-jobs and functions, which need their
+dependencies to be crates first, so tenancy, identity, the sign-in flows
+and messaging moved into fc-platform-iam in the same step; then messaging
+out of iam; then auth out of iam; then the step 2 traits.
+
+The cycle breaks, as section 6.3 lists them, with what changed in the
+doing:
+
+- `AuthContext`, `Credential`, `Authority`, `ApplicationScope` (with
+  `PrincipalApplicationBinding`) and `checks` are core's. The two
+  constructors from claims and from a session principal are iam free
+  functions. `checks::require_application_access` (and the caller form)
+  take any `ScopedApplication`, which `Application` implements.
+- The middleware authenticates through `TokenAuthenticator` (core).
+  `AppState` keeps its two fields and implements it, with the same calls
+  in the same order; `AuthLayer::new(AppState {..})` and
+  `authenticate_headers(&app_state, …)` keep their call sites.
+- The catalogue is `fc_platform_core::permissions` (with
+  `matches_pattern`), `PrincipalType` / `UserScope` are
+  `fc_platform_core::principal_kind`; `role::entity` and
+  `principal::entity` re-export them.
+- The migration runner takes the code migrations (`run_migrations_with`);
+  the assembly's `run_migrations` passes the cron migration (036).
+- The Java zone-id rules moved from `function::schedule_check` to
+  `scheduled_job::java_zone`; `TriggerSync::from_repositories` takes
+  anything that converts into `TriggerSyncRepositories`;
+  `SyncResultResponse` is core's `api_common`.
+- The function aggregate's `impl Caller` is the `FunctionReach` trait; the
+  two `From<ValidationError>` impls are core's.
+- `signing_reach` is messaging's; the account facts it reads are core's
+  (`directory::{AccountReach, SigningAccount}`), because iam's repository
+  loads them. `shared::branding` stays in iam: the reset and portal
+  e-mails, which are iam's, are themed.
+- `InMemoryUnitOfWork` and `assert_str_enum` are behind core's
+  `test-support` feature (the domain crates' dev-dependency). Core unit
+  tests that used a platform aggregate use a local stand-in; the
+  platform-wide enum tests, the event persistence snapshots and the three
+  tests that mount a function router moved to the assembly's
+  `split_tests`.
+
+Step 2 (6.3): messaging, the scheduled jobs and the functions reach IAM
+through six traits in `fc_platform_core::directory` (`ClientDirectory`,
+`ApplicationDirectory`, `ServiceAccountDirectory`, `PrincipalDirectory`,
+`OutboundCredentialSource`, `ApplicationAccess`), each method the
+repository method of the same name, returning the fields its callers
+read. So an IAM edit rebuilds auth and the assembly only.
+
+Each crate declares only the dependencies it uses: only fc-platform-auth
+builds webauthn-rs and the vendored OpenSSL.
+
+The convention tests read every `crates/fc-platform*/src` as one tree
+(`tests/it/support/sources.rs`). Each was shown to still fail on a
+deliberate violation in a split crate: a scheduled-jobs use case that skips
+the unit of work, one whose `authorize` is emptied, a messaging GET and a
+messaging write handler without their checks (route-auth read, write and
+the permission test), a route registered in an iam file, a repository
+write in an auth handler, and a client-grant cascade in a messaging
+repository.
+
+### 12.3 Step 7: imports
+
+About 5,200 inline absolute paths in 686 files (workspace-wide, from
+clippy's own `absolute_paths` warnings, default features and every
+feature but tokio's `taskdump`) became `use` imports
+(`scripts/build-bench/import_codemod.py`, then `import_hoist.py`; the
+rules are in the codemod's header). `clippy::absolute_paths` warns in
+every workspace crate (`absolute-paths-max-segments = 2`, clippy.toml);
+the `routes.rs` files and `router.rs` allow it. `cargo clippy --workspace
+--all-targets` has the 4 baseline warnings and no `absolute_paths`.
+
+### 12.4 Step 8: the `async_trait` pilot
+
+`Persist`, `LockedRead` and `UnitOfWork` (fc-platform-core; 48 impls, used
+only generically) declare `fn m(..) -> impl Future<Output = T> + Send`,
+and the impls keep `async fn` without the attribute. Measured on the same
+tree before and after (commits `731d89bd` / `df25e78e`), back to back on a
+quiet machine (load 8–25), CPU seconds, median of five:
+
+| Edit (`incr-check -p fc-server`) | `#[async_trait]` | native |
+|---|---:|---:|
+| iam (`client/repository.rs`) | 3.6 | 3.7 |
+| core (`usecase/unit_of_work.rs`) | 5.0 | 5.1 |
+| functions / auth / messaging / scheduled jobs | 1.5 / 1.7 / 2.3 / 1.8 | 1.5 / 1.8 / 2.3 / 1.8 |
+| assembly (`router.rs`) | 1.1 | 1.1 |
+| one-test loop (iam edit, build + run) | 11.3 | 11.8 |
+| all fc-platform tests after an iam edit | 24.9 | 24.2 |
+| cold `check -p fc-server` (one run each) | 1,153 | 1,088 |
+| cold one-test build (one run each) | 1,974 | 1,940 |
+
+No measurable change: the incremental runs differ by 0.1 s or less (the
+resolution of the CPU figure), their ranges overlap, and the cold builds
+are 2–6 % faster in one run each. The slowdown section 8 warned of (bigger
+futures, more `Send` proving) does not show up at this size. The change is
+kept (it doesn't make builds slower, and each call saves a boxed future).
+`UseCase` (143 impls) stays `#[async_trait]`: there is no clear win to
+extrapolate.
+
+### 12.5 The build-configuration items from part A
+
+- **Release profile in the image.** The `[profile.*]` sections moved from
+  `.cargo/config.toml` to the workspace `Cargo.toml`, unchanged, so the
+  Docker image's fc-server now gets the thin-LTO, one-codegen-unit profile
+  the release binaries use. (Config profiles also overrode the nested
+  workspaces' own: the wasm test guests' `lto = true` was thin in practice;
+  rebuilt, they now take their manifests' settings.) The Docker builder
+  installs lld and links with it (`-fuse-ld=lld` in RUSTFLAGS, beside
+  `--cfg tokio_unstable` when `FC_TASKDUMP=1`, for the cook and the build
+  alike). Measured, `docker build --platform linux/arm64 --no-cache` of the
+  image before and after on this machine (load 20–120): 329 s → 453 s in
+  all; the dependency cook 154 → 151 s, the fc-server build and link
+  158 → 283 s (thin LTO and one codegen unit, linked by lld); fc-server
+  226 → 187 MB (−17 %), the image 268 → 230 MB. The image starts as
+  before.
+- **OpenSSL: not changed.** Vendoring only on Windows is a manifest
+  change (`[target.'cfg(windows)'.dependencies]`), but the other
+  platforms would then link OpenSSL dynamically: fc-dev's macOS release
+  binary would depend on the build runner's Homebrew `libssl` (absent on a
+  user's Mac without Homebrew's `openssl@3`), its Linux ones on the
+  system's OpenSSL 3, and developer machines without OpenSSL headers
+  would stop building. The Windows release job needs nothing more either
+  way (`openssl-src` builds with the runner's perl). A narrower option is
+  dynamic OpenSSL on Linux only (CI, Docker, and Linux developers have it;
+  distroless `cc-debian12` ships `libssl3`), which still changes what the
+  Linux fc-dev binary needs at run time: an owner decision. Developers skip
+  the vendored build today with `OPENSSL_NO_VENDOR=1` (section 5). Only
+  fc-platform-auth (webauthn-rs) builds OpenSSL now, so a crate below it
+  never does.
+- **CI test job**: `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: unpacked`.
+- **cargo-hakari**: not tried (section 9 stays the proposal).
+
+### 12.6 The numbers
+
+`scripts/build-bench/` on this machine (section 1; macOS 15, 14 cores),
+before (`main` as part B started, re-measured the same night), after step 1,
+after the split (step 6) and at the end (step 8 and the functions
+flattening). CPU seconds (user + sys of the build), cargo's own wall time in
+brackets; median of five runs for incremental scenarios, two for "all
+tests", one for cold builds. Before the split every fc-platform edit costs
+the same, so the "before" column repeats the leaf edit.
+
+| Loop | Before | Step 1 | Split | End |
+|---|---:|---:|---:|---:|
+| incremental `check -p fc-server`, iam edit (`client/repository.rs`) | 5.8 (6.8) | 5.1 (5.6) | 4.4 (5.6) | 3.3 (3.6) |
+| … core edit (`usecase/unit_of_work.rs`) | 5.4 (6.2) | 4.9 (5.2) | 6.1 (5.0) | 5.0 (3.5) |
+| … messaging edit (`event_type/repository.rs`) | 5.8 (6.8) | 5.1 (5.6) | 2.3 (2.3) | 2.3 (2.3) |
+| … auth edit (`auth/session_cookie.rs`) | 5.8 (6.8) | 5.1 (5.6) | 1.7 (1.7) | 1.8 (1.8) |
+| … scheduled-jobs edit (`scheduled_job/repository.rs`) | 5.8 (6.8) | 5.1 (5.6) | 2.3 (2.4) | 1.7 (1.7) |
+| … functions edit (`function/repository.rs`) | 5.8 (6.8) | 5.1 (5.6) | 1.5 (1.5) | 1.5 (1.4) |
+| … assembly edit (`router.rs`) | 5.8 (6.8) | 5.1 (5.6) | 1.1 (1.1) | 1.1 (1.1) |
+| … fc-router edit (`health.rs`) | 1.7 (2.9) | 1.3 (1.3) | 1.3 (1.3) | 1.3 (1.3) |
+| average platform edit, weighted by lines | 5.7 | 5.0 | 3.1 | 2.6 |
+| one-test loop: iam edit, rebuild the test binary (run excluded) | 10.3 (15.7) | 11.1 (11.8) | 11.2 (8.2) | 9.9 (7.4) |
+| `cargo test -p fc-platform --no-run` after an iam edit | 159 (35.3) | 31 (17.2) | 24 (12.1) | 21 (10.8) |
+| cold `check -p fc-server` | 1,120 (237) | 1,118 (179) | 1,126 (157) | 1,117 (135) |
+| cold one-test build | 2,116 (687) | 1,923 (261) | 1,926 (290) | 1,947 (233) |
+| `target/debug` after the tests (macOS) | 23 GB | 12 GB | 11 GB | 11 GB |
+| test executables | 67, 6.5 GB | 4, 0.6 GB | 4, 0.6 GB | 4, 0.6 GB |
+
+Machine load (1-minute average before each run): median 165 (90–624)
+before, 94 after step 1, 67 after the split, 77 at the end; cold wall
+times move with it far more than CPU. Running the one cron-golden module
+from the merged binary takes 1.7 s against 0.8 s alone (a 180 MB
+executable to load).
+
+Against section 11's expectations: the average incremental check is 2.6 s
+of CPU (expected ≈2.5), an iam edit 3.3 s (expected 3.3 after step 2), a
+core edit unchanged as expected; `test --no-run` after an edit 21 s of CPU
+(expected ≈35) and `target/` 11 GB (expected 9–10). The one-test loop did
+not halve (9.9 s, expected 5–6): the merged test crate (33,000 lines) is
+rebuilt for any test, and it links the whole platform. A developer who only
+needs one crate's unit tests gets the small loop: `cargo test -p
+fc-platform-functions` after a functions edit rebuilds only that crate.
+
+### 12.7 Gates
+
+At the end (and, for the tests, after every step):
+
+- `cargo check --workspace --all-targets`, and every crate on its own
+  (`-p <crate> --all-targets`) and in the release selections (`-p
+  fc-server`, `-p fc-server -p fc-outbox-processor`, `-p fc-dev`);
+  `cargo clippy --workspace --all-targets`: the 4 baseline warnings.
+- Workspace tests (without the two harnesses): 2,597 passed, as on
+  `main`; the unit tests are 1,116 across the platform crates, as before.
+- The Docker suite: 300 passed (299 in `it`, the function-host e2e test).
+- `FC_SKIP_FRONTEND_BUILD=1 cargo check -p fc-dev --features web` and
+  fc-web's tests; `cargo deny --locked check`; `cargo vet --locked` (the
+  new crates are first-party workspace members: deny's AGPL list names
+  them, vet needs nothing).
+- The route-table snapshot byte-identical; the event persistence snapshots
+  unchanged.
+- The API parity harness, Go pinned to `0cfb595` (a read-only snapshot),
+  Rust `fc-server` debug: `main` and this branch both 1,254 OK / 96
+  ACCEPTED / 13 DIFF / 0 ERROR, the same 13 steps with the same diffs
+  (only the run's random job code differs), and the same 40 stale
+  allow-list entries.
+- The delivery harness (same Go snapshot, Rust debug binaries): all 17
+  scenarios PASS.
+
+### 12.9 Not done
+
+- The cargo-hakari trial (section 9): not run, as agreed.
+- `crate-split.txt` / `crate_split_check.py` describe the design, not
+  the result (branding, the directory types): the compiler checks the
+  split now.
+- fc-web (outside the workspace) keeps its inline paths; its lints are
+  its own.
