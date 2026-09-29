@@ -928,7 +928,9 @@ The owner approved part B on 2026-09-28. Behaviour is unchanged: the
 tests, the Docker suite, the route-table snapshot (byte-identical), the
 event persistence snapshots, the convention tests and the API parity
 harness gate every step (12.6). The numbers are `scripts/build-bench/`'s,
-rerun unchanged apart from the merged test binary's `it:<filter>` subject.
+rerun unchanged apart from the merged test binary's `it:<filter>` subject;
+the raw rows are `scripts/build-bench/results/2026-09-29-partb-*` (labels
+`baseline-b`, `step1`, `split`, `prepilot2` / `pilot2`, `final`).
 
 ### 12.1 Step 1: one test binary per crate
 

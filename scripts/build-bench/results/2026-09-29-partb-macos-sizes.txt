@@ -1,0 +1,48 @@
+== baseline-b
+ 23G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug
+ 14G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/deps
+ 11G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/incremental
+322M	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/build
+test/bin executables in deps (count, total):
+  6.5 GB
+      67
+fc_platform object files / rlibs:
+513M	total
+incremental, fc_platform:
+3.9G	total
+== step1
+ 12G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug
+7.1G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/deps
+5.3G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/incremental
+322M	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/build
+test/bin executables in deps (count, total):
+  0.6 GB
+       4
+fc_platform object files / rlibs:
+509M	total
+incremental, fc_platform:
+3.9G	total
+== split
+ 11G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug
+6.9G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/deps
+4.6G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/incremental
+322M	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/build
+test/bin executables in deps (count, total):
+  0.6 GB
+       4
+fc_platform object files / rlibs:
+172M	total
+incremental, fc_platform:
+885M	total
+== final
+ 11G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug
+6.9G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/deps
+4.6G	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/incremental
+322M	/Users/andrewgraaff/Developer/fc-bench-base/target/debug/build
+test/bin executables in deps (count, total):
+  0.6 GB
+       4
+fc_platform object files / rlibs:
+172M	total
+incremental, fc_platform:
+872M	total
