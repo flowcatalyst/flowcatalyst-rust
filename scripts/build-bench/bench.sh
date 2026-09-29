@@ -101,7 +101,7 @@ edit() { # edit <file> <n>: put a fresh comment line on top of the pristine file
   { echo "// build-bench edit $(date +%s)-$n"; cat "$EDIT_BACKUP"; } >"$file"
 }
 
-latest_timing() { ls -t "$TARGET_DIR"/cargo-timings/cargo-timing-2*.html 2>/dev/null | head -1; }
+latest_timing() { ls -t "$TARGET_DIR"/cargo-timings/cargo-timing-2*.html 2>/dev/null | head -1 || true; }
 
 # run_cargo <scenario> <subject> <run> <cargo args...>
 LAST_WALL=0 LAST_LINK=0 LAST_LINKS=0 LAST_LOG=""
