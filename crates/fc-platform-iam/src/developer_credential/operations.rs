@@ -15,6 +15,7 @@ use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::Caller;
 use fc_platform_core::usecase::{
@@ -64,7 +65,7 @@ async fn require_credential_target(
             "Client administrators can only manage client-scope users",
         )));
     }
-    let in_scope = match p.client_id.as_deref() {
+    let in_scope = match p.client_id.as_id_str() {
         Some(client_id) => caller.can_access_client(client_id),
         None => caller.is_anchor() || caller.has_permission(permissions::ADMIN_ALL),
     };

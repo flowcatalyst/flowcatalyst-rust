@@ -10,6 +10,7 @@ use chrono::{Duration, Utc};
 use dashmap::DashMap;
 use fc_platform_core::principal_kind::{PrincipalType, UserScope};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::tsid;
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -400,14 +401,18 @@ impl AccessTokenClaims {
 /// `["*"]`; partner → the assigned clients; client → the home client; each
 /// as `id:identifier` when the identifier is known, else the bare id.
 pub fn clients_claim(principal: &Principal) -> Vec<String> {
-    let pair = |id: &String| match principal.client_identifier_map.get(id) {
+    let pair = |id: &str| match principal.client_identifier_map.get(id) {
         Some(identifier) => format!("{id}:{identifier}"),
-        None => id.clone(),
+        None => id.to_string(),
     };
     match principal.scope {
         UserScope::Anchor => vec!["*".to_string()],
-        UserScope::Partner => principal.assigned_clients.iter().map(pair).collect(),
-        UserScope::Client => principal.client_id.iter().map(pair).collect(),
+        UserScope::Partner => principal.assigned_clients.iter().map(|c| pair(c)).collect(),
+        UserScope::Client => principal
+            .client_id
+            .iter()
+            .map(|c| pair(c.as_str()))
+            .collect(),
     }
 }
 
@@ -1287,7 +1292,7 @@ impl AuthService {
             azp: Some(client_id.to_string()),
             principal_type: principal.principal_type,
             tier: principal.scope,
-            client_id: principal.client_id.clone(),
+            client_id: principal.client_id.as_id_str().map(String::from),
             roles,
             applications: applications_claim(principal),
             all_applications: principal.all_applications,
@@ -1388,7 +1393,7 @@ mod tests {
     use crate::portal::entity::IdentitySource;
     use crate::principal::entity::Principal;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
-    use fc_platform_core::shared::id::PrincipalId;
+    use fc_platform_core::shared::id::{ClientId, PrincipalId};
 
     use base64::engine::general_purpose;
     use serde_json::json;
@@ -1410,7 +1415,8 @@ mod tests {
     /// A CLIENT-tier user with a known client identifier, two roles, and two
     /// application grants — one whose code is known and one whose isn't.
     fn client_user() -> Principal {
-        let mut p = Principal::new_user("ada@acme.test", UserScope::Client).with_client_id("clt_A");
+        let mut p = Principal::new_user("ada@acme.test", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_A").unwrap());
         p.id = PrincipalId::parse("prn_ADA").unwrap();
         p.name = "Ada Lovelace".to_string();
         p.client_identifier_map
@@ -1772,7 +1778,7 @@ mod tests {
             ..AuthConfig::default()
         });
         let mut sa = Principal::new_service("agent-planner", "Agent Planner", UserScope::Client);
-        sa.client_id = Some("clt_A".to_string());
+        sa.client_id = Some(ClientId::parse("clt_A").unwrap());
         let token = s
             .generate_access_token_with_scope(
                 &sa,

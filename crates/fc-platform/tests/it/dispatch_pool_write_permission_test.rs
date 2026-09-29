@@ -4,6 +4,7 @@
 //! client's pools. Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 use serde_json::json;
@@ -14,7 +15,8 @@ use support::{read_json, TestApp};
 
 /// A CLIENT-tier token for `client` whose `scope` grants exactly `perms`.
 fn client_caller(app: &TestApp, client: &str, perms: &[&str]) -> String {
-    let p = Principal::new_user("pools@pool-perms.test", UserScope::Client).with_client_id(client);
+    let p = Principal::new_user("pools@pool-perms.test", UserScope::Client)
+        .with_client_id(ClientId::parse(client).unwrap());
     let granted: Vec<String> = perms.iter().map(|s| s.to_string()).collect();
     app.auth_service
         .generate_access_token_with_scope(&p, &granted, None)

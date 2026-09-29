@@ -8,6 +8,7 @@
 //! Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use std::sync::Arc;
 
@@ -161,7 +162,7 @@ async fn token(app: &TestApp, scope: UserScope, clients: &[&str], perms: &[&str]
     app.repos.role_repo.insert(&role).await.expect("role");
     let mut principal = Principal::new_user(format!("fnv-{n}@flowcatalyst.test"), scope);
     if scope == UserScope::Client {
-        principal = principal.with_client_id(clients[0]);
+        principal = principal.with_client_id(ClientId::parse(clients[0]).unwrap());
     }
     principal.roles = vec![RoleAssignment::new(role.name.clone())];
     principal.all_applications = true;

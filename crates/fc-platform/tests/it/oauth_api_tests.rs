@@ -9,6 +9,7 @@
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::domain::{Principal, PrincipalType, UserScope};
 use fc_platform::shared::authorization_service::Credential;
+use fc_platform_core::shared::id::ClientId;
 
 /// Create a test AuthService with HS256 (no RSA keys needed)
 fn test_auth_service() -> AuthService {
@@ -99,13 +100,13 @@ fn test_token_claims_for_service_principal() {
 #[test]
 fn test_token_claims_for_client_scope_user() {
     let auth_service = test_auth_service();
-    let principal =
-        Principal::new_user("user@client.com", UserScope::Client).with_client_id("client-abc");
+    let principal = Principal::new_user("user@client.com", UserScope::Client)
+        .with_client_id(ClientId::parse("clt_abc").unwrap());
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
     assert_eq!(claims.tier, Some(UserScope::Client));
-    assert!(claims.clients.contains(&"client-abc".to_string()));
+    assert!(claims.clients.contains(&"clt_abc".to_string()));
 }
 
 #[test]
@@ -149,12 +150,12 @@ fn test_client_access_check() {
 #[test]
 fn test_client_scope_limited_access() {
     let auth_service = test_auth_service();
-    let principal =
-        Principal::new_user("user@client.com", UserScope::Client).with_client_id("my-client");
+    let principal = Principal::new_user("user@client.com", UserScope::Client)
+        .with_client_id(ClientId::parse("clt_mine").unwrap());
     let token = auth_service.generate_access_token(&principal).unwrap();
     let claims = auth_service.validate_token(&token).unwrap();
 
-    assert!(claims.has_client_access("my-client"));
+    assert!(claims.has_client_access("clt_mine"));
     assert!(!claims.has_client_access("other-client"));
 }
 

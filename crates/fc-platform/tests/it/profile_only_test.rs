@@ -23,7 +23,7 @@ async fn a_roleless_user_reaches_only_its_profile() {
         .expect("insert client");
 
     let roleless = Principal::new_user("roleless@profile-only.test", UserScope::Client)
-        .with_client_id(&client.id);
+        .with_client_id(client.id.clone());
     let roleless_anchor = Principal::new_user("anchor@profile-only.test", UserScope::Anchor);
     for p in [&roleless, &roleless_anchor] {
         app.repos.principal_repo.insert(p).await.expect("insert");

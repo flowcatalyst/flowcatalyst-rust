@@ -6,6 +6,7 @@
 //! Run with `cargo test -p fc-platform --test it portal_identity_test:: -- --ignored`.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use std::sync::Arc;
 
@@ -71,7 +72,7 @@ async fn portal_admin_token(app: &TestApp, client_id: &str) -> String {
             .expect("insert role");
     }
     let mut p = Principal::new_user("padmin@flowcatalyst.test", UserScope::Client)
-        .with_client_id(client_id);
+        .with_client_id(ClientId::parse(client_id).unwrap());
     p.roles = vec![RoleAssignment::new(role.name.clone())];
     app.auth_service.generate_access_token(&p).expect("token")
 }

@@ -33,6 +33,7 @@ use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecisio
 use crate::auth::session_cookie::SessionCookieConfig;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::ClientIp;
 use fc_platform_core::shared::rate_limit_store::{
     within_mail_budget, Bucket, RateLimitPolicies, RateLimitStore,
@@ -334,7 +335,7 @@ impl TwoFactorLogin {
             email,
             roles,
             permissions: Some(permissions).filter(|p| !p.is_empty()),
-            client_id: p.client_id.clone(),
+            client_id: p.client_id.as_id_str().map(String::from),
             recovery_codes,
             sso_managed: self.sso_managed(p, None).await,
         };

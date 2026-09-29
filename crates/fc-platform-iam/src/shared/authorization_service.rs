@@ -64,9 +64,9 @@ pub fn auth_context_for_session(
         vec!["*".to_string()]
     } else {
         let mut clients = principal.assigned_clients.clone();
-        if let Some(home) = principal.client_id.as_ref().filter(|c| !c.is_empty()) {
-            if !clients.contains(home) {
-                clients.push(home.clone());
+        if let Some(home) = &principal.client_id {
+            if !clients.iter().any(|c| c == home.as_str()) {
+                clients.push(home.to_string());
             }
         }
         clients

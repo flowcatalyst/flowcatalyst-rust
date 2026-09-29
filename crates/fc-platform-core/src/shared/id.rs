@@ -75,6 +75,17 @@ impl<K: IdKind> Id<K> {
     }
 }
 
+/// `Option<Id<K>>` as `Option<&str>`, where `Option<String>` has `as_deref`.
+pub trait OptionIdExt {
+    fn as_id_str(&self) -> Option<&str>;
+}
+
+impl<K> OptionIdExt for Option<Id<K>> {
+    fn as_id_str(&self) -> Option<&str> {
+        self.as_ref().map(Id::as_str)
+    }
+}
+
 /// [`Id::parse`] for a column of a stored row: a value of the wrong kind means
 /// the row is corrupt (or predates the prefixed ids), which is a loud read error
 /// naming the table, column, value and row id, like `enum_str::decode`.

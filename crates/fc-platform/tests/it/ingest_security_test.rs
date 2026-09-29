@@ -3,6 +3,7 @@
 //! S6; owner decision #24). Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -33,7 +34,8 @@ fn anchor_user() -> Principal {
 /// A client-scoped user of `client_id`. (`_identifier` is the client's
 /// identifier, which the token's `clients` claim may pair with the id.)
 fn client_user(client_id: &str, _identifier: &str) -> Principal {
-    Principal::new_user("client@flowcatalyst.test", UserScope::Client).with_client_id(client_id)
+    Principal::new_user("client@flowcatalyst.test", UserScope::Client)
+        .with_client_id(ClientId::parse(client_id).unwrap())
 }
 
 fn partner_user(client_ids: &[&str]) -> Principal {

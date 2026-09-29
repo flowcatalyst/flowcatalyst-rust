@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::auth::auth_service::AuthService;
 use fc_platform_iam::client::entity::Client;
@@ -155,7 +156,7 @@ impl ClientSelectionState {
                 // Client users have access to their home client + explicit grants
                 let mut client_ids = Vec::new();
                 if let Some(ref home_client) = principal.client_id {
-                    client_ids.push(home_client.clone());
+                    client_ids.push(home_client.to_string());
                 }
 
                 // Add non-expired explicit grants
@@ -246,7 +247,7 @@ pub async fn list_accessible_clients(
 
     Ok(Json(AccessibleClientsResponse {
         clients,
-        current_client_id: principal.client_id.clone(),
+        current_client_id: principal.client_id.as_id_str().map(String::from),
         global_access,
     }))
 }
@@ -333,7 +334,7 @@ pub async fn get_current_client(
     let principal = state.session_principal(&auth).await?;
 
     let client = if let Some(ref client_id) = principal.client_id {
-        if let Some(c) = state.client_repo.find_by_id(client_id).await? {
+        if let Some(c) = state.client_repo.find_by_id(client_id.as_str()).await? {
             Some(ClientInfo {
                 id: c.id.to_string(),
                 name: c.name,

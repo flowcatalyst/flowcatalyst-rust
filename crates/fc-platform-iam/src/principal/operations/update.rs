@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserUpdated;
+use super::parse_client_id;
 use crate::principal::repository::PrincipalRepository;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::error::PlatformError;
@@ -180,22 +181,21 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         if command.client_id.is_some() || new_scope.is_some() {
             match principal.scope {
                 UserScope::Client => {
-                    let cid = command
-                        .client_id
-                        .clone()
-                        .or_else(|| principal.client_id.clone())
-                        .ok_or_else(|| {
+                    let cid = match &command.client_id {
+                        Some(raw) if raw.trim().is_empty() => {
+                            return Err(UseCaseError::validation(
+                                "CLIENT_ID_REQUIRED",
+                                "client_id cannot be empty when scope is CLIENT",
+                            ));
+                        }
+                        Some(raw) => parse_client_id(raw)?,
+                        None => principal.client_id.clone().ok_or_else(|| {
                             UseCaseError::validation(
                                 "CLIENT_ID_REQUIRED",
                                 "client_id is required when scope is CLIENT",
                             )
-                        })?;
-                    if cid.trim().is_empty() {
-                        return Err(UseCaseError::validation(
-                            "CLIENT_ID_REQUIRED",
-                            "client_id cannot be empty when scope is CLIENT",
-                        ));
-                    }
+                        })?,
+                    };
                     principal.client_id = Some(cid);
                 }
                 UserScope::Anchor | UserScope::Partner => {

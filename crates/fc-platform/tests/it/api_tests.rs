@@ -2,6 +2,8 @@
 //!
 //! Tests for platform domain models, authorization, and error handling.
 
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 use std::collections::HashSet;
 
 use fc_platform::domain::{Principal, PrincipalType, UserScope};
@@ -81,8 +83,8 @@ mod domain_tests {
     #[test]
     fn test_principal_with_client_id() {
         let principal = Principal::new_user("test@example.com", UserScope::Client)
-            .with_client_id("client123".to_string());
-        assert_eq!(principal.client_id, Some("client123".to_string()));
+            .with_client_id(ClientId::parse("clt_client123").unwrap());
+        assert_eq!(principal.client_id.as_id_str(), Some("clt_client123"));
     }
 
     #[test]

@@ -319,8 +319,8 @@ pub async fn whoami(
             }
             (None, Some(p)) => {
                 let mut clients = p.assigned_clients.clone();
-                if let Some(home) = p.client_id.as_ref().filter(|c| !c.is_empty()) {
-                    clients.push(home.clone());
+                if let Some(home) = &p.client_id {
+                    clients.push(home.to_string());
                 }
                 let (ids, all) = parse_applications_claim(&auth_service::applications_claim(p));
                 (clients, (ids, all || p.all_applications))

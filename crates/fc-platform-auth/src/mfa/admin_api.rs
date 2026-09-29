@@ -17,6 +17,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_iam::principal::api::StatusChangeResponse;
 
@@ -67,7 +68,7 @@ pub async fn reset_user_two_factor(
             "Client administrators can only manage client-scope users",
         ));
     }
-    let in_scope = match p.client_id.as_deref() {
+    let in_scope = match p.client_id.as_id_str() {
         Some(client_id) => ctx.can_access_client(client_id),
         None => ctx.is_anchor() || ctx.has_permission(permissions::ADMIN_ALL),
     };

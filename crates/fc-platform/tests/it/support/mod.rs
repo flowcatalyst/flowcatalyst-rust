@@ -15,6 +15,7 @@
 
 pub mod sources;
 
+use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
 
 use axum::{
@@ -242,7 +243,7 @@ impl TestApp {
     /// Token for a client-scoped user principal.
     pub fn client_user_token(&self, client_id: &str) -> String {
         let principal = Principal::new_user("user@flowcatalyst.test", UserScope::Client)
-            .with_client_id(client_id);
+            .with_client_id(ClientId::parse(client_id).unwrap());
         self.auth_service
             .generate_access_token(&principal)
             .expect("client token")
@@ -251,7 +252,7 @@ impl TestApp {
     /// Token for a service account principal (used by SDKs).
     pub fn service_account_token(&self, client_id: &str) -> String {
         let principal = Principal::new_service("svc-test", "Test Service", UserScope::Client)
-            .with_client_id(client_id);
+            .with_client_id(ClientId::parse(client_id).unwrap());
         self.auth_service
             .generate_access_token(&principal)
             .expect("svc token")

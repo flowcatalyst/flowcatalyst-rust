@@ -230,8 +230,8 @@ async fn test_principal_with_client_access() {
         .expect("Failed to insert client");
 
     // Create a principal with client scope
-    let principal =
-        Principal::new_user("user@test-client.com", UserScope::Client).with_client_id(&client.id);
+    let principal = Principal::new_user("user@test-client.com", UserScope::Client)
+        .with_client_id(client.id.clone());
     principal_repo
         .insert(&principal)
         .await
@@ -242,7 +242,7 @@ async fn test_principal_with_client_access() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.client_id, Some(client.id.to_string()));
+    assert_eq!(found.client_id, Some(client.id.clone()));
     assert_eq!(found.scope, UserScope::Client);
     assert!(found.can_access_client(client.id.as_str()));
 }

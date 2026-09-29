@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserCreated;
+use super::parse_client_id;
 use crate::auth::password_service::PasswordService;
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::portal::policy;
@@ -179,7 +180,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
 
         // Set home client_id if provided
         if let Some(ref client_id) = command.client_id {
-            principal = principal.with_client_id(client_id);
+            principal = principal.with_client_id(parse_client_id(client_id)?);
         }
 
         // Grants — persisted atomically via `pg_persist` (syncs

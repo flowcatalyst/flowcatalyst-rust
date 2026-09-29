@@ -29,6 +29,7 @@ use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::parse_opt;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::{ExecutionContext, UseCase};
 use std::collections::HashMap;
 use std::slice;
@@ -105,7 +106,7 @@ pub async fn create_user(
     let granted_client_ids = if scope == UserScope::Partner {
         let client_id = primary_client_id.clone().unwrap_or_default();
         if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
-            let already_linked = existing.client_id.as_deref() == Some(client_id.as_str())
+            let already_linked = existing.client_id.as_id_str() == Some(client_id.as_str())
                 || existing.assigned_clients.iter().any(|c| c == &client_id);
             if already_linked {
                 return Err(PlatformError::duplicate("Principal", "email", &req.email));
@@ -191,7 +192,7 @@ pub async fn detail(
         .await?
         .or_not_found("Principal", id)?;
     if !is_self {
-        if let Some(cid) = principal.client_id.as_deref() {
+        if let Some(cid) = principal.client_id.as_id_str() {
             if !caller_reach::reaches_client(ctx, cid) {
                 return Err(PlatformError::not_found("Principal", id));
             }
@@ -254,7 +255,7 @@ pub async fn list(
                 return true;
             }
             match &p.client_id {
-                Some(cid) => ctx.can_access_client(cid),
+                Some(cid) => ctx.can_access_client(cid.as_str()),
                 None => p.scope == UserScope::Anchor && ctx.is_anchor(),
             }
         })
@@ -357,7 +358,7 @@ pub async fn role_assignments(
     // does not reach answers the same 404 as a missing one.
     if !ctx.is_anchor() {
         if let Some(ref cid) = principal.client_id {
-            if !ctx.can_access_client(cid) {
+            if !ctx.can_access_client(cid.as_str()) {
                 return Err(PlatformError::not_found("Principal", id));
             }
         }
@@ -395,7 +396,7 @@ pub async fn assign_role(
     // the reach rule and the role ceiling.
     let principal = load_user_to_shape(state, id).await?;
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
         assert_assignable_roles(state, slice::from_ref(&role), &allowed).await?;
     }
     let mut roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
@@ -496,7 +497,7 @@ pub async fn remove_role(
     // A client administrator removes only roles it could assign (Go
     // `removeRole`).
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
         assert_assignable_roles(state, &[role.to_string()], &allowed).await?;
     }
     let roles: Vec<String> = principal
@@ -886,7 +887,7 @@ pub async fn application_access(
     // does not reach answers the same 404 as a missing one.
     if !ctx.is_anchor() {
         if let Some(ref cid) = principal.client_id {
-            if !ctx.can_access_client(cid) {
+            if !ctx.can_access_client(cid.as_str()) {
                 return Err(PlatformError::not_found("Principal", id));
             }
         }
@@ -957,7 +958,7 @@ pub async fn set_application_access(
     // `assignApplicationAccess`, principal/api/api.go:1183-1249).
     let mut req = req;
     if !ctx.is_anchor() {
-        let allowed = client_application_ids(state, principal.client_id.as_deref()).await?;
+        let allowed = client_application_ids(state, principal.client_id.as_id_str()).await?;
         if let Some(app_id) = req.application_ids.iter().find(|a| !allowed.contains(*a)) {
             return Err(PlatformError::forbidden_code(
                 "APP_FORBIDDEN",
@@ -1053,7 +1054,7 @@ pub async fn available_applications(
     // client the caller does not reach answers the same 404 as a missing
     // one.
     if let Some(ref cid) = principal.client_id {
-        if !caller_reach::reaches_client(ctx, cid) {
+        if !caller_reach::reaches_client(ctx, cid.as_str()) {
             return Err(PlatformError::not_found("Principal", id));
         }
     }
@@ -1062,7 +1063,7 @@ pub async fn available_applications(
     // is bounded to the applications the target's client has enabled.
     let mut apps = state.application_repo.find_active().await?;
     if !ctx.is_anchor() {
-        let allowed: HashSet<String> = match principal.client_id.as_deref() {
+        let allowed: HashSet<String> = match principal.client_id.as_id_str() {
             Some(cid) => state
                 .app_client_config_repo
                 .find_by_client(cid)

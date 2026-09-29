@@ -59,6 +59,7 @@ use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::AuthContext;
 use fc_platform_core::shared::error::{NotFoundExt, PlatformError};
+use fc_platform_core::shared::id::{ClientId, OptionIdExt};
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
@@ -519,7 +520,7 @@ impl From<Principal> for PrincipalResponse {
             id: p.id.to_string(),
             principal_type: p.principal_type.as_str().to_string(),
             scope: p.scope.as_str().to_string(),
-            client_id: p.client_id,
+            client_id: p.client_id.map(ClientId::into_string),
             name: p.name,
             active: p.active,
             email,
@@ -889,7 +890,7 @@ pub(super) async fn bounded_role_set(
     if ctx.is_anchor() {
         return Ok(requested);
     }
-    let allowed = client_application_ids(state, target.client_id.as_deref()).await?;
+    let allowed = client_application_ids(state, target.client_id.as_id_str()).await?;
     assert_assignable_roles(state, &requested, &allowed).await?;
     let current: Vec<String> = target.roles.iter().map(|r| r.role.clone()).collect();
     let mut out = requested;
@@ -2307,7 +2308,7 @@ pub async fn get_principal_version(
             .find_by_id(&id)
             .await?
             .ok_or_else(|| PlatformError::not_found_code("Principal", &id))?;
-        if let Some(client) = p.client_id.as_deref() {
+        if let Some(client) = p.client_id.as_id_str() {
             if !auth.0.can_access_client(client) {
                 return Err(PlatformError::not_found_code("Principal", &id));
             }
@@ -2638,7 +2639,7 @@ mod tests {
             id: PrincipalId::parse("prn_SERVICEID12345").unwrap(),
             principal_type: PrincipalType::Service,
             scope: UserScope::Client,
-            client_id: Some("clt_CLIENT1234567".to_string()),
+            client_id: Some(ClientId::parse("clt_CLIENT1234567").unwrap()),
             application_id: None,
             name: "My Service Account".to_string(),
             active: true,

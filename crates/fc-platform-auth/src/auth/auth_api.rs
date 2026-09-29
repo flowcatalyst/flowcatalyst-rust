@@ -28,6 +28,7 @@ use axum::body::Bytes;
 use axum::response::Response;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::middleware::{ClientIp, OptionalAuth};
 use fc_platform_iam::auth::auth_service;
 use fc_platform_iam::auth::auth_service::AuthService;
@@ -259,7 +260,7 @@ async fn login_response(state: &AuthState, jar: CookieJar, principal: Principal)
         email: principal_email,
         roles,
         permissions: permissions.ok().filter(|p| !p.is_empty()),
-        client_id: principal.client_id.clone(),
+        client_id: principal.client_id.as_id_str().map(String::from),
         sso_managed: sso_managed.unwrap_or(false),
     };
 
@@ -551,7 +552,7 @@ pub async fn get_current_user(
         email: principal.email().unwrap_or_default().to_string(),
         roles,
         permissions: Some(permissions).filter(|p| !p.is_empty()),
-        client_id: principal.client_id.clone(),
+        client_id: principal.client_id.as_id_str().map(String::from),
         sso_managed,
         scope: principal.scope.as_str().to_string(),
     }))

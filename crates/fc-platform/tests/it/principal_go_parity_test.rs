@@ -4,6 +4,7 @@
 //! recorded as Go's one command. Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -194,7 +195,8 @@ async fn a_client_grant_reports_its_own_id_and_date() {
     let token = app.anchor_admin_token().await;
     let home = create_client(&app, "home").await;
     let other = create_client(&app, "other").await;
-    let partner = Principal::new_user("pat@partner.test", UserScope::Partner).with_client_id(&home);
+    let partner = Principal::new_user("pat@partner.test", UserScope::Partner)
+        .with_client_id(ClientId::parse(&home).unwrap());
     app.repos
         .principal_repo
         .insert(&partner)

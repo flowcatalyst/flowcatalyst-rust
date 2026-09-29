@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use fc_platform_core::principal_kind::{PrincipalType, UserScope};
-use fc_platform_core::shared::id::PrincipalId;
+use fc_platform_core::shared::id::{ClientId, PrincipalId};
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use std::collections::HashMap;
@@ -110,7 +110,7 @@ pub struct Principal {
 
     /// Home client ID (for CLIENT scope users)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
+    pub client_id: Option<ClientId>,
 
     /// Application ID (for service accounts created by an app)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,8 +265,8 @@ impl Principal {
         }
     }
 
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = Some(client_id.into());
+    pub fn with_client_id(mut self, client_id: ClientId) -> Self {
+        self.client_id = Some(client_id);
         self
     }
 
@@ -331,8 +331,11 @@ impl Principal {
     }
 
     pub fn can_access_client(&self, client_id: &str) -> bool {
-        self.scope
-            .can_access_client(client_id, self.client_id.as_deref(), &self.assigned_clients)
+        self.scope.can_access_client(
+            client_id,
+            self.client_id.as_ref().map(ClientId::as_str),
+            &self.assigned_clients,
+        )
     }
 
     pub fn deactivate(&mut self) {
@@ -594,7 +597,8 @@ mod tests {
     #[test]
     fn principal_can_access_client_uses_its_scope() {
         // Client-scoped user with home client
-        let p = Principal::new_user("u@c.com", UserScope::Client).with_client_id("clt_home");
+        let p = Principal::new_user("u@c.com", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_home").unwrap());
         assert!(p.can_access_client("clt_home"));
         assert!(!p.can_access_client("clt_other"));
 

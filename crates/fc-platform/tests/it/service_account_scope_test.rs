@@ -4,6 +4,7 @@
 //! but doesn't decide the tier. Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::OptionIdExt;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -97,7 +98,7 @@ async fn client_scope_service_account_is_not_anchor() {
     let id = body["principalId"].as_str().unwrap();
     let p = principal(&app, id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_deref(), Some(clt.as_str()));
+    assert_eq!(p.client_id.as_id_str(), Some(clt.as_str()));
 
     // The token carries CLIENT and only its client.
     let token = token(&app, &p);
@@ -290,7 +291,7 @@ async fn update_moves_the_principal_reach() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     let p = principal(&app, &id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_deref(), Some(b.as_str()));
+    assert_eq!(p.client_id.as_id_str(), Some(b.as_str()));
     assert!(p.assigned_clients.is_empty());
 
     // A scope alone is stored as sent and leaves the principal as it is, as
@@ -302,7 +303,7 @@ async fn update_moves_the_principal_reach() {
     assert_eq!(read["clientIds"], json!([b]));
     let p = principal(&app, &id).await;
     assert_eq!(p.scope, UserScope::Client);
-    assert_eq!(p.client_id.as_deref(), Some(b.as_str()));
+    assert_eq!(p.client_id.as_id_str(), Some(b.as_str()));
     let resp = app.put(&path, &admin, json!({ "scope": "anchor" })).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     assert_eq!(principal(&app, &id).await.scope, UserScope::Client);

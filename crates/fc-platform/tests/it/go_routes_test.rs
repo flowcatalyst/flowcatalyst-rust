@@ -3,6 +3,8 @@
 //! Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
+use fc_platform_core::shared::id::OptionIdExt;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -21,7 +23,7 @@ async fn setup() -> TestApp {
 /// A non-anchor (client-scoped) user holding nothing.
 fn nobody_token(app: &TestApp) -> String {
     let p = Principal::new_user("nobody@flowcatalyst.test", UserScope::Client)
-        .with_client_id("clt_nobody");
+        .with_client_id(ClientId::parse("clt_nobody").unwrap());
     app.auth_service.generate_access_token(&p).expect("token")
 }
 
@@ -532,7 +534,7 @@ async fn clients_are_searched_by_body() {
 fn role_holder_token(app: &TestApp, role: &str) -> String {
     use fc_platform::service_account::entity::RoleAssignment;
     let mut p = Principal::new_user("reader@flowcatalyst.test", UserScope::Client)
-        .with_client_id("clt_reader");
+        .with_client_id(ClientId::parse("clt_reader").unwrap());
     p.roles = vec![RoleAssignment::new(role)];
     app.auth_service.generate_access_token(&p).expect("token")
 }
@@ -1080,7 +1082,7 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
         .await
         .unwrap()
         .expect("ann");
-    assert_eq!(ann.client_id.as_deref(), Some(acme.as_str()));
+    assert_eq!(ann.client_id.as_id_str(), Some(acme.as_str()));
     assert!(ann.roles.iter().any(|r| r.role == "parity:importer"));
 
     // A second import skips the existing user.

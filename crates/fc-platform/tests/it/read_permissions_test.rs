@@ -13,6 +13,7 @@
 //! so "past the gate" is a 404 there.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 
@@ -25,7 +26,7 @@ use support::{read_json, TestApp};
 fn caller(app: &TestApp, scope: UserScope, client: Option<&str>, perms: &[&str]) -> String {
     let mut p = Principal::new_user("reader@read-perms.test", scope);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     let granted: Vec<String> = perms.iter().map(|s| s.to_string()).collect();
     app.auth_service
@@ -324,7 +325,7 @@ async fn principal_self_read_and_out_of_reach_rows_answer_as_go() {
     }
 
     // Self, with only an unrelated permission.
-    let me = Principal::new_user("me@rp.test", UserScope::Client).with_client_id(&mine.id);
+    let me = Principal::new_user("me@rp.test", UserScope::Client).with_client_id(mine.id.clone());
     app.repos
         .principal_repo
         .insert(&me)
@@ -339,7 +340,8 @@ async fn principal_self_read_and_out_of_reach_rows_answer_as_go() {
     assert_eq!(status, StatusCode::OK, "self read: {body}");
 
     // Another client's principal, with the user read permission.
-    let other = Principal::new_user("other@rp.test", UserScope::Client).with_client_id(&theirs.id);
+    let other =
+        Principal::new_user("other@rp.test", UserScope::Client).with_client_id(theirs.id.clone());
     app.repos
         .principal_repo
         .insert(&other)

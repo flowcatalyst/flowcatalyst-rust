@@ -9,6 +9,7 @@
 //! insert those rows directly to exercise the reads.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use std::sync::Arc;
 
@@ -95,7 +96,9 @@ async fn token(app: &TestApp, who: As<'_>) -> String {
 
     let mut principal = Principal::new_user(format!("fn-{n}@flowcatalyst.test"), who.scope);
     match who.scope {
-        UserScope::Client => principal = principal.with_client_id(who.clients[0]),
+        UserScope::Client => {
+            principal = principal.with_client_id(ClientId::parse(who.clients[0]).unwrap())
+        }
         UserScope::Partner => {
             principal.assigned_clients = who.clients.iter().map(|c| c.to_string()).collect()
         }

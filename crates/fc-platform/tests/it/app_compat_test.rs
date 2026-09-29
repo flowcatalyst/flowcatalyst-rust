@@ -4,6 +4,7 @@
 //! Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 #[allow(unused_imports)]
 use serde_json::{json, Value};
@@ -577,8 +578,8 @@ async fn auth_me_lists_the_effective_permissions() {
         app.repos.role_repo.insert(role).await.expect("insert role");
     }
     let client_id = create_client(&app, "inhance").await;
-    let mut user =
-        Principal::new_user("me@inhance.test", UserScope::Client).with_client_id(&client_id);
+    let mut user = Principal::new_user("me@inhance.test", UserScope::Client)
+        .with_client_id(ClientId::parse(&client_id).unwrap());
     user.assign_role("hr:viewer");
     user.assign_role("hr:editor");
     app.repos

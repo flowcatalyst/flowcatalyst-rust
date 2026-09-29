@@ -7,6 +7,7 @@
 //! Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use std::collections::HashSet;
 
@@ -70,7 +71,7 @@ async fn insert_user(
 ) -> fc_platform::Principal {
     let mut p = fc_platform::Principal::new_user(email, scope);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     app.repos.principal_repo.insert(&p).await.unwrap();
     p

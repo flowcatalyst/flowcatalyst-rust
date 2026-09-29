@@ -17,7 +17,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use fc_platform_core::principal_kind::UserScope;
-use fc_platform_core::shared::error::Result;
+use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::ClientId;
 use fc_platform_iam::auth::config_entity::IdpRoleMapping;
 use fc_platform_iam::{
     auth::config_repository::IdpRoleMappingRepository, principal::repository::PrincipalRepository,
@@ -118,7 +119,9 @@ impl OidcSyncService {
             });
 
             if let Some(cid) = client_id {
-                new_principal.client_id = Some(cid.to_string());
+                new_principal.client_id = Some(
+                    ClientId::parse(cid).map_err(|e| PlatformError::validation(e.to_string()))?,
+                );
             }
 
             self.principal_repo.insert(&new_principal).await?;

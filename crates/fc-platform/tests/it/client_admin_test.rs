@@ -5,6 +5,7 @@
 //! is entitled to, and nothing beyond. Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -64,7 +65,8 @@ async fn setup() -> Fixture {
     // The client administrator: CLIENT tier in my client, holding exactly
     // the platform:client-admin role's permissions.
     let role = roles::client_admin();
-    let caller = Principal::new_user("ca@ca.test", UserScope::Client).with_client_id(&mine.id);
+    let caller =
+        Principal::new_user("ca@ca.test", UserScope::Client).with_client_id(mine.id.clone());
     let granted: Vec<String> = role.permissions.iter().cloned().collect();
     let admin = app
         .auth_service
@@ -84,7 +86,7 @@ async fn setup() -> Fixture {
 async fn stored(app: &TestApp, email: &str, scope: UserScope, client: Option<&str>) -> Principal {
     let mut p = Principal::new_user(email, scope);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     app.repos
         .principal_repo
@@ -181,7 +183,8 @@ async fn a_client_admin_assigns_only_its_clients_application_roles() {
             .await
             .expect("insert role");
     }
-    let mut member = Principal::new_user("r@ca.test", UserScope::Client).with_client_id(&f.mine);
+    let mut member = Principal::new_user("r@ca.test", UserScope::Client)
+        .with_client_id(ClientId::parse(&f.mine).unwrap());
     // A platform role the client administrator can neither grant nor strip.
     member.assign_role("platform:viewer");
     f.app

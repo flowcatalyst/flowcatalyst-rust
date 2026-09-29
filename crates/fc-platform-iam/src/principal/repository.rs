@@ -14,6 +14,7 @@ use fc_platform_core::directory::PrincipalDirectory;
 use fc_platform_core::shared::enum_str::{decode, decode_opt};
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::shared::id::decode_id;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -87,7 +88,11 @@ impl TryFrom<PrincipalRow> for Principal {
             id: decode_id(&r.id, "iam_principals", "id", &r.id)?,
             principal_type,
             scope,
-            client_id: r.client_id,
+            client_id: r
+                .client_id
+                .as_deref()
+                .map(|v| decode_id(v, "iam_principals", "client_id", &r.id))
+                .transpose()?,
             application_id: r.application_id,
             name: r.name,
             active: r.active,
@@ -893,8 +898,8 @@ impl PrincipalRepository {
                 // Build client identifier map — include both grant clients and home client
                 let mut id_map = HashMap::new();
                 if let Some(ref home_cid) = principal.client_id {
-                    if let Some(ident) = client_id_to_identifier.get(home_cid) {
-                        id_map.insert(home_cid.clone(), ident.clone());
+                    if let Some(ident) = client_id_to_identifier.get(home_cid.as_str()) {
+                        id_map.insert(home_cid.to_string(), ident.clone());
                     }
                 }
                 if let Some(clients) = grant_map.remove(&id) {
@@ -945,7 +950,7 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
         let ids: Vec<&str> = ps.iter().map(|p| p.id.as_str()).collect();
         let types: Vec<&str> = ps.iter().map(|p| p.principal_type.as_str()).collect();
         let scopes: Vec<&str> = ps.iter().map(|p| p.scope.as_str()).collect();
-        let client_ids: Vec<Option<&str>> = ps.iter().map(|p| p.client_id.as_deref()).collect();
+        let client_ids: Vec<Option<&str>> = ps.iter().map(|p| p.client_id.as_id_str()).collect();
         let names: Vec<&str> = ps.iter().map(|p| p.name.as_str()).collect();
         let actives: Vec<bool> = ps.iter().map(|p| p.active).collect();
         let emails: Vec<Option<&str>> = ps.iter().map(|p| p.email()).collect();

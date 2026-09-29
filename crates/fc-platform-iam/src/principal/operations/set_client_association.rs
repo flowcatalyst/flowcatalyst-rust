@@ -15,6 +15,7 @@ use super::events::UserUpdated;
 use crate::{client::repository::ClientRepository, principal::repository::PrincipalRepository};
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::id::{ClientId, OptionIdExt};
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -50,12 +51,12 @@ impl<U: UnitOfWork> SetClientAssociationUseCase<U> {
         }
     }
 
-    async fn require_client(&self, client_id: &str) -> Result<(), UseCaseError> {
+    async fn require_client(&self, client_id: &str) -> Result<ClientId, UseCaseError> {
         self.client_repo
             .find_by_id(client_id)
             .await
             .or_not_found("CLIENT_NOT_FOUND", format!("Client not found: {client_id}"))
-            .map(|_| ())
+            .map(|client| client.id)
     }
 }
 
@@ -122,22 +123,22 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
             p.scope = UserScope::Anchor;
             p.client_id = None;
         } else if mode == "CHANGE_CLIENT" {
-            self.require_client(target).await?;
+            let client_id = self.require_client(target).await?;
             p.scope = UserScope::Client;
-            p.client_id = Some(target.to_string());
+            p.client_id = Some(client_id);
         } else if mode == "TO_PARTNER" {
-            self.require_client(target).await?;
+            let target_id = self.require_client(target).await?;
             let mut grants = Vec::new();
             if p.scope == UserScope::Client {
                 if let Some(home) = p
                     .client_id
-                    .as_deref()
+                    .as_id_str()
                     .filter(|h| !h.is_empty() && *h != target)
                 {
                     grants.push(home.to_string());
                 }
             }
-            grants.push(target.to_string());
+            grants.push(target_id.into_string());
             for g in grants {
                 if !p.assigned_clients.contains(&g) {
                     p.assigned_clients.push(g);

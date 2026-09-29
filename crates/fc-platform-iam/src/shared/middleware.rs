@@ -50,6 +50,7 @@ mod tests {
     use axum::http::{header, request::Parts, Request, StatusCode};
     use axum::response::IntoResponse;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use fc_platform_core::shared::id::ClientId;
     use sqlx::postgres::PgPoolOptions;
     use std::sync::Arc;
 
@@ -128,8 +129,8 @@ mod tests {
 
     /// Generate a valid access token for a client-scoped user with no roles
     fn generate_client_token(auth_service: &AuthService) -> String {
-        let principal =
-            Principal::new_user("user@client.com", UserScope::Client).with_client_id("client-abc");
+        let principal = Principal::new_user("user@client.com", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_abc").unwrap());
         auth_service.generate_access_token(&principal).unwrap()
     }
 
@@ -506,8 +507,8 @@ mod tests {
     #[tokio::test]
     async fn test_scope_claim_permissions_are_used_as_granted() {
         let auth_service = test_auth_service();
-        let mut principal =
-            Principal::new_user("svc@example.com", UserScope::Client).with_client_id("client-abc");
+        let mut principal = Principal::new_user("svc@example.com", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_abc").unwrap());
         // A role the (unreachable) DB would have to resolve: the scope
         // claim must make that lookup unnecessary.
         principal.assign_role("app:role");
@@ -556,7 +557,7 @@ mod tests {
 
         assert!(!auth.0.is_anchor());
         assert_eq!(auth.0.scope, UserScope::Client);
-        assert!(auth.0.can_access_client("client-abc"));
+        assert!(auth.0.can_access_client("clt_abc"));
         assert!(!auth.0.can_access_client("other-client"));
         assert_eq!(auth.0.email, Some("user@client.com".to_string()));
     }

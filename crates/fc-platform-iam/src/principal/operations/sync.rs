@@ -41,6 +41,7 @@ use fc_platform_core::permissions;
 use fc_platform_core::principal_kind::UserScope;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::shared::authorization_service::Authority;
+use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -97,7 +98,7 @@ pub fn administers(caller: &impl Authority, target: &Principal) -> bool {
     if target.scope != UserScope::Client {
         return false;
     }
-    match target.client_id.as_deref() {
+    match target.client_id.as_id_str() {
         Some(client_id) => caller.can_access_client(client_id),
         None => caller.has_permission(permissions::ADMIN_ALL),
     }
@@ -410,6 +411,7 @@ mod tests {
     use super::*;
     use crate::role::ceiling::test_caller as ctx;
     use fc_common::audit_redaction;
+    use fc_platform_core::shared::id::ClientId;
 
     #[test]
     fn test_command_serialization() {
@@ -426,9 +428,12 @@ mod tests {
     fn reach_follows_tier_and_client() {
         let anchor = ctx(UserScope::Anchor, &["*"], &[]);
         let client = ctx(UserScope::Client, &["clt_a"], &[]);
-        let own = Principal::new_user("a@x.test", UserScope::Client).with_client_id("clt_a");
-        let other = Principal::new_user("b@x.test", UserScope::Client).with_client_id("clt_b");
-        let partner = Principal::new_user("c@x.test", UserScope::Partner).with_client_id("clt_a");
+        let own = Principal::new_user("a@x.test", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_a").unwrap());
+        let other = Principal::new_user("b@x.test", UserScope::Client)
+            .with_client_id(ClientId::parse("clt_b").unwrap());
+        let partner = Principal::new_user("c@x.test", UserScope::Partner)
+            .with_client_id(ClientId::parse("clt_a").unwrap());
         let clientless = Principal::new_user("d@x.test", UserScope::Client);
         let staff = Principal::new_user("e@x.test", UserScope::Anchor);
         for p in [&own, &other, &partner, &clientless, &staff] {

@@ -3,6 +3,7 @@
 //! hold (owner rulings 13-15 of 2026-09-25). Requires Docker.
 
 use crate::support;
+use fc_platform_core::shared::id::ClientId;
 
 use axum::http::StatusCode;
 use serde_json::{json, Value};
@@ -27,7 +28,7 @@ async fn setup() -> TestApp {
 fn caller(app: &TestApp, scope: UserScope, client: Option<&str>, perms: &[&str]) -> String {
     let mut p = Principal::new_user(format!("caller-{}@iam.test", perms.len()), scope);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     let granted: Vec<String> = perms.iter().map(|s| s.to_string()).collect();
     app.auth_service
@@ -213,7 +214,7 @@ async fn service_account_all_applications_opt_in() {
 async fn stored_user(app: &TestApp, email: &str, scope: UserScope, client: Option<&str>) -> String {
     let mut p = Principal::new_user(email, scope);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     app.repos
         .principal_repo
@@ -1081,7 +1082,7 @@ async fn sdk_user(app: &TestApp, email: &str, client: Option<&str>, roles: &[&st
     use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
     let mut p = Principal::new_user(email, UserScope::Client);
     if let Some(c) = client {
-        p = p.with_client_id(c);
+        p = p.with_client_id(ClientId::parse(c).unwrap());
     }
     for r in roles {
         p.roles
@@ -1187,7 +1188,8 @@ async fn application_sync_stays_within_the_callers_reach() {
     let mine = create_client(&app, "reach-mine").await;
     let theirs = create_client(&app, "reach-theirs").await;
     // A client-tier syncer that reaches every application.
-    let p = Principal::new_user("reach-syncer@iam.test", UserScope::Client).with_client_id(&mine);
+    let p = Principal::new_user("reach-syncer@iam.test", UserScope::Client)
+        .with_client_id(ClientId::parse(&mine).unwrap());
     app.repos.principal_repo.insert(&p).await.unwrap();
     let syncer = app
         .auth_service
