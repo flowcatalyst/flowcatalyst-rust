@@ -59,10 +59,8 @@ use super::settings_repository::FunctionSettingsRepository;
 use super::version_repository::FunctionVersionRepository;
 use super::{FunctionAddress, FunctionLimits};
 use fc_function_signing::Signatures;
+use fc_platform_core::directory::{ApplicationDirectory, ClientDirectory};
 use fc_platform_core::usecase::UnitOfWork;
-use fc_platform_iam::{
-    application::repository::ApplicationRepository, client::repository::ClientRepository,
-};
 
 /// A command's address, as its rendered string.
 pub(crate) fn serialize_address<S: Serializer>(
@@ -76,8 +74,8 @@ pub(crate) fn serialize_address<S: Serializer>(
 pub struct FunctionOperations<U: UnitOfWork> {
     pub functions: Arc<FunctionRepository>,
     pub versions: Arc<FunctionVersionRepository>,
-    pub applications: Arc<ApplicationRepository>,
-    pub clients: Arc<ClientRepository>,
+    pub applications: Arc<dyn ApplicationDirectory>,
+    pub clients: Arc<dyn ClientDirectory>,
     pub settings: Arc<FunctionSettingsRepository>,
     pub policies: Arc<ClientPolicyRepository>,
     pub domains: Arc<FunctionDomainRepository>,

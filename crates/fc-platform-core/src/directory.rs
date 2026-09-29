@@ -1,13 +1,15 @@
-//! The lookups messaging and the scheduled jobs make into IAM, as traits.
+//! The lookups messaging, the scheduled jobs and the functions make into
+//! IAM, as traits.
 //!
-//! Messaging (fc-platform-messaging) and the scheduled jobs
-//! (fc-platform-scheduled-jobs) read a few IAM facts: a client's name or
+//! Messaging (fc-platform-messaging), the scheduled jobs
+//! (fc-platform-scheduled-jobs) and the functions (fc-platform-functions)
+//! read a few IAM facts: a client's name or
 //! identifier, an application's id or code, which service accounts a caller
 //! may sign with, an application's outbound credentials, a principal's
 //! application scope. They read them through these traits, which
 //! fc-platform-iam implements on its repositories and services, and the
 //! assembly (`fc-platform`) injects as `Arc<dyn …>`. So an IAM edit does
-//! not rebuild messaging or the scheduled jobs (docs/plans/build-speed-2026-09-28.md,
+//! not rebuild messaging, the scheduled jobs or the functions (docs/plans/build-speed-2026-09-28.md,
 //! section 6.3, step 2).
 //!
 //! Each method is the repository method of the same name, and returns the
@@ -18,7 +20,9 @@ use std::fmt;
 
 use async_trait::async_trait;
 
-use crate::shared::authorization_service::{AuthContext, PrincipalApplicationBinding};
+use crate::shared::authorization_service::{
+    ApplicationScope, AuthContext, PrincipalApplicationBinding,
+};
 use crate::shared::error::Result;
 
 // ── Clients ──────────────────────────────────────────────────────────────
@@ -80,6 +84,9 @@ pub trait ApplicationAccess: Send + Sync {
         context: &AuthContext,
         app_code: &str,
     ) -> Result<ApplicationRef>;
+
+    /// A principal's application scope (cached).
+    async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope>;
 }
 
 // ── Service accounts ─────────────────────────────────────────────────────
@@ -135,6 +142,8 @@ pub trait ServiceAccountDirectory: Send + Sync {
         &self,
         references: &[String],
     ) -> Result<HashMap<String, SigningAccount>>;
+    /// Whether the application's oldest active account has a signing secret.
+    async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool>;
 }
 
 // ── Principals ───────────────────────────────────────────────────────────
@@ -197,4 +206,9 @@ pub trait OutboundCredentialSource: Send + Sync {
     async fn for_application(&self, application_id: &str) -> Result<Option<OutboundCredentials>>;
     /// A named account's (cached).
     async fn by_service_account_id(&self, id: &str) -> Result<ById>;
+    /// Several applications' credentials, read now (not cached).
+    async fn for_applications_fresh(
+        &self,
+        application_ids: &[String],
+    ) -> Result<HashMap<String, OutboundCredentials>>;
 }

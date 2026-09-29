@@ -998,6 +998,10 @@ impl ServiceAccountDirectory for ServiceAccountRepository {
     ) -> Result<HashMap<String, SigningAccount>> {
         ServiceAccountRepository::find_signing_accounts(self, references).await
     }
+
+    async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool> {
+        ServiceAccountRepository::oldest_active_has_signing_secret(self, application_id).await
+    }
 }
 
 #[cfg(test)]

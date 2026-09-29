@@ -40,6 +40,7 @@ use super::wire::{micros_ser, parse_body};
 use super::{
     parse_address, FunctionAddress, FunctionAddressPattern, FunctionLimits, FunctionOwner,
 };
+use fc_platform_core::directory::ApplicationAccess;
 use fc_platform_core::permissions::function::{
     FUNCTION_MANAGE, FUNCTION_SECRET_MANAGE, FUNCTION_VIEW,
 };
@@ -49,7 +50,6 @@ use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase, UseCaseError};
-use fc_platform_iam::shared::authorization_service::ApplicationAccessService;
 use std::collections::HashMap;
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ pub struct FunctionsState {
     pub domains: Arc<FunctionDomainRepository>,
     pub routes: Arc<FunctionRouteRepository>,
     pub trigger_objects: Arc<TriggerObjectRepository>,
-    pub app_access: Arc<ApplicationAccessService>,
+    pub app_access: Arc<dyn ApplicationAccess>,
     /// The platform defaults a policy's absent ceilings resolve to.
     pub limits: FunctionLimits,
     pub ops: FunctionOperations<PgUnitOfWork>,

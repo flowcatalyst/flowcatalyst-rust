@@ -15,12 +15,12 @@ use super::events::PolicyUpdated;
 use crate::function::entity::{ClientPolicy, SignerRule};
 use crate::function::policy_repository::ClientPolicyRepository;
 use crate::function::{java_is_blank, FunctionOwner, Runtime};
+use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::permissions;
 use fc_platform_core::shared::authorization_service::checks;
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
 };
-use fc_platform_iam::client::repository::ClientRepository;
 
 /// One signer rule as sent; runtimes still raw.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -59,7 +59,7 @@ impl AuditMasked for PutPolicyCommand {}
 
 pub struct PutFunctionPolicyUseCase<U: UnitOfWork> {
     pub(crate) policies: Arc<ClientPolicyRepository>,
-    pub(crate) clients: Arc<ClientRepository>,
+    pub(crate) clients: Arc<dyn ClientDirectory>,
     pub(crate) unit_of_work: Arc<U>,
 }
 

@@ -57,12 +57,12 @@ use crate::function::trigger_object_repository::{
 };
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::{Manifest, PoolUrlTemplate, ScheduleSpec, SubscriptionSpec, LIVE_ALIAS};
+use fc_platform_core::directory::ApplicationDirectory;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::DomainEvent;
 use fc_platform_core::usecase::HasId;
 use fc_platform_core::usecase::Persist;
 use fc_platform_core::usecase::{ExecutionContext, UnitOfWork, UseCaseError};
-use fc_platform_iam::application::repository::ApplicationRepository;
 use fc_platform_messaging::dispatch_pool::operations::{
     CreateDispatchPoolCommand, DeleteDispatchPoolCommand, DispatchPoolCreated, DispatchPoolDeleted,
     DispatchPoolUpdated, UpdateDispatchPoolCommand,
@@ -191,7 +191,7 @@ pub struct TriggerSync {
     pub pools: Arc<DispatchPoolRepository>,
     pub jobs: Arc<ScheduledJobRepository>,
     pub trigger_objects: Arc<TriggerObjectRepository>,
-    pub applications: Arc<ApplicationRepository>,
+    pub applications: Arc<dyn ApplicationDirectory>,
     pub versions: Arc<FunctionVersionRepository>,
     pub functions: Arc<FunctionRepository>,
     pub routes: Arc<FunctionRouteRepository>,
@@ -224,7 +224,7 @@ pub struct TriggerSyncRepositories {
     pub pools: Arc<DispatchPoolRepository>,
     pub jobs: Arc<ScheduledJobRepository>,
     pub trigger_objects: Arc<TriggerObjectRepository>,
-    pub applications: Arc<ApplicationRepository>,
+    pub applications: Arc<dyn ApplicationDirectory>,
     pub versions: Arc<FunctionVersionRepository>,
     pub functions: Arc<FunctionRepository>,
     pub routes: Arc<FunctionRouteRepository>,
@@ -237,7 +237,7 @@ impl TriggerSync {
         pools: Arc<DispatchPoolRepository>,
         jobs: Arc<ScheduledJobRepository>,
         trigger_objects: Arc<TriggerObjectRepository>,
-        applications: Arc<ApplicationRepository>,
+        applications: Arc<dyn ApplicationDirectory>,
         versions: Arc<FunctionVersionRepository>,
         functions: Arc<FunctionRepository>,
         routes: Arc<FunctionRouteRepository>,

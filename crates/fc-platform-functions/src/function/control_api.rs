@@ -58,13 +58,13 @@ use super::repository::FunctionRepository;
 use super::version_repository::FunctionVersionRepository;
 use super::wire::parse_body;
 use super::{java_is_blank, parse_address, DnsLabel, FunctionAddress, FunctionOwner};
+use fc_platform_core::directory::ApplicationDirectory;
 use fc_platform_core::permissions::function::FUNCTION_HOST_CONTROL;
 use fc_platform_core::shared::authorization_service::{checks, AuthContext};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
 use fc_platform_core::usecase::Committed;
 use fc_platform_core::usecase::{ExecutionContext, PgUnitOfWork, UseCase, UseCaseError};
-use fc_platform_iam::application::repository::ApplicationRepository;
 use fc_platform_messaging::event::entity::Event;
 use fc_platform_messaging::event::repository::EventRepository;
 use fc_platform_messaging::event_type::entity::EventTypeStatus;
@@ -86,7 +86,7 @@ pub struct FunctionControlState {
     pub functions: Arc<FunctionRepository>,
     pub versions: Arc<FunctionVersionRepository>,
     pub hosts: Arc<FunctionHostRepository>,
-    pub applications: Arc<ApplicationRepository>,
+    pub applications: Arc<dyn ApplicationDirectory>,
     pub event_types: Arc<EventTypeRepository>,
     pub events: Arc<EventRepository>,
     /// `FC_FN_ARTIFACT_STORE`; `None` when unset.

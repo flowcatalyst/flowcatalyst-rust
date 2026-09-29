@@ -16,11 +16,9 @@ use super::events::FunctionCreated;
 use crate::function::entity::Function;
 use crate::function::repository::FunctionRepository;
 use crate::function::{java_is_blank, DnsLabel, FunctionAddress, FunctionOwner, Runtime};
+use fc_platform_core::directory::{ApplicationDirectory, ClientDirectory};
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
-};
-use fc_platform_iam::{
-    application::repository::ApplicationRepository, client::repository::ClientRepository,
 };
 
 /// `POST /api/functions`. An absent or blank `clientId` means a
@@ -82,8 +80,8 @@ fn parse_application_code(raw: &str) -> Result<String, UseCaseError> {
 
 pub struct CreateFunctionUseCase<U: UnitOfWork> {
     pub(crate) functions: Arc<FunctionRepository>,
-    pub(crate) applications: Arc<ApplicationRepository>,
-    pub(crate) clients: Arc<ClientRepository>,
+    pub(crate) applications: Arc<dyn ApplicationDirectory>,
+    pub(crate) clients: Arc<dyn ClientDirectory>,
     pub(crate) unit_of_work: Arc<U>,
 }
 

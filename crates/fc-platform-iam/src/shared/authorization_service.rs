@@ -351,6 +351,10 @@ impl ApplicationAccess for ApplicationAccessService {
             .await
             .map(repository::application_ref)
     }
+
+    async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope> {
+        ApplicationAccessService::scope_for(self, principal_id).await
+    }
 }
 
 #[cfg(test)]

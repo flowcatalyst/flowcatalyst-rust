@@ -56,8 +56,8 @@ use super::settings_repository::FunctionSettingsRepository;
 use super::version_repository::{CorruptVersion, FunctionVersionRepository};
 use super::{java_is_blank, DnsLabel, EndpointAuth, FunctionOwner, JsonNode, Manifest, LIVE_ALIAS};
 use axum::http::StatusCode;
+use fc_platform_core::directory::OutboundCredentialSource;
 use fc_platform_core::shared::error::PlatformError;
-use fc_platform_iam::service_account::outbound_credentials::OutboundCredentialsResolver;
 
 /// What one entry is to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -234,7 +234,7 @@ pub struct DesiredStateBuilder {
     pub routes: Arc<FunctionRouteRepository>,
     /// The resolver the deliveries use, read fresh (uncached) here so a
     /// rotated signing secret reaches the next poll.
-    pub credentials: Arc<OutboundCredentialsResolver>,
+    pub credentials: Arc<dyn OutboundCredentialSource>,
 }
 
 /// One entry before its settings and signing secret are resolved.

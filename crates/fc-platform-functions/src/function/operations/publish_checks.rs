@@ -35,8 +35,8 @@ use crate::function::schedule_check::parse_cron;
 use crate::function::version_repository::FunctionVersionRepository;
 use crate::function::Runtime;
 use crate::function::{FunctionLimits, Manifest, PublicRoute};
+use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::usecase::UseCaseError;
-use fc_platform_iam::service_account::repository::ServiceAccountRepository;
 use fc_platform_messaging::event_type::entity::EventTypeStatus;
 use fc_platform_messaging::event_type::repository::EventTypeRepository;
 use fc_platform_scheduled_jobs::scheduled_job::java_zone::zone_id_valid;
@@ -44,7 +44,7 @@ use fc_platform_scheduled_jobs::scheduled_job::java_zone::zone_id_valid;
 #[derive(Clone)]
 pub struct PublishChecks {
     pub event_types: Arc<EventTypeRepository>,
-    pub service_accounts: Arc<ServiceAccountRepository>,
+    pub service_accounts: Arc<dyn ServiceAccountDirectory>,
     pub versions: Arc<FunctionVersionRepository>,
     pub functions: Arc<FunctionRepository>,
     pub domains: Arc<FunctionDomainRepository>,

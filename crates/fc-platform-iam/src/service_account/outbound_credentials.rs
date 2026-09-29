@@ -174,6 +174,13 @@ impl OutboundCredentialSource for OutboundCredentialsResolver {
     async fn by_service_account_id(&self, id: &str) -> Result<ById> {
         OutboundCredentialsResolver::by_service_account_id(self, id).await
     }
+
+    async fn for_applications_fresh(
+        &self,
+        application_ids: &[String],
+    ) -> Result<HashMap<String, OutboundCredentials>> {
+        OutboundCredentialsResolver::for_applications_fresh(self, application_ids).await
+    }
 }
 
 #[cfg(test)]
