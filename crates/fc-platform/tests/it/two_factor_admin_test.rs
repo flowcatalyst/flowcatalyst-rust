@@ -27,7 +27,7 @@ async fn an_administrator_resets_a_users_two_factor() {
     let app = TestApp::setup().await;
     let admin = app.anchor_admin_token().await;
     let user = developer(&app, "lost@flowcatalyst.test", false).await;
-    let mut method = Method::new(&user.id, MethodType::EmailPin);
+    let mut method = Method::new(user.id.as_str(), MethodType::EmailPin);
     method.confirmed_at = Some(chrono::Utc::now());
     MfaRepository::new(&app.pool)
         .replace_pending_method(&method)

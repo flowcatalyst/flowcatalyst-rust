@@ -1160,7 +1160,7 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
     let ann = app
         .repos
         .principal_repo
-        .find_by_id(&ann.id)
+        .find_by_id(ann.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -1508,7 +1508,7 @@ async fn app_with_service_account(app: &TestApp, admin: &str, code: &str) -> Str
         .unwrap()
         .unwrap();
     let mut application = Application::new(code, code);
-    application.service_account_id = Some(principal.id);
+    application.service_account_id = Some(principal.id.to_string());
     app.repos
         .application_repo
         .insert(&application)

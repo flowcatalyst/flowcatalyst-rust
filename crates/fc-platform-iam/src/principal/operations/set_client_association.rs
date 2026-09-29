@@ -152,7 +152,7 @@ impl<U: UnitOfWork> UseCase for SetClientAssociationUseCase<U> {
             ));
         }
         p.updated_at = chrono::Utc::now();
-        let event = UserUpdated::new(&ctx, &p.id, &p.name);
+        let event = UserUpdated::new(&ctx, p.id.as_str(), &p.name);
         self.unit_of_work
             .commit(&p, &*self.principal_repo, event, &command)
             .await

@@ -167,7 +167,7 @@ async fn a_passwordless_user_asks_for_a_set_password_link() {
         )
         .await;
         assert_eq!((status, &body), (StatusCode::OK, &expected));
-        let (id, purpose, _, _) = token_row(&app, &fresh.id).await.expect("an invite");
+        let (id, purpose, _, _) = token_row(&app, fresh.id.as_str()).await.expect("an invite");
         assert_eq!(purpose, "invite");
         ids.push(id);
     }
@@ -199,7 +199,7 @@ async fn a_confirmed_invite_signs_the_user_in() {
     app.repos.principal_repo.insert(&user).await.unwrap();
     plant_token(
         &app,
-        &user.id,
+        user.id.as_str(),
         "raw-invite",
         TokenPurpose::Invite,
         false,
@@ -234,11 +234,14 @@ async fn a_confirmed_invite_signs_the_user_in() {
     let (_, body) = read_json(resp).await;
     assert_eq!(body["status"], "ok", "{body}");
     assert_eq!(body["sessionEstablished"], true, "{body}");
-    assert!(token_row(&app, &user.id).await.is_none(), "single use");
+    assert!(
+        token_row(&app, user.id.as_str()).await.is_none(),
+        "single use"
+    );
 
     plant_token(
         &app,
-        &user.id,
+        user.id.as_str(),
         "raw-reset",
         TokenPurpose::Reset,
         false,
@@ -277,7 +280,7 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
     let app = TestApp::setup().await;
     let user = Principal::new_user("guarded@flowcatalyst.test", UserScope::Anchor);
     app.repos.principal_repo.insert(&user).await.unwrap();
-    let secret = give_totp(&app, &user.id).await;
+    let secret = give_totp(&app, user.id.as_str()).await;
 
     let resp = post(
         &app,
@@ -286,12 +289,12 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let (_, purpose, requires_factor, _) = token_row(&app, &user.id).await.unwrap();
+    let (_, purpose, requires_factor, _) = token_row(&app, user.id.as_str()).await.unwrap();
     assert_eq!((purpose.as_str(), requires_factor), ("reset", true));
 
     plant_token(
         &app,
-        &user.id,
+        user.id.as_str(),
         "raw-guarded",
         TokenPurpose::Reset,
         true,
@@ -329,7 +332,15 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
-    plant_token(&app, &user.id, "raw-burn", TokenPurpose::Reset, true, false).await;
+    plant_token(
+        &app,
+        user.id.as_str(),
+        "raw-burn",
+        TokenPurpose::Reset,
+        true,
+        false,
+    )
+    .await;
     let mut last = Value::Null;
     for _ in 0..5 {
         last = read_json(
@@ -344,7 +355,7 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
         .1;
     }
     assert_eq!(last["error"], "INVALID_TOKEN", "{last}");
-    assert!(token_row(&app, &user.id).await.is_none(), "burned");
+    assert!(token_row(&app, user.id.as_str()).await.is_none(), "burned");
 }
 
 /// The admin reset can also clear 2FA (Go `reset2fa`); confirming it on a
@@ -384,7 +395,7 @@ async fn a_lost_device_reset_clears_two_factor_and_sends_the_user_to_enrol() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let user = Principal::new_user("lost@strict.test", UserScope::Anchor);
     app.repos.principal_repo.insert(&user).await.unwrap();
-    give_totp(&app, &user.id).await;
+    give_totp(&app, user.id.as_str()).await;
 
     let resp = app
         .post(
@@ -394,10 +405,18 @@ async fn a_lost_device_reset_clears_two_factor_and_sends_the_user_to_enrol() {
         )
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let (_, _, _, reset_2fa) = token_row(&app, &user.id).await.unwrap();
+    let (_, _, _, reset_2fa) = token_row(&app, user.id.as_str()).await.unwrap();
     assert!(reset_2fa);
 
-    plant_token(&app, &user.id, "raw-lost", TokenPurpose::Reset, false, true).await;
+    plant_token(
+        &app,
+        user.id.as_str(),
+        "raw-lost",
+        TokenPurpose::Reset,
+        false,
+        true,
+    )
+    .await;
     let (status, body) = read_json(
         post(
             &app,

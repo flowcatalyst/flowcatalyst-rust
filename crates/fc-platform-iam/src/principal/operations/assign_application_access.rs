@@ -157,7 +157,7 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
 
         let event = ApplicationAccessAssigned::new(
             &ctx,
-            &principal.id,
+            principal.id.as_str(),
             command.application_ids.clone(),
             added,
             removed,

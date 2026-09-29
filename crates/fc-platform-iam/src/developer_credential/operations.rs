@@ -146,10 +146,10 @@ impl<U: UnitOfWork> UseCase for SetDeveloperCredentialUseCase<U> {
             ));
         }
         let credential = DeveloperCredential {
-            principal_id: principal.id.clone(),
+            principal_id: principal.id.to_string(),
             secret_ref: Some(command.secret_ref.clone()),
         };
-        let event = DeveloperCredentialSet::new(&ctx, &principal.id);
+        let event = DeveloperCredentialSet::new(&ctx, principal.id.as_str());
         self.unit_of_work
             .commit(&credential, &*self.principal_repo, event, &command)
             .await
@@ -206,10 +206,10 @@ impl<U: UnitOfWork> UseCase for RevokeDeveloperCredentialUseCase<U> {
             Err(e) => return Err(e),
         };
         let credential = DeveloperCredential {
-            principal_id: principal.id.clone(),
+            principal_id: principal.id.to_string(),
             secret_ref: None,
         };
-        let event = DeveloperCredentialRevoked::new(&ctx, &principal.id);
+        let event = DeveloperCredentialRevoked::new(&ctx, principal.id.as_str());
         self.unit_of_work
             .commit_delete(&credential, &*self.principal_repo, event, &command)
             .await

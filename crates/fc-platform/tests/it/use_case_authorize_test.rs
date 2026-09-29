@@ -109,12 +109,12 @@ async fn user_writes_are_confined_to_the_callers_clients() {
         email: None,
     };
 
-    let err = refusal(use_case.run(cmd(&other.id), admin()).await);
+    let err = refusal(use_case.run(cmd(other.id.as_str()), admin()).await);
     assert_eq!(
         rendered(err).await,
-        render(PlatformError::not_found("Principal", &other.id)).await
+        render(PlatformError::not_found("Principal", other.id.as_str())).await
     );
-    let err = refusal(use_case.run(cmd(&partner.id), admin()).await);
+    let err = refusal(use_case.run(cmd(partner.id.as_str()), admin()).await);
     assert_eq!(
         rendered(err).await,
         render(PlatformError::forbidden(
@@ -122,11 +122,11 @@ async fn user_writes_are_confined_to_the_callers_clients() {
         ))
         .await
     );
-    assert_eq!(app.audit_count_for(&other.id).await, 0);
+    assert_eq!(app.audit_count_for(other.id.as_str()).await, 0);
 
     // The system caller reaches every user.
     use_case
-        .run(cmd(&other.id), ExecutionContext::system("system"))
+        .run(cmd(other.id.as_str()), ExecutionContext::system("system"))
         .await
         .into_result()
         .expect("system update");
@@ -165,7 +165,7 @@ async fn role_assignment_is_bounded_by_the_callers_ceiling() {
         use_case
             .run(
                 AssignUserRolesCommand {
-                    user_id: target.id.clone(),
+                    user_id: target.id.to_string(),
                     roles: vec![super_admin.name.clone()],
                 },
                 anchor,
@@ -174,7 +174,7 @@ async fn role_assignment_is_bounded_by_the_callers_ceiling() {
     );
     assert_eq!(err.http_status_code(), 403);
     assert_eq!(err.code(), "ROLE_ABOVE_CALLER");
-    assert_eq!(app.audit_count_for(&target.id).await, 0);
+    assert_eq!(app.audit_count_for(target.id.as_str()).await, 0);
 }
 
 /// A role carries only platform permissions its creator holds, also when
@@ -316,7 +316,7 @@ async fn developer_credentials_are_confined_to_the_callers_clients() {
         use_case
             .run(
                 RevokeDeveloperCredentialCommand {
-                    principal_id: other.id.clone(),
+                    principal_id: other.id.to_string(),
                 },
                 caller(
                     UserScope::Client,
@@ -328,7 +328,7 @@ async fn developer_credentials_are_confined_to_the_callers_clients() {
     );
     assert_eq!(
         rendered(err).await,
-        render(PlatformError::not_found("User", &other.id)).await
+        render(PlatformError::not_found("User", other.id.as_str())).await
     );
 }
 

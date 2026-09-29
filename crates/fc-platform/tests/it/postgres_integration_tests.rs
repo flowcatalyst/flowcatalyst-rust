@@ -164,7 +164,7 @@ async fn test_principal_user_crud() {
 
     // Read
     let found = repo
-        .find_by_id(&principal.id)
+        .find_by_id(principal.id.as_str())
         .await
         .expect("Failed to find principal");
     assert!(found.is_some());
@@ -187,7 +187,11 @@ async fn test_principal_user_crud() {
     p.deactivate();
     repo.update(&p).await.expect("Failed to update principal");
 
-    let deactivated = repo.find_by_id(&principal.id).await.unwrap().unwrap();
+    let deactivated = repo
+        .find_by_id(principal.id.as_str())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!deactivated.active);
 }
 
@@ -202,7 +206,11 @@ async fn test_principal_service_account() {
         .await
         .expect("Failed to insert service principal");
 
-    let found = repo.find_by_id(&principal.id).await.unwrap().unwrap();
+    let found = repo
+        .find_by_id(principal.id.as_str())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(found.is_service());
     assert_eq!(found.name, "My Service");
 }
@@ -230,7 +238,7 @@ async fn test_principal_with_client_access() {
         .expect("Failed to insert principal");
 
     let found = principal_repo
-        .find_by_id(&principal.id)
+        .find_by_id(principal.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -404,7 +412,7 @@ async fn test_token_generation_from_db_principal() {
 
     // Load from DB
     let loaded = principal_repo
-        .find_by_id(&principal.id)
+        .find_by_id(principal.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -418,7 +426,7 @@ async fn test_token_generation_from_db_principal() {
     let claims = auth_service
         .validate_token(&token)
         .expect("Failed to validate token");
-    assert_eq!(claims.sub, principal.id);
+    assert_eq!(claims.sub, principal.id.as_str());
     assert_eq!(claims.email, Some("admin@flowcatalyst.local".to_string()));
     assert_eq!(claims.tier, Some(UserScope::Anchor));
     assert!(claims.clients.contains(&"*".to_string()));
@@ -447,7 +455,7 @@ async fn test_multiple_clients_with_partner_principal() {
 
     // Verify access
     let loaded = principal_repo
-        .find_by_id(&principal.id)
+        .find_by_id(principal.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -518,14 +526,14 @@ async fn test_all_applications_migration_is_idempotent() {
 
     assert!(
         !repo
-            .find_by_id(&service.id)
+            .find_by_id(service.id.as_str())
             .await
             .unwrap()
             .unwrap()
             .all_applications
     );
     assert!(
-        repo.find_by_id(&user.id)
+        repo.find_by_id(user.id.as_str())
             .await
             .unwrap()
             .unwrap()
@@ -1023,7 +1031,7 @@ async fn test_service_account_crud() {
         .expect("Failed to insert service account");
     let account_id = svc.account_id().to_string();
     let mut principal = Principal::new_service(&account_id, &svc.name, UserScope::Anchor);
-    principal.id = svc.id.to_string();
+    principal.id = svc.id.clone();
     PrincipalRepository::new(&pool)
         .insert(&principal)
         .await

@@ -103,7 +103,7 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         principal.deactivate();
 
         // Create domain event
-        let event = UserDeactivated::new(&ctx, &principal.id);
+        let event = UserDeactivated::new(&ctx, principal.id.as_str());
 
         // Atomic commit
         self.unit_of_work

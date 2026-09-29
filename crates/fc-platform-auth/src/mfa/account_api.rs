@@ -83,15 +83,18 @@ async fn verify_any_second_factor(
 ) -> bool {
     for m in confirmed {
         let ok = match m {
-            MethodType::Totp => s.mfa.verify_totp(&p.id, code).await,
-            MethodType::EmailPin => s.mfa.verify_login_email_pin(&p.id, code).await,
+            MethodType::Totp => s.mfa.verify_totp(p.id.as_str(), code).await,
+            MethodType::EmailPin => s.mfa.verify_login_email_pin(p.id.as_str(), code).await,
         };
         if matches!(ok, Ok(true)) {
             return true;
         }
     }
     confirmed.contains(&MethodType::Totp)
-        && matches!(s.mfa.verify_recovery_code(&p.id, code).await, Ok(true))
+        && matches!(
+            s.mfa.verify_recovery_code(p.id.as_str(), code).await,
+            Ok(true)
+        )
 }
 
 /// `POST /auth/change-password` (Go `handleChangePassword`).
@@ -149,7 +152,7 @@ pub async fn change_password(
 
     // Any confirmed factor means a current code is needed too. The SPA
     // first submits without one and is told which methods to ask for.
-    let confirmed = match tf.mfa.confirmed_methods(&p.id).await {
+    let confirmed = match tf.mfa.confirmed_methods(p.id.as_str()).await {
         Ok(c) => c,
         Err(_) => return server_error("MFA_STATUS_FAILED", "could not check two-factor status"),
     };
@@ -180,7 +183,7 @@ pub async fn change_password(
     };
     if tf
         .principal_repo
-        .update_password_hash(&p.id, &new_hash)
+        .update_password_hash(p.id.as_str(), &new_hash)
         .await
         .is_err()
     {
@@ -189,11 +192,15 @@ pub async fn change_password(
 
     // A password change cuts off whoever held the old one: remembered
     // devices and refresh tokens go. Best-effort; the password is changed.
-    if let Err(e) = tf.mfa.revoke_all_trusted_devices(&p.id).await {
+    if let Err(e) = tf.mfa.revoke_all_trusted_devices(p.id.as_str()).await {
         warn!(principal_id = %p.id, error = %e, "revoke trusted devices after password change failed");
     }
     let jar = tf.clear_trusted_device_cookie(jar);
-    if let Err(e) = s.refresh_token_repo.revoke_all_for_principal(&p.id).await {
+    if let Err(e) = s
+        .refresh_token_repo
+        .revoke_all_for_principal(p.id.as_str())
+        .await
+    {
         warn!(principal_id = %p.id, error = %e, "revoke refresh tokens after password change failed");
     }
     tf.notifier.password_changed(&email_of(&p)).await;
@@ -210,7 +217,7 @@ pub async fn send_email_code(State(s): State<Arc<AccountState>>, auth: OptionalA
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    let confirmed = match s.two_factor.mfa.confirmed_methods(&p.id).await {
+    let confirmed = match s.two_factor.mfa.confirmed_methods(p.id.as_str()).await {
         Ok(c) => c,
         Err(_) => return server_error("MFA_STATUS_FAILED", "could not check two-factor status"),
     };
@@ -234,7 +241,7 @@ pub async fn send_email_code(State(s): State<Arc<AccountState>>, auth: OptionalA
     }
     if s.two_factor
         .mfa
-        .send_login_email_pin(&p.id, &email)
+        .send_login_email_pin(p.id.as_str(), &email)
         .await
         .is_err()
     {

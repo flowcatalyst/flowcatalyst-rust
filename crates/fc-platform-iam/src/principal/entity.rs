@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+use fc_platform_core::shared::id::PrincipalId;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use std::collections::HashMap;
@@ -96,8 +97,7 @@ impl UserIdentity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Principal {
-    /// TSID as Crockford Base32 string
-    pub id: String,
+    pub id: PrincipalId,
 
     /// Principal type (user or service)
     #[serde(rename = "type")]
@@ -207,7 +207,7 @@ impl Principal {
         let now = Utc::now();
 
         Self {
-            id: tsid::generate(EntityType::Principal),
+            id: PrincipalId::generate(),
             principal_type: PrincipalType::User,
             scope,
             client_id: None,
@@ -242,7 +242,7 @@ impl Principal {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Principal),
+            id: PrincipalId::generate(),
             principal_type: PrincipalType::Service,
             scope,
             client_id: None,

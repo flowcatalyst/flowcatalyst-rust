@@ -43,7 +43,7 @@ fn test_generate_and_validate_access_token() {
 
     let claims = auth_service.validate_token(&token).unwrap();
 
-    assert_eq!(claims.sub, principal.id);
+    assert_eq!(claims.sub, principal.id.as_str());
     assert_eq!(claims.email, Some("test@example.com".to_string()));
     assert_eq!(claims.principal_type, PrincipalType::User);
     assert_eq!(claims.tier, Some(UserScope::Anchor));

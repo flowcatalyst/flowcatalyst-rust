@@ -96,7 +96,7 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
             )?;
 
         // Create domain event
-        let event = UserDeleted::new(&ctx, &principal.id, principal.email().unwrap_or(""));
+        let event = UserDeleted::new(&ctx, principal.id.as_str(), principal.email().unwrap_or(""));
 
         // Atomic commit with delete
         self.unit_of_work

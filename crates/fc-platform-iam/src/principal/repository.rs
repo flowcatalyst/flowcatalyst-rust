@@ -13,6 +13,7 @@ use crate::service_account::entity::RoleAssignment;
 use fc_platform_core::directory::PrincipalDirectory;
 use fc_platform_core::shared::enum_str::{decode, decode_opt};
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::shared::tsid;
 use fc_platform_core::shared::tsid::EntityType;
 use fc_platform_core::usecase::unit_of_work::HasId;
@@ -83,7 +84,7 @@ impl TryFrom<PrincipalRow> for Principal {
         });
 
         Ok(Self {
-            id: r.id,
+            id: decode_id(&r.id, "iam_principals", "id", &r.id)?,
             principal_type,
             scope,
             client_id: r.client_id,
@@ -233,7 +234,8 @@ impl PrincipalRepository {
         .await?;
 
         // Insert roles into junction table
-        self.insert_roles(&principal.id, &principal.roles).await?;
+        self.insert_roles(principal.id.as_str(), &principal.roles)
+            .await?;
 
         // Insert application access grants
         if !principal.accessible_application_ids.is_empty() {
@@ -564,7 +566,8 @@ impl PrincipalRepository {
             .bind(&principal.id)
             .execute(&self.pool)
             .await?;
-        self.insert_roles(&principal.id, &principal.roles).await?;
+        self.insert_roles(principal.id.as_str(), &principal.roles)
+            .await?;
 
         // Sync application access
         sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
@@ -574,7 +577,8 @@ impl PrincipalRepository {
 
         if !principal.accessible_application_ids.is_empty() {
             let count = principal.accessible_application_ids.len();
-            let principal_ids: Vec<String> = iter::repeat_n(principal.id.clone(), count).collect();
+            let principal_ids: Vec<String> =
+                iter::repeat_n(principal.id.to_string(), count).collect();
             let app_ids: Vec<String> = principal.accessible_application_ids.clone();
             let granted_ats: Vec<DateTime<Utc>> = iter::repeat_n(now, count).collect();
 
@@ -1010,7 +1014,7 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
         let mut role_bys: Vec<Option<&str>> = Vec::new();
         for p in ps {
             for r in &p.roles {
-                role_pids.push(&p.id);
+                role_pids.push(p.id.as_str());
                 role_names.push(&r.role);
                 role_sources.push(r.assignment_source.map(|s| s.as_str()));
                 role_ats.push(r.assigned_at);
@@ -1051,7 +1055,7 @@ impl Persist<PrincipalSyncBatch> for PrincipalRepository {
 
 impl HasId for Principal {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 

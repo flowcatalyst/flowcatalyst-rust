@@ -11,6 +11,7 @@ use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::permissions;
 use fc_platform::shared::tsid;
+use fc_platform_core::shared::id::PrincipalId;
 use support::{read_json, TestApp};
 
 const EVENTS_WRITE: &str = permissions::admin::BATCH_EVENTS_WRITE;
@@ -120,7 +121,7 @@ async fn seed_account(
 /// The SERVICE principal `principal_id` as a caller, at `scope`.
 fn service_caller(principal_id: &str, scope: UserScope) -> Principal {
     let mut p = Principal::new_service("sac_unused", "svc", scope);
-    p.id = principal_id.to_string();
+    p.id = PrincipalId::parse(principal_id).unwrap();
     p
 }
 

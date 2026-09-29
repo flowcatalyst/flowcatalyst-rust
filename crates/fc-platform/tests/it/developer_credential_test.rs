@@ -108,14 +108,14 @@ async fn a_developer_mints_tokens_with_their_own_credential() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"], "NOT_A_DEVELOPER");
 
-    let (status, token) = token_exchange(&app, &dev.id, &secret).await;
+    let (status, token) = token_exchange(&app, dev.id.as_str(), &secret).await;
     assert_eq!(status, StatusCode::OK, "{token}");
     assert_eq!(token["token_type"], "Bearer");
     assert!(token["access_token"].as_str().is_some());
-    let (status, body) = token_exchange(&app, &dev.id, "wrong").await;
+    let (status, body) = token_exchange(&app, dev.id.as_str(), "wrong").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"], "invalid_client");
-    let (status, _) = token_exchange(&app, &plain.id, &secret).await;
+    let (status, _) = token_exchange(&app, plain.id.as_str(), &secret).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let (_, list) = read_json(app.get("/api/principals/developer-users", &admin).await).await;
@@ -136,7 +136,7 @@ async fn a_developer_mints_tokens_with_their_own_credential() {
         )
         .await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-    let (status, _) = token_exchange(&app, &dev.id, &secret).await;
+    let (status, _) = token_exchange(&app, dev.id.as_str(), &secret).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "revoked");
 
     assert_eq!(

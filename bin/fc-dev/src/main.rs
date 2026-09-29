@@ -1508,7 +1508,7 @@ async fn auto_sync_developer_portal(
     let admin_email = env::var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL")
         .unwrap_or_else(|_| "admin@flowcatalyst.local".to_string());
     let principal_id = match principal_repo.find_by_email(&admin_email).await {
-        Ok(Some(p)) => p.id,
+        Ok(Some(p)) => p.id.into_string(),
         Ok(None) => {
             info!(
                 "Developer-portal auto-sync skipped: no admin principal yet \

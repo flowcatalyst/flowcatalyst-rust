@@ -205,7 +205,7 @@ async fn a_client_admin_assigns_only_its_clients_application_roles() {
         .app
         .repos
         .principal_repo
-        .find_by_id(&member.id)
+        .find_by_id(member.id.as_str())
         .await
         .unwrap()
         .unwrap();

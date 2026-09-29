@@ -21,9 +21,7 @@ use tracing::error;
 use super::entity::IdentityStatus;
 use super::PortalState;
 use crate::auth::authorization_code::AuthorizationCode;
-use fc_platform_core::principal_kind::UserScope;
 use fc_platform_iam::auth::auth_service::AuthService;
-use fc_platform_iam::principal::entity::Principal;
 
 fn oauth_error(status: StatusCode, code: &str, desc: Option<&str>) -> Response {
     let body = match desc {
@@ -77,17 +75,8 @@ pub async fn redeem_portal_code(
         }
     }
 
-    // A transient principal-shaped view of the identity: the token
-    // generators read id, name, email and updated_at; it never touches the
-    // principal store. sub = the ptu_ id.
-    let mut synth = Principal::new_user(&ident.email, UserScope::Client);
-    synth.id = ident.id.clone();
-    synth.name = ident.name.clone();
-    synth.updated_at = ident.updated_at;
-    synth.all_applications = false;
-
     // Client-bound, like every interactive identity token; no tier, as Go's.
-    let access_token = match auth_service.generate_portal_access_token(&synth, Some(client_id)) {
+    let access_token = match auth_service.generate_portal_access_token(&ident, Some(client_id)) {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "portal access token mint failed");
@@ -100,7 +89,7 @@ pub async fn redeem_portal_code(
         .is_some_and(|s| s.split_whitespace().any(|sc| sc == "openid"));
     let id_token = if has_openid {
         match auth_service.generate_portal_id_token(
-            &synth,
+            &ident,
             &code.client_id,
             code.nonce.clone(),
             &ident.client_id,

@@ -126,7 +126,7 @@ pub async fn run(repos: &Repositories) -> Result<()> {
 
     // 3. OAuth client.
     let mut oauth_client = OAuthClient::confidential(CLIENT_ID, CLIENT_NAME)
-        .with_service_account(principal.id.clone())
+        .with_service_account(principal.id.to_string())
         .with_secret_ref(secret_encrypted);
     // `confidential()` defaults to ClientCredentials only — explicit for clarity.
     if !oauth_client

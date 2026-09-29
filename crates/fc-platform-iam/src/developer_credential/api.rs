@@ -79,7 +79,7 @@ pub async fn list_developer_users(
         .into_iter()
         .filter(Principal::is_user)
         .collect();
-    let ids: Vec<String> = users.iter().map(|p| p.id.clone()).collect();
+    let ids: Vec<String> = users.iter().map(|p| p.id.to_string()).collect();
     let times = state
         .principal_repo
         .find_developer_secret_times(&ids)
@@ -87,7 +87,7 @@ pub async fn list_developer_users(
     let principals: Vec<serde_json::Value> = users
         .into_iter()
         .map(|p| {
-            let updated = times.get(&p.id).copied();
+            let updated = times.get(p.id.as_str()).copied();
             let mut v = serde_json::to_value(PrincipalResponse::from(p)).unwrap_or_default();
             v["hasDeveloperCredential"] = serde_json::Value::Bool(updated.is_some());
             if let Some(at) = updated {

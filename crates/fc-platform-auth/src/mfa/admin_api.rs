@@ -82,13 +82,13 @@ pub async fn reset_user_two_factor(
     }
     state
         .mfa
-        .reset_all(&p.id)
+        .reset_all(p.id.as_str())
         .await
         .map_err(|e| PlatformError::internal(format!("reset failed: {e}")))?;
     state.notifier.two_factor_reset(&email_of(&p)).await;
     super::audit::record(
         &state.audit_log_repo,
-        &p.id,
+        p.id.as_str(),
         super::audit::RESET_BY_ADMIN,
         &ctx.principal_id,
     )

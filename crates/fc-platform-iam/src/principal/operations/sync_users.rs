@@ -207,7 +207,11 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
                             "principal sync: passwordHash ignored for an existing principal"
                         );
                     }
-                    row_events.push(RecordedEvent::of(&UserUpdated::new(&ctx, &p.id, &p.name))?);
+                    row_events.push(RecordedEvent::of(&UserUpdated::new(
+                        &ctx,
+                        p.id.as_str(),
+                        &p.name,
+                    ))?);
                     updated += 1;
                     p
                 }
@@ -219,7 +223,11 @@ impl<U: UnitOfWork> UseCase for SyncUsersUseCase<U> {
                     if let (Some(hash), Some(identity)) = (hash, p.user_identity.as_mut()) {
                         identity.password_hash = Some(hash.to_string());
                     }
-                    row_events.push(RecordedEvent::of(&UserCreated::new(&ctx, &p.id, email))?);
+                    row_events.push(RecordedEvent::of(&UserCreated::new(
+                        &ctx,
+                        p.id.as_str(),
+                        email,
+                    ))?);
                     created += 1;
                     p
                 }

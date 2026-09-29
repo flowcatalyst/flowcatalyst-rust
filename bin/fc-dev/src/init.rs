@@ -339,7 +339,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // Attach SA to Application (sets application.service_account_id). The
     // column references iam_principals (migration 028), so it takes the
     // principal id, as Go's fcdev init stores it.
-    application.service_account_id = Some(sa_principal.id.clone());
+    application.service_account_id = Some(sa_principal.id.to_string());
     application.updated_at = Utc::now();
     application_repo
         .update(&application)
@@ -362,7 +362,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     oauth_client.grant_types = vec![GrantType::ClientCredentials];
     oauth_client.application_ids = vec![app_id.clone()];
     // References iam_principals (migration 027): the principal id.
-    oauth_client.service_account_principal_id = Some(sa_principal.id.clone());
+    oauth_client.service_account_principal_id = Some(sa_principal.id.to_string());
     oauth_client_repo
         .insert(&oauth_client)
         .await

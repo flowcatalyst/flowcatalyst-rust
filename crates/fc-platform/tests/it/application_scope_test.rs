@@ -229,7 +229,7 @@ async fn service_account_is_confined_to_its_applications() {
     let attached_id = attached.id.clone();
     let sa_attached = token_for(&app, attached, &[]).await;
     let mut app_d = Application::new("scope-d", "SCOPE-D");
-    app_d.service_account_id = Some(attached_id);
+    app_d.service_account_id = Some(attached_id.to_string());
     app.repos
         .application_repo
         .insert(&app_d)

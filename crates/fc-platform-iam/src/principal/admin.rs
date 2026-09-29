@@ -111,7 +111,7 @@ pub async fn create_user(
                 return Err(PlatformError::duplicate("Principal", "email", &req.email));
             }
             let cmd = GrantClientAccessCommand {
-                user_id: existing.id.clone(),
+                user_id: existing.id.to_string(),
                 client_id: client_id.clone(),
             };
             let exec = ExecutionContext::from_auth(ctx);
@@ -122,9 +122,9 @@ pub async fn create_user(
                 .into_result()?;
             let refreshed = state
                 .principal_repo
-                .find_by_id(&existing.id)
+                .find_by_id(existing.id.as_str())
                 .await?
-                .or_not_found("Principal", &existing.id)?;
+                .or_not_found("Principal", existing.id.as_str())?;
             return Ok(refreshed.into());
         }
         // New partner user — home client + single grant for the requested
@@ -200,7 +200,7 @@ pub async fn detail(
 
     // Go enriches the detail read with the confirmed second factors,
     // best-effort: a lookup failure leaves them out.
-    let methods: Vec<String> = match state.mfa_repo.find_methods(&principal.id).await {
+    let methods: Vec<String> = match state.mfa_repo.find_methods(principal.id.as_str()).await {
         Ok(methods) => methods
             .into_iter()
             .filter(Method::is_confirmed)

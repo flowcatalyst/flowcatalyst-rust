@@ -450,7 +450,7 @@ async fn known_admin(app: &TestApp) -> (String, String) {
         .auth_service
         .generate_access_token(&admin)
         .expect("token");
-    (token, admin.id)
+    (token, admin.id.to_string())
 }
 
 /// Go documents `assignedBy` and `clientId` on a service account's role

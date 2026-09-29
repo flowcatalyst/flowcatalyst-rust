@@ -134,7 +134,7 @@ impl<U: UnitOfWork> UseCase for GrantClientAccessUseCase<U> {
 
         let grant = ClientAccessGrant::new(&command.user_id, &command.client_id, &ctx.principal_id);
 
-        let event = ClientAccessGranted::new(&ctx, &principal.id, &command.client_id);
+        let event = ClientAccessGranted::new(&ctx, principal.id.as_str(), &command.client_id);
 
         self.unit_of_work
             .commit(&grant, &*self.grant_repo, event, &command)

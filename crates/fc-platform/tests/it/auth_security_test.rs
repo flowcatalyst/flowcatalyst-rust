@@ -312,7 +312,7 @@ async fn the_session_cookie_is_the_subject_reloaded_per_request() {
     let mut granted = app
         .repos
         .principal_repo
-        .find_by_id(&user.id)
+        .find_by_id(user.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -496,7 +496,7 @@ async fn authorize_reads_only_an_active_users_session_cookie() {
     let mut inactive = app
         .repos
         .principal_repo
-        .find_by_id(&user.id)
+        .find_by_id(user.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -559,14 +559,14 @@ async fn client_selection_and_passkeys_take_the_session_cookie_only() {
     for client in &clients {
         app.repos
             .principal_repo
-            .grant_client_access(&partner.id, &client.id)
+            .grant_client_access(partner.id.as_str(), &client.id)
             .await
             .unwrap();
     }
     let partner = app
         .repos
         .principal_repo
-        .find_by_id(&partner.id)
+        .find_by_id(partner.id.as_str())
         .await
         .unwrap()
         .unwrap();
@@ -837,10 +837,13 @@ async fn client_credentials_requires_a_service_principal() {
     let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
     let service = Principal::new_service("svc-reports", "Reports", UserScope::Anchor);
     app.repos.principal_repo.insert(&service).await.unwrap();
-    for (client_id, principal_id) in [("user-linked", &user.id), ("svc-linked", &service.id)] {
+    for (client_id, principal_id) in [
+        ("user-linked", user.id.as_str()),
+        ("svc-linked", service.id.as_str()),
+    ] {
         let client = OAuthClient::confidential(client_id, client_id)
             .with_secret_ref(secret_ref.clone())
-            .with_service_account(principal_id.clone());
+            .with_service_account(principal_id);
         app.repos.oauth_client_repo.insert(&client).await.unwrap();
     }
 

@@ -225,7 +225,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             }
         }
 
-        let event = UserCreated::new(&ctx, &principal.id, &email);
+        let event = UserCreated::new(&ctx, principal.id.as_str(), &email);
 
         // Atomic commit — principal + event + audit log, in one transaction.
         self.unit_of_work

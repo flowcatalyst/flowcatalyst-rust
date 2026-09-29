@@ -516,7 +516,7 @@ impl From<Principal> for PrincipalResponse {
         };
 
         Self {
-            id: p.id,
+            id: p.id.to_string(),
             principal_type: p.principal_type.as_str().to_string(),
             scope: p.scope.as_str().to_string(),
             client_id: p.client_id,
@@ -2384,6 +2384,7 @@ pub async fn client_association(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fc_platform_core::shared::id::PrincipalId;
 
     fn mapping(
         scope_type: ScopeType,
@@ -2576,7 +2577,7 @@ mod tests {
     fn make_test_principal() -> Principal {
         let now = Utc::now();
         Principal {
-            id: "prn_ABCDEFGHIJKLM".to_string(),
+            id: PrincipalId::parse("prn_ABCDEFGHIJKLM").unwrap(),
             principal_type: PrincipalType::User,
             scope: UserScope::Anchor,
             client_id: None,
@@ -2634,7 +2635,7 @@ mod tests {
     fn test_principal_response_without_user_identity() {
         let now = Utc::now();
         let principal = Principal {
-            id: "prn_SERVICEID12345".to_string(),
+            id: PrincipalId::parse("prn_SERVICEID12345").unwrap(),
             principal_type: PrincipalType::Service,
             scope: UserScope::Client,
             client_id: Some("clt_CLIENT1234567".to_string()),

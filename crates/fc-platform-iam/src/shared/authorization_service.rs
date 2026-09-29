@@ -72,7 +72,7 @@ pub fn auth_context_for_session(
         clients
     };
     AuthContext {
-        principal_id: principal.id.clone(),
+        principal_id: principal.id.to_string(),
         principal_type: principal.principal_type,
         scope: principal.scope,
         email: principal.email().map(String::from),

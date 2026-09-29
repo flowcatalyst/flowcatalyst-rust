@@ -218,7 +218,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
 
         principal.updated_at = chrono::Utc::now();
 
-        let event = UserUpdated::new(&ctx, &principal.id, &principal.name);
+        let event = UserUpdated::new(&ctx, principal.id.as_str(), &principal.name);
 
         self.unit_of_work
             .commit(&principal, &*self.principal_repo, event, &command)

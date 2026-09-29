@@ -388,7 +388,7 @@ async fn resolve_real_credentials(state: &WebauthnApiState, email: &str) -> Opti
     }
     let creds = state
         .credential_repo
-        .find_by_principal(&principal.id)
+        .find_by_principal(principal.id.as_str())
         .await
         .ok()?;
     Some(creds.into_iter().map(|c| c.passkey).collect())
@@ -526,7 +526,7 @@ pub async fn authenticate_complete(
                 record_user_login_attempt(
                     &state.login_attempt_repo,
                     Some(email),
-                    Some(&principal.id),
+                    Some(principal.id.as_str()),
                     ip,
                     LoginOutcome::Failure,
                     Some("RATE_LIMITED"),
@@ -547,7 +547,7 @@ pub async fn authenticate_complete(
             record_user_login_attempt(
                 &state.login_attempt_repo,
                 principal.email(),
-                Some(&principal.id),
+                Some(principal.id.as_str()),
                 ip,
                 LoginOutcome::Failure,
                 Some("SESSION_TOKEN_FAILED"),
@@ -562,7 +562,7 @@ pub async fn authenticate_complete(
     record_user_login_attempt(
         &state.login_attempt_repo,
         principal.email(),
-        Some(&principal.id),
+        Some(principal.id.as_str()),
         ip,
         LoginOutcome::Success,
         None,
@@ -570,7 +570,7 @@ pub async fn authenticate_complete(
     .await;
 
     let response = AuthenticateCompleteResponse {
-        principal_id: principal.id.clone(),
+        principal_id: principal.id.to_string(),
         email: principal.email().map(String::from),
         name: principal.name.clone(),
         roles: principal.roles.iter().map(|r| r.role.clone()).collect(),

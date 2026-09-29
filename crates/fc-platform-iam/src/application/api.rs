@@ -1669,6 +1669,7 @@ pub async fn attach_application_service_account(
             .await?
             .ok_or_else(|| PlatformError::not_found_code("ServiceAccountPrincipal", &sa_id))?
             .id
+            .into_string()
     };
     state
         .attach_use_case

@@ -77,7 +77,7 @@ impl PasswordResetEmailer {
 
         let raw_token = self
             .mint(
-                &principal.id,
+                principal.id.as_str(),
                 TokenPurpose::Reset,
                 Utc::now() + Duration::minutes(RESET_TOKEN_TTL_MINUTES),
                 options,
@@ -113,7 +113,7 @@ impl PasswordResetEmailer {
         }
 
         // Best-effort domain event.
-        let event = PasswordResetRequested::new(&principal.id, &email);
+        let event = PasswordResetRequested::new(principal.id.as_str(), &email);
         let command = serde_json::json!({ "principalId": principal.id, "email": email });
         if let Err(e) = self.unit_of_work.emit_event(event, &command).await {
             warn!("Failed to emit PasswordResetRequested event: {}", e);
@@ -140,7 +140,7 @@ impl PasswordResetEmailer {
         };
         let raw_token = self
             .mint(
-                &principal.id,
+                principal.id.as_str(),
                 TokenPurpose::Invite,
                 Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS),
                 ResetOptions {
@@ -198,7 +198,7 @@ impl PasswordResetEmailer {
         }
         let raw_token = self
             .mint(
-                &principal.id,
+                principal.id.as_str(),
                 TokenPurpose::Invite,
                 Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS),
                 ResetOptions {

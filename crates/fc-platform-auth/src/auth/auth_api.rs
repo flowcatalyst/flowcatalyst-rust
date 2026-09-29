@@ -254,7 +254,7 @@ async fn login_response(state: &AuthState, jar: CookieJar, principal: Principal)
     );
     let response = LoginResponse {
         status: "ok".to_string(),
-        principal_id: principal.id.clone(),
+        principal_id: principal.id.to_string(),
         name: principal.name.clone(),
         email: principal_email,
         roles,
@@ -374,7 +374,7 @@ pub async fn password_login(
             Ok(new_hash) => {
                 if let Err(e) = state
                     .principal_repo
-                    .update_password_hash(&principal.id, &new_hash)
+                    .update_password_hash(principal.id.as_str(), &new_hash)
                     .await
                 {
                     tracing::warn!(principal_id = %principal.id, error = %e, "password rehash persist failed; login continues");
@@ -410,7 +410,7 @@ pub async fn password_login(
     record_user_login_attempt(
         &state.login_attempt_repo,
         Some(&email),
-        Some(&principal.id),
+        Some(principal.id.as_str()),
         ip,
         LoginOutcome::Success,
         None,
@@ -546,7 +546,7 @@ pub async fn get_current_user(
 
     Ok(Json(CurrentUserResponse {
         status: String::new(),
-        principal_id: principal.id.clone(),
+        principal_id: principal.id.to_string(),
         name: principal.name.clone(),
         email: principal.email().unwrap_or_default().to_string(),
         roles,

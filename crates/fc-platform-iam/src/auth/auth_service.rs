@@ -4,6 +4,7 @@
 //! Supports both RS256 (RSA) for production and HS256 (HMAC) for development.
 
 use crate::auth::signing_keys;
+use crate::portal::entity::PortalIdentity;
 use crate::principal::entity::Principal;
 use chrono::{Duration, Utc};
 use dashmap::DashMap;
@@ -990,22 +991,35 @@ impl AuthService {
 
     /// The access token of a PORTAL identity login (Go `redeemPortalCode`,
     /// oauthapi/portal_token.go): identity-only like every interactive
-    /// login, minted from a transient view of the `ptu_` identity, and with
-    /// an empty `tier` — Go's synthetic principal has no tenancy.
+    /// login, minted from the `ptu_` identity itself, and with an empty
+    /// `tier` — Go's synthetic principal has no tenancy.
     pub fn generate_portal_access_token(
         &self,
-        identity: &Principal,
+        identity: &PortalIdentity,
         azp: Option<&str>,
     ) -> Result<String> {
-        let mut claims = self.access_token_claims(
-            identity,
-            self.config.access_token_expiry_secs,
-            &[],
-            false,
-            azp,
-            Utc::now(),
-        );
-        claims.tier = None;
+        let now = Utc::now();
+        let exp = now + Duration::seconds(self.config.access_token_expiry_secs);
+        let claims = AccessTokenClaims {
+            sub: identity.id.clone(),
+            iss: self.config.issuer.clone(),
+            aud: self.config.audience.clone(),
+            exp: exp.timestamp(),
+            iat: now.timestamp(),
+            nbf: now.timestamp(),
+            jti: tsid::generate_untyped(),
+            principal_type: PrincipalType::User,
+            tier: None,
+            scope: None,
+            email: Some(identity.email.clone()).filter(|e| !e.is_empty()),
+            name: identity.name.clone(),
+            clients: Vec::new(),
+            roles: Vec::new(),
+            applications: Vec::new(),
+            all_applications: false,
+            azp: azp.filter(|a| !a.is_empty()).map(String::from),
+            token_use: Some(TOKEN_USE_IDENTITY.to_string()),
+        };
         self.sign_access(claims)
     }
 
@@ -1029,7 +1043,7 @@ impl AuthService {
     ) -> SessionTokenClaims {
         SessionTokenClaims {
             iss: self.config.issuer.clone(),
-            sub: principal.id.clone(),
+            sub: principal.id.to_string(),
             iat: now.timestamp(),
             nbf: now.timestamp(),
             exp: (now + Duration::seconds(self.config.session_token_expiry_secs)).timestamp(),
@@ -1129,17 +1143,39 @@ impl AuthService {
     /// id) with no authority — empty `roles`, `applications` and `clients`,
     /// an empty `tier`, no `client_id` — plus `portal_client_id` and, for an
     /// app-linked portal OAuth client, `portal_app_id` / `portal_app_code`.
-    /// `identity` is a transient principal-shaped view of the portal
-    /// identity; it never touches the principal store.
     pub fn generate_portal_id_token(
         &self,
-        identity: &Principal,
+        identity: &PortalIdentity,
         client_id: &str,
         nonce: Option<String>,
         portal_client_id: &str,
         portal_app: Option<(&str, &str)>,
     ) -> Result<String> {
-        let claims = self.id_token_claims(identity, client_id, nonce, Vec::new(), Utc::now());
+        let now = Utc::now();
+        let email = Some(identity.email.clone()).filter(|e| !e.is_empty());
+        let claims = IdTokenClaims {
+            sub: identity.id.clone(),
+            iss: self.config.issuer.clone(),
+            aud: client_id.to_string(),
+            exp: (now + Duration::seconds(ID_TOKEN_EXPIRY_SECS)).timestamp(),
+            iat: now.timestamp(),
+            auth_time: Some(now.timestamp()),
+            nonce,
+            name: Some(identity.name.clone()),
+            email_verified: email.as_ref().map(|_| true),
+            email,
+            updated_at: Some(identity.updated_at.timestamp()),
+            acr: None,
+            amr: None,
+            azp: Some(client_id.to_string()),
+            principal_type: PrincipalType::User,
+            tier: UserScope::Client,
+            client_id: None,
+            roles: Vec::new(),
+            applications: Vec::new(),
+            all_applications: false,
+            clients: Vec::new(),
+        };
         let mut value = serde_json::to_value(&claims).map_err(|e| PlatformError::Internal {
             message: format!("Failed to encode ID token: {}", e),
         })?;
@@ -1183,7 +1219,7 @@ impl AuthService {
     ) -> AccessTokenClaims {
         let exp = now + Duration::seconds(expiry_secs);
         let mut claims = AccessTokenClaims {
-            sub: principal.id.clone(),
+            sub: principal.id.to_string(),
             iss: self.config.issuer.clone(),
             aud: self.config.audience.clone(),
             exp: exp.timestamp(),
@@ -1235,7 +1271,7 @@ impl AuthService {
             .filter(|e| !e.is_empty())
             .map(String::from);
         IdTokenClaims {
-            sub: principal.id.clone(),
+            sub: principal.id.to_string(),
             iss: self.config.issuer.clone(),
             aud: client_id.to_string(),
             exp: (now + Duration::seconds(ID_TOKEN_EXPIRY_SECS)).timestamp(),
@@ -1349,8 +1385,10 @@ pub fn extract_bearer_token(auth_header: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::portal::entity::IdentitySource;
     use crate::principal::entity::Principal;
     use fc_platform_core::principal_kind::{PrincipalType, UserScope};
+    use fc_platform_core::shared::id::PrincipalId;
 
     use base64::engine::general_purpose;
     use serde_json::json;
@@ -1373,7 +1411,7 @@ mod tests {
     /// application grants — one whose code is known and one whose isn't.
     fn client_user() -> Principal {
         let mut p = Principal::new_user("ada@acme.test", UserScope::Client).with_client_id("clt_A");
-        p.id = "prn_ADA".to_string();
+        p.id = PrincipalId::parse("prn_ADA").unwrap();
         p.name = "Ada Lovelace".to_string();
         p.client_identifier_map
             .insert("clt_A".to_string(), "acme".to_string());
@@ -1482,9 +1520,7 @@ mod tests {
     #[test]
     fn a_portal_access_token_has_an_empty_tier_and_grants_nothing() {
         let s = service();
-        let mut portal = Principal::new_user("pat@portal.test", UserScope::Client);
-        portal.id = "ptu_PAT".to_string();
-        portal.all_applications = false;
+        let portal = PortalIdentity::new("clt_A", "pat@portal.test", "Pat", IdentitySource::Invite);
         let token = s
             .generate_portal_access_token(&portal, Some("oc_portal"))
             .unwrap();

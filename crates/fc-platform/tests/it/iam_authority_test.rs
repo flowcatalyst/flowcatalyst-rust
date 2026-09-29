@@ -220,7 +220,7 @@ async fn stored_user(app: &TestApp, email: &str, scope: UserScope, client: Optio
         .insert(&p)
         .await
         .expect("insert user");
-    p.id
+    p.id.to_string()
 }
 
 /// Every principal write needs a user permission on top of its tier check:
@@ -741,7 +741,7 @@ async fn user_roles_are_bounded_by_the_callers_own_permissions() {
     .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
     assert_eq!(
-        roles_of(&app, &id).await,
+        roles_of(&app, id.as_str()).await,
         vec!["platform:iam-readonly", "platform:super-admin"]
     );
 
@@ -775,7 +775,7 @@ async fn user_roles_are_bounded_by_the_callers_own_permissions() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
     assert_eq!(
-        roles_of(&app, &id).await,
+        roles_of(&app, id.as_str()).await,
         vec!["platform:iam-readonly", "platform:super-admin"]
     );
 
@@ -787,7 +787,7 @@ async fn user_roles_are_bounded_by_the_callers_own_permissions() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{resp}");
-    assert_eq!(roles_of(&app, &id).await, vec!["platform:viewer"]);
+    assert_eq!(roles_of(&app, id.as_str()).await, vec!["platform:viewer"]);
 }
 
 /// A service account's roles: service-account:update, and the same ceiling.
@@ -1088,7 +1088,7 @@ async fn sdk_user(app: &TestApp, email: &str, client: Option<&str>, roles: &[&st
             .push(RoleAssignment::with_source(*r, AssignmentSource::SdkSync));
     }
     app.repos.principal_repo.insert(&p).await.unwrap();
-    p.id
+    p.id.to_string()
 }
 
 async fn application(app: &TestApp, code: &str) {

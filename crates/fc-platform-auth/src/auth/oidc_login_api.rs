@@ -828,7 +828,7 @@ pub async fn oidc_callback(
     {
         use fc_platform_iam::principal::operations::events::{FederatedClaims, FlowcatalystClaims};
 
-        let ctx = ExecutionContext::system(&principal.id);
+        let ctx = ExecutionContext::system(principal.id.as_str());
 
         // Build role codes from the synced principal
         let roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
@@ -871,7 +871,7 @@ pub async fn oidc_callback(
 
         let login_event = UserLoggedIn::new(
             &ctx,
-            &principal.id,
+            principal.id.as_str(),
             &claims.email,
             "OIDC",
             Some(&idp.code),

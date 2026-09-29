@@ -163,7 +163,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         }
         principal.updated_at = chrono::Utc::now();
 
-        let event = PasswordResetCompleted::from_ctx(&ctx, &principal.id);
+        let event = PasswordResetCompleted::from_ctx(&ctx, principal.id.as_str());
 
         self.unit_of_work
             .commit(&principal, &*self.principal_repo, event, &command)

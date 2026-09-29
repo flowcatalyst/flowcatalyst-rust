@@ -159,7 +159,7 @@ impl ClientSelectionState {
                 }
 
                 // Add non-expired explicit grants
-                self.add_active_grants(&mut client_ids, &principal.id)
+                self.add_active_grants(&mut client_ids, principal.id.as_str())
                     .await?;
 
                 Ok(client_ids)
@@ -169,7 +169,7 @@ impl ClientSelectionState {
                 let mut client_ids = principal.assigned_clients.clone();
 
                 // Add non-expired explicit grants
-                self.add_active_grants(&mut client_ids, &principal.id)
+                self.add_active_grants(&mut client_ids, principal.id.as_str())
                     .await?;
 
                 Ok(client_ids)

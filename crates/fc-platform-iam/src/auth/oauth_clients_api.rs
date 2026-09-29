@@ -444,7 +444,7 @@ pub async fn create_oauth_client(
                     "principalId must name a service account's principal",
                 ));
             }
-            Some(principal.id)
+            Some(principal.id.into_string())
         }
     };
 

@@ -143,7 +143,13 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
             .collect();
         principal.updated_at = chrono::Utc::now();
 
-        let event = RolesAssigned::new(&ctx, &principal.id, command.roles.clone(), added, removed);
+        let event = RolesAssigned::new(
+            &ctx,
+            principal.id.as_str(),
+            command.roles.clone(),
+            added,
+            removed,
+        );
 
         self.unit_of_work
             .commit(&principal, &*self.principal_repo, event, &command)
