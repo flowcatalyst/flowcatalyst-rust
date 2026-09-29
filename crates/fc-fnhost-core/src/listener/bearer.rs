@@ -8,7 +8,9 @@ use std::collections::BTreeSet;
 
 use fc_function_abi::Principal;
 
+use crate::clock::SharedClock;
 pub use fc_platform_jwks::bearer::{BearerAuthenticator, TokenClaims, SCOPE_WILDCARD};
+use std::sync::Arc;
 
 /// Every claim onto the function's [`Principal`] (Java
 /// `FnHttpServer.principalFrom`, spec `function-caller-claims.md` §3); an
@@ -31,7 +33,7 @@ pub fn principal(claims: &TokenClaims) -> Principal {
 
 /// The host's clock as the verifier's (the same instant source, so a test's
 /// `ManualClock` moves both).
-pub fn verifier_clock(clock: &crate::clock::SharedClock) -> fc_platform_jwks::SharedClock {
+pub fn verifier_clock(clock: &SharedClock) -> fc_platform_jwks::SharedClock {
     let clock = clock.clone();
-    std::sync::Arc::new(move || clock.now())
+    Arc::new(move || clock.now())
 }

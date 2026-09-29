@@ -10,8 +10,14 @@ use std::time::Duration;
 use fc_common::config::parse_go_bool;
 use fc_common::WarningSeverity;
 
+use crate::api::platform_auth::RouterAuthSettings;
+use crate::flight_recorder;
 use crate::notification::NotificationConfig;
 use crate::standby::StandbyRouterConfig;
+use crate::warning;
+use std::env;
+use std::fmt;
+use std::fmt::Formatter;
 
 /// Go `ServerConfig.ConfigPollInterval`'s fallback for an unset, zero or
 /// negative interval.
@@ -46,8 +52,8 @@ pub struct RouterCredentials {
     pub client_secret: String,
 }
 
-impl std::fmt::Debug for RouterCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for RouterCredentials {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("RouterCredentials")
             .field("client_id", &self.client_id)
             .field("client_secret", &"<redacted>")
@@ -78,7 +84,7 @@ pub struct RouterEnv {
     pub local_platform_url: Option<String>,
     /// `AUTH_MODE`, `FC_ROUTER_AUTH_USER` / `_PASS`: which guard the
     /// router's API gets ([`crate::api::platform_auth::resolve`]).
-    pub api_auth: crate::api::platform_auth::RouterAuthSettings,
+    pub api_auth: RouterAuthSettings,
     /// `FC_ROUTER_DASHBOARD_CLIENT_ID`: the public OAuth client the
     /// dashboard signs in through (authorization code + PKCE). Unset leaves
     /// dashboard sign-in off; the API still takes bearer tokens.
@@ -109,7 +115,7 @@ pub struct RouterEnv {
 impl RouterEnv {
     /// Read the process environment.
     pub fn from_env() -> Result<Self, RouterEnvError> {
-        Self::from_lookup(|k| std::env::var(k).ok())
+        Self::from_lookup(|k| env::var(k).ok())
     }
 
     /// Read an environment through `get` (a test seam).
@@ -180,7 +186,7 @@ impl RouterEnv {
         let flight_recorder_events = env
             .int("FC_ROUTER_FLIGHT_RECORDER_EVENTS")
             .filter(|&n| n >= 0)
-            .map_or(crate::flight_recorder::DEFAULT_CAPACITY, |n| {
+            .map_or(flight_recorder::DEFAULT_CAPACITY, |n| {
                 (n as usize).min(1_000_000)
             });
 
@@ -191,9 +197,7 @@ impl RouterEnv {
             platform_url,
             credentials,
             local_platform_url: None,
-            api_auth: crate::api::platform_auth::RouterAuthSettings::from_lookup(dev_mode, |k| {
-                env.first(&[k])
-            }),
+            api_auth: RouterAuthSettings::from_lookup(dev_mode, |k| env.first(&[k])),
             dashboard_client_id: env.first(&["FC_ROUTER_DASHBOARD_CLIENT_ID"]),
             dev_mode,
             strict_routing: env.bool_first(&["FC_ROUTER_STRICT_ROUTING"], false),
@@ -272,7 +276,7 @@ fn notification_config(env: &Lookup<'_>) -> NotificationConfig {
 
     let min_severity = env
         .first(&["FC_NOTIFY_MIN_SEVERITY", "NOTIFICATION_MIN_SEVERITY"])
-        .and_then(|s| crate::warning::parse_severity(s.trim()))
+        .and_then(|s| warning::parse_severity(s.trim()))
         .unwrap_or(WarningSeverity::Warn);
 
     let batch_interval_seconds = env
@@ -325,7 +329,7 @@ impl Lookup<'_> {
 /// SQS queues (`LOCALSTACK_SQS_HOST`) and three pools.
 pub fn dev_router_config() -> fc_common::RouterConfig {
     use fc_common::{PoolConfig, QueueConfig};
-    let sqs_host = std::env::var("LOCALSTACK_SQS_HOST")
+    let sqs_host = env::var("LOCALSTACK_SQS_HOST")
         .unwrap_or_else(|_| "http://sqs.eu-west-1.localhost.localstack.cloud:4566".to_string());
     let pool = |code: &str, concurrency, rate_limit_per_minute| PoolConfig {
         code: code.to_string(),

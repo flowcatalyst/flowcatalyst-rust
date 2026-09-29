@@ -23,6 +23,8 @@ use chrono::{DateTime, Utc};
 
 use super::ArtifactError;
 use crate::clock::SharedClock;
+use base64::engine::general_purpose;
+use tokio::sync::Mutex;
 
 /// ECR tokens are valid 12 hours; refresh this long before the real expiry
 /// so a token already in flight never goes stale mid-pull.
@@ -48,7 +50,7 @@ pub struct EcrTokenCache {
     clock: SharedClock,
     /// Held across a mint for a given region, so concurrent callers for
     /// that region mint once. A mint for one region does not block another.
-    cached: tokio::sync::Mutex<HashMap<String, (String, DateTime<Utc>)>>,
+    cached: Mutex<HashMap<String, (String, DateTime<Utc>)>>,
 }
 
 impl EcrTokenCache {
@@ -56,7 +58,7 @@ impl EcrTokenCache {
         Self {
             authorizer,
             clock,
-            cached: tokio::sync::Mutex::new(HashMap::new()),
+            cached: Mutex::new(HashMap::new()),
         }
     }
 
@@ -72,10 +74,7 @@ impl EcrTokenCache {
         }
         let (user, password, expiry) = self.authorizer.authorize(region).await?;
         let raw = format!("{user}:{password}");
-        let header = format!(
-            "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(raw)
-        );
+        let header = format!("Basic {}", general_purpose::STANDARD.encode(raw));
         cached.insert(region.to_owned(), (header.clone(), expiry));
         Ok(header)
     }
@@ -113,6 +112,9 @@ pub fn ecr_region(host: &str) -> Option<String> {
 #[cfg(feature = "ecr")]
 mod aws_authorizer {
     use super::*;
+    use aws_sdk_ecr::config::Builder;
+    use aws_sdk_ecr::config::Region;
+    use base64::engine::general_purpose;
     use tokio::sync::OnceCell;
 
     /// Mints tokens via `ecr:GetAuthorizationToken`, on the default AWS
@@ -145,8 +147,8 @@ mod aws_authorizer {
             region: &str,
         ) -> Result<(String, String, DateTime<Utc>), ArtifactError> {
             let base = self.base_config().await;
-            let conf = aws_sdk_ecr::config::Builder::from(base)
-                .region(aws_sdk_ecr::config::Region::new(region.to_owned()))
+            let conf = Builder::from(base)
+                .region(Region::new(region.to_owned()))
                 .build();
             let client = aws_sdk_ecr::Client::from_conf(conf);
             let output = client.get_authorization_token().send().await.map_err(|e| {
@@ -171,7 +173,7 @@ mod aws_authorizer {
 
     /// `base64(user:password)` -> `(user, password)`.
     fn decode_token(token: &str) -> Result<(String, String), ArtifactError> {
-        let decoded = base64::engine::general_purpose::STANDARD
+        let decoded = general_purpose::STANDARD
             .decode(token)
             .map_err(ArtifactError::transport)?;
         let text = String::from_utf8(decoded).map_err(ArtifactError::transport)?;
@@ -184,10 +186,11 @@ mod aws_authorizer {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use base64::engine::general_purpose;
 
         #[test]
         fn decodes_a_base64_user_password_pair() {
-            let token = base64::engine::general_purpose::STANDARD.encode("AWS:s3cr3t-p4ss");
+            let token = general_purpose::STANDARD.encode("AWS:s3cr3t-p4ss");
             let (user, password) = decode_token(&token).unwrap();
             assert_eq!(user, "AWS");
             assert_eq!(password, "s3cr3t-p4ss");
@@ -195,7 +198,7 @@ mod aws_authorizer {
 
         #[test]
         fn rejects_a_token_with_no_colon() {
-            let token = base64::engine::general_purpose::STANDARD.encode("not-a-pair");
+            let token = general_purpose::STANDARD.encode("not-a-pair");
             assert!(decode_token(&token).is_err());
         }
 
@@ -213,6 +216,7 @@ pub use aws_authorizer::AwsEcrAuthorizer;
 mod tests {
     use super::*;
     use crate::clock::{Clock, ManualClock};
+    use base64::engine::general_purpose;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -306,10 +310,7 @@ mod tests {
         let first = cache.basic_header("us-east-1").await.unwrap();
         assert_eq!(
             first,
-            format!(
-                "Basic {}",
-                base64::engine::general_purpose::STANDARD.encode("AWS:tok3n-1")
-            )
+            format!("Basic {}", general_purpose::STANDARD.encode("AWS:tok3n-1"))
         );
         assert_eq!(cache.basic_header("us-east-1").await.unwrap(), first);
         assert_eq!(fake.calls.load(Ordering::SeqCst), 1);

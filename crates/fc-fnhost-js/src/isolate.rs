@@ -36,9 +36,17 @@ use std::task::Poll;
 use deno_core::{v8, JsRuntime, ModuleId, PollEventLoopOptions, RuntimeOptions};
 
 use crate::allocator::{self, Budget};
+use crate::modules;
 use crate::modules::FunctionModules;
 use crate::ops::{fc_function, HostState};
 use crate::platform;
+use crate::prepare;
+use deno_core::serde_v8;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::future;
+use std::pin::Pin;
 
 /// The smallest V8 heap an isolate gets, whatever the function's memory
 /// limit: below it, restoring the snapshot alone would hit the limit.
@@ -133,8 +141,8 @@ pub enum StartError {
     Evaluate(String),
 }
 
-impl std::fmt::Display for StartError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for StartError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StartError::Load(why) | StartError::Evaluate(why) => f.write_str(why),
         }
@@ -177,7 +185,7 @@ impl Isolate {
         let bootstrapped = match base {
             Some(_) => Ok(()),
             None => js
-                .execute_script("[fc:bootstrap]", crate::prepare::BOOTSTRAP.to_owned())
+                .execute_script("[fc:bootstrap]", prepare::BOOTSTRAP.to_owned())
                 .map(|_| ())
                 .map_err(|e| format!("the bootstrap failed: {e}")),
         };
@@ -206,11 +214,11 @@ impl Isolate {
     pub async fn start(&mut self) -> Result<ModuleId, StartError> {
         let raw = self.raw;
         let specifier =
-            deno_core::ModuleSpecifier::parse(crate::modules::MAIN).expect("a valid specifier");
+            deno_core::ModuleSpecifier::parse(modules::MAIN).expect("a valid specifier");
         let id = {
             let js = &mut *self.js;
             let mut load = Box::pin(js.load_main_es_module(&specifier));
-            std::future::poll_fn(|cx| {
+            future::poll_fn(|cx| {
                 let _entered = Entered::new(raw);
                 platform::run_pending(platform::key(raw), cx.waker());
                 load.as_mut().poll(cx)
@@ -227,7 +235,7 @@ impl Isolate {
         // unhandled rejection, which the event loop reports.
         let raw = self.raw;
         let js = &mut *self.js;
-        std::future::poll_fn(|cx| {
+        future::poll_fn(|cx| {
             let _entered = Entered::new(raw);
             platform::run_pending(platform::key(raw), cx.waker());
             match js.poll_event_loop(cx, PollEventLoopOptions::default()) {
@@ -249,13 +257,13 @@ impl Isolate {
     /// Polls `future` and the event loop together, entered, until `future`
     /// is ready. An event loop that finishes first leaves `future` pending
     /// forever: an error.
-    async fn drive<T, E: std::fmt::Display>(
+    async fn drive<T, E: Display>(
         &mut self,
-        mut future: std::pin::Pin<Box<impl Future<Output = Result<T, E>>>>,
+        mut future: Pin<Box<impl Future<Output = Result<T, E>>>>,
     ) -> Result<T, String> {
         let raw = self.raw;
         let js = &mut *self.js;
-        std::future::poll_fn(|cx| {
+        future::poll_fn(|cx| {
             let _entered = Entered::new(raw);
             platform::run_pending(platform::key(raw), cx.waker());
             if let Poll::Ready(result) = future.as_mut().poll(cx) {
@@ -326,7 +334,7 @@ impl Isolate {
                 .ok_or("the main module does not export invoke")?;
             let method = v8::String::new(scope, method).ok_or("the method is too long")?;
             let url = v8::String::new(scope, url).ok_or("the URL is too long")?;
-            let headers = deno_core::serde_v8::to_v8(scope, headers)
+            let headers = serde_v8::to_v8(scope, headers)
                 .map_err(|e| format!("the headers did not convert: {e}"))?;
             let store = v8::ArrayBuffer::new_backing_store_from_vec(body.to_vec()).make_shared();
             let buffer = v8::ArrayBuffer::with_backing_store(scope, &store);
@@ -352,7 +360,7 @@ impl Isolate {
         deno_core::scope!(scope, &mut *self.js);
         let value = v8::Local::new(scope, value);
         let (status, headers, body): (u16, Vec<(String, String)>, deno_core::JsBuffer) =
-            deno_core::serde_v8::from_v8(scope, value)
+            serde_v8::from_v8(scope, value)
                 .map_err(|e| format!("the dispatcher's answer did not convert: {e}"))?;
         Ok((status, headers, body.to_vec()))
     }

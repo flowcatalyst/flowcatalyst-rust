@@ -75,6 +75,7 @@ pub use processes::*;
 pub use roles::*;
 pub use router::*;
 pub use scheduled_jobs::*;
+use serde::de::DeserializeOwned;
 pub use service_accounts::*;
 pub use subscriptions::*;
 
@@ -242,10 +243,7 @@ impl FlowCatalystClient {
         format!("?{}", url.query().unwrap_or_default())
     }
 
-    pub(crate) async fn get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<T, ClientError> {
+    pub(crate) async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
         let resp = self
             .http
             .get(self.url(path))
@@ -266,7 +264,7 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    pub(crate) async fn post<B: Serialize, T: serde::de::DeserializeOwned>(
+    pub(crate) async fn post<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
@@ -292,7 +290,7 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    pub(crate) async fn put<B: Serialize, T: serde::de::DeserializeOwned>(
+    pub(crate) async fn put<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
@@ -340,7 +338,7 @@ impl FlowCatalystClient {
     }
 
     /// DELETE that returns a parsed response body (e.g. the updated resource).
-    pub(crate) async fn delete_with_response<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn delete_with_response<T: DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<T, ClientError> {
@@ -364,7 +362,7 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    pub(crate) async fn post_action<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn post_action<T: DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<T, ClientError> {

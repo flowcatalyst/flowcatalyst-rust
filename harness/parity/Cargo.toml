@@ -32,3 +32,8 @@ sha1 = "0.10"
 data-encoding = "2"
 rsa = { version = "0.9", features = ["pem"] }
 p256 = { version = "0.13", features = ["ecdsa", "std"] }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

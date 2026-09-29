@@ -13,7 +13,10 @@ use axum::{
     Json,
 };
 
+use crate::dispatch_job::api::get_jobs_for_event;
+use crate::dispatch_job::api::list_dispatch_jobs_unchecked;
 use crate::dispatch_job::api::{DispatchJobReadResponse, DispatchJobsQuery, DispatchJobsState};
+use crate::event::api;
 use crate::event::api::{EventListItem, EventsQuery, EventsState};
 use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
@@ -31,7 +34,7 @@ async fn events_list_raw(
     q: EventsQuery,
 ) -> Result<Json<Vec<EventListItem>>, PlatformError> {
     // Go's `listRaw` asks `event:view-raw` only (checked by the callers).
-    crate::event::api::list_events_unchecked(&state.events, &auth, q).await
+    api::list_events_unchecked(&state.events, &auth, q).await
 }
 
 /// The event list, for a caller holding `event:view-raw` (Go `listEventsRaw`).
@@ -74,7 +77,7 @@ pub async fn api_list_dispatch_jobs_raw(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    crate::dispatch_job::api::list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
+    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
 }
 
 /// BFF twin of [`api_list_dispatch_jobs_raw`].
@@ -88,7 +91,7 @@ pub async fn bff_list_dispatch_jobs_raw(
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     // Go's `listRaw` asks `dispatch-job:view-raw` only.
     checks::can_read_dispatch_jobs_raw(&auth.0)?;
-    crate::dispatch_job::api::list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
+    list_dispatch_jobs_unchecked(&state.dispatch_jobs, &auth, q).await
 }
 
 /// An event's dispatch jobs (Go `dispatchJobsByEvent`).
@@ -103,8 +106,7 @@ pub async fn api_dispatch_jobs_by_event(
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    crate::dispatch_job::api::get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id))
-        .await
+    get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id)).await
 }
 
 /// BFF twin of [`api_dispatch_jobs_by_event`].
@@ -118,6 +120,5 @@ pub async fn bff_dispatch_jobs_by_event(
     Path(event_id): Path<String>,
 ) -> Result<Json<Vec<DispatchJobReadResponse>>, PlatformError> {
     checks::can_read_dispatch_jobs(&auth.0)?;
-    crate::dispatch_job::api::get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id))
-        .await
+    get_jobs_for_event(State(state.dispatch_jobs), auth, Path(event_id)).await
 }

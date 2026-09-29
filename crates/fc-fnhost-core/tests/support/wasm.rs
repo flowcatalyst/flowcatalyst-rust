@@ -27,6 +27,10 @@ use sha2::Digest as _;
 
 use super::fakes::{self, Answer, FakeControlPlane};
 use super::listener::Reply;
+use fc_fnhost_core::clock::SharedClock;
+use fc_fnhost_core::db::DbSettings;
+use fc_fnhost_core::exec::ExecBudget;
+use std::fs;
 
 pub const ADDR: &str = "app.orders.ship";
 pub const ENTRYPOINT: &str = "wasi:http/incoming-handler";
@@ -59,7 +63,7 @@ pub fn fixtures_dir() -> PathBuf {
 
 /// `name → sha256 hex` from the committed `SHA256SUMS`.
 pub fn sums() -> Vec<(String, String)> {
-    std::fs::read_to_string(fixtures_dir().join("SHA256SUMS"))
+    fs::read_to_string(fixtures_dir().join("SHA256SUMS"))
         .expect("SHA256SUMS is committed")
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -77,7 +81,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// A committed guest, verified against `SHA256SUMS`.
 pub fn guest(name: &str) -> PathBuf {
     let path = fixtures_dir().join(format!("{name}.wasm"));
-    let bytes = std::fs::read(&path).unwrap_or_else(|_| panic!("{} is committed", path.display()));
+    let bytes = fs::read(&path).unwrap_or_else(|_| panic!("{} is committed", path.display()));
     let file = format!("{name}.wasm");
     let expected = sums()
         .into_iter()
@@ -95,7 +99,7 @@ pub fn guest(name: &str) -> PathBuf {
 /// Writes `bytes` into `dir` as an artifact (for hand-made components).
 pub fn artifact(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, bytes).unwrap();
+    fs::write(&path, bytes).unwrap();
     path
 }
 
@@ -117,7 +121,7 @@ pub fn manifest(extra: Value) -> Value {
 /// A live, warm desired-state entry for `artifact`, with `extra` merged
 /// into the entry (config and secret values, mode, …).
 pub fn entry(address: &str, version: i32, artifact: &Path, manifest: Value, extra: Value) -> Value {
-    let bytes = std::fs::read(artifact).unwrap();
+    let bytes = fs::read(artifact).unwrap();
     let mut e = fakes::entry(address, version, "live", "warm");
     e["digest"] = json!(format!("sha256:{}", sha256_hex(&bytes)));
     e["artifactRef"] = json!(format!("file://{}", artifact.display()));
@@ -134,7 +138,7 @@ pub struct Options {
     pub host_max_concurrency: i32,
     /// `EngineSettings::consume_fuel` (on in production).
     pub consume_fuel: bool,
-    pub db: fc_fnhost_core::db::DbSettings,
+    pub db: DbSettings,
 }
 
 impl Default for Options {
@@ -144,7 +148,7 @@ impl Default for Options {
             max_instances: 32,
             host_max_concurrency: 64,
             consume_fuel: true,
-            db: fc_fnhost_core::db::DbSettings::default(),
+            db: DbSettings::default(),
         }
     }
 }
@@ -173,7 +177,7 @@ impl WasmHarness {
 
     /// With the caches in `dir` (a second host over the same cache).
     pub async fn start_in(dir: tempfile::TempDir, functions: Vec<Value>, options: Options) -> Self {
-        let clock: fc_fnhost_core::clock::SharedClock = Arc::new(SystemClock);
+        let clock: SharedClock = Arc::new(SystemClock);
         let control = FakeControlPlane::new();
         let runtime = WasmRuntime::new(WasmSettings {
             engine: EngineSettings {
@@ -182,7 +186,7 @@ impl WasmHarness {
                 ..EngineSettings::default()
             },
             threads: options.max_executing,
-            budget: fc_fnhost_core::exec::ExecBudget::new(options.max_executing),
+            budget: ExecBudget::new(options.max_executing),
             cache_dir: dir.path().to_owned(),
             db: options.db.clone(),
         })

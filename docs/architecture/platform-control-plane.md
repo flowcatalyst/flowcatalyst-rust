@@ -8,7 +8,7 @@ This document is for engineers working in `fc-platform`. For ops-level concerns 
 
 ## Layering
 
-Four layers, strict downward dependency only. CLAUDE.md states this rule and `tests/uow_convention_test.rs` enforces a subset of it at test time.
+Four layers, strict downward dependency only. CLAUDE.md states this rule and `tests/it/uow_convention_test.rs` enforces a subset of it at test time.
 
 | Layer | Lives in | Knows about | Does not import |
 |---|---|---|---|
@@ -21,12 +21,35 @@ The most-violated boundary in early Rust ports was "aggregates persist themselve
 
 ---
 
+## The platform crates
+
+The platform is seven crates (docs/plans/build-speed-2026-09-28.md, section
+12). Each keeps its modules at their historical paths, and `fc-platform`
+re-exports every one at `fc_platform::<module>`, so the binaries, fc-web and
+the tests name them as before.
+
+| Crate | Holds | Depends on |
+|---|---|---|
+| `fc-platform-core` | `usecase` (the UoW seal), the kernel half of `shared` (errors, ids, the authorization context and `checks`, the request extractors and `AuthLayer`, the pool and migration runner, encryption, email, rate limiting), the permission catalogue (`permissions`), the principal kinds, the IAM lookup traits (`directory`) | – |
+| `fc-platform-iam` | tenancy, identity and access: `client`, `application`, `principal`, `role`, `service_account`, `identity_provider`, `email_domain_mapping`, `platform_config`, `cors`, `audit`, …; the IAM half of `auth` (OAuth clients, auth configs, `auth_service`, password hashing, the reset emailer), `mfa` (2FA state) and `portal` (identities, apps) | core |
+| `fc-platform-auth` | the sign-in flows: `auth` (token endpoint, OIDC login, sessions, refresh tokens), `mfa` (login, self-service), `webauthn`, `portal` (login plane), client selection, `/api/me` | core, iam |
+| `fc-platform-messaging` | `event_type`, `event`, `subscription`, `connection`, `dispatch_pool`, `dispatch_job`, the scheduler, `process`, the ingest endpoints | core |
+| `fc-platform-scheduled-jobs` | `scheduled_job` | core |
+| `fc-platform-functions` | `function` | core, messaging, scheduled-jobs |
+| `fc-platform` | the assembly: every aggregate's `routes.rs`, `router.rs`, the `PlatformContext` and server setup, the OpenAPI documents, the startup seeding, the cross-aggregate endpoints in `shared` | all of them |
+
+Messaging, the scheduled jobs and the functions read IAM facts (a client's
+name, an application's code, signing accounts, outbound credentials, the
+application scope) through the traits in `fc_platform_core::directory`, which
+iam implements and the assembly injects; so an IAM edit rebuilds only auth and
+the assembly.
+
 ## Aggregate-per-directory
 
-Every aggregate lives in its own directory under `crates/fc-platform/src/`. The layout is intentionally repetitive — a new aggregate is mechanical to add:
+Every aggregate lives in its own directory under its crate's `src/` (the table above). The layout is intentionally repetitive — a new aggregate is mechanical to add:
 
 ```
-crates/fc-platform/src/<aggregate>/
+crates/fc-platform-<domain>/src/<aggregate>/
 ├── entity.rs         # the domain struct + factory/mutator methods
 ├── repository.rs     # sqlx row struct, persist/find/delete, impl Persist<Entity>
 ├── api.rs            # axum handlers; thin adapters
@@ -36,6 +59,9 @@ crates/fc-platform/src/<aggregate>/
     ├── create_*.rs   # one file per UseCase
     ├── update_*.rs
     └── delete_*.rs
+crates/fc-platform/src/<aggregate>/
+├── mod.rs            # `pub use fc_platform_<domain>::<aggregate>::*;` + `pub mod routes;`
+└── routes.rs         # routes(ctx): builds the states from the PlatformContext
 ```
 
 Current aggregates (mid-2026):
@@ -102,7 +128,7 @@ Everything before the commit is ordinary `Result` code — `?` on repository cal
 - `unit_of_work.emit_event(event, command)` — emit event only (login, sync summary).
 - Any `.map(|c| c.map(|_| success_value))` chained onto one of the above.
 
-This is **stronger than the TypeScript runtime token check** — it's compile-time-guaranteed. A use case that "forgets" to call UoW fails to compile, not at test time. The convention test in `tests/uow_convention_test.rs` adds a second guard: it parses every `execute` body and asserts it reaches a `unit_of_work.*` call.
+This is **stronger than the TypeScript runtime token check** — it's compile-time-guaranteed. A use case that "forgets" to call UoW fails to compile, not at test time. The convention test in `tests/it/uow_convention_test.rs` adds a second guard: it parses every `execute` body and asserts it reaches a `unit_of_work.*` call.
 
 ### What UoW.commit does
 
@@ -387,11 +413,11 @@ This is one of the few infrastructure-write paths exempt from UoW — it runs at
 ## Code references
 
 - Top-level router: `crates/fc-platform/src/router.rs::build`; the modules' `*/routes.rs`; `shared/platform_context.rs`.
-- Use case framework: `crates/fc-platform/src/usecase/{mod,result,context,error}.rs`.
-- UoW: `crates/fc-platform/src/usecase/unit_of_work.rs::PgUnitOfWork`.
+- Use case framework: `crates/fc-platform-core/src/usecase/{mod,result,context,error}.rs`.
+- UoW: `crates/fc-platform-core/src/usecase/unit_of_work.rs::PgUnitOfWork`.
 - UoW seal: search for `pub(in crate::usecase) fn success` in `usecase/result.rs`.
-- UoW convention test: `crates/fc-platform/tests/uow_convention_test.rs`.
-- Authz service: `crates/fc-platform/src/shared/authorization_service.rs`.
-- Auth middleware: `crates/fc-platform/src/shared/middleware.rs` (`AuthLayer`).
+- UoW convention test: `crates/fc-platform/tests/it/uow_convention_test.rs`.
+- Authz service: `crates/fc-platform-iam/src/shared/authorization_service.rs` (the context and the checks: `crates/fc-platform-core/src/shared/authorization_service.rs`).
+- Auth middleware: `crates/fc-platform-core/src/shared/middleware.rs` (`AuthLayer`; the platform's `AppState` is fc-platform-iam's).
 - DB pool + migrations + secret refresh + role seeding: `crates/fc-platform/src/shared/database.rs`.
-- TSID generation: `crates/fc-common/src/tsid.rs` (`tsid::generate`/`generate_with_prefix`/`generate_untyped`), re-exported via `crates/fc-platform/src/shared/tsid.rs`.
+- TSID generation: `crates/fc-common/src/tsid.rs` (`tsid::generate`/`generate_with_prefix`/`generate_untyped`), re-exported via `crates/fc-platform-core/src/shared/tsid.rs`.

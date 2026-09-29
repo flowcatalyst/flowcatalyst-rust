@@ -48,8 +48,14 @@ use fc_fnhost_core::wasm::egress::HttpAllowlist;
 use fc_fnhost_core::wasm::output::GuestLogger;
 use fc_function_model::FunctionLimits;
 
+use deno_core::v8;
+use fc_fnhost_core::host;
 pub use function::JsFunction;
 pub use prepare::{JS_ENTRYPOINT_NOT_EXPORTED, JS_IMPORT_NOT_ALLOWED, JS_INIT_FAILED, JS_INVALID};
+use std::collections::BTreeMap;
+use std::fs;
+use tokio::runtime::Handle;
+use tokio::task;
 
 /// A `db[]` on a `js` function: the WASM runtime's load-failure code for a
 /// database it cannot serve.
@@ -90,7 +96,7 @@ pub struct JsRuntime {
     base: Option<&'static [u8]>,
     http: reqwest::Client,
     /// The host's own runtime, where outbound calls and emits run.
-    host_runtime: Option<tokio::runtime::Handle>,
+    host_runtime: Option<Handle>,
     init_timeout: Duration,
 }
 
@@ -103,14 +109,14 @@ impl JsRuntime {
         tracing::info!(
             workers = workers.len(),
             max_executing = settings.budget.limit(),
-            v8 = deno_core::v8::VERSION_STRING,
+            v8 = v8::VERSION_STRING,
             "js runtime started"
         );
         Ok(Arc::new(Self {
             workers: Arc::new(workers),
             base,
             http: ops::http_client()?,
-            host_runtime: tokio::runtime::Handle::try_current().ok(),
+            host_runtime: Handle::try_current().ok(),
             init_timeout: settings.init_timeout,
         }))
     }
@@ -163,7 +169,7 @@ impl FunctionLoader for JsLoader {
         let cap_bytes = memory_mb << 20;
         let limits = isolate::Limits::of(cap_bytes);
         // The keys the manifest declares, as the WASM runtime keeps them.
-        let pick = |values: &std::collections::BTreeMap<String, String>, keys: &[String]| {
+        let pick = |values: &BTreeMap<String, String>, keys: &[String]| {
             keys.iter()
                 .filter_map(|k| values.get(k).map(|v| (k.clone(), v.clone())))
                 .collect::<HashMap<_, _>>()
@@ -194,8 +200,8 @@ impl FunctionLoader for JsLoader {
             let version = version.clone();
             let init_timeout = self.runtime.init_timeout;
             let base = self.runtime.base;
-            tokio::task::spawn_blocking(move || {
-                let bundle = std::fs::read(&artifact).map_err(|e| prepare::Refusal {
+            task::spawn_blocking(move || {
+                let bundle = fs::read(&artifact).map_err(|e| prepare::Refusal {
                     reason: JS_INVALID,
                     detail: format!("unreadable: {}: {e}", artifact.display()),
                 })?;
@@ -243,7 +249,7 @@ impl FunctionLoader for JsLoader {
 /// execute on one [`ExecBudget`] of `FC_FN_MAX_EXECUTING` permits.
 pub fn loaders(env: &HostEnv) -> Result<Loaders, String> {
     let budget = ExecBudget::new(env.max_executing);
-    let loaders = fc_fnhost_core::host::wasm_loaders_with(env, &budget)?;
+    let loaders = host::wasm_loaders_with(env, &budget)?;
     let js = JsRuntime::new(JsSettings::from_env(env, &budget))?;
     Ok(Arc::new(JsLoader::new(js)).register(loaders))
 }

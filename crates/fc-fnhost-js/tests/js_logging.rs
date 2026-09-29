@@ -10,7 +10,10 @@ use std::sync::{Arc, OnceLock};
 use fc_fnhost_core::logging::SlogJsonLayer;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::io;
+use std::io::Write;
 use support::{bundle, entry, manifest, JsHarness, ADDR};
+use tracing::subscriber;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
@@ -22,7 +25,7 @@ fn captured() -> &'static Arc<Mutex<Vec<u8>>> {
             let lines = lines.clone();
             move || CaptureWriter(lines.clone())
         };
-        tracing::subscriber::set_global_default(
+        subscriber::set_global_default(
             tracing_subscriber::registry()
                 .with(EnvFilter::new("trace"))
                 .with(SlogJsonLayer::new(writer)),
@@ -34,13 +37,13 @@ fn captured() -> &'static Arc<Mutex<Vec<u8>>> {
 
 struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for CaptureWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for CaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().extend_from_slice(buf);
         Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }

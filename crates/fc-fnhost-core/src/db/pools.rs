@@ -46,6 +46,12 @@ use sqlx::{Connection as _, Executor as _};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::dsn::{pool_id, Dsn, DsnSource, SecretResolver, DB_SECRET_UNRESOLVED, DB_UNSUPPORTED};
+use futures::future::BoxFuture;
+use std::fmt;
+use std::fmt::Formatter;
+use std::mem;
+use tokio::runtime::Handle;
+use tokio::time;
 
 /// The load-failure code for one pool too many (Java's).
 pub const DB_POOL_LIMIT: &str = "DB_POOL_LIMIT";
@@ -273,14 +279,14 @@ impl DbPools {
         if interval.is_zero() {
             return;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        let Ok(runtime) = Handle::try_current() else {
             return;
         };
         let weak = Arc::downgrade(entry);
         let resolver = self.resolver.clone();
         runtime.spawn(async move {
             loop {
-                tokio::time::sleep(interval).await;
+                time::sleep(interval).await;
                 let Some(entry) = weak.upgrade() else {
                     return;
                 };
@@ -306,8 +312,8 @@ impl DbPools {
     }
 }
 
-impl std::fmt::Debug for DbPools {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for DbPools {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "DbPools[{} open]", self.pool_count())
     }
 }
@@ -326,9 +332,7 @@ fn new_pool(options: PgConnectOptions, size: u32) -> PgPool {
         .connect_lazy_with(options)
 }
 
-fn reset_on_release(
-    conn: &mut PgConnection,
-) -> futures::future::BoxFuture<'_, Result<bool, sqlx::Error>> {
+fn reset_on_release(conn: &mut PgConnection) -> BoxFuture<'_, Result<bool, sqlx::Error>> {
     Box::pin(async move { reset_session(conn).await.map(|()| true) })
 }
 
@@ -408,9 +412,9 @@ impl PoolEntry {
         let size = state.users.values().map(|u| u.1).max().unwrap_or(1).max(1);
         // A sqlx pool starts its housekeeping on the current runtime; with
         // none (a lease dropped outside one) the pool keeps its size.
-        if size != state.size && tokio::runtime::Handle::try_current().is_ok() {
+        if size != state.size && Handle::try_current().is_ok() {
             let options = self.options.read().clone();
-            let old = std::mem::replace(&mut *self.pool.write(), new_pool(options, size));
+            let old = mem::replace(&mut *self.pool.write(), new_pool(options, size));
             close_in_background(old);
             tracing::info!(pool = %self.id, from = state.size, to = size, "function database pool resized");
             state.size = size;
@@ -449,7 +453,7 @@ fn share_limit(declared_pool_size: u32) -> u32 {
 }
 
 fn close_in_background(pool: PgPool) {
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+    if let Ok(runtime) = Handle::try_current() {
         runtime.spawn(async move { pool.close().await });
     }
 }
@@ -487,8 +491,8 @@ impl Drop for PoolLease {
     }
 }
 
-impl std::fmt::Debug for PoolLease {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for PoolLease {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "PoolLease[pool {}, poolSize {}]",

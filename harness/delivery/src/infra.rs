@@ -7,6 +7,8 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
+use std::net::TcpListener;
+use std::thread;
 
 pub const POSTGRES_IMAGE: &str = "postgres:17";
 pub const LOCALSTACK_IMAGE: &str = "localstack/localstack:3.0";
@@ -131,7 +133,7 @@ impl Infra {
             if Instant::now() > deadline {
                 bail!("postgres not ready");
             }
-            std::thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(500));
         }
         loop {
             let ok = Command::new("curl")
@@ -150,7 +152,7 @@ impl Infra {
             if Instant::now() > deadline {
                 bail!("localstack not ready");
             }
-            std::thread::sleep(Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(500));
         }
         Ok(())
     }
@@ -199,7 +201,7 @@ impl Drop for Infra {
 
 /// A free TCP port on loopback (bind :0, read, release).
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    TcpListener::bind("127.0.0.1:0")
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
         .unwrap_or(0)

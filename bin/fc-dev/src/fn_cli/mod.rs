@@ -32,8 +32,14 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::functions;
 use client::FnClient;
 use credentials::{Credentials, Flags};
+use std::env;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::io;
 
 #[derive(clap::Args, Debug)]
 #[command(
@@ -113,8 +119,8 @@ pub enum CliError {
     Reported,
 }
 
-impl std::fmt::Display for CliError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CliError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CliError::Usage(m) | CliError::Other(m) => f.write_str(m),
             CliError::Platform { code, message, .. } if message.is_empty() => f.write_str(code),
@@ -124,8 +130,8 @@ impl std::fmt::Display for CliError {
     }
 }
 
-impl From<std::io::Error> for CliError {
-    fn from(e: std::io::Error) -> Self {
+impl From<io::Error> for CliError {
+    fn from(e: io::Error) -> Self {
         CliError::Other(e.to_string())
     }
 }
@@ -168,7 +174,7 @@ impl Ctx<'_> {
         self.args
             .credentials_file
             .clone()
-            .unwrap_or_else(crate::functions::cli_file_path)
+            .unwrap_or_else(functions::cli_file_path)
     }
 
     pub fn credentials(&self) -> Result<Credentials, CliError> {
@@ -191,10 +197,10 @@ impl Ctx<'_> {
 /// Runs `args` against the process environment, on the process's stdio.
 /// Returns the exit code.
 pub async fn run(args: FnArgs) -> i32 {
-    let mut out = std::io::stdout();
-    let mut err = std::io::stderr();
-    let mut stdin = std::io::stdin();
-    let env = |key: &str| std::env::var(key).ok();
+    let mut out = io::stdout();
+    let mut err = io::stderr();
+    let mut stdin = io::stdin();
+    let env = |key: &str| env::var(key).ok();
     run_with(
         &args,
         &env,

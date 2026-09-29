@@ -268,7 +268,7 @@ What that does on each kind of database:
 | Java-migrated | Java's `fn_*` are no longer touched (037 and 056 used to widen its runtime CHECK and add `fn_hosts.runtimes`); 062 creates `fnr_*` |
 | Go-migrated | Go's `fn_*` are never touched; 062 creates `fnr_*` and admits `FUNCTION` in `chk_msg_subscriptions_source` if Go's CHECK does not yet (Go before its 059) |
 
-`crates/fc-platform/tests/function_table_prefix_test.rs` runs Go's 059 before
+`crates/fc-platform/tests/it/function_table_prefix_test.rs` runs Go's 059 before
 and after Rust's migrations, and a database with the retired migrations
 applied, and checks that `fnr_*` is their end state renamed.
 

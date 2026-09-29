@@ -11,7 +11,7 @@
 
 use axum::{
     extract::Request,
-    http::{HeaderMap, header::AUTHORIZATION},
+    http::{header::AUTHORIZATION, HeaderMap},
     middleware::Next,
     response::Response,
 };
@@ -21,6 +21,15 @@ use crate::auth::AuthContext;
 use super::principal::{AuthMechanism, Principal};
 use super::session::{PrincipalSnapshot, SessionPayload, SessionTokens};
 use super::state::AuthState;
+use crate::auth::oauth::TokenResponse;
+use crate::auth::AccessTokenClaims;
+use axum::extract::State;
+use axum::http::HeaderName;
+use axum::http::HeaderValue;
+use std::mem;
+use std::sync::Mutex;
+use std::time;
+use std::time::SystemTime;
 
 const REFRESH_LEEWAY_MS: i64 = 60_000;
 
@@ -35,14 +44,14 @@ const REFRESH_LEEWAY_MS: i64 = 60_000;
 /// Apply with `.layer(axum::middleware::from_fn_with_state(state, fc_auth_middleware))`
 /// via [`super::router::auth_router`].
 pub async fn fc_auth_middleware(
-    axum::extract::State(state): axum::extract::State<AuthState>,
+    State(state): State<AuthState>,
     mut request: Request,
     next: Next,
 ) -> Response {
     let principal = resolve_principal(&state, request.headers()).await;
 
     // Apply any cookie mutations (refresh / clear) to the response.
-    let cookie_updates = std::mem::take(&mut *principal.cookie_updates.lock().expect("lock"));
+    let cookie_updates = mem::take(&mut *principal.cookie_updates.lock().expect("lock"));
 
     if let Some(p) = principal.principal {
         request.extensions_mut().insert(Some(p));
@@ -59,11 +68,11 @@ pub async fn fc_auth_middleware(
 
 struct ResolvedPrincipal {
     principal: Option<Principal>,
-    cookie_updates: std::sync::Mutex<Vec<(axum::http::HeaderName, axum::http::HeaderValue)>>,
+    cookie_updates: Mutex<Vec<(HeaderName, HeaderValue)>>,
 }
 
 async fn resolve_principal(state: &AuthState, headers: &HeaderMap) -> ResolvedPrincipal {
-    let cookie_updates = std::sync::Mutex::new(Vec::new());
+    let cookie_updates = Mutex::new(Vec::new());
 
     // 1. Bearer.
     if let Some(token) = read_bearer(headers) {
@@ -150,7 +159,7 @@ fn read_bearer(headers: &HeaderMap) -> Option<&str> {
 
 fn make_session_from_refresh(
     old: &SessionPayload,
-    tr: &crate::auth::oauth::TokenResponse,
+    tr: &TokenResponse,
     auth: &AuthContext,
     state: &AuthState,
 ) -> SessionPayload {
@@ -183,7 +192,7 @@ fn make_session_from_refresh(
 }
 
 fn build_auth_context_from_session(session: &SessionPayload) -> AuthContext {
-    let claims = crate::auth::AccessTokenClaims {
+    let claims = AccessTokenClaims {
         sub: session.principal.id.clone(),
         iss: String::new(),
         aud: String::new(),
@@ -208,7 +217,7 @@ fn build_auth_context_from_session(session: &SessionPayload) -> AuthContext {
 async fn write_cookie(
     state: &AuthState,
     session: &SessionPayload,
-    out: &std::sync::Mutex<Vec<(axum::http::HeaderName, axum::http::HeaderValue)>>,
+    out: &Mutex<Vec<(HeaderName, HeaderValue)>>,
 ) {
     let mut h = HeaderMap::new();
     if state.session_store.write(session, &mut h).await.is_ok() {
@@ -218,10 +227,7 @@ async fn write_cookie(
     }
 }
 
-async fn clear_cookie(
-    state: &AuthState,
-    out: &std::sync::Mutex<Vec<(axum::http::HeaderName, axum::http::HeaderValue)>>,
-) {
+async fn clear_cookie(state: &AuthState, out: &Mutex<Vec<(HeaderName, HeaderValue)>>) {
     let mut h = HeaderMap::new();
     if state.session_store.clear(&mut h).await.is_ok() {
         for (k, v) in h.iter() {
@@ -231,8 +237,8 @@ async fn clear_cookie(
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }

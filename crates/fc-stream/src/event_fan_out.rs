@@ -33,6 +33,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::health::StreamHealth;
+use std::time::Instant;
+use tokio::time;
 
 /// Configuration for the fan-out projection.
 #[derive(Debug, Clone)]
@@ -91,7 +93,7 @@ pub async fn run(
                     error!(error = %e, "Failed to load subscriptions; fan-out waits for the first load");
                     health.record_error();
                     tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(5000)) => {}
+                        _ = time::sleep(Duration::from_millis(5000)) => {}
                         _ = cancel.cancelled() => { break; }
                     }
                     continue;
@@ -116,7 +118,7 @@ pub async fn run(
 
         if sleep_ms > 0 {
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = time::sleep(Duration::from_millis(sleep_ms)) => {}
                 _ = cancel.cancelled() => { break; }
             }
         }
@@ -383,7 +385,7 @@ async fn load_active_subscriptions(pool: &PgPool) -> anyhow::Result<Vec<CachedSu
 /// rather than per-cycle to amortise the round-trip.
 struct SubscriptionCache {
     subs: Vec<CachedSubscription>,
-    last_refreshed: std::time::Instant,
+    last_refreshed: Instant,
     ttl: Duration,
     /// Whether a load has ever succeeded. Until one has, `subs` being empty
     /// says nothing about the subscriptions.
@@ -395,7 +397,7 @@ impl SubscriptionCache {
         Self {
             subs: Vec::new(),
             // Force initial refresh.
-            last_refreshed: std::time::Instant::now() - ttl - Duration::from_millis(1),
+            last_refreshed: Instant::now() - ttl - Duration::from_millis(1),
             ttl,
             loaded: false,
         }
@@ -408,7 +410,7 @@ impl SubscriptionCache {
     }
     fn replace(&mut self, subs: Vec<CachedSubscription>) {
         self.subs = subs;
-        self.last_refreshed = std::time::Instant::now();
+        self.last_refreshed = Instant::now();
         self.loaded = true;
     }
     fn subs(&self) -> &[CachedSubscription] {

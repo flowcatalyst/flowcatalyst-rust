@@ -1,0 +1,542 @@
+//! Sync Subscriptions Use Case
+//!
+//! Bulk creates/updates/deletes anchor-level subscriptions from an application SDK.
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use super::create::EventTypeBindingInput;
+use super::events::{
+    SubscriptionCreated, SubscriptionDeleted, SubscriptionUpdated, SubscriptionsSynced,
+};
+use crate::connection::entity::Connection;
+use crate::connection::repository::ConnectionRepository;
+use crate::dispatch_job::entity;
+use crate::dispatch_pool::repository::DispatchPoolRepository;
+use crate::subscription::entity::SubscriptionSource;
+use crate::subscription::repository::SubscriptionRepository;
+use crate::{
+    dispatch_pool::entity::DispatchPool,
+    subscription::entity::{EventTypeBinding, Subscription},
+};
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
+};
+
+/// A single subscription definition in the sync payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionInput {
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    /// The connection by code, stable across environments (Go
+    /// `SyncSubscriptionInput.ConnectionCode`): by default one this
+    /// application owns; with `shared_connection`, an application-less one.
+    /// Never a fallback between the two (ruling 2026-09-21 #4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_code: Option<String>,
+    #[serde(default)]
+    pub shared_connection: bool,
+    pub event_types: Vec<EventTypeBindingInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_pool_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
+    #[serde(default)]
+    pub data_only: bool,
+}
+
+/// Command for syncing subscriptions from an application.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionsCommand {
+    pub application_code: String,
+    /// The client this batch belongs to, already resolved to an id (`None`:
+    /// the application's client-less subscriptions). Go scopes the whole
+    /// sync to (application, client).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    pub subscriptions: Vec<SyncSubscriptionInput>,
+    #[serde(default)]
+    pub remove_unlisted: bool,
+}
+
+impl AuditMasked for SyncSubscriptionsCommand {}
+
+pub struct SyncSubscriptionsUseCase<U: UnitOfWork> {
+    subscription_repo: Arc<SubscriptionRepository>,
+    connection_repo: Arc<ConnectionRepository>,
+    dispatch_pool_repo: Arc<DispatchPoolRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
+    pub fn new(
+        subscription_repo: Arc<SubscriptionRepository>,
+        connection_repo: Arc<ConnectionRepository>,
+        dispatch_pool_repo: Arc<DispatchPoolRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self {
+            subscription_repo,
+            connection_repo,
+            dispatch_pool_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
+    type Command = SyncSubscriptionsCommand;
+    type Event = SubscriptionsSynced;
+
+    async fn validate(&self, command: &SyncSubscriptionsCommand) -> Result<(), UseCaseError> {
+        if command.application_code.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "APPLICATION_CODE_REQUIRED",
+                "Application code is required",
+            ));
+        }
+
+        for input in &command.subscriptions {
+            if input.code.trim().is_empty() {
+                return Err(UseCaseError::validation(
+                    "CODE_REQUIRED",
+                    "Subscription code is required",
+                ));
+            }
+            if input.name.trim().is_empty() {
+                return Err(UseCaseError::validation(
+                    "NAME_REQUIRED",
+                    "Subscription name is required",
+                ));
+            }
+            if input.target.trim().is_empty() {
+                return Err(UseCaseError::validation(
+                    "TARGET_REQUIRED",
+                    "Target endpoint URL is required",
+                ));
+            }
+            if input.event_types.is_empty() {
+                return Err(UseCaseError::validation(
+                    "EVENT_TYPES_REQUIRED",
+                    "At least one event type is required",
+                ));
+            }
+            if input.shared_connection
+                && input
+                    .connection_code
+                    .as_deref()
+                    .is_none_or(|c| c.trim().is_empty())
+            {
+                return Err(UseCaseError::validation(
+                    "SHARED_CONNECTION_REQUIRES_CODE",
+                    format!(
+                        "Subscription '{}': sharedConnection requires connectionCode",
+                        input.code
+                    ),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The target client must be one the caller holds (Go's use case: 403 `No
+    /// access to client: …`). The SDK handler resolves the client reference (404
+    /// for an unknown one) and the `/{appCode}` application within the caller's
+    /// scope before the body.
+    async fn authorize(
+        &self,
+        command: &SyncSubscriptionsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        if let Some(client_id) = command.client_id.as_deref() {
+            if !ctx.caller().can_access_client(client_id) {
+                return Err(UseCaseError::verbatim(PlatformError::forbidden(format!(
+                    "No access to client: {client_id}"
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute(
+        &self,
+        command: SyncSubscriptionsCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<SubscriptionsSynced>, UseCaseError> {
+        let connection_ids = self.resolve_connections(&command).await?;
+
+        // Resolve every referenced dispatch pool in one query, before any
+        // write. An unknown code is a validation error naming it, rather
+        // than a subscription silently created without its pool.
+        let pool_codes = requested_pool_codes(&command.subscriptions);
+        let pools: HashMap<String, DispatchPool> = self
+            .dispatch_pool_repo
+            .find_anchor_by_codes(&pool_codes)
+            .await?
+            .into_iter()
+            .map(|p| (p.code.clone(), p))
+            .collect();
+        let missing = missing_pool_codes(&pool_codes, &pools);
+        if !missing.is_empty() {
+            return Err(UseCaseError::validation(
+                "DISPATCH_POOL_NOT_FOUND",
+                format!("Unknown dispatch pool code(s): {}", missing.join(", ")),
+            ));
+        }
+
+        // The rows this (application, client) sync may touch: no client
+        // matches only the client-less rows (Go FindByApplicationAndClient).
+        let existing = self
+            .subscription_repo
+            .find_by_application_and_client(&command.application_code, command.client_id.as_deref())
+            .await?;
+
+        let mut created_count = 0u32;
+        let mut updated_count = 0u32;
+        let mut deleted_count = 0u32;
+        let mut synced_codes: Vec<String> = Vec::new();
+        let mut saves: Vec<Subscription> = Vec::new();
+        let mut deletes: Vec<Subscription> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
+
+        // Plan every row before anything is written (Go's `usecaseop.Sync`).
+        for (input, connection_id) in command.subscriptions.iter().zip(connection_ids) {
+            synced_codes.push(input.code.clone());
+
+            let bindings: Vec<EventTypeBinding> = input
+                .event_types
+                .iter()
+                .map(EventTypeBindingInput::to_binding)
+                .collect();
+
+            let existing_sub = existing.iter().find(|s| s.code == input.code);
+            match existing_sub {
+                Some(sub) => {
+                    // Only update API-sourced subscriptions
+                    if sub.source == SubscriptionSource::Api
+                        || sub.source == SubscriptionSource::Code
+                    {
+                        let mut updated = sub.clone();
+                        updated.name = input.name.clone();
+                        updated.description = input.description.clone();
+                        updated.endpoint = input.target.clone();
+                        updated.connection_id = connection_id;
+                        updated.event_types = bindings;
+                        updated.data_only = input.data_only;
+                        if let Some(retries) = input.max_retries {
+                            updated.max_retries = retries as i32;
+                        }
+                        if let Some(timeout) = input.timeout_seconds {
+                            updated.timeout_seconds = timeout as i32;
+                        }
+                        // Pool codes were all resolved above.
+                        if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
+                            updated.dispatch_pool_id = Some(pool.id.clone());
+                            updated.dispatch_pool_code = Some(pool.code.clone());
+                        }
+                        updated.updated_at = chrono::Utc::now();
+                        rows.push(RecordedEvent::of(&SubscriptionUpdated::new(
+                            &ctx,
+                            &updated.id,
+                            &updated.name,
+                        ))?);
+                        saves.push(updated);
+                        updated_count += 1;
+                    }
+                }
+                None => {
+                    let pool = requested_pool_code(input).and_then(|c| pools.get(c));
+                    let sub = Subscription::builder()
+                        .code(&input.code)
+                        .name(&input.name)
+                        .endpoint(&input.target)
+                        .maybe_connection_id(connection_id)
+                        .application_code(command.application_code.clone())
+                        .maybe_client_id(command.client_id.clone())
+                        .source(SubscriptionSource::Api)
+                        .maybe_description(input.description.clone())
+                        .event_types(bindings)
+                        .data_only(input.data_only)
+                        .created_by(ctx.principal_id.clone())
+                        .maybe_max_retries(input.max_retries.map(|r| r as i32))
+                        .maybe_timeout_seconds(input.timeout_seconds.map(|t| t as i32))
+                        // Ruling X-01: absent means NEXT_ON_ERROR, unknown
+                        // means NEXT_ON_ERROR with a warning. An existing
+                        // subscription's mode is left alone on update, as
+                        // before.
+                        .mode(entity::parse_dispatch_mode(input.mode.as_deref()))
+                        .maybe_dispatch_pool_id(pool.map(|p| p.id.clone()))
+                        .maybe_dispatch_pool_code(pool.map(|p| p.code.clone()))
+                        .build();
+                    rows.push(RecordedEvent::of(&SubscriptionCreated::new(
+                        &ctx, &sub.id, &sub.code, &sub.name,
+                    ))?);
+                    saves.push(sub);
+                    created_count += 1;
+                }
+            }
+        }
+
+        // Remove unlisted API-sourced subscriptions
+        if command.remove_unlisted {
+            for sub in &existing {
+                if (sub.source == SubscriptionSource::Api || sub.source == SubscriptionSource::Code)
+                    && !synced_codes.contains(&sub.code)
+                {
+                    rows.push(RecordedEvent::of(&SubscriptionDeleted::new(
+                        &ctx, &sub.id, &sub.code,
+                    ))?);
+                    deletes.push(sub.clone());
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        let event = SubscriptionsSynced {
+            metadata: SubscriptionsSynced::metadata_for(&ctx, &command.application_code),
+            application_code: command.application_code.clone(),
+            client_id: command.client_id.clone(),
+            created: created_count,
+            updated: updated_count,
+            deleted: deleted_count,
+            synced_codes,
+        };
+
+        // Go's usecaseop.Sync: the rows, a created/updated/deleted event per
+        // synced subscription, then the rollup, in one transaction.
+        self.unit_of_work
+            .commit_sync(
+                &*self.subscription_repo,
+                &saves,
+                &deletes,
+                rows,
+                event,
+                &command,
+            )
+            .await
+    }
+}
+
+impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
+    /// Each input's connection id, resolved as Go's sync does
+    /// (subscription/operations/sync.go): a `connectionCode` names one in an
+    /// explicit namespace (this application's own, or with
+    /// `sharedConnection` the application-less ones; no fallback between
+    /// them), preferring this sync's client's connection over a client-less
+    /// one; a bare `connectionId` must exist and be client-less or this
+    /// client's, and shared or this application's. Two queries in all.
+    async fn resolve_connections(
+        &self,
+        command: &SyncSubscriptionsCommand,
+    ) -> Result<Vec<Option<String>>, UseCaseError> {
+        let app = command.application_code.as_str();
+        let client = command.client_id.as_deref();
+        let code_of = |i: &SyncSubscriptionInput| {
+            i.connection_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .map(String::from)
+        };
+        let codes: Vec<String> = command.subscriptions.iter().filter_map(code_of).collect();
+        let ids: Vec<String> = command
+            .subscriptions
+            .iter()
+            .filter(|i| code_of(i).is_none())
+            .filter_map(|i| i.connection_id.clone())
+            .collect();
+        let (by_code, by_id) = tokio::try_join!(
+            self.connection_repo
+                .find_by_codes_for_application(&codes, app),
+            self.connection_repo.find_by_ids(&ids),
+        )?;
+        let by_id: HashMap<String, Connection> =
+            by_id.into_iter().map(|c| (c.id.clone(), c)).collect();
+
+        let mut resolved = Vec::with_capacity(command.subscriptions.len());
+        for input in &command.subscriptions {
+            if let Some(code) = code_of(input) {
+                let namespace = (!input.shared_connection).then_some(app);
+                let find = |client_id: Option<&str>| {
+                    by_code.iter().find(|c| {
+                        c.code == code
+                            && c.application_code.as_deref() == namespace
+                            && c.client_id.as_deref() == client_id
+                    })
+                };
+                let found = client
+                    .and_then(|cid| find(Some(cid)))
+                    .or_else(|| find(None))
+                    .ok_or_else(|| {
+                        UseCaseError::not_found_verbatim(
+                            "CONNECTION_NOT_FOUND",
+                            format!("Connection with code '{}' not found", code),
+                        )
+                    })?;
+                if input
+                    .connection_id
+                    .as_deref()
+                    .is_some_and(|id| id != found.id)
+                {
+                    return Err(UseCaseError::validation(
+                        "CONNECTION_MISMATCH",
+                        format!(
+                            "Subscription '{}': connectionId and connectionCode name different connections",
+                            input.code
+                        ),
+                    ));
+                }
+                resolved.push(Some(found.id.clone()));
+                continue;
+            }
+            let Some(ref conn_id) = input.connection_id else {
+                resolved.push(None);
+                continue;
+            };
+            // Go's own spelling here (subscription/operations/sync.go:223),
+            // not `Connection_NOT_FOUND`.
+            let connection = by_id.get(conn_id).ok_or_else(|| {
+                UseCaseError::not_found_verbatim(
+                    "CONNECTION_NOT_FOUND",
+                    format!("Connection '{}' not found", conn_id),
+                )
+            })?;
+            if connection
+                .client_id
+                .as_deref()
+                .is_some_and(|cid| Some(cid) != client)
+            {
+                return Err(UseCaseError::validation(
+                    "CONNECTION_SCOPE_MISMATCH",
+                    format!(
+                        "Subscription '{}': connection '{}' is scoped to a different client",
+                        input.code, conn_id
+                    ),
+                ));
+            }
+            if connection
+                .application_code
+                .as_deref()
+                .is_some_and(|a| a != app)
+            {
+                return Err(UseCaseError::validation(
+                    "CONNECTION_SCOPE_MISMATCH",
+                    format!(
+                        "Subscription '{}': connection '{}' belongs to a different application",
+                        input.code, conn_id
+                    ),
+                ));
+            }
+            resolved.push(Some(conn_id.clone()));
+        }
+        Ok(resolved)
+    }
+}
+
+/// The dispatch pool code an input asks for. Blank means none, as in Go.
+fn requested_pool_code(input: &SyncSubscriptionInput) -> Option<&str> {
+    input
+        .dispatch_pool_code
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+}
+
+/// Every distinct pool code the payload references, sorted.
+fn requested_pool_codes(inputs: &[SyncSubscriptionInput]) -> Vec<String> {
+    let mut codes: Vec<String> = inputs
+        .iter()
+        .filter_map(requested_pool_code)
+        .map(String::from)
+        .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+/// The requested codes with no pool, in request order.
+fn missing_pool_codes<'a>(
+    requested: &'a [String],
+    found: &HashMap<String, DispatchPool>,
+) -> Vec<&'a str> {
+    requested
+        .iter()
+        .filter(|c| !found.contains_key(*c))
+        .map(String::as_str)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(code: &str, pool: Option<&str>) -> SyncSubscriptionInput {
+        SyncSubscriptionInput {
+            code: code.to_string(),
+            name: code.to_string(),
+            description: None,
+            target: "https://example.com/hook".to_string(),
+            connection_id: None,
+            connection_code: None,
+            shared_connection: false,
+            event_types: vec![],
+            dispatch_pool_code: pool.map(String::from),
+            mode: None,
+            max_retries: None,
+            timeout_seconds: None,
+            data_only: false,
+        }
+    }
+
+    #[test]
+    fn pool_codes_are_distinct_and_skip_blank() {
+        let inputs = vec![
+            input("a", Some("fast")),
+            input("b", None),
+            input("c", Some("  ")),
+            input("d", Some("slow")),
+            input("e", Some("fast")),
+        ];
+        assert_eq!(requested_pool_codes(&inputs), vec!["fast", "slow"]);
+    }
+
+    #[test]
+    fn unknown_pool_codes_are_reported() {
+        let requested = vec!["fast".to_string(), "nope".to_string(), "slow".to_string()];
+        let mut found = HashMap::new();
+        for code in ["fast", "slow"] {
+            found.insert(code.to_string(), DispatchPool::new(code, code));
+        }
+        assert_eq!(missing_pool_codes(&requested, &found), vec!["nope"]);
+        found.remove("slow");
+        assert_eq!(missing_pool_codes(&requested, &found), vec!["nope", "slow"]);
+    }
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = SyncSubscriptionsCommand {
+            application_code: "orders".to_string(),
+            client_id: None,
+            subscriptions: vec![],
+            remove_unlisted: false,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("orders"));
+    }
+}

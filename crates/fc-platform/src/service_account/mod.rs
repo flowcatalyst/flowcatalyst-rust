@@ -1,17 +1,11 @@
-//! Service Account Aggregate
+//! The `service_account` aggregate (fc-platform-iam), and its routes.
 //!
-//! Machine-to-machine identity management.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod outbound_credentials;
-pub mod repository;
+pub use fc_platform_iam::service_account::*;
+/// Messaging's rules for which connections a service account signs for.
+pub use fc_platform_messaging::service_account::signing_reach;
+
 pub mod routes;
-pub mod signing_reach;
-
-// Re-export main types
-pub use api::ServiceAccountsState;
 pub use routes::{routes, service_accounts_router};
-pub use entity::{RoleAssignment, ServiceAccount};
-pub use repository::ServiceAccountRepository;

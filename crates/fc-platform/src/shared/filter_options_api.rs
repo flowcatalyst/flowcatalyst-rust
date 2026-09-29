@@ -137,7 +137,7 @@ pub async fn get_event_type_options(
     let mut applications: Vec<FilterOption> = event_types
         .iter()
         .map(|et| et.application.clone())
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .map(|app| FilterOption {
             value: app.clone(),
@@ -150,7 +150,7 @@ pub async fn get_event_type_options(
     let mut subdomains: Vec<FilterOption> = event_types
         .iter()
         .map(|et| et.subdomain.clone())
-        .collect::<std::collections::HashSet<_>>()
+        .collect::<HashSet<_>>()
         .into_iter()
         .map(|sub| FilterOption {
             value: sub.clone(),

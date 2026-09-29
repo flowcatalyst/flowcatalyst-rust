@@ -29,7 +29,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use fc_platform_jwks::clock;
 use fc_platform_jwks::{BearerAuthenticator, JwksKeySource};
+use reqwest::redirect::Policy;
+use std::time::Duration;
 use tracing::debug;
 
 /// Monitoring reads.
@@ -82,19 +85,12 @@ impl PlatformAuth {
             .filter(|u| !u.is_empty())
             .map(|url| {
                 let http = reqwest::Client::builder()
-                    .connect_timeout(std::time::Duration::from_secs(5))
-                    .redirect(reqwest::redirect::Policy::none())
+                    .connect_timeout(Duration::from_secs(5))
+                    .redirect(Policy::none())
                     .build()
                     .unwrap_or_default();
-                let keys = Arc::new(JwksKeySource::new(
-                    http,
-                    url.to_string(),
-                    fc_platform_jwks::clock::system(),
-                ));
-                Arc::new(BearerAuthenticator::new(
-                    keys,
-                    fc_platform_jwks::clock::system(),
-                ))
+                let keys = Arc::new(JwksKeySource::new(http, url.to_string(), clock::system()));
+                Arc::new(BearerAuthenticator::new(keys, clock::system()))
             });
         Self { authenticator }
     }

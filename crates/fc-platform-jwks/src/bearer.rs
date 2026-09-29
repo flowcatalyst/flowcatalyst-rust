@@ -14,6 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::clock::SharedClock;
 use crate::jwks::{JwksKeySource, BASE64_URL};
+use crate::permission;
+use fc_function_model::java;
 
 /// `token_use` of a token that identifies a user but grants no API access.
 const TOKEN_USE_IDENTITY: &str = "identity";
@@ -59,7 +61,7 @@ impl TokenClaims {
 
     /// Whether `scope` grants `required` ([`crate::permission::grants`]).
     pub fn grants(&self, required: &str) -> bool {
-        crate::permission::grants(&self.permissions, required)
+        permission::grants(&self.permissions, required)
     }
 }
 
@@ -229,7 +231,7 @@ fn verify(
         return Err("an identity token is not an API credential".to_owned());
     }
     let permissions = match string("scope") {
-        Some(scope) if !fc_function_model::java::is_blank(&scope) => scope
+        Some(scope) if !java::is_blank(&scope) => scope
             .split([' ', '\t', '\n', '\u{000B}', '\u{000C}', '\r'])
             .filter(|p| !p.is_empty())
             .map(str::to_owned)

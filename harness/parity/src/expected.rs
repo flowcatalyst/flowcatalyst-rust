@@ -16,6 +16,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 
 /// The allow-list pointer that accepts Go failing a step's own `expect`.
@@ -48,7 +49,7 @@ impl ExpectedDiffs {
         if !path.exists() {
             return Ok(Self::empty());
         }
-        let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
         let entries: Vec<ExpectedDiff> =
             serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
         Self::from_entries(entries)

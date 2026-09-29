@@ -4,6 +4,11 @@
 //! (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST). The plane's hooks on the shared
 //! reset-token and OIDC routes are mounted by `auth::routes`.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use axum::routing::{delete, get, post};
 use axum::Router;
 use utoipa_axum::router::OpenApiRouter;

@@ -1,6 +1,8 @@
 //! Java `function/FunctionLimits.java` and `function/ClientCeilings.java`,
 //! with the `FC_FN_*` defaults Java reads in `server/Env.java:600-605`.
 
+use std::env;
+
 /// A limit component that is zero or negative. Names the component, as
 /// Java's `IllegalArgumentException` does.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -69,7 +71,7 @@ impl FunctionLimits {
     /// `FC_FN_DEFAULT_MAX_CONCURRENCY`, `FC_FN_DEFAULT_WASM_MEMORY_MB`,
     /// `FC_FN_DEFAULT_DB_POOL_SIZE` and `FC_FN_MAX_WARM_PER_HOST`.
     pub fn from_env() -> Result<FunctionLimits, NonPositiveLimit> {
-        Self::from_lookup(|name| std::env::var(name).ok())
+        Self::from_lookup(|name| env::var(name).ok())
     }
 
     /// As Java's `Env`: an unset or unparseable value (Java's

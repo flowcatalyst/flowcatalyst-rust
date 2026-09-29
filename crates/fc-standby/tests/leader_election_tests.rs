@@ -12,7 +12,10 @@ use fc_standby::{LeaderElection, LeaderElectionConfig};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::redis::Redis;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::OwnedReadHalf;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time;
 
 /// A byte-copying TCP proxy. While `frozen` is set it stops forwarding in
 /// both directions but keeps every socket open — a hung Redis, not a dead
@@ -37,22 +40,18 @@ async fn start_proxy(upstream: String, frozen: Arc<AtomicBool>) -> u16 {
     port
 }
 
-async fn pump(
-    mut from: tokio::net::tcp::OwnedReadHalf,
-    mut to: tokio::net::tcp::OwnedWriteHalf,
-    frozen: Arc<AtomicBool>,
-) {
+async fn pump(mut from: OwnedReadHalf, mut to: OwnedWriteHalf, frozen: Arc<AtomicBool>) {
     let mut buf = vec![0u8; 16 * 1024];
     loop {
         while frozen.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
         let n = match from.read(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(n) => n,
         };
         while frozen.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
         if to.write_all(&buf[..n]).await.is_err() {
             return;
@@ -86,7 +85,7 @@ async fn leader_demotes_when_redis_stops_answering() {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !election.is_leader() {
         assert!(Instant::now() < deadline, "never acquired leadership");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
 
     // Redis hangs: nothing is refused, nothing answers.
@@ -99,7 +98,7 @@ async fn leader_demotes_when_redis_stops_answering() {
              may already belong to another instance",
             frozen_at.elapsed()
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
     // Demoted before the lock could expire in Redis.
     assert!(frozen_at.elapsed() < Duration::from_secs(6));
@@ -113,7 +112,7 @@ async fn leader_demotes_when_redis_stops_answering() {
             Instant::now() < deadline,
             "leadership must be re-acquired once Redis answers again"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
     election.shutdown().await;
 }
@@ -140,12 +139,12 @@ async fn only_one_instance_leads_and_the_holder_keeps_its_lock() {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !a.is_leader() {
         assert!(Instant::now() < deadline);
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
     let b = Arc::new(LeaderElection::new(mk("b")).await.unwrap());
     b.clone().start().await.unwrap();
     for _ in 0..40 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        time::sleep(Duration::from_millis(250)).await;
         assert!(a.is_leader(), "the holder must keep extending its lock");
         assert!(!b.is_leader(), "two leaders at once");
     }

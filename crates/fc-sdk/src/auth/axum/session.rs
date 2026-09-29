@@ -17,6 +17,9 @@ use crate::auth::AuthError;
 
 use super::crypto::SessionCrypto;
 use super::principal::AuthMechanism;
+use serde::de;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 /// Pruned snapshot of the principal carried inside a session. Identical
 /// shape to what [`Principal`](super::Principal) is rebuilt from.
@@ -86,7 +89,7 @@ impl<'de> Deserialize<'de> for AuthMechanism {
         match s.as_str() {
             "bearer" => Ok(AuthMechanism::Bearer),
             "session" => Ok(AuthMechanism::Session),
-            other => Err(serde::de::Error::custom(format!(
+            other => Err(de::Error::custom(format!(
                 "unknown auth mechanism {other:?}"
             ))),
         }
@@ -191,8 +194,8 @@ impl SessionStore for CookieSessionStore {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }
@@ -227,7 +230,6 @@ fn append_set_cookie(headers: &mut HeaderMap, cookie: &Cookie<'_>) {
 /// Sharable handle — auth middleware holds `Arc<dyn SessionStore>` so the
 /// concrete store type is opaque past plugin registration.
 pub type SharedSessionStore = Arc<dyn SessionStore>;
-
 
 #[cfg(test)]
 mod tests {

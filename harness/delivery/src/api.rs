@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
+use reqwest::redirect::Policy;
 use reqwest::Method;
 use serde_json::{json, Value};
 
@@ -44,7 +45,7 @@ impl Api {
             base: base.trim_end_matches('/').to_string(),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(Policy::none())
                 .build()
                 .expect("reqwest client"),
             auth: Auth::None,

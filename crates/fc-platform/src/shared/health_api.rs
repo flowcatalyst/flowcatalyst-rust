@@ -14,6 +14,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -60,7 +62,7 @@ pub struct HealthState {
     pub started_at: DateTime<Utc>,
 
     /// Ready flag (set after initialization complete)
-    pub ready: Arc<std::sync::atomic::AtomicBool>,
+    pub ready: Arc<AtomicBool>,
 }
 
 impl HealthState {
@@ -68,18 +70,18 @@ impl HealthState {
         Self {
             version,
             started_at: Utc::now(),
-            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ready: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Mark the service as ready
     pub fn set_ready(&self) {
-        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ready.store(true, Ordering::SeqCst);
     }
 
     /// Check if the service is ready
     pub fn is_ready(&self) -> bool {
-        self.ready.load(std::sync::atomic::Ordering::SeqCst)
+        self.ready.load(Ordering::SeqCst)
     }
 }
 

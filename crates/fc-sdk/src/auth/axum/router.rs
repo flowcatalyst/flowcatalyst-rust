@@ -3,15 +3,19 @@
 
 use std::sync::Arc;
 
-use axum::{Router, routing::{get, post}};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
-use crate::auth::{TokenValidator, oauth::OAuthClient};
+use crate::auth::{oauth::OAuthClient, TokenValidator};
 
 use super::crypto::SessionCrypto;
-use super::oidc::{OidcState, callback_handler, login_handler, logout_handler};
+use super::oidc::{callback_handler, login_handler, logout_handler, OidcState};
 use super::rbac::RbacCatalogue;
 use super::session::{CookieAttrs, CookieSessionStore, SharedSessionStore};
 use super::state::{AuthRoutes, AuthState};
+use crate::auth::AuthError;
 
 /// Build options for [`auth_router`]. Mirrors `FlowcatalystAuthOptions` from
 /// the TS SDK.
@@ -103,12 +107,12 @@ impl FlowcatalystAuthBuilder {
     ///     ))
     ///     .layer(axum::Extension(state));
     /// ```
-    pub fn build(self) -> Result<(AuthState, Router), crate::auth::AuthError> {
+    pub fn build(self) -> Result<(AuthState, Router), AuthError> {
         let session_store: SharedSessionStore = if let Some(s) = self.session_store {
             s
         } else {
             if self.session_secret.is_empty() {
-                return Err(crate::auth::AuthError::Config(
+                return Err(AuthError::Config(
                     "either `cookie_secret(...)` or `session_store(...)` is required".into(),
                 ));
             }

@@ -14,6 +14,8 @@ use crate::desired::Entry;
 use crate::fingerprint::settings_fingerprint;
 use crate::loader::LoadedFunction;
 use crate::reconciler::{PinnedLoad, Reconciler};
+use tokio::runtime::Handle;
+use tokio::sync;
 
 pub const CAPACITY: usize = 8;
 
@@ -28,7 +30,7 @@ pub struct PinnedVersions {
     reconciler: Arc<Reconciler>,
     /// Least recently used first.
     cache: Mutex<Vec<(Key, Cached)>>,
-    loading: tokio::sync::Mutex<()>,
+    loading: sync::Mutex<()>,
 }
 
 impl PinnedVersions {
@@ -36,7 +38,7 @@ impl PinnedVersions {
         Self {
             reconciler,
             cache: Mutex::new(Vec::new()),
-            loading: tokio::sync::Mutex::new(()),
+            loading: sync::Mutex::new(()),
         }
     }
 
@@ -134,7 +136,7 @@ impl PinnedVersions {
 /// A close waits (bounded) for in-flight calls, so it never runs inline on
 /// a reconcile or a request.
 fn close_later(function: Arc<LoadedFunction>) {
-    match tokio::runtime::Handle::try_current() {
+    match Handle::try_current() {
         Ok(handle) => {
             handle.spawn(async move { function.close().await });
         }

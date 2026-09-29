@@ -29,10 +29,17 @@ use std::time::Instant;
 use deno_core::{op2, JsBuffer, OpState, ToJsBuffer};
 use deno_error::JsErrorBox;
 use fc_fnhost_core::emit::{EmitFailure, Emitter, OutboundEvent};
+use fc_fnhost_core::invoke::InvocationContext;
 use fc_fnhost_core::wasm::egress::{self, Decision, HttpAllowlist};
 use fc_fnhost_core::wasm::output::{GuestLogger, GuestOutput};
 use fc_function_abi::{Caller, FunctionAddress};
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderName;
+use reqwest::header::HeaderValue;
+use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
+use std::error;
+use std::str;
 use tokio::runtime::Handle;
 
 deno_core::extension!(
@@ -198,7 +205,7 @@ pub struct PrincipalOut {
 }
 
 impl ContextOut {
-    pub fn from(context: &fc_fnhost_core::invoke::InvocationContext) -> Self {
+    pub fn from(context: &InvocationContext) -> Self {
         let caller = match &context.caller {
             Caller::Platform => CallerOut::Platform,
             Caller::Anonymous => CallerOut::Anonymous,
@@ -424,15 +431,15 @@ async fn op_fc_fetch(
             ))
         }
     };
-    let mut headers = reqwest::header::HeaderMap::new();
+    let mut headers = HeaderMap::new();
     for (name, value) in &request.headers {
         if HOST_OWNED_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
             continue;
         }
         let bytes: Option<Vec<u8>> = value.chars().map(|c| u8::try_from(c as u32).ok()).collect();
         let (Ok(name), Some(Ok(value))) = (
-            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
-            bytes.map(|b| reqwest::header::HeaderValue::from_bytes(&b)),
+            HeaderName::from_bytes(name.as_bytes()),
+            bytes.map(|b| HeaderValue::from_bytes(&b)),
         ) else {
             return Ok(FetchOut::failed(
                 "HTTP-request-header-invalid",
@@ -512,7 +519,7 @@ fn failure(e: &reqwest::Error) -> FetchOut {
         "internal-error"
     };
     let mut message = e.to_string();
-    let mut source = std::error::Error::source(e);
+    let mut source = error::Error::source(e);
     while let Some(cause) = source {
         message.push_str(": ");
         message.push_str(&cause.to_string());
@@ -526,7 +533,7 @@ fn failure(e: &reqwest::Error) -> FetchOut {
 /// rustls with the web PKI roots.
 pub fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(Policy::none())
         .no_proxy()
         .build()
         .map_err(|e| format!("the outbound HTTP client did not build: {e}"))
@@ -613,5 +620,5 @@ fn op_fc_url_set(
 
 #[op2(fast)]
 fn op_fc_utf8_valid(#[buffer] bytes: &[u8]) -> bool {
-    std::str::from_utf8(bytes).is_ok()
+    str::from_utf8(bytes).is_ok()
 }

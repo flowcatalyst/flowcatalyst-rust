@@ -16,18 +16,27 @@
 //!   started meanwhile refuses at once ("could not lock …/epg-lock"), and a
 //!   Java fcdev already running is named by its PID.
 
+use crate::dev_paths;
 use anyhow::{bail, Context, Result};
+use std::fs;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io;
+use std::io::ErrorKind;
+use std::mem;
 use std::path::{Path, PathBuf};
+use std::process;
+use std::process::Command;
 
 /// Go `readPIDFile`: the PID recorded at `path`, `None` when there is none.
 pub fn read_pid_file(path: &Path) -> Result<Option<u32>> {
-    match std::fs::read_to_string(path) {
+    match fs::read_to_string(path) {
         Ok(s) => s
             .trim()
             .parse::<u32>()
             .map(Some)
             .with_context(|| format!("malformed pid file {}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("read pid file {}", path.display())),
     }
 }
@@ -35,9 +44,9 @@ pub fn read_pid_file(path: &Path) -> Result<Option<u32>> {
 /// Go `writePIDFile`: `<pid>\n`, parent directories created, mode 0600.
 pub fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).context("create pid dir")?;
+        fs::create_dir_all(parent).context("create pid dir")?;
     }
-    crate::dev_paths::write_private(path, format!("{pid}\n").as_bytes())
+    dev_paths::write_private(path, format!("{pid}\n").as_bytes())
         .with_context(|| format!("write pid file {}", path.display()))
 }
 
@@ -45,7 +54,7 @@ pub fn write_pid_file(path: &Path, pid: u32) -> Result<()> {
 pub fn remove_pid_file_if_owned(path: &Path, pid: u32) {
     if let Ok(Some(cur)) = read_pid_file(path) {
         if cur == pid {
-            let _ = std::fs::remove_file(path);
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -60,7 +69,7 @@ pub fn process_alive(pid: u32) -> bool {
     // SAFETY: kill(2) with signal 0 performs only the existence and
     // permission check; it delivers nothing.
     let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    rc == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(not(unix))]
@@ -75,7 +84,7 @@ pub fn process_alive(_pid: u32) -> bool {
 pub fn process_command(pid: u32) -> Option<String> {
     #[cfg(unix)]
     {
-        let out = std::process::Command::new("ps")
+        let out = Command::new("ps")
             .args(["-o", "command=", "-p", &pid.to_string()])
             .output()
             .ok()?;
@@ -141,7 +150,7 @@ impl Drop for PidFileGuard {
 /// this process in it. Failing to write the file is a warning, as in Go
 /// (DEV-2): `stop` then can't find this instance, nothing else breaks.
 pub fn claim_pid_file(path: &Path) -> Result<Option<PidFileGuard>> {
-    let me = std::process::id();
+    let me = process::id();
     if let Some(pid) = read_pid_file(path).unwrap_or(None) {
         if pid != me && process_alive(pid) {
             let command = process_command(pid);
@@ -198,7 +207,7 @@ pub fn parse_postmaster_pid(contents: &str) -> Option<RunningPostmaster> {
 /// The postmaster currently serving `cluster_dir`, if any (a stale file
 /// whose PID is gone is ignored — PostgreSQL replaces it on start).
 pub fn running_postmaster(cluster_dir: &Path) -> Option<RunningPostmaster> {
-    let contents = std::fs::read_to_string(cluster_dir.join("postmaster.pid")).ok()?;
+    let contents = fs::read_to_string(cluster_dir.join("postmaster.pid")).ok()?;
     let pm = parse_postmaster_pid(&contents)?;
     process_alive(pm.pid).then_some(pm)
 }
@@ -212,7 +221,7 @@ pub fn describe_cluster_owner(pid_file: &Path, pm: &RunningPostmaster) -> String
         pm.port.map(|p| format!(" on port {p}")).unwrap_or_default()
     );
     if let Ok(Some(pid)) = read_pid_file(pid_file) {
-        if pid != std::process::id() && process_alive(pid) {
+        if pid != process::id() && process_alive(pid) {
             let cmd = process_command(pid);
             let what = cmd.as_deref().map(describe).unwrap_or("an fcdev");
             s.push_str(&format!(", started by {what} (pid {pid})"));
@@ -226,7 +235,7 @@ pub fn describe_cluster_owner(pid_file: &Path, pm: &RunningPostmaster) -> String
 /// the process dies.
 pub struct ClusterLock {
     #[allow(dead_code)]
-    file: std::fs::File,
+    file: File,
 }
 
 /// Take the `epg-lock` lock, or say who holds it.
@@ -235,7 +244,7 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
     use std::os::unix::io::AsRawFd;
 
     let path = cluster_dir.join("epg-lock");
-    let file = std::fs::OpenOptions::new()
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -244,7 +253,7 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
         .with_context(|| format!("open {}", path.display()))?;
     // Java's `FileChannel.tryLock()`: an exclusive lock over the whole file.
     // SAFETY: a zeroed flock is a valid "whole file from offset 0" request.
-    let mut fl: libc::flock = unsafe { std::mem::zeroed() };
+    let mut fl: libc::flock = unsafe { mem::zeroed() };
     fl.l_type = libc::F_WRLCK as _;
     fl.l_whence = libc::SEEK_SET as _;
     // SAFETY: fcntl on an fd we own with a valid flock pointer.
@@ -252,9 +261,9 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
     if rc == 0 {
         return Ok(ClusterLock { file });
     }
-    let err = std::io::Error::last_os_error();
+    let err = io::Error::last_os_error();
     // F_GETLK reports the holder's PID.
-    let mut probe: libc::flock = unsafe { std::mem::zeroed() };
+    let mut probe: libc::flock = unsafe { mem::zeroed() };
     probe.l_type = libc::F_WRLCK as _;
     probe.l_whence = libc::SEEK_SET as _;
     // SAFETY: as above.
@@ -295,13 +304,18 @@ pub fn lock_cluster(cluster_dir: &Path) -> Result<ClusterLock> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process;
+    use std::process::Command;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn pid_file_round_trips_in_gos_format() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sub").join("fcdev.pid");
         write_pid_file(&path, 4242).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "4242\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "4242\n");
         assert_eq!(read_pid_file(&path).unwrap(), Some(4242));
         remove_pid_file_if_owned(&path, 1);
         assert!(path.exists(), "someone else's pid file is left alone");
@@ -315,9 +329,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fcdev.pid");
         // PID 0 is never a live process.
-        std::fs::write(&path, "0\n").unwrap();
+        fs::write(&path, "0\n").unwrap();
         let guard = claim_pid_file(&path).unwrap().expect("written");
-        assert_eq!(read_pid_file(&path).unwrap(), Some(std::process::id()));
+        assert_eq!(read_pid_file(&path).unwrap(), Some(process::id()));
         drop(guard);
         assert!(!path.exists());
     }
@@ -329,11 +343,11 @@ mod tests {
         let path = dir.path().join("fcdev.pid");
         // This test binary is alive; its command line holds "fc_dev".
         // Spawn a process whose command contains "fcdev" instead.
-        let mut child = std::process::Command::new("sh")
+        let mut child = Command::new("sh")
             .args(["-c", "exec -a fcdev sleep 30 || sleep 30"])
             .spawn()
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(200));
         write_pid_file(&path, child.id()).unwrap();
         let cmd = process_command(child.id());
         let result = claim_pid_file(&path);
@@ -386,10 +400,7 @@ mod tests {
              exit(fcntl($f, F_SETLK, $fl) ? 0 : 1);",
             dir.path().join("epg-lock").display()
         );
-        if let Ok(status) = std::process::Command::new("perl")
-            .args(["-e", &script])
-            .status()
-        {
+        if let Ok(status) = Command::new("perl").args(["-e", &script]).status() {
             // 1 = refused; 0 would mean the lock is not held.
             assert_eq!(status.code(), Some(1), "second process got the lock");
         }

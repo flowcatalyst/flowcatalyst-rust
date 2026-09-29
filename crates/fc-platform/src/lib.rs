@@ -1,13 +1,21 @@
-//! FlowCatalyst Platform
+//! FlowCatalyst Platform: the assembly crate.
 //!
-//! Core platform providing:
-//! - Event management (CloudEvents spec)
-//! - Event type definitions with schema versioning
-//! - Dispatch job lifecycle management
-//! - Subscription-based event routing
-//! - Multi-tenant identity and access control
-//! - Service account management for webhooks
-//! - Use Case pattern with guaranteed audit logging
+//! The platform is split into crates (docs/plans/build-speed-2026-09-28.md,
+//! section 6), each keeping its modules at their historical paths:
+//!
+//! - `fc-platform-core`: `usecase`, the kernel half of `shared` (errors,
+//!   ids, the authorization context and checks, middleware, database,
+//!   encryption, email, rate limiting), the permission catalogue;
+//! - `fc-platform-iam`: tenancy, identity and access, and (until they move
+//!   to their own crates) the sign-in flows and messaging;
+//! - `fc-platform-scheduled-jobs`: `scheduled_job`;
+//! - `fc-platform-functions`: `function`.
+//!
+//! This crate re-exports every module at `fc_platform::<module>` and adds
+//! what assembles them: each aggregate's `routes.rs` (wiring: it builds the
+//! states and use cases from the `PlatformContext`), `router`, the
+//! `PlatformContext` and server setup, the OpenAPI documents, the startup
+//! seeding, and the cross-aggregate endpoints in `shared`.
 //!
 //! ## Module Organization (Aggregate-based)
 //!
@@ -16,11 +24,12 @@
 //! - `repository` - Data access
 //! - `api` - REST endpoints
 //! - `operations` - Use case operations (where applicable)
+//! - `routes` - its routes (here, in the assembly)
 
 // Core aggregates
 pub mod app_docs;
 pub mod application;
-pub mod application_openapi_spec;
+pub use fc_platform_iam::application_openapi_spec;
 pub mod client;
 pub mod principal;
 pub mod role;
@@ -50,7 +59,7 @@ pub mod cors;
 pub mod email_domain_mapping;
 pub mod identity_provider;
 pub mod login_attempt;
-pub mod password_reset;
+pub use fc_platform_iam::password_reset;
 pub mod platform_config;
 pub mod portal;
 
@@ -58,11 +67,20 @@ pub mod portal;
 pub mod shared;
 
 // Cross-cutting concerns
-pub mod seed;
-pub mod usecase;
+/// The principal kinds an `AuthContext` carries (fc-platform-core).
+pub use fc_platform_core::principal_kind;
+/// The use-case contract and the unit of work (fc-platform-core).
+pub use fc_platform_core::usecase;
+pub use fc_platform_core::{details, impl_domain_event};
+pub use fc_platform_messaging::seed;
+
+// Unit tests of the lower crates' code that exercise it with the platform's
+// aggregates (they can't live in the crate that defines the code).
+#[cfg(test)]
+mod split_tests;
 
 // Dispatch scheduler (polls PENDING jobs → queue → router → webhook)
-pub mod scheduler;
+pub use fc_platform_messaging::scheduler;
 
 // Centralized router builder
 pub mod router;
@@ -76,7 +94,8 @@ pub use usecase::{
     Committed, DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, UnitOfWork,
     UseCaseError, UseCaseResult,
 };
-// Note: impl_domain_event! macro is automatically exported at crate root via #[macro_export]
+// Note: impl_domain_event! and details! are fc-platform-core's
+// `#[macro_export]` macros, re-exported above.
 
 // Re-export main entity types for convenience
 pub use application::client_config::ApplicationClientConfig;
@@ -206,6 +225,14 @@ pub mod repository {
     pub use crate::service_account::repository::ServiceAccountRepository;
     pub use crate::subscription::repository::SubscriptionRepository;
 
+    use crate::function::domain_repository::FunctionDomainRepository;
+    use crate::function::host_repository::FunctionHostRepository;
+    use crate::function::operations::TriggerSyncRepositories;
+    use crate::function::policy_repository::ClientPolicyRepository;
+    use crate::function::repository::FunctionRepository;
+    use crate::function::route_repository::FunctionRouteRepository;
+    use crate::function::trigger_object_repository::TriggerObjectRepository;
+    use crate::function::version_repository::FunctionVersionRepository;
     use sqlx::PgPool;
     use std::sync::Arc;
 
@@ -252,19 +279,32 @@ pub mod repository {
         pub pending_auth_repo: Arc<PendingAuthRepository>,
         // The function registry. Its settings repository needs the app key,
         // so the route setup builds that one itself.
-        pub function_repo: Arc<crate::function::repository::FunctionRepository>,
-        pub function_version_repo:
-            Arc<crate::function::version_repository::FunctionVersionRepository>,
-        pub function_host_repo: Arc<crate::function::host_repository::FunctionHostRepository>,
-        pub function_policy_repo: Arc<crate::function::policy_repository::ClientPolicyRepository>,
-        pub function_domain_repo: Arc<crate::function::domain_repository::FunctionDomainRepository>,
-        pub function_route_repo: Arc<crate::function::route_repository::FunctionRouteRepository>,
-        pub function_trigger_object_repo:
-            Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
+        pub function_repo: Arc<FunctionRepository>,
+        pub function_version_repo: Arc<FunctionVersionRepository>,
+        pub function_host_repo: Arc<FunctionHostRepository>,
+        pub function_policy_repo: Arc<ClientPolicyRepository>,
+        pub function_domain_repo: Arc<FunctionDomainRepository>,
+        pub function_route_repo: Arc<FunctionRouteRepository>,
+        pub function_trigger_object_repo: Arc<TriggerObjectRepository>,
         /// Raw pool — exposed so callers (e.g. the BFF dashboard stats
         /// endpoint) can run ad-hoc queries that don't fit a single
         /// repository. Cloning is cheap; sqlx already Arcs internally.
         pub pool: PgPool,
+    }
+
+    impl From<&Repositories> for TriggerSyncRepositories {
+        fn from(repos: &Repositories) -> Self {
+            Self {
+                subscriptions: repos.subscription_repo.clone(),
+                pools: repos.dispatch_pool_repo.clone(),
+                jobs: repos.scheduled_job_repo.clone(),
+                trigger_objects: repos.function_trigger_object_repo.clone(),
+                applications: repos.application_repo.clone(),
+                versions: repos.function_version_repo.clone(),
+                functions: repos.function_repo.clone(),
+                routes: repos.function_route_repo.clone(),
+            }
+        }
     }
 
     impl Repositories {
@@ -304,25 +344,13 @@ pub mod repository {
                 idp_repo: Arc::new(IdentityProviderRepository::new(pool)),
                 edm_repo: Arc::new(EmailDomainMappingRepository::new(pool)),
                 pending_auth_repo: Arc::new(PendingAuthRepository::new(pool)),
-                function_repo: Arc::new(crate::function::repository::FunctionRepository::new(pool)),
-                function_version_repo: Arc::new(
-                    crate::function::version_repository::FunctionVersionRepository::new(pool),
-                ),
-                function_host_repo: Arc::new(
-                    crate::function::host_repository::FunctionHostRepository::new(pool),
-                ),
-                function_policy_repo: Arc::new(
-                    crate::function::policy_repository::ClientPolicyRepository::new(pool),
-                ),
-                function_domain_repo: Arc::new(
-                    crate::function::domain_repository::FunctionDomainRepository::new(pool),
-                ),
-                function_route_repo: Arc::new(
-                    crate::function::route_repository::FunctionRouteRepository::new(pool),
-                ),
-                function_trigger_object_repo: Arc::new(
-                    crate::function::trigger_object_repository::TriggerObjectRepository::new(pool),
-                ),
+                function_repo: Arc::new(FunctionRepository::new(pool)),
+                function_version_repo: Arc::new(FunctionVersionRepository::new(pool)),
+                function_host_repo: Arc::new(FunctionHostRepository::new(pool)),
+                function_policy_repo: Arc::new(ClientPolicyRepository::new(pool)),
+                function_domain_repo: Arc::new(FunctionDomainRepository::new(pool)),
+                function_route_repo: Arc::new(FunctionRouteRepository::new(pool)),
+                function_trigger_object_repo: Arc::new(TriggerObjectRepository::new(pool)),
                 pool: pool.clone(),
             }
         }
@@ -393,12 +421,17 @@ pub mod api {
     pub use crate::subscription::routes::subscriptions_router;
 
     // New domain APIs
+    pub use crate::audit::routes::sdk_audit_batch_router;
     pub use crate::connection::api::ConnectionsState;
     pub use crate::connection::routes::connections_router;
     pub use crate::cors::api::CorsState;
     pub use crate::cors::routes::cors_router;
+    pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
     pub use crate::email_domain_mapping::api::EmailDomainMappingsState;
     pub use crate::email_domain_mapping::routes::email_domain_mappings_router;
+    pub use crate::event::routes::sdk_events_batch_router;
+    pub use crate::event_type::bff::BffEventTypesState;
+    pub use crate::event_type::routes::bff_event_types_router;
     pub use crate::identity_provider::api::IdentityProvidersState;
     pub use crate::identity_provider::routes::identity_providers_router;
     pub use crate::login_attempt::api::LoginAttemptsState;
@@ -406,27 +439,22 @@ pub mod api {
     pub use crate::platform_config::access_api::ConfigAccessState;
     pub use crate::platform_config::api::PlatformConfigState;
     pub use crate::platform_config::routes::{admin_platform_config_router, config_access_router};
-    pub use crate::event::routes::sdk_events_batch_router;
+    pub use crate::role::bff::BffRolesState;
+    pub use crate::role::routes::bff_roles_router;
+    pub use crate::scheduled_job::bff::BffScheduledJobsState;
+    pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
     pub use crate::shared::batch_api::SdkEventsState;
     pub use crate::shared::bff_dashboard_api::BffDashboardState;
-    pub use crate::shared::routes::bff_dashboard_router;
-    pub use crate::event_type::routes::bff_event_types_router;
-    pub use crate::event_type::bff::BffEventTypesState;
-    pub use crate::role::routes::bff_roles_router;
-    pub use crate::role::bff::BffRolesState;
-    pub use crate::scheduled_job::routes::bff_scheduled_jobs_router;
-    pub use crate::scheduled_job::bff::BffScheduledJobsState;
     pub use crate::shared::dispatch_process_api::DispatchProcessState;
-    pub use crate::shared::routes::dispatch_process_router;
     pub use crate::shared::me_api::MeState;
-    pub use crate::shared::routes::me_router;
     pub use crate::shared::public_api::PublicApiState;
+    pub use crate::shared::routes::bff_dashboard_router;
+    pub use crate::shared::routes::dispatch_process_router;
+    pub use crate::shared::routes::me_router;
     pub use crate::shared::routes::public_router;
-    pub use crate::audit::routes::sdk_audit_batch_router;
-    pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
-    pub use crate::dispatch_job::routes::sdk_dispatch_jobs_batch_router;
-    pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
     pub use crate::shared::routes::sdk_sync_router;
+    pub use crate::shared::sdk_audit_batch_api::SdkAuditBatchState;
+    pub use crate::shared::sdk_dispatch_jobs_api::SdkDispatchJobsState;
     pub use crate::shared::sdk_sync_api::SdkSyncState;
 
     // Shared APIs

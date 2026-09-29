@@ -23,6 +23,9 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::scenario::{ReceiverScript, ScriptedResponse};
+use axum::body::Body;
+use tokio::net::TcpListener;
+use tokio::time;
 
 /// One request the receiver saw.
 #[derive(Debug, Clone, Serialize)]
@@ -86,7 +89,7 @@ impl Receiver {
             .route("/health", any(|| async { "ok" }))
             .route("/router-config", any(router_config))
             .with_state(receiver.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
@@ -233,11 +236,11 @@ async fn handle(
     };
 
     if let Some(ms) = response.delay_ms {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
+        time::sleep(Duration::from_millis(ms)).await;
     }
     if response.hang {
         // Never answer; the caller's own timeout ends the exchange.
-        tokio::time::sleep(Duration::from_secs(3600)).await;
+        time::sleep(Duration::from_secs(3600)).await;
     }
     // Still here: the caller is still waiting (hyper drops this future when
     // the connection closes), so the answer goes out.
@@ -261,10 +264,10 @@ async fn handle(
     match &response.body {
         Some(b) => builder
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(b.to_string()))
+            .body(Body::from(b.to_string()))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
         None => builder
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
     }
 }

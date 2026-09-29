@@ -16,6 +16,7 @@ use crate::Result;
 use futures::future;
 
 use super::{PoolState, QueueManager};
+use std::sync::atomic::Ordering;
 
 /// Every field of a queue's config matters: a changed URI points at a
 /// different queue, and connections / visibility timeout are fixed when the
@@ -81,11 +82,7 @@ impl QueueManager {
     /// change. A pool is only ever torn down when its code drops out of the
     /// new config entirely (the "removed pools" branch).
     pub async fn reload_config(self: &Arc<Self>, config: RouterConfig) -> Result<bool> {
-        if !self.running.load(std::sync::atomic::Ordering::SeqCst)
-            || self
-                .polling_stopped
-                .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if !self.running.load(Ordering::SeqCst) || self.polling_stopped.load(Ordering::SeqCst) {
             warn!("Cannot reload config - QueueManager is shutting down");
             return Ok(false);
         }
@@ -472,9 +469,7 @@ impl QueueManager {
         }
 
         if !failures.is_empty() {
-            return Err(crate::error::RouterError::ConsumerBuild(
-                failures.join("; "),
-            ));
+            return Err(RouterError::ConsumerBuild(failures.join("; ")));
         }
         Ok((queues_created, queues_removed))
     }

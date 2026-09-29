@@ -9,9 +9,12 @@ use crate::sqlite::SqliteOutboxRepository;
 use crate::GroupStatus;
 use async_trait::async_trait;
 use fc_common::{OutboxItem, OutboxStatus};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use tokio::time;
 
 type Script = Box<dyn Fn(&OutboxItem) -> DispatchOutcome + Send + Sync>;
 
@@ -87,7 +90,7 @@ async fn settle(p: &EnhancedOutboxProcessor) {
         if p.in_flight_count() == 0 && p.distributor_stats().active_groups == 0 {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
     panic!("processor did not settle");
 }
@@ -157,7 +160,7 @@ async fn a_row_is_not_deleted_before_the_platform_answers() {
     add(&repo, "u1", "EVENT", None, 2).await;
 
     p.poll_once().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     // In flight: claimed, still in the table.
     assert_eq!(row(&repo, "g1").await.unwrap().0, 9);
     assert_eq!(row(&repo, "u1").await.unwrap().0, 9);
@@ -502,11 +505,11 @@ async fn start_polls_until_stopped() {
         if row(&repo, "e1").await.is_none() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(row(&repo, "e1").await, None);
     p.stop();
-    tokio::time::timeout(Duration::from_secs(2), runner)
+    time::timeout(Duration::from_secs(2), runner)
         .await
         .unwrap()
         .unwrap();
@@ -518,10 +521,10 @@ async fn start_polls_until_stopped() {
 /// stays held in memory, and once recovery returns the row it is sent.
 #[tokio::test]
 async fn a_panicking_send_does_not_strand_its_group() {
-    let panics = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let panics = Arc::new(AtomicBool::new(true));
     let armed = panics.clone();
     let platform = Platform::new(move |item| {
-        if item.id == "g1" && armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if item.id == "g1" && armed.swap(false, Ordering::SeqCst) {
             panic!("dispatcher bug");
         }
         DispatchOutcome::success()
@@ -571,7 +574,7 @@ async fn shutdown_releases_what_the_groups_hold() {
     add(&repo, "g3", "EVENT", Some("g"), 3).await;
 
     p.poll_once().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    time::sleep(Duration::from_millis(50)).await;
     // g1 is being sent (held at the gate); g2 and g3 wait behind it.
     assert_eq!(p.shutdown().await, 2);
     assert_eq!(row(&repo, "g2").await.unwrap().0, 0);

@@ -74,6 +74,7 @@ fn encode(value: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn thirteen_crockford_characters() {
@@ -88,7 +89,7 @@ mod tests {
         let mut sorted = ids.clone();
         sorted.sort();
         assert_eq!(ids, sorted);
-        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        let unique: HashSet<_> = ids.iter().collect();
         assert_eq!(unique.len(), ids.len());
     }
 

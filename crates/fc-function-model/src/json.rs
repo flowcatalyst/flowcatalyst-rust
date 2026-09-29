@@ -15,6 +15,8 @@ use std::fmt;
 
 use indexmap::IndexMap;
 use serde::de::Error as _;
+use serde::ser;
+use serde_json::value::RawValue;
 
 /// A JSON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -195,8 +197,8 @@ impl serde::Serialize for JsonNode {
                 } else if let Ok(n) = text.parse::<u64>() {
                     serializer.serialize_u64(n)
                 } else {
-                    serde_json::value::RawValue::from_string(text.clone())
-                        .map_err(serde::ser::Error::custom)?
+                    RawValue::from_string(text.clone())
+                        .map_err(ser::Error::custom)?
                         .serialize(serializer)
                 }
             }
@@ -223,7 +225,7 @@ impl serde::Serialize for JsonNode {
 /// request DTO. Only works through `serde_json`, like `RawValue` itself.
 impl<'de> serde::Deserialize<'de> for JsonNode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
         JsonNode::parse(raw.get()).map_err(D::Error::custom)
     }
 }

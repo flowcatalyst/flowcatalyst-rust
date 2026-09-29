@@ -16,6 +16,13 @@ use fc_common::{
 };
 use fc_queue::QueueConsumer;
 use fc_router::{Mediator, QueueManager};
+use std::future;
+use std::io;
+use std::io::Write;
+use tokio::time;
+use tracing::subscriber;
+use tracing_subscriber::fmt;
+use tracing_subscriber::fmt::MakeWriter;
 
 // ── Doubles ────────────────────────────────────────────────────────────────
 
@@ -28,7 +35,7 @@ struct ByName;
 impl Mediator for ByName {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
         if message.id.starts_with("hang") {
-            std::future::pending::<()>().await;
+            future::pending::<()>().await;
         }
         if message.id.starts_with("log") {
             tracing::warn!(status = 418, "target answered oddly");
@@ -52,7 +59,7 @@ impl QueueConsumer for Consumer {
         "q1"
     }
     async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
-        std::future::pending().await
+        future::pending().await
     }
     async fn ack(&self, receipt: &str) -> fc_queue::Result<()> {
         self.acked.lock().unwrap().push(receipt.to_string());
@@ -121,7 +128,7 @@ async fn eventually(what: &str, mut f: impl FnMut() -> bool) {
         if f() {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for {what}");
 }
@@ -131,17 +138,17 @@ async fn eventually(what: &str, mut f: impl FnMut() -> bool) {
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for Capture {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(buf);
         Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+impl<'a> MakeWriter<'a> for Capture {
     type Writer = Capture;
     fn make_writer(&'a self) -> Capture {
         self.clone()
@@ -155,7 +162,7 @@ async fn lines_logged_inside_a_delivery_carry_the_message_id() {
     use tracing_subscriber::layer::SubscriberExt;
     let capture = Capture::default();
     let subscriber = tracing_subscriber::registry().with(
-        tracing_subscriber::fmt::layer()
+        fmt::layer()
             .json()
             .with_current_span(true)
             .with_span_list(true)
@@ -164,7 +171,7 @@ async fn lines_logged_inside_a_delivery_carry_the_message_id() {
     );
     // Current-thread runtime: every task runs on this thread, under this
     // subscriber.
-    let _default = tracing::subscriber::set_default(subscriber);
+    let _default = subscriber::set_default(subscriber);
 
     let manager = manager(4).await;
     let consumer = Arc::new(Consumer::default());

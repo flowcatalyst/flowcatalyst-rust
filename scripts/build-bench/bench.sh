@@ -8,6 +8,10 @@
 #   bench.sh cold-check <pkg>                 # rm -rf target/debug, then check
 #   bench.sh cold-build <pkg>                 # rm -rf target/debug, then build
 #   bench.sh cold-test <test>                 # rm -rf target/debug, then build one fc-platform test
+#
+# <test> is a test binary (`route_table_snapshot_test`), or `<binary>:<filter>`
+# for some tests of one: `it:scheduled_job_cron_golden_test::` builds the
+# merged `tests/it` binary and runs only that module's tests.
 #   bench.sh incr-check <file> <pkg> [runs]   # edit <file>, check <pkg>
 #   bench.sh incr-build <file> <pkg> [runs]   # edit <file>, build <pkg>
 #   bench.sh test-one <file> <test> [runs]    # edit <file>, build + run one test binary
@@ -97,7 +101,7 @@ edit() { # edit <file> <n>: put a fresh comment line on top of the pristine file
   { echo "// build-bench edit $(date +%s)-$n"; cat "$EDIT_BACKUP"; } >"$file"
 }
 
-latest_timing() { ls -t "$TARGET_DIR"/cargo-timings/cargo-timing-2*.html 2>/dev/null | head -1; }
+latest_timing() { ls -t "$TARGET_DIR"/cargo-timings/cargo-timing-2*.html 2>/dev/null | head -1 || true; }
 
 # run_cargo <scenario> <subject> <run> <cargo args...>
 LAST_WALL=0 LAST_LINK=0 LAST_LINKS=0 LAST_LOG=""
@@ -141,6 +145,10 @@ record() {
   echo "bench: $LABEL $1 $2 run $3: cargo ${LAST_CARGO}s (wall ${LAST_WALL}s, cpu ${LAST_CPU}s) link ${LAST_LINK}s (${LAST_LINKS} links) run ${4}s load ${LAST_LOAD_BEFORE}"
 }
 
+# test_bin <test> / test_filter <test>: the binary and the filter of a spec.
+test_bin() { echo "${1%%:*}"; }
+test_filter() { case "$1" in *:*) echo "${1#*:}" ;; *) echo "" ;; esac; }
+
 scenario="${1:-}"
 shift || true
 case "$scenario" in
@@ -159,7 +167,7 @@ cold-build)
 cold-test)
   test="$1"
   rm -rf "$TARGET_DIR/debug"
-  run_cargo cold-test "$test" 1 test -p fc-platform --test "$test" --no-run
+  run_cargo cold-test "$test" 1 test -p fc-platform --test "$(test_bin "$test")" --no-run
   record cold-test "$test" 1 "" ""
   ;;
 incr-check | incr-build)
@@ -174,14 +182,15 @@ incr-check | incr-build)
   ;;
 test-one)
   file="$1" test="$2" runs="${3:-3}"
-  run_cargo warmup "$test" 0 test -p fc-platform --test "$test" --no-run
+  bin="$(test_bin "$test")" filter="$(test_filter "$test")"
+  run_cargo warmup "$test" 0 test -p fc-platform --test "$bin" --no-run
   for n in $(seq 1 "$runs"); do
     edit "$file" "$n"
-    run_cargo test-one "$test" "$n" test -p fc-platform --test "$test" --no-run
+    run_cargo test-one "$test" "$n" test -p fc-platform --test "$bin" --no-run
     exe="$(sed -n 's/.*Executable .*(\(.*\))$/\1/p' "$LAST_LOG" | tail -1)"
     r0="$(now)"
     case "$exe" in /*) ;; *) exe="$ROOT/$exe" ;; esac
-    (cd "$ROOT/crates/fc-platform" && "$exe" -q >/dev/null) || { echo "bench: test failed" >&2; exit 1; }
+    (cd "$ROOT/crates/fc-platform" && "$exe" -q $filter >/dev/null) || { echo "bench: test failed" >&2; exit 1; }
     r1="$(now)"
     record test-one "$(basename "$file")->$test" "$n" "$(echo "$r1 - $r0" | bc)" ""
   done

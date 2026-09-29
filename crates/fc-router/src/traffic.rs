@@ -13,8 +13,14 @@
 
 use async_trait::async_trait;
 #[cfg(feature = "alb")]
+use aws_sdk_elasticloadbalancingv2::types::TargetDescription;
+#[cfg(feature = "alb")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::watch::Receiver;
+use tokio::task::JoinHandle;
+#[cfg(feature = "alb")]
+use tokio::time;
 #[cfg(not(feature = "alb"))]
 use tracing::{debug, error, info};
 #[cfg(feature = "alb")]
@@ -105,8 +111,8 @@ impl AwsAlbTrafficStrategy {
     }
 
     /// Build a target description for AWS API calls.
-    fn target_description(&self) -> aws_sdk_elasticloadbalancingv2::types::TargetDescription {
-        aws_sdk_elasticloadbalancingv2::types::TargetDescription::builder()
+    fn target_description(&self) -> TargetDescription {
+        TargetDescription::builder()
             .id(&self.config.target_id)
             .port(self.config.target_port)
             .build()
@@ -171,7 +177,7 @@ impl AwsAlbTrafficStrategy {
                 poll_interval.as_secs()
             );
 
-            tokio::time::sleep(poll_interval).await;
+            time::sleep(poll_interval).await;
         }
     }
 }
@@ -277,8 +283,8 @@ impl TrafficStrategy for AwsAlbTrafficStrategy {
 /// **Joined by:** the caller via the returned `JoinHandle`.
 pub fn spawn_traffic_watcher(
     strategy: Arc<dyn TrafficStrategy>,
-    mut status_rx: tokio::sync::watch::Receiver<fc_standby::LeadershipStatus>,
-) -> tokio::task::JoinHandle<()> {
+    mut status_rx: Receiver<fc_standby::LeadershipStatus>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         info!(
             strategy_type = strategy.strategy_type(),

@@ -5,6 +5,12 @@
 //! - OIDC with full JWT validation (signature, issuer, audience, expiration)
 //! - No authentication (for development)
 
+#[cfg(feature = "oidc-flow")]
+use crate::api::oidc_flow;
+#[cfg(feature = "oidc-flow")]
+use crate::api::oidc_flow::OidcFlowState;
+use axum::extract::State;
+use axum::response::Redirect;
 use axum::{
     extract::Request,
     http::{header, HeaderName, HeaderValue, StatusCode},
@@ -12,8 +18,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use fc_common::config;
+use jsonwebtoken::errors;
 use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -112,13 +121,11 @@ impl AuthConfig {
     /// here would silently leave auth off for a drop-in deployment. An explicit
     /// `AUTH_MODE=OIDC`/`OIDC_FLOW` still wins over inferred Basic.
     pub fn from_env() -> Self {
-        let basic_username =
-            fc_common::config::env_first_opt(&["FC_ROUTER_AUTH_USER", "AUTH_BASIC_USERNAME"]);
-        let basic_password =
-            fc_common::config::env_first_opt(&["FC_ROUTER_AUTH_PASS", "AUTH_BASIC_PASSWORD"]);
+        let basic_username = config::env_first_opt(&["FC_ROUTER_AUTH_USER", "AUTH_BASIC_USERNAME"]);
+        let basic_password = config::env_first_opt(&["FC_ROUTER_AUTH_PASS", "AUTH_BASIC_PASSWORD"]);
 
         // Trimmed and case-insensitive, as Go's `resolveRouterAuth` reads it.
-        let mode = match std::env::var("AUTH_MODE")
+        let mode = match env::var("AUTH_MODE")
             .ok()
             .as_deref()
             .map(|m| m.trim().to_uppercase())
@@ -142,12 +149,12 @@ impl AuthConfig {
             mode,
             basic_username,
             basic_password,
-            oidc_issuer: std::env::var("OIDC_ISSUER").ok(),
-            oidc_client_id: std::env::var("OIDC_CLIENT_ID").ok(),
-            oidc_audience: std::env::var("OIDC_AUDIENCE").ok(),
-            oidc_client_secret: std::env::var("OIDC_CLIENT_SECRET").ok(),
-            oidc_redirect_uri: std::env::var("OIDC_REDIRECT_URI").ok(),
-            oidc_scopes: std::env::var("OIDC_SCOPES").ok(),
+            oidc_issuer: env::var("OIDC_ISSUER").ok(),
+            oidc_client_id: env::var("OIDC_CLIENT_ID").ok(),
+            oidc_audience: env::var("OIDC_AUDIENCE").ok(),
+            oidc_client_secret: env::var("OIDC_CLIENT_SECRET").ok(),
+            oidc_redirect_uri: env::var("OIDC_REDIRECT_URI").ok(),
+            oidc_scopes: env::var("OIDC_SCOPES").ok(),
         }
     }
 }
@@ -208,16 +215,16 @@ pub enum TokenValidationError {
     DecodingKey {
         kty: &'static str,
         #[source]
-        source: jsonwebtoken::errors::Error,
+        source: errors::Error,
     },
     #[error("Unsupported key type: {0}")]
     UnsupportedKeyType(String),
     #[error("Failed to decode token header: {0}")]
-    Header(#[source] jsonwebtoken::errors::Error),
+    Header(#[source] errors::Error),
     #[error("No matching key found for kid: {0:?}")]
     NoMatchingKey(Option<String>),
     #[error("Token validation failed: {0}")]
-    Invalid(#[source] jsonwebtoken::errors::Error),
+    Invalid(#[source] errors::Error),
 }
 
 impl TokenValidationError {
@@ -361,9 +368,7 @@ impl OidcValidator {
                 .as_deref()
                 .ok_or(TokenValidationError::MissingKeyComponent { kty, component })
         }
-        fn decoding_key(
-            kty: &'static str,
-        ) -> impl FnOnce(jsonwebtoken::errors::Error) -> TokenValidationError {
+        fn decoding_key(kty: &'static str) -> impl FnOnce(errors::Error) -> TokenValidationError {
             move |source| TokenValidationError::DecodingKey { kty, source }
         }
 
@@ -501,7 +506,7 @@ pub struct AuthState {
     pub oidc_validator: Option<Arc<OidcValidator>>,
     /// OIDC flow state (only present when `oidc-flow` feature is enabled and mode is OidcFlow)
     #[cfg(feature = "oidc-flow")]
-    pub oidc_flow_state: Option<Arc<crate::api::oidc_flow::OidcFlowState>>,
+    pub oidc_flow_state: Option<Arc<OidcFlowState>>,
 }
 
 impl AuthState {
@@ -560,14 +565,13 @@ impl AuthState {
                     session_ttl_seconds,
                 };
 
-                let session_store = Arc::new(SessionStore::new(std::time::Duration::from_secs(
-                    session_ttl_seconds,
-                )));
+                let session_store =
+                    Arc::new(SessionStore::new(Duration::from_secs(session_ttl_seconds)));
 
                 let pending_states = Arc::new(PendingOidcStateStore::new());
 
                 let http_client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(30))
+                    .timeout(Duration::from_secs(30))
                     .build()
                     .expect("Failed to create OIDC flow HTTP client");
 
@@ -606,11 +610,7 @@ impl AuthState {
 }
 
 /// Authentication middleware
-pub async fn auth_middleware(
-    state: axum::extract::State<AuthState>,
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn auth_middleware(state: State<AuthState>, request: Request, next: Next) -> Response {
     match state.config.mode {
         AuthMode::None => {
             // No authentication required
@@ -746,9 +746,7 @@ async fn oidc_flow_auth(state: &AuthState, request: Request, next: Next) -> Resp
     #[cfg(feature = "oidc-flow")]
     {
         if let Some(ref flow_state) = state.oidc_flow_state {
-            if let Some(session_id) =
-                crate::api::oidc_flow::extract_session_cookie(request.headers())
-            {
+            if let Some(session_id) = oidc_flow::extract_session_cookie(request.headers()) {
                 if let Some(claims) = flow_state.session_store.get(&session_id) {
                     debug!(
                         sub = %claims.sub,
@@ -819,7 +817,7 @@ async fn oidc_flow_auth(state: &AuthState, request: Request, next: Next) -> Resp
             path = %path,
             "OIDC flow: browser request without session, redirecting to login"
         );
-        return axum::response::Redirect::temporary(&login_url).into_response();
+        return Redirect::temporary(&login_url).into_response();
     }
 
     // 4. API request without valid credentials

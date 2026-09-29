@@ -1,6 +1,11 @@
 //! Process documentation routes: `/api/processes` and `/bff/processes`
 //! (the same handlers on both tiers).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

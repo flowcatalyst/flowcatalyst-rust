@@ -24,8 +24,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+#[cfg(feature = "aws-secrets")]
+use aws_sdk_secretsmanager::error::DisplayErrorContext;
 use sha2::Digest as _;
 use sqlx::postgres::PgConnectOptions;
+#[cfg(feature = "aws-secrets")]
+use std::collections::HashMap;
+#[cfg(feature = "aws-secrets")]
+use tokio::sync::Mutex;
 
 /// The load-failure code for a DSN this host cannot use (Java's).
 pub const DB_UNSUPPORTED: &str = "DB_UNSUPPORTED";
@@ -283,9 +289,7 @@ pub fn pool_id(identity: &str) -> String {
 #[cfg(feature = "aws-secrets")]
 #[derive(Default)]
 pub struct AwsSecretsManager {
-    clients: tokio::sync::Mutex<
-        std::collections::HashMap<Option<String>, aws_sdk_secretsmanager::Client>,
-    >,
+    clients: Mutex<HashMap<Option<String>, aws_sdk_secretsmanager::Client>>,
 }
 
 #[cfg(feature = "aws-secrets")]
@@ -323,12 +327,7 @@ impl SecretResolver for AwsSecretsManager {
             .secret_id(id)
             .send()
             .await
-            .map_err(|e| {
-                format!(
-                    "reading {reference} failed: {}",
-                    aws_sdk_secretsmanager::error::DisplayErrorContext(&e)
-                )
-            })?;
+            .map_err(|e| format!("reading {reference} failed: {}", DisplayErrorContext(&e)))?;
         secret
             .secret_string()
             .map(str::to_owned)

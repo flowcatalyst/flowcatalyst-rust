@@ -26,15 +26,23 @@ use axum::{
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
+use crate::application_openapi_spec::entity::ChangeNotes;
+use crate::application_openapi_spec::entity::OpenApiSpec;
 use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
+use crate::application_openapi_spec::repository::CurrentSpecRef;
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
 use crate::event_type::repository::EventTypeRepository;
+use crate::shared::authorization_service::checks;
 use crate::shared::authorization_service::{ApplicationScope, AuthContext};
 use crate::shared::error::PlatformError;
+use crate::shared::jsonb_text;
 use crate::shared::middleware::Authenticated;
+use crate::usecase::PgUnitOfWork;
 use crate::usecase::{ExecutionContext, UseCase};
 use crate::PrincipalRepository;
+use std::slice;
 
 #[derive(Clone)]
 pub struct BffDeveloperState {
@@ -42,7 +50,7 @@ pub struct BffDeveloperState {
     pub openapi_spec_repo: Arc<OpenApiSpecRepository>,
     pub event_type_repo: Arc<EventTypeRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
-    pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<PgUnitOfWork>>,
     /// The platform's own OpenAPI document, captured at server boot from the
     /// utoipa-generated spec. Refreshed in-place is not needed — the value is
     /// compile-time-derived and constant for a given binary.
@@ -89,7 +97,7 @@ pub struct OpenApiSpecResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub change_notes_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub change_notes: Option<crate::application_openapi_spec::entity::ChangeNotes>,
+    pub change_notes: Option<ChangeNotes>,
     pub synced_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -199,10 +207,7 @@ fn in_reach(reach: &ApplicationScope, app_id: &str) -> Result<(), PlatformError>
     }
 }
 
-fn summary(
-    app: crate::application::entity::Application,
-    current: Option<crate::application_openapi_spec::repository::CurrentSpecRef>,
-) -> DeveloperApplicationSummary {
+fn summary(app: Application, current: Option<CurrentSpecRef>) -> DeveloperApplicationSummary {
     DeveloperApplicationSummary {
         id: app.id,
         code: app.code,
@@ -215,9 +220,7 @@ fn summary(
     }
 }
 
-fn spec_response(
-    spec: crate::application_openapi_spec::entity::OpenApiSpec,
-) -> OpenApiSpecResponse {
+fn spec_response(spec: OpenApiSpec) -> OpenApiSpecResponse {
     OpenApiSpecResponse {
         id: spec.id,
         application_id: spec.application_id,
@@ -273,7 +276,7 @@ pub async fn get_application(
         .ok_or_else(|| PlatformError::not_found("Application", &app_id))?;
     let current = state
         .openapi_spec_repo
-        .find_current_refs_by_applications(std::slice::from_ref(&app.id))
+        .find_current_refs_by_applications(slice::from_ref(&app.id))
         .await?
         .remove(&app.id);
     Ok(Json(summary(app, current)))
@@ -366,10 +369,7 @@ pub async fn list_event_types(
                     // The schema is serialised as a JSON string here to match
                     // the wire shape SchemaViewerDialog expects (it does
                     // `JSON.parse` on a string field).
-                    schema: sv
-                        .schema_content
-                        .as_ref()
-                        .map(crate::shared::jsonb_text::jsonb_text),
+                    schema: sv.schema_content.as_ref().map(jsonb_text::jsonb_text),
                 })
                 .collect();
             DeveloperEventTypeSummary {
@@ -397,7 +397,7 @@ pub async fn sync_platform_openapi(
     State(state): State<BffDeveloperState>,
     auth: Authenticated,
 ) -> Result<Json<SyncPlatformOpenApiResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_platform_openapi(&auth.0)?;
+    checks::can_sync_platform_openapi(&auth.0)?;
 
     let command = SyncOpenApiSpecCommand {
         application_id: state.platform_application_id.clone(),

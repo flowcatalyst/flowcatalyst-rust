@@ -226,7 +226,7 @@ Why not just call the billing service directly with target_mode=WEBHOOK? Because
 ## Code references
 
 - Scheduled-job aggregate: `crates/fc-platform/src/scheduled_job/`.
-- Scheduler service: `crates/fc-platform/src/scheduled_job/scheduler/`.
+- Scheduler service: `crates/fc-platform-scheduled-jobs/src/scheduled_job/scheduler/`.
 - Cron parser: the `croner` crate (DST/timezone-aware).
 - Instance & log tables: `migrations/021_scheduled_jobs.sql`, `migrations/022_partition_scheduled_job_history.sql`, `migrations/024_scheduled_jobs_add_target_url.sql`.
 - Leader-gated start: `bin/fc-server/src/main.rs::spawn_scheduled_job_scheduler`.

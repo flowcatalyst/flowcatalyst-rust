@@ -403,8 +403,8 @@ recorded through the store's `ResourceLimiter`; `limits.maxFuel` stops a guest p
 (`fuel_async_yield_interval`), which is where compiled code writes its register-held count back, so a
 guest stopped at its deadline mid-loop still reports what it spent (to within 10 M).
 
-**Method.** `crates/fc-fnhost-core/tests/wasm_fuel.rs`, `measure_fuel_metering_overhead` (ignored; run in
-release, `cargo test --release -p fc-fnhost-core --test wasm_fuel -- --ignored --nocapture --test-threads 1`).
+**Method.** `crates/fc-fnhost-core/tests/it/wasm_fuel.rs`, `measure_fuel_metering_overhead` (ignored; run in
+release, `cargo test --release -p fc-fnhost-core --test it wasm_fuel:: -- --ignored --nocapture --test-threads 1`).
 Two complete hosts (artifact cache, reconciler, `WasmLoader`, listener) run side by side, one engine with
 `consume_fuel` off and one with it on, and the calls **alternate** between them through the real
 listener (loopback HTTP included), so background load hits both alike. Same machine as §1, but **not**
@@ -472,10 +472,10 @@ delayed ones are held, and everything left is destroyed before the isolate is.
 
 ### 10.2 Method
 
-`crates/fc-fnhost-js/tests/js_density.rs` (ignored tests), release:
+`crates/fc-fnhost-js/tests/it/js_density.rs` (ignored tests), release:
 
 ```
-cargo test --release -p fc-fnhost-js --test js_density -- --ignored --nocapture --test-threads 1
+cargo test --release -p fc-fnhost-js --test it js_density:: -- --ignored --nocapture --test-threads 1
 ```
 
 - *Loaded functions*: N copies of a bundle as distinct warm functions in one host (`limits.wasmMemoryMb` 32), memory
@@ -565,7 +565,7 @@ shared with other builds; indicative only):
 | JS `invoke` in process, c=1, p50 | 3.05 ms | 3.43 ms |
 
 No cost shows above the noise: taking a permit is one atomic when one is free, and the WASM guests' 1 ms re-queue is
-what the epoch tick already paid. `crates/fc-fnhost-js/tests/shared_budget.rs` asserts the budget (at most two of two
+what the epoch tick already paid. `crates/fc-fnhost-js/tests/it/shared_budget.rs` asserts the budget (at most two of two
 WASM and two JS CPU-bound guests at once with `FC_FN_MAX_EXECUTING=2`), that I/O holds no permit, and that the
 deadline applies while a guest queues.
 

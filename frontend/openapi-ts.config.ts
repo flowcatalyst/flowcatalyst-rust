@@ -17,10 +17,10 @@ const openApiInput =
 // The function API is a second, separate document (Go has no functions):
 // Java's `functions.openapi.json` plus Rust's backward-compatible additions,
 // which the platform serves verbatim at `GET /api/openapi-functions.json`
-// (crates/fc-platform/src/function/openapi.rs). Types only —
+// (crates/fc-platform-functions/src/function/openapi.rs). Types only —
 // `api/functions.ts` wraps them over the hand-rolled `api/client.ts`.
 const functionsOpenApiInput =
-	"../crates/fc-platform/resources/openapi/functions.openapi.json";
+	"../crates/fc-platform-functions/resources/openapi/functions.openapi.json";
 
 export default defineConfig([
 	{

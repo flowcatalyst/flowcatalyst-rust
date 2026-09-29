@@ -23,6 +23,9 @@ use super::AppState;
 use crate::flight_recorder::{EventFilter, EventKind, RecordedEvent};
 use crate::manager::InFlightMessageInfo;
 use crate::pool::BufferedMessage;
+use fc_common::diagnostics;
+use std::time::Instant;
+use tokio::runtime::Handle;
 
 /// Longest sampling window `/diagnostics/runtime` accepts.
 const MAX_SAMPLE: Duration = Duration::from_secs(10);
@@ -84,7 +87,7 @@ pub(crate) async fn runtime_handler(
         return refused();
     }
     let window = Duration::from_millis(q.sample_ms.unwrap_or(1000)).min(MAX_SAMPLE);
-    let report = fc_common::diagnostics::report(None, window).await;
+    let report = diagnostics::report(None, window).await;
     let groups = state.queue_manager.blocked_groups();
     let recorder = state.queue_manager.flight_recorder();
     let router = RouterFigures {
@@ -133,8 +136,8 @@ pub(crate) async fn task_dump_handler(
 /// fc-server's metrics-port diagnostics).
 pub async fn task_dump_response(timeout: Duration) -> Response {
     use fc_common::diagnostics::TaskDumpError;
-    let handle = tokio::runtime::Handle::current();
-    match fc_common::diagnostics::task_dump(&handle, timeout).await {
+    let handle = Handle::current();
+    match diagnostics::task_dump(&handle, timeout).await {
         Ok(text) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
@@ -202,7 +205,7 @@ pub(crate) async fn message_handler(
     }
     let qm = &state.queue_manager;
     let tracker = qm.lookup_in_flight_by_app_id(&message_id);
-    let now = std::time::Instant::now();
+    let now = Instant::now();
     let mediating = qm
         .mediating_snapshot()
         .into_iter()
@@ -292,7 +295,7 @@ pub(crate) async fn group_handler(
     }
     let qm = &state.queue_manager;
     let pool_filter = q.pool_code.as_deref();
-    let now = std::time::Instant::now();
+    let now = Instant::now();
     let in_workers: Vec<_> = qm
         .mediating_snapshot()
         .into_iter()

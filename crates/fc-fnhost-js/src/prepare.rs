@@ -25,9 +25,14 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::isolate::StartError;
 use crate::isolate::{Isolate, Limits};
 use crate::modules::{FunctionModules, VersionCode};
 use crate::ops::{HostState, VersionShared};
+use std::str;
+use std::thread;
+use tokio::runtime::Builder;
+use tokio::time;
 
 pub const JS_INVALID: &str = "JS_INVALID";
 pub const JS_IMPORT_NOT_ALLOWED: &str = "JS_IMPORT_NOT_ALLOWED";
@@ -73,10 +78,10 @@ pub fn prepare(
     init_timeout: Duration,
 ) -> Result<Prepared, Refusal> {
     let started = Instant::now();
-    let text = std::str::from_utf8(bundle)
+    let text = str::from_utf8(bundle)
         .map_err(|e| Refusal::new(JS_INVALID, format!("the bundle is not UTF-8: {e}")))?;
     let mut code = VersionCode::new(text.strip_prefix('\u{feff}').unwrap_or(text), entrypoint);
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| Refusal::new(JS_INIT_FAILED, format!("no runtime to load on: {e}")))?;
@@ -90,7 +95,7 @@ pub fn prepare(
     // The init timeout: top-level code that spins is stopped from here.
     let (done, watch) = mpsc::channel::<()>();
     let terminator = isolate.terminator();
-    let watchdog = std::thread::Builder::new()
+    let watchdog = thread::Builder::new()
         .name("fn-js-init".into())
         .spawn(move || {
             if let Err(mpsc::RecvTimeoutError::Timeout) = watch.recv_timeout(init_timeout) {
@@ -99,7 +104,7 @@ pub fn prepare(
         })
         .map_err(|e| Refusal::new(JS_INIT_FAILED, format!("no init watchdog: {e}")))?;
     let started_module =
-        runtime.block_on(async { tokio::time::timeout(init_timeout, isolate.start()).await });
+        runtime.block_on(async { time::timeout(init_timeout, isolate.start()).await });
     let _ = done.send(());
     let _ = watchdog.join();
     let out_of_memory = isolate.stops().out_of_memory.load(Ordering::Acquire);
@@ -133,16 +138,16 @@ pub fn prepare(
                 ),
             ))
         }
-        Ok(Err(crate::isolate::StartError::Load(why))) => {
+        Ok(Err(StartError::Load(why))) => {
             return Err(match modules.refused() {
                 Some(refused) => Refusal::new(JS_IMPORT_NOT_ALLOWED, refused),
                 None => Refusal::new(JS_INVALID, why),
             })
         }
-        Ok(Err(crate::isolate::StartError::Evaluate(why))) if why.contains("EntrypointError") => {
+        Ok(Err(StartError::Evaluate(why))) if why.contains("EntrypointError") => {
             return Err(Refusal::new(JS_ENTRYPOINT_NOT_EXPORTED, why))
         }
-        Ok(Err(crate::isolate::StartError::Evaluate(why))) => return Err(failed(why)),
+        Ok(Err(StartError::Evaluate(why))) => return Err(failed(why)),
         Ok(Ok(_)) => {}
     }
     code.code_cache = modules.made_cache().map(Into::into);

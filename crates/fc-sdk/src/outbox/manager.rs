@@ -30,6 +30,7 @@ use crate::tsid;
 use super::driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 use super::dto::{CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
 use super::error::OutboxError;
+use std::collections::HashMap;
 
 /// A dispatch job's outbox payload: the DTO's fields plus `id`, the outbox
 /// row's own id (a 13-character TSID). The platform honours a supplied job id
@@ -231,7 +232,7 @@ impl OutboxManager {
         message_type: MessageType,
         payload: &str,
         message_group: Option<&str>,
-        headers: Option<std::collections::HashMap<String, String>>,
+        headers: Option<HashMap<String, String>>,
     ) -> OutboxMessage {
         let now = chrono::Utc::now().to_rfc3339();
         OutboxMessage {
@@ -259,6 +260,9 @@ impl OutboxManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+    use std::iter;
     use std::sync::{Arc, Mutex};
 
     /// In-memory driver that captures inserted messages for assertion.
@@ -341,7 +345,7 @@ mod tests {
         let many = mgr.create_dispatch_jobs(vec![job(), job()]).await.unwrap();
 
         let msgs = captured.lock().unwrap();
-        let ids: Vec<&String> = std::iter::once(&one).chain(many.iter()).collect();
+        let ids: Vec<&String> = iter::once(&one).chain(many.iter()).collect();
         assert_eq!(msgs.len(), 3);
         for (msg, id) in msgs.iter().zip(ids) {
             assert_eq!(&msg.id, id);
@@ -382,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn create_event_with_headers_propagates_them() {
         let (mgr, captured) = make_manager("clt_1");
-        let mut headers = std::collections::HashMap::new();
+        let mut headers = HashMap::new();
         headers.insert("X-Trace".to_string(), "abc".to_string());
 
         let dto = CreateEventDto::new("t", serde_json::json!({})).headers(headers);
@@ -487,7 +491,7 @@ mod tests {
     #[tokio::test]
     async fn create_audit_log_with_headers() {
         let (mgr, captured) = make_manager("clt_al2");
-        let mut headers = std::collections::HashMap::new();
+        let mut headers = HashMap::new();
         headers.insert("X-Audit".to_string(), "true".to_string());
 
         let dto = CreateAuditLogDto::new("E", "e_1", "DELETE").headers(headers);
@@ -591,7 +595,7 @@ mod tests {
 
         let msgs = captured.lock().unwrap();
         let ids: Vec<&str> = msgs.iter().map(|m| m.id.as_str()).collect();
-        let unique: std::collections::HashSet<&&str> = ids.iter().collect();
+        let unique: HashSet<&&str> = ids.iter().collect();
         assert_eq!(unique.len(), ids.len(), "all IDs must be unique");
     }
 }

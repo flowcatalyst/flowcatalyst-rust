@@ -1,0 +1,53 @@
+[package]
+name = "fc-platform-scheduled-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FlowCatalyst Platform - scheduled jobs: definitions, the cron scheduler and its firings"
+
+[dependencies]
+# The kernel. IAM lookups go through `fc_platform_core::directory`
+# (the assembly injects fc-platform-iam's implementations).
+fc-platform-core = { path = "../fc-platform-core" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+# Database (PostgreSQL)
+sqlx = { workspace = true, features = ["postgres"] }
+
+# Web framework
+axum = { workspace = true }
+utoipa = { workspace = true }
+
+# HTTP client for OIDC. Inherit from workspace so we pick up the
+# `default-features = false` + rustls-tls posture; declaring our own
+# reqwest here used to re-enable `default-tls` via feature unification
+# and drag OpenSSL/native-tls back into every binary.
+reqwest = { workspace = true }
+
+chrono = { workspace = true }
+chrono-tz = "0.10"
+cron = "0.15"
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+fc-function-abi = { path = "../fc-function-abi" }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

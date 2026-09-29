@@ -1,19 +1,9 @@
-//! Role Aggregate
+//! The `role` aggregate (fc-platform-iam), and its routes.
 //!
-//! Role and permission management.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod bff;
-pub mod ceiling;
-pub mod entity;
-pub mod operations;
-pub mod permission_catalog;
-pub mod permission_repository;
-pub mod repository;
+pub use fc_platform_iam::role::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::RolesState;
 pub use routes::{roles_router, routes};
-pub use entity::{AuthRole, Permission, RoleSource};
-pub use repository::RoleRepository;

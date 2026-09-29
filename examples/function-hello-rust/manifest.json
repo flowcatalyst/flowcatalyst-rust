@@ -1,5 +1,5 @@
 {
-  "$schema": "../../crates/fc-platform/resources/schemas/function-manifest.schema.json",
+  "$schema": "../../crates/fc-platform-functions/resources/schemas/function-manifest.schema.json",
   "runtime": "wasm",
   "entrypoint": "wasi_http_incoming_handler",
   "pool": "default",

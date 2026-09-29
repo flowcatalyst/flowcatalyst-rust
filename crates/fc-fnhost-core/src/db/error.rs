@@ -5,6 +5,9 @@
 use std::time::Duration;
 
 use crate::log_throttle::LogThrottle;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 /// The wire codes, Java's `DbFailure.code()` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,8 +59,8 @@ impl DbErrorCode {
     }
 }
 
-impl std::fmt::Display for DbErrorCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for DbErrorCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -147,8 +150,8 @@ impl DbFailure {
     }
 }
 
-impl std::fmt::Display for DbFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for DbFailure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
     }
 }
@@ -219,6 +222,8 @@ fn operator_warning(db: &str, code: DbErrorCode, state: Option<&str>, message: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+    use std::io::ErrorKind;
 
     /// Java `DbFailureTest`'s pinned table.
     #[test]
@@ -260,10 +265,7 @@ mod tests {
 
     #[test]
     fn connection_failures_without_a_state_are_unavailable() {
-        let io = sqlx::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::ConnectionRefused,
-            "refused",
-        ));
+        let io = sqlx::Error::Io(io::Error::new(ErrorKind::ConnectionRefused, "refused"));
         assert_eq!(
             DbFailure::from_sqlx("orders", &io).code,
             DbErrorCode::Unavailable

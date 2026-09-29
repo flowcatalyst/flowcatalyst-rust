@@ -38,6 +38,8 @@ use fc_platform::repository::Repositories;
 use fc_platform::service_account::entity::RoleAssignment;
 use fc_platform::shared::encryption_service::EncryptionService;
 use fc_platform::{Principal, UserScope};
+use std::env;
+use std::fs;
 
 /// Stable identifiers — the local MCP client always uses these names.
 /// `client_id` is part of the OAuth public surface; `principal_name` is
@@ -53,7 +55,7 @@ const SUPER_ADMIN_ROLE: &str = "platform:super-admin";
 pub async fn run(repos: &Repositories) -> Result<()> {
     // Hard gate: production deployments must never auto-provision an
     // anchor-admin OAuth client into their IAM tables.
-    if std::env::var("FC_DEV_MODE").as_deref() != Ok("true") {
+    if env::var("FC_DEV_MODE").as_deref() != Ok("true") {
         return Ok(());
     }
 
@@ -169,8 +171,7 @@ fn write_credentials_file(client_id: &str, client_secret: &str) -> Result<()> {
     let path =
         credentials_path().context("dirs::cache_dir() returned None — cannot persist creds")?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
 
     let payload = serde_json::json!({
@@ -180,12 +181,12 @@ fn write_credentials_file(client_id: &str, client_secret: &str) -> Result<()> {
         // fc-dev mcp doesn't need its own knowledge of the API port.
         "base_url": format!(
             "http://localhost:{}",
-            std::env::var("FC_API_PORT").unwrap_or_else(|_| "8080".to_string()),
+            env::var("FC_API_PORT").unwrap_or_else(|_| "8080".to_string()),
         ),
     });
     let bytes = serde_json::to_vec_pretty(&payload)?;
 
-    std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
+    fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
 
     // chmod 0600 on Unix — the file holds a long-lived (for this install)
     // OAuth client_secret. Windows ACLs default to user-only for files
@@ -193,9 +194,9 @@ fn write_credentials_file(client_id: &str, client_secret: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path)?.permissions();
+        let mut perms = fs::metadata(&path)?.permissions();
         perms.set_mode(0o600);
-        std::fs::set_permissions(&path, perms)?;
+        fs::set_permissions(&path, perms)?;
     }
 
     Ok(())

@@ -33,6 +33,7 @@
 //!     .source("user-service");
 //! ```
 
+use crate::usecase::audit;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -469,7 +470,7 @@ impl CreateAuditLogDto {
     /// on a sibling field. The masks are applied here, so `operation_data`
     /// holds the masked document.
     pub fn operation_data_masked(mut self, data: serde_json::Value, masked: &[&str]) -> Self {
-        self.operation_data = Some(crate::usecase::audit::redact(&data, masked));
+        self.operation_data = Some(audit::redact(&data, masked));
         self
     }
 
@@ -518,7 +519,7 @@ impl CreateAuditLogDto {
         if let Some(ref v) = self.operation_data {
             // Redacted before it is serialised (owner spec
             // docs/spec/audit-redaction.md, Java repo).
-            let redacted = crate::usecase::audit::redact(v, &[]);
+            let redacted = audit::redact(v, &[]);
             obj.insert(
                 "operationData".into(),
                 serde_json::json!(redacted.to_string()),
@@ -545,6 +546,7 @@ impl CreateAuditLogDto {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use serde::ser;
 
     // ─── CreateEventDto ─────────────────────────────────────────────────
 
@@ -727,7 +729,7 @@ mod tests {
         struct Unserializable;
         impl Serialize for Unserializable {
             fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
-                Err(serde::ser::Error::custom("nope"))
+                Err(ser::Error::custom("nope"))
             }
         }
         let result =

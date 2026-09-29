@@ -16,6 +16,9 @@
 //! recovered to PENDING).
 
 use async_trait::async_trait;
+use fc_common::diagnostics;
+use fc_common::diagnostics::panic;
+use fc_common::diagnostics::supervise;
 use fc_common::OutboxItem;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -141,12 +144,11 @@ async fn drain(
                     }
                 }
             };
-            if let Err(payload) = fc_common::diagnostics::catch_panic(handler.release(items)).await
-            {
+            if let Err(payload) = diagnostics::catch_panic(handler.release(items)).await {
                 // The rows stay IN_PROGRESS and are recovered.
                 tracing::error!(
                     group = %group,
-                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                    panic_message = %panic::payload_text(payload.as_ref()),
                     "Outbox group release panicked"
                 );
             }
@@ -170,13 +172,13 @@ async fn drain(
         // block-on-error) and releases what is queued, instead of the drain
         // dying with the group's entry left in the map, where it stranded
         // the group for good (no later submit started a drain for it).
-        let ok = match fc_common::diagnostics::catch_panic(handler.dispatch(item)).await {
+        let ok = match diagnostics::catch_panic(handler.dispatch(item)).await {
             Ok(ok) => ok,
             Err(payload) => {
-                fc_common::diagnostics::supervise::note_task_panic("outbox.group_send");
+                supervise::note_task_panic("outbox.group_send");
                 tracing::error!(
                     group = %group,
-                    panic_message = %fc_common::diagnostics::panic::payload_text(payload.as_ref()),
+                    panic_message = %panic::payload_text(payload.as_ref()),
                     "Outbox group send panicked; treating it as a failed send"
                 );
                 false
@@ -195,6 +197,7 @@ mod tests {
     use fc_common::{OutboxItemType, OutboxStatus};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    use tokio::time;
 
     fn item(id: &str, group: &str) -> OutboxItem {
         OutboxItem {
@@ -228,7 +231,7 @@ mod tests {
         async fn dispatch(&self, item: OutboxItem) -> bool {
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_running.fetch_max(now, Ordering::SeqCst);
-            tokio::time::sleep(self.delay).await;
+            time::sleep(self.delay).await;
             self.running.fetch_sub(1, Ordering::SeqCst);
             self.sent.lock().unwrap().push(item.id.clone());
             !self.fail.contains(&item.id)
@@ -246,7 +249,7 @@ mod tests {
             if d.stats().active_groups == 0 {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            time::sleep(Duration::from_millis(5)).await;
         }
         panic!("distributor did not drain");
     }
@@ -321,7 +324,7 @@ mod tests {
         });
         d.submit("g", item("a", "g"), h.clone());
         // Arrives while "a" is being sent; "a" then fails.
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        time::sleep(Duration::from_millis(10)).await;
         d.submit("g", item("b", "g"), h.clone());
         settle(&d).await;
         assert_eq!(*h.sent.lock().unwrap(), vec!["a"]);

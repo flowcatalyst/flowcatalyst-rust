@@ -175,7 +175,7 @@ _fcdev-port-free *ARGS:
 # The SDKs' generated clients (and their vendored openapi.json) are the
 # published ones, generated from the Go platform's spec. This platform's
 # spec now carries Go's operationIds and schema names
-# (tests/openapi_go_contract_test.rs), but regenerating from it still
+# (tests/it/openapi_go_contract_test.rs), but regenerating from it still
 # changes the generated code: it has no huma `$schema` member (owner
 # decision #30) and the residual differences listed in docs/sdks.md. The SDK
 # steps therefore refuse to run unless FC_SDK_REGEN_FROM_RUST_SPEC=1.

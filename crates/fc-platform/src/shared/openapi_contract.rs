@@ -4,7 +4,7 @@
 //! `/q/openapi` describes the same programmable surface as Go's huma document
 //! (`flowcatalyst-go/api/openapi.lock.json`, vendored as
 //! `frontend/openapi/openapi.json`). The SDKs' generated clients are
-//! generated from that document; `tests/openapi_go_contract_test.rs` pins the
+//! generated from that document; `tests/it/openapi_go_contract_test.rs` pins the
 //! operation ids.
 //!
 //! Only the handlers Go documents are listed. Routes Go lacks (e.g.
@@ -14,7 +14,12 @@
 //! [`shape_as_go_contract`] then applies the conventions of Go's document
 //! that no per-handler annotation expresses (see its docs).
 
+use crate::shared::debug_api::RawDispatchJobResponse;
+use crate::shared::debug_api::RawEventResponse;
 use serde_json::{json, Map, Value};
+use std::collections::BTreeSet;
+use utoipa::openapi;
+use utoipa::openapi::OpenApiBuilder;
 use utoipa::OpenApi;
 
 #[derive(OpenApi)]
@@ -169,10 +174,7 @@ struct EventsBatchDoc;
 /// `/bff/debug/dispatch-jobs`): Go's document keeps them as components no
 /// path references, and a client generated from it has their types.
 #[derive(OpenApi)]
-#[openapi(components(schemas(
-    crate::shared::debug_api::RawEventResponse,
-    crate::shared::debug_api::RawDispatchJobResponse,
-)))]
+#[openapi(components(schemas(RawEventResponse, RawDispatchJobResponse,)))]
 struct DebugSchemasDoc;
 
 /// [`DebugSchemasDoc`]'s schemas, kept by [`drop_unreachable_schemas`]
@@ -180,8 +182,8 @@ struct DebugSchemasDoc;
 const BFF_ONLY_SCHEMAS: &[&str] = &["RawDispatchJobResponse", "RawEventResponse"];
 
 /// The operations above, at their mount points, and the BFF-only schemas.
-pub fn documented_plain_routes() -> utoipa::openapi::OpenApi {
-    let mut doc = utoipa::openapi::OpenApiBuilder::new()
+pub fn documented_plain_routes() -> openapi::OpenApi {
+    let mut doc = OpenApiBuilder::new()
         .build()
         .nest("/api/anchor-domains", AnchorDomainsDoc::openapi())
         .nest("/api/auth-configs", AuthConfigsDoc::openapi())
@@ -444,7 +446,7 @@ fn unwrap_nullable(schema: &mut Value) {
 
 /// Remove component schemas no path reaches (transitively).
 fn drop_unreachable_schemas(doc: &mut Value) {
-    let mut reachable = std::collections::BTreeSet::new();
+    let mut reachable = BTreeSet::new();
     let mut queue: Vec<String> = BFF_ONLY_SCHEMAS.iter().map(|s| s.to_string()).collect();
     collect_refs(doc.get("paths").unwrap_or(&Value::Null), &mut queue);
     while let Some(name) = queue.pop() {

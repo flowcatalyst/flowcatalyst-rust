@@ -11,6 +11,7 @@ use base64::Engine;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{DerSignature, SigningKey};
 use rand::RngCore;
+use rsa::rand_core::OsRng;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -28,7 +29,7 @@ impl Default for SoftAuthenticator {
 
 impl SoftAuthenticator {
     pub fn new() -> Self {
-        let key = SigningKey::random(&mut rsa::rand_core::OsRng);
+        let key = SigningKey::random(&mut OsRng);
         let mut credential_id = [0u8; 32];
         rand::rng().fill_bytes(&mut credential_id);
         Self {
@@ -195,6 +196,7 @@ mod cbor {
 mod tests {
     use super::*;
     use p256::ecdsa::signature::Verifier;
+    use p256::ecdsa::DerSignature;
     use p256::ecdsa::VerifyingKey;
 
     #[test]
@@ -226,7 +228,7 @@ mod tests {
         let mut signed = auth_data.clone();
         signed.extend_from_slice(&Sha256::digest(&cd));
         let vk = VerifyingKey::from(&a.key);
-        let sig = p256::ecdsa::DerSignature::try_from(sig.as_slice()).unwrap();
+        let sig = DerSignature::try_from(sig.as_slice()).unwrap();
         vk.verify(&signed, &sig).unwrap();
         assert_eq!(u32::from_be_bytes(auth_data[33..37].try_into().unwrap()), 1);
     }

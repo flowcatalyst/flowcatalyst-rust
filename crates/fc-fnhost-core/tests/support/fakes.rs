@@ -23,6 +23,10 @@ use fc_fnhost_core::registry::FunctionRegistry;
 use fc_function_abi::{EventEmitError, FunctionAddress, Response};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::any::Any;
+use std::collections::BTreeMap;
+use tokio::sync::Semaphore;
+use tokio::time;
 
 /// A desired-state entry, as the platform would send it.
 pub fn entry(address: &str, version: i32, role: &str, mode: &str) -> Value {
@@ -74,7 +78,7 @@ pub struct FakeControlPlane {
     pub etags_sent: Mutex<Vec<Option<String>>>,
     pub heartbeats: Mutex<Vec<HeartbeatReport>>,
     /// When set, `desired_state` waits here (loop tests).
-    pub gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    pub gate: Mutex<Option<Arc<Semaphore>>>,
     pub panic_next: AtomicBool,
     /// Every emit, in order.
     pub emits: Mutex<Vec<EmitRequest>>,
@@ -159,7 +163,7 @@ pub struct FakeStore {
     pub failures: Mutex<HashMap<String, ArtifactError>>,
     pub fetches: Mutex<Vec<String>>,
     /// References whose fetch waits until released: a version mid-prepare.
-    pub held: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    pub held: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl FakeStore {
@@ -182,10 +186,9 @@ impl FakeStore {
     /// Fetches of `artifact_ref` wait until [`FakeStore::release`].
     #[allow(dead_code)]
     pub fn hold(&self, artifact_ref: &str) {
-        self.held.lock().insert(
-            artifact_ref.to_owned(),
-            Arc::new(tokio::sync::Semaphore::new(0)),
-        );
+        self.held
+            .lock()
+            .insert(artifact_ref.to_owned(), Arc::new(Semaphore::new(0)));
     }
 
     #[allow(dead_code)]
@@ -250,7 +253,7 @@ impl FunctionInstance for FakeInstance {
         self.journal.lock().push(format!("close {}", self.label));
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -262,7 +265,7 @@ pub struct FakeLoader {
     pub instances: Mutex<Vec<Arc<FakeInstance>>>,
     pub registry: Mutex<Option<Arc<FunctionRegistry>>>,
     pub delay: Mutex<Option<Duration>>,
-    pub loaded_config: Mutex<Vec<std::collections::BTreeMap<String, String>>>,
+    pub loaded_config: Mutex<Vec<BTreeMap<String, String>>>,
 }
 
 impl FakeLoader {
@@ -310,7 +313,7 @@ impl FunctionLoader for FakeLoader {
         let label = format!("{}@{}", request.entry.address, request.entry.version);
         let delay = *self.delay.lock();
         if let Some(delay) = delay {
-            tokio::time::sleep(delay).await;
+            time::sleep(delay).await;
         }
         if let Some((reason, detail)) = self.refusals.lock().get(&label).cloned() {
             self.journal.lock().push(format!("refuse {label}"));

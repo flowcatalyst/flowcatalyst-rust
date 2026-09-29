@@ -31,13 +31,25 @@ use crate::artifact::{AwsEcrAuthorizer, EcrAuthorizer, EcrTokenCache};
 use crate::clock::{SharedClock, SystemClock};
 use crate::control_plane::{ControlPlane, HttpControlPlane, CONNECT_TIMEOUT};
 use crate::env::{EnvReader, HostEnv};
+use crate::exec::ExecBudget;
+use crate::listener::FnListener;
 use crate::loader::Loaders;
+use crate::logging;
 use crate::metrics::FnMetrics;
 use crate::observability::{Observability, Probes};
+use crate::reconcile_loop;
 use crate::reconcile_loop::ReconcileLoop;
 use crate::reconciler::Reconciler;
 use crate::registry::FunctionRegistry;
 use crate::token::TokenSource;
+use crate::wasm::WasmLoader;
+use crate::wasm::WasmRuntime;
+use crate::wasm::WasmSettings;
+use std::io;
+use tokio::signal;
+use tokio::signal::unix;
+use tokio::signal::unix::SignalKind;
+use tokio::time;
 
 /// The function listeners' hook ([`crate::listener::FnListener`] is the
 /// private `:8080` and public `:8081` listeners behind it). A host with no
@@ -45,11 +57,7 @@ use crate::token::TokenSource;
 #[async_trait]
 pub trait Listener: Send + Sync {
     /// Binds and starts serving; returns once listening.
-    async fn start(
-        &self,
-        reconciler: Arc<Reconciler>,
-        metrics: Arc<FnMetrics>,
-    ) -> std::io::Result<()>;
+    async fn start(&self, reconciler: Arc<Reconciler>, metrics: Arc<FnMetrics>) -> io::Result<()>;
     /// The bound private port, once started.
     fn port(&self) -> Option<u16>;
     /// Whether every socket is still accepting; `/ready` reports
@@ -98,7 +106,7 @@ impl FnHost {
         env: HostEnv,
         loaders: Loaders,
         listener: Option<Arc<dyn Listener>>,
-    ) -> std::io::Result<Self> {
+    ) -> io::Result<Self> {
         let clock: SharedClock = Arc::new(SystemClock);
         let control_client = HttpControlPlane::default_client();
         let token_source = Arc::new(TokenSource::new(
@@ -134,7 +142,7 @@ impl FnHost {
                 loaders,
                 listener,
                 clock,
-                interval: crate::reconcile_loop::INTERVAL,
+                interval: reconcile_loop::INTERVAL,
             },
         ))
     }
@@ -232,7 +240,7 @@ impl FnHost {
         self.reconcile_loop.trigger();
     }
 
-    pub async fn start(&mut self) -> std::io::Result<()> {
+    pub async fn start(&mut self) -> io::Result<()> {
         let loop_for_probe = self.reconcile_loop.clone();
         let bound = self.listener_bound.clone();
         let listener_for_probe = self.listener.clone();
@@ -277,8 +285,7 @@ impl FnHost {
         self.closed = true;
         self.reconciler.drain();
         // Tell the platform right away rather than at the next 15 s cycle.
-        let _ =
-            tokio::time::timeout(Duration::from_secs(10), self.reconciler.heartbeat_now()).await;
+        let _ = time::timeout(Duration::from_secs(10), self.reconciler.heartbeat_now()).await;
         if let Some(listener) = &self.listener {
             listener.drain().await;
             listener
@@ -305,7 +312,7 @@ pub async fn run(
     listener: impl FnOnce(&HostEnv) -> Option<Arc<dyn Listener>>,
     shutdown: impl Future<Output = ()>,
 ) -> i32 {
-    crate::logging::init(&env_reader);
+    logging::init(&env_reader);
     let env = match HostEnv::load(&env_reader) {
         Ok(env) => env,
         Err(e) => {
@@ -358,18 +365,15 @@ pub async fn run(
 /// on JVM hosts). Shared by `fc-server`'s function-host role, `fc-dev`'s
 /// in-process host and the end-to-end tests, so all run the same assembly.
 pub fn wasm_loaders(env: &HostEnv) -> Result<Loaders, String> {
-    wasm_loaders_with(env, &crate::exec::ExecBudget::new(env.max_executing))
+    wasm_loaders_with(env, &ExecBudget::new(env.max_executing))
 }
 
 /// [`wasm_loaders`] on `budget`, the host's one executing budget
 /// (`FC_FN_MAX_EXECUTING`), which the caller shares with the host's other
 /// runtimes. The loaders carry it for the host's metrics.
-pub fn wasm_loaders_with(
-    env: &HostEnv,
-    budget: &crate::exec::ExecBudget,
-) -> Result<Loaders, String> {
-    let wasm = crate::wasm::WasmRuntime::new(crate::wasm::WasmSettings::from_env(env, budget))?;
-    Ok(Arc::new(crate::wasm::WasmLoader::new(wasm))
+pub fn wasm_loaders_with(env: &HostEnv, budget: &ExecBudget) -> Result<Loaders, String> {
+    let wasm = WasmRuntime::new(WasmSettings::from_env(env, budget))?;
+    Ok(Arc::new(WasmLoader::new(wasm))
         .register(Loaders::none())
         .with_budget(budget.clone()))
 }
@@ -378,7 +382,7 @@ pub fn wasm_loaders_with(
 /// listeners. They bind regardless of what loaded, as Java's do; a call to
 /// a function no runtime could load is 503 `FUNCTION_UNAVAILABLE`.
 pub fn function_listener(env: &HostEnv) -> Arc<dyn Listener> {
-    Arc::new(crate::listener::FnListener::from_env(env))
+    Arc::new(FnListener::from_env(env))
 }
 
 /// [`run`] with the deployed assembly ([`wasm_loaders`],
@@ -407,13 +411,12 @@ pub async fn run_wasm_host(
 /// lost. Call it inside the runtime.
 pub fn shutdown_signal() -> impl Future<Output = ()> {
     #[cfg(unix)]
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("installing the SIGTERM handler");
+    let mut term = unix::signal(SignalKind::terminate()).expect("installing the SIGTERM handler");
     async move {
         #[cfg(unix)]
         tokio::select! {
             _ = term.recv() => {}
-            _ = tokio::signal::ctrl_c() => {}
+            _ = signal::ctrl_c() => {}
         }
         #[cfg(not(unix))]
         {

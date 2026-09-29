@@ -20,8 +20,11 @@ use serde_json::Value;
 
 use crate::desired::DesiredDocument;
 use crate::heartbeat::HeartbeatReport;
+use crate::java;
 use crate::log_throttle::LogThrottle;
 use crate::token::TokenSource;
+use std::error;
+use std::fmt::Display;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -60,7 +63,7 @@ impl fmt::Display for ControlPlaneError {
     }
 }
 
-impl std::error::Error for ControlPlaneError {}
+impl error::Error for ControlPlaneError {}
 
 /// The outcome of one desired-state call.
 #[derive(Debug, Clone, PartialEq)]
@@ -343,7 +346,7 @@ fn refusal(status: u16, body: &[u8]) -> EventEmitError {
         body.as_ref()
             .and_then(|b| b.get(field))
             .and_then(Value::as_str)
-            .filter(|v| !crate::java::is_blank(v))
+            .filter(|v| !java::is_blank(v))
             .map(str::to_owned)
     };
     EventEmitError::new(
@@ -356,7 +359,7 @@ fn refusal(status: u16, body: &[u8]) -> EventEmitError {
 /// A transport or token failure: the function gets the `UNAVAILABLE` code it
 /// branches on, and the host operator gets the cause, logged at WARN and
 /// throttled (a platform outage fails every emit).
-fn emit_unavailable(what: &str, cause: &dyn std::fmt::Display) -> EventEmitError {
+fn emit_unavailable(what: &str, cause: &dyn Display) -> EventEmitError {
     static EMIT_FAILURE_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(10));
     if let Some(suppressed) = EMIT_FAILURE_LOG.admit() {
         tracing::warn!(

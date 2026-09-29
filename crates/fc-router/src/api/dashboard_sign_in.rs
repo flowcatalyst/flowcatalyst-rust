@@ -22,6 +22,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::{
     extract::State,
     http::StatusCode,
@@ -30,6 +31,7 @@ use axum::{
     Json, Router,
 };
 use fc_platform_jwks::JwksKeySource;
+use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -90,7 +92,7 @@ impl DashboardSignIn {
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
+                .redirect(Policy::none())
                 .build()
                 .unwrap_or_default(),
         }
@@ -136,7 +138,7 @@ fn error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
-async fn token_handler(State(s): State<Arc<DashboardSignIn>>, body: axum::body::Bytes) -> Response {
+async fn token_handler(State(s): State<Arc<DashboardSignIn>>, body: Bytes) -> Response {
     if !s.config().await.enabled {
         return error(StatusCode::NOT_FOUND, "dashboard sign-in is not configured");
     }

@@ -5,9 +5,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use tokio::time;
+use tokio::time::Duration;
 
 // Global test stats counter
-static TEST_REQUEST_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static TEST_REQUEST_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Test fast endpoint (100ms delay)
 #[utoipa::path(
@@ -19,8 +23,8 @@ static TEST_REQUEST_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
     )
 )]
 pub(crate) async fn test_fast() -> Json<serde_json::Value> {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+    time::sleep(Duration::from_millis(100)).await;
     Json(serde_json::json!({ "status": "success", "ack": true }))
 }
 
@@ -34,8 +38,8 @@ pub(crate) async fn test_fast() -> Json<serde_json::Value> {
     )
 )]
 pub(crate) async fn test_slow() -> Json<serde_json::Value> {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
+    time::sleep(Duration::from_secs(60)).await;
     Json(serde_json::json!({ "status": "success", "ack": true }))
 }
 
@@ -53,7 +57,7 @@ pub(crate) async fn test_slow() -> Json<serde_json::Value> {
 pub(crate) async fn test_faulty() -> Response {
     use rand::Rng;
 
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     let mut rng = rand::rng();
     let roll: f64 = rng.random();
 
@@ -91,7 +95,7 @@ pub(crate) async fn test_faulty() -> Response {
     )
 )]
 pub(crate) async fn test_fail() -> Response {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({ "status": "error", "error": "Always fails" })),
@@ -109,7 +113,7 @@ pub(crate) async fn test_fail() -> Response {
     )
 )]
 pub(crate) async fn test_success() -> Json<serde_json::Value> {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     Json(serde_json::json!({ "ack": true, "message": "" }))
 }
 
@@ -123,7 +127,7 @@ pub(crate) async fn test_success() -> Json<serde_json::Value> {
     )
 )]
 pub(crate) async fn test_pending() -> Json<serde_json::Value> {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     Json(serde_json::json!({ "ack": false, "message": "notBefore time not reached" }))
 }
 
@@ -137,7 +141,7 @@ pub(crate) async fn test_pending() -> Json<serde_json::Value> {
     )
 )]
 pub(crate) async fn test_client_error() -> Response {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({ "status": "error", "error": "Record not found" })),
@@ -155,7 +159,7 @@ pub(crate) async fn test_client_error() -> Response {
     )
 )]
 pub(crate) async fn test_server_error() -> Response {
-    TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    TEST_REQUEST_COUNT.fetch_add(1, Ordering::Relaxed);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({ "status": "error", "error": "Internal server error" })),
@@ -173,7 +177,7 @@ pub(crate) async fn test_server_error() -> Response {
     )
 )]
 pub(crate) async fn test_stats() -> Json<serde_json::Value> {
-    let count = TEST_REQUEST_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    let count = TEST_REQUEST_COUNT.load(Ordering::Relaxed);
     Json(serde_json::json!({ "totalRequests": count }))
 }
 
@@ -187,6 +191,6 @@ pub(crate) async fn test_stats() -> Json<serde_json::Value> {
     )
 )]
 pub(crate) async fn reset_test_stats() -> Json<serde_json::Value> {
-    let previous = TEST_REQUEST_COUNT.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let previous = TEST_REQUEST_COUNT.swap(0, Ordering::Relaxed);
     Json(serde_json::json!({ "previousCount": previous, "currentCount": 0 }))
 }

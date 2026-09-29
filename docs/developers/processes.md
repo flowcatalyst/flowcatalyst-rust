@@ -62,14 +62,14 @@ timestamps.
 
 ### Domain entity
 
-`crates/fc-platform/src/process/entity.rs` — `Process` aggregate. Pure
+`crates/fc-platform-messaging/src/process/entity.rs` — `Process` aggregate. Pure
 data + behavior (`archive()`, `Process::new(code, name)` with code
 parsing). No `sqlx` imports. Status enum: `Current` / `Archived`.
 Source enum: `Code` / `Api` / `Ui`.
 
 ### Repository
 
-`crates/fc-platform/src/process/repository.rs` — SQLx repository.
+`crates/fc-platform-messaging/src/process/repository.rs` — SQLx repository.
 Implements `Persist<Process>` for `UnitOfWork`. Methods: `insert`,
 `update`, `delete`, `find_by_id`, `find_by_code`, `find_all`,
 `find_by_application`, `find_with_filters`, `exists_by_code`.
@@ -77,7 +77,7 @@ Implements `Persist<Process>` for `UnitOfWork`. Methods: `insert`,
 ## Use cases
 
 All writes route through `UnitOfWork::commit`. Location:
-`crates/fc-platform/src/process/operations/`.
+`crates/fc-platform-messaging/src/process/operations/`.
 
 | Use case | Command | Event |
 |---|---|---|
@@ -100,7 +100,7 @@ Validation rules enforced by use cases:
 
 Mounted under both `/api/processes` (bearer auth, SDK consumers) and
 `/bff/processes` (cookie auth, SPA). Both point at the same router
-defined in `crates/fc-platform/src/process/api.rs`.
+defined in `crates/fc-platform-messaging/src/process/api.rs`.
 
 | Method | Path | Permission | Use case |
 |---|---|---|---|
@@ -118,7 +118,7 @@ matching the EventType convention.
 
 ## Permissions
 
-Defined in `crates/fc-platform/src/role/entity.rs::permissions::admin`
+Defined in `crates/fc-platform-iam/src/role/entity.rs::permissions::admin`
 (messaging context) and `permissions::application_service` (SDK):
 
 **Admin (full management):**
@@ -144,7 +144,7 @@ Defined in `crates/fc-platform/src/role/entity.rs::permissions::admin`
 | `application-service` (auto-assigned to app service accounts) | view, sync |
 
 Permission check helpers in
-`crates/fc-platform/src/shared/authorization_service.rs::checks`:
+`crates/fc-platform-core/src/shared/authorization_service.rs::checks`:
 `can_read_processes`, `can_create_processes`, `can_update_processes`,
 `can_delete_processes`, `can_write_processes` (any write),
 `can_sync_processes`.
@@ -270,8 +270,8 @@ future change):
 
 - Migration: `migrations/026_processes.sql`
 - Aggregate: `crates/fc-platform/src/process/`
-- HTTP routes: `crates/fc-platform/src/process/api.rs` + `router.rs`
-- Permissions: `crates/fc-platform/src/role/entity.rs::permissions`
+- HTTP routes: `crates/fc-platform-messaging/src/process/api.rs` + `router.rs`
+- Permissions: `crates/fc-platform-iam/src/role/entity.rs::permissions`
 - SDK (Rust): `crates/fc-sdk/src/client/processes.rs`
 - SDK (TS): `clients/typescript-sdk/src/resources/processes.ts`
 - SDK (Laravel): `clients/laravel-sdk/src/{DTOs,Enums,Sync,Attributes}/Process*.php` (partial — L1 in progress)

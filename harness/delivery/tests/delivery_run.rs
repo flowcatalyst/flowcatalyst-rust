@@ -12,20 +12,24 @@
 //! scenario ran); a DIFF is a finding written to the report, not a test
 //! failure.
 
+use fc_delivery_harness::compare;
+use fc_delivery_harness::scenario;
+use std::collections::HashSet;
+use std::env;
 use std::path::PathBuf;
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs Docker, a Go toolchain and the Rust binaries"]
 async fn delivery_parity_run() {
     let mut opts = fc_delivery_harness::Options {
-        only: std::env::var("HARNESS_ONLY").ok(),
+        only: env::var("HARNESS_ONLY").ok(),
         ..Default::default()
     };
-    if let Ok(p) = std::env::var("HARNESS_GO_SRC") {
+    if let Ok(p) = env::var("HARNESS_GO_SRC") {
         opts.go_src = PathBuf::from(p);
     }
-    opts.go_bin_dir = std::env::var("HARNESS_GO_BIN_DIR").ok().map(PathBuf::from);
-    if let Ok(p) = std::env::var("HARNESS_RUST_BIN_DIR") {
+    opts.go_bin_dir = env::var("HARNESS_GO_BIN_DIR").ok().map(PathBuf::from);
+    if let Ok(p) = env::var("HARNESS_RUST_BIN_DIR") {
         opts.rust_bin_dir = PathBuf::from(p);
     }
     let report = fc_delivery_harness::run(opts).await.expect("harness run");
@@ -43,9 +47,9 @@ async fn delivery_parity_run() {
 #[test]
 fn scenarios_parse() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scenarios");
-    let all = fc_delivery_harness::scenario::load_dir(&dir).expect("scenarios parse");
+    let all = scenario::load_dir(&dir).expect("scenarios parse");
     assert!(!all.is_empty());
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     for s in &all {
         assert!(
             names.insert(s.name.clone()),
@@ -70,5 +74,5 @@ fn scenarios_parse() {
         }
     }
     let expected = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("expected-diffs.json");
-    fc_delivery_harness::compare::load_expected(&expected).expect("expected-diffs parse");
+    compare::load_expected(&expected).expect("expected-diffs parse");
 }

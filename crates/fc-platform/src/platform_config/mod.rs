@@ -1,21 +1,9 @@
-//! Platform Config Aggregate
+//! The `platform_config` aggregate (fc-platform-iam), and its routes.
 //!
-//! Hierarchical configuration with RBAC access control.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod access_api;
-pub mod access_entity;
-pub mod access_repository;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::platform_config::*;
+
 pub mod routes;
-
-pub use access_api::ConfigAccessState;
-pub use access_entity::PlatformConfigAccess;
-pub use access_repository::PlatformConfigAccessRepository;
-pub use api::PlatformConfigState;
-pub use entity::{ConfigScope, ConfigValueType, PlatformConfig};
-pub use repository::PlatformConfigRepository;
 pub use routes::{admin_platform_config_router, config_access_router, routes};

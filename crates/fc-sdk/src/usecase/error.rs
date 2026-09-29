@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 
 /// Macro for creating error detail maps.
 ///
@@ -200,17 +204,18 @@ impl UseCaseError {
     }
 }
 
-impl std::fmt::Display for UseCaseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for UseCaseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] {}", self.code(), self.message())
     }
 }
 
-impl std::error::Error for UseCaseError {}
+impl error::Error for UseCaseError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error;
 
     // ─── Constructor Helpers ────────────────────────────────────────────
 
@@ -309,7 +314,7 @@ mod tests {
     #[test]
     fn implements_std_error() {
         let err = UseCaseError::not_found("NF", "gone");
-        let _: &dyn std::error::Error = &err;
+        let _: &dyn error::Error = &err;
     }
 
     // ─── Serialization ─────────────────────────────────────────────────

@@ -11,10 +11,16 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::manager::QueueManager;
+use fc_common::diagnostics;
+use fc_common::diagnostics::OnPanic;
 pub use fc_standby::{
     LeaderElection, LeaderElectionConfig, LeadershipStatus, Result as StandbyResult, StandbyError,
     StandbyGuard,
 };
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Configuration for standby-aware router operation
 #[derive(Debug, Clone)]
@@ -189,39 +195,35 @@ impl StandbyAwareProcessor {
 /// manager awaits all such handles during graceful shutdown.
 pub fn spawn_leadership_monitor(
     processor: Arc<StandbyAwareProcessor>,
-    manager: Arc<crate::manager::QueueManager>,
+    manager: Arc<QueueManager>,
     shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
+) -> JoinHandle<()> {
     // Supervised: a panic is logged and the loop restarted (a dead monitor
     // would freeze the leader flag for the rest of the process's life).
-    fc_common::diagnostics::spawn_supervised(
-        "router.leadership_monitor",
-        fc_common::diagnostics::OnPanic::Restart,
-        move || {
-            let processor = processor.clone();
-            let manager = manager.clone();
-            ticker_loop(
-                move || {
-                    processor.check_and_log_transition();
-                    manager.set_leader(processor.is_leader());
-                    debug!(
-                        instance_id = %processor.instance_id(),
-                        is_leader = processor.is_leader(),
-                        status = ?processor.status(),
-                        "Leadership status check"
-                    );
-                },
-                shutdown.clone(),
-            )
-        },
-    )
+    diagnostics::spawn_supervised("router.leadership_monitor", OnPanic::Restart, move || {
+        let processor = processor.clone();
+        let manager = manager.clone();
+        ticker_loop(
+            move || {
+                processor.check_and_log_transition();
+                manager.set_leader(processor.is_leader());
+                debug!(
+                    instance_id = %processor.instance_id(),
+                    is_leader = processor.is_leader(),
+                    status = ?processor.status(),
+                    "Leadership status check"
+                );
+            },
+            shutdown.clone(),
+        )
+    })
 }
 
 /// The leadership monitor's loop: run `on_tick` every 5s until `shutdown`
 /// is cancelled.
 async fn ticker_loop(mut on_tick: impl FnMut() + Send + 'static, shutdown: CancellationToken) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(5));
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut ticker = time::interval(Duration::from_secs(5));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -238,13 +240,14 @@ async fn ticker_loop(mut on_tick: impl FnMut() + Send + 'static, shutdown: Cance
 fn spawn_ticker(
     on_tick: impl FnMut() + Send + 'static,
     shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
+) -> JoinHandle<()> {
     tokio::spawn(ticker_loop(on_tick, shutdown))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time;
 
     #[test]
     fn test_standby_config_defaults() {
@@ -265,7 +268,7 @@ mod tests {
 
         let handle = spawn_ticker(|| {}, token);
 
-        tokio::time::timeout(Duration::from_secs(1), handle)
+        time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("leadership monitor should exit within 1s of an already-cancelled token")
             .expect("task should not panic");

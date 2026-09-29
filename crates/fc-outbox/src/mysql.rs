@@ -290,6 +290,7 @@ mod tests {
     use super::*;
     use crate::setup;
     use crate::OutboxBackend;
+    use std::sync::Arc;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::ContainerAsync;
     use testcontainers_modules::mysql::Mysql;
@@ -451,7 +452,7 @@ mod tests {
     #[ignore = "needs Docker"]
     async fn concurrent_claims_never_share_a_row() {
         let (_container, _url, pool) = database().await;
-        let repo = std::sync::Arc::new(reset(&pool, SDK).await);
+        let repo = Arc::new(reset(&pool, SDK).await);
         for i in 0..200 {
             insert(&pool, &format!("r{i:03}"), "EVENT", None).await;
         }

@@ -246,4 +246,4 @@ See [observability.md](observability.md).
 - Migration runner: `crates/fc-platform/src/shared/database.rs::run_migrations`.
 - Migration files: `migrations/*.sql`.
 - Partition manager: `crates/fc-stream/src/partition_manager.rs`.
-- Built-in role seeding: `crates/fc-platform/src/shared/database.rs::seed_builtin_roles`, `crates/fc-platform/src/role/entity.rs::roles`.
+- Built-in role seeding: `crates/fc-platform/src/shared/database.rs::seed_builtin_roles`, `crates/fc-platform-iam/src/role/entity.rs::roles`.

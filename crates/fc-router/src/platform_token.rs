@@ -13,7 +13,9 @@
 
 use std::time::{Duration, Instant};
 
+use reqwest::header;
 use serde::Deserialize;
+use tokio::sync::Mutex;
 
 /// How far ahead of expiry the cached token is replaced (Go
 /// `tokenRefreshBuffer`): covers clock skew and in-flight request latency.
@@ -61,7 +63,7 @@ pub struct PlatformTokenSource {
     client_id: String,
     client_secret: String,
     http: reqwest::Client,
-    cached: tokio::sync::Mutex<Option<CachedToken>>,
+    cached: Mutex<Option<CachedToken>>,
 }
 
 impl PlatformTokenSource {
@@ -77,7 +79,7 @@ impl PlatformTokenSource {
             client_id: client_id.into(),
             client_secret: client_secret.into(),
             http,
-            cached: tokio::sync::Mutex::new(None),
+            cached: Mutex::new(None),
         }
     }
 
@@ -123,7 +125,7 @@ impl PlatformTokenSource {
         let response = self
             .http
             .post(&self.token_url)
-            .header(reqwest::header::ACCEPT, "application/json")
+            .header(header::ACCEPT, "application/json")
             .form(&form)
             .send()
             .await

@@ -42,6 +42,13 @@ use tracing::{error, info, warn};
 use crate::dev_paths;
 use crate::instance_guard::{self, ClusterLock};
 use crate::pg_extensions;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
+use std::fs;
+use std::io::ErrorKind;
+use std::net::TcpListener;
+use std::process;
+use tokio::task;
 
 /// The PostgreSQL major the shared cluster runs (Go `embeddedPGVersion`,
 /// Java's zonky binaries). The bundled archive is pinned to it by
@@ -142,9 +149,9 @@ fn bundled_version(settings: &Settings) -> Result<(u64, String)> {
 
 /// Go `embeddedDataMajor`: `<path>/data/PG_VERSION`, `None` without a cluster.
 pub fn data_major(path: &Path) -> Result<Option<String>> {
-    match std::fs::read_to_string(path.join("data").join("PG_VERSION")) {
+    match fs::read_to_string(path.join("data").join("PG_VERSION")) {
         Ok(s) => Ok(Some(s.trim().to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).context("read embedded PG_VERSION"),
     }
 }
@@ -168,9 +175,9 @@ pub fn assert_version_compatible(path: &Path) -> Result<()> {
 /// clear them (they are empty).
 fn default_settings() -> Settings {
     let s = Settings::default();
-    let _ = std::fs::remove_dir(&s.data_dir);
+    let _ = fs::remove_dir(&s.data_dir);
     if let Some(parent) = s.password_file.parent() {
-        let _ = std::fs::remove_dir(parent);
+        let _ = fs::remove_dir(parent);
     }
     s
 }
@@ -245,12 +252,11 @@ pub async fn start(
     }
 
     // ── Binaries (+ initdb on a fresh machine) ─────────────────────────
-    std::fs::create_dir_all(&path)
+    fs::create_dir_all(&path)
         .with_context(|| format!("create embedded Postgres dir {}", path.display()))?;
-    std::fs::create_dir_all(&pg_cache).with_context(|| format!("create {}", pg_cache.display()))?;
+    fs::create_dir_all(&pg_cache).with_context(|| format!("create {}", pg_cache.display()))?;
     let fresh_cluster = !cluster_dir.join("postgresql.conf").exists();
-    let password_file =
-        std::env::temp_dir().join(format!("fc-dev-pg-{}.pwfile", std::process::id()));
+    let password_file = env::temp_dir().join(format!("fc-dev-pg-{}.pwfile", process::id()));
     let settings = Settings {
         installation_dir: installation_dir.clone(),
         data_dir: cluster_dir.clone(),
@@ -268,7 +274,7 @@ pub async fn start(
         info!(path = %cluster_dir.display(), "Initialising a new embedded PostgreSQL {PG_MAJOR} cluster");
     }
     let setup = pg.setup().await;
-    let _ = std::fs::remove_file(&password_file);
+    let _ = fs::remove_file(&password_file);
     setup.context("embedded Postgres setup (extract binaries / initdb) failed")?;
 
     // ── PostGIS into our tree, before the server reads it ──────────────
@@ -316,7 +322,7 @@ pub async fn stop(db: &mut EmbeddedDb) {
     info!("Stopping embedded Postgres");
     let bin = db.bin_dir.clone();
     let cluster = db.cluster_dir.clone();
-    let _ = tokio::task::spawn_blocking(move || pg_ctl_stop(&bin, &cluster)).await;
+    let _ = task::spawn_blocking(move || pg_ctl_stop(&bin, &cluster)).await;
 }
 
 /// Go's `--embedded-db-reset`: delete the whole `<path>` (DEV-3). The shared
@@ -335,7 +341,7 @@ fn reset_cluster(path: &Path, shared_default: &Path, reset: Reset) -> Result<()>
         );
     }
     warn!(path = %path.display(), "Wiping the embedded Postgres directory");
-    std::fs::remove_dir_all(path)
+    fs::remove_dir_all(path)
         .with_context(|| format!("remove embedded Postgres dir {}", path.display()))
 }
 
@@ -347,7 +353,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
 }
 
 fn free_port() -> Result<u16> {
-    let l = std::net::TcpListener::bind(("127.0.0.1", 0)).context("pick a free port")?;
+    let l = TcpListener::bind(("127.0.0.1", 0)).context("pick a free port")?;
     Ok(l.local_addr()?.port())
 }
 
@@ -379,12 +385,12 @@ async fn pg_ctl_start(bin_dir: &Path, cluster_dir: &Path, port: u16, log: &Path)
         .arg(log)
         .arg("-o")
         .arg(format!("-F -p {port}"));
-    let out = tokio::task::spawn_blocking(move || cmd.output())
+    let out = task::spawn_blocking(move || cmd.output())
         .await
         .context("pg_ctl start")?
         .context("run pg_ctl start")?;
     if !out.status.success() {
-        let tail = std::fs::read_to_string(log)
+        let tail = fs::read_to_string(log)
             .map(|s| {
                 let lines: Vec<&str> = s.lines().collect();
                 lines[lines.len().saturating_sub(15)..].join("\n")
@@ -417,7 +423,7 @@ fn pg_ctl_stop(bin_dir: &Path, cluster_dir: &Path) {
 
 async fn connect(port: u16, database: &str) -> Result<sqlx::PgPool> {
     let url = format!("postgresql://{USER}:{PASSWORD}@localhost:{port}/{database}?sslmode=disable");
-    sqlx::postgres::PgPoolOptions::new()
+    PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&url)
@@ -530,6 +536,7 @@ async fn verify_extensions(port: u16, installation_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn the_bundled_postgres_is_the_shared_clusters_major() {
@@ -555,10 +562,10 @@ mod tests {
             assert_version_compatible(dir.path()).is_ok(),
             "no cluster yet"
         );
-        std::fs::create_dir_all(dir.path().join("data")).unwrap();
-        std::fs::write(dir.path().join("data/PG_VERSION"), "18\n").unwrap();
+        fs::create_dir_all(dir.path().join("data")).unwrap();
+        fs::write(dir.path().join("data/PG_VERSION"), "18\n").unwrap();
         assert!(assert_version_compatible(dir.path()).is_ok());
-        std::fs::write(dir.path().join("data/PG_VERSION"), "17\n").unwrap();
+        fs::write(dir.path().join("data/PG_VERSION"), "17\n").unwrap();
         let err = assert_version_compatible(dir.path())
             .unwrap_err()
             .to_string();
@@ -570,8 +577,8 @@ mod tests {
     fn resetting_the_shared_default_cluster_needs_confirmation() {
         let dir = tempfile::tempdir().unwrap();
         let shared = dir.path().join("flowcatalyst").join("embedded-pg");
-        std::fs::create_dir_all(shared.join("data")).unwrap();
-        std::fs::write(shared.join("data/PG_VERSION"), "18\n").unwrap();
+        fs::create_dir_all(shared.join("data")).unwrap();
+        fs::write(shared.join("data/PG_VERSION"), "18\n").unwrap();
         let unconfirmed = Reset {
             requested: true,
             confirmed: false,
@@ -594,7 +601,7 @@ mod tests {
     fn another_path_resets_without_confirmation() {
         let dir = tempfile::tempdir().unwrap();
         let mine = dir.path().join("mine");
-        std::fs::create_dir_all(mine.join("data")).unwrap();
+        fs::create_dir_all(mine.join("data")).unwrap();
         let reset = Reset {
             requested: true,
             confirmed: false,

@@ -26,6 +26,7 @@ use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::AssignmentSource;
 use crate::shared::error::Result;
+use std::env;
 
 const ENV_EMAIL: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL";
 const ENV_PASSWORD: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD";
@@ -50,7 +51,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
 
     info!("No anchor users found, checking for bootstrap configuration...");
 
-    let email = match std::env::var(ENV_EMAIL).ok().filter(|v| !v.is_empty()) {
+    let email = match env::var(ENV_EMAIL).ok().filter(|v| !v.is_empty()) {
         Some(e) => e,
         None => {
             warn!(
@@ -61,7 +62,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
         }
     };
 
-    let password = match std::env::var(ENV_PASSWORD).ok().filter(|v| !v.is_empty()) {
+    let password = match env::var(ENV_PASSWORD).ok().filter(|v| !v.is_empty()) {
         Some(p) => p,
         None => {
             warn!(
@@ -72,7 +73,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
         }
     };
 
-    let name = std::env::var(ENV_NAME)
+    let name = env::var(ENV_NAME)
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| DEFAULT_NAME.to_string());

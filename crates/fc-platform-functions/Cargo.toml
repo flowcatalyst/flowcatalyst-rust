@@ -1,0 +1,69 @@
+[package]
+name = "fc-platform-functions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FlowCatalyst Platform - the function registry: functions, versions, artifacts, policies, domains, routes and the control plane"
+
+[dependencies]
+# The kernel, and the platform crates this one builds on.
+fc-platform-core = { path = "../fc-platform-core" }
+fc-platform-messaging = { path = "../fc-platform-messaging" }
+fc-platform-scheduled-jobs = { path = "../fc-platform-scheduled-jobs" }
+fc-common = { path = "../fc-common" }
+# The manifest and the function value types, shared with the function host.
+fc-function-model = { path = "../fc-function-model" }
+# Sigstore verification of a published version's signature bundle.
+fc-function-signing = { path = "../fc-function-signing" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+indexmap = { workspace = true }
+
+# Database (PostgreSQL)
+sqlx = { workspace = true, features = ["postgres"] }
+
+# Web framework
+axum = { workspace = true }
+utoipa = { workspace = true }
+
+sha2 = "0.10"
+# Streams an artifact from the blob store to the host (control plane).
+tokio-util = { workspace = true, features = ["io"] }
+
+urlencoding = "2.1"
+
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+hex = { workspace = true }
+
+# AWS Secrets Manager (for DB credential refresh)
+aws-config = { workspace = true }
+# The s3:// function-artifact store (FC_FN_ARTIFACT_STORE).
+aws-sdk-s3 = { workspace = true }
+
+[dev-dependencies]
+# The unit tests build the IAM repositories the lookups are over.
+fc-platform-iam = { path = "../fc-platform-iam" }
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+# Log capture in unit tests.
+tracing-subscriber = { workspace = true }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

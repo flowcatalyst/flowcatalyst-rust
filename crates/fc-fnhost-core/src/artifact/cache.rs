@@ -11,6 +11,14 @@ use tokio::io::AsyncWriteExt;
 
 use super::{ArtifactError, Fetched, Source};
 use crate::digest::Digest;
+use std::fs;
+use std::time::Duration;
+use tokio::fs::metadata;
+use tokio::fs::remove_file;
+use tokio::fs::rename;
+use tokio::fs::File;
+use tokio::task;
+use tokio::time;
 
 /// 256 MiB.
 pub const DEFAULT_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -42,7 +50,7 @@ impl ArtifactCache {
     pub fn new(dir: impl Into<PathBuf>, max_bytes: u64) -> io::Result<Self> {
         let dir = dir.into();
         assert!(max_bytes > 0, "max_bytes must be positive");
-        std::fs::create_dir_all(dir.join("sha256"))?;
+        fs::create_dir_all(dir.join("sha256"))?;
         Ok(Self { dir, max_bytes })
     }
 
@@ -65,10 +73,7 @@ impl ArtifactCache {
         version_id: Option<&str>,
     ) -> Result<Fetched, ArtifactError> {
         let cached = self.path_for(expected);
-        if tokio::fs::metadata(&cached)
-            .await
-            .is_ok_and(|m| m.is_file())
-        {
+        if metadata(&cached).await.is_ok_and(|m| m.is_file()) {
             let (actual, size) = hash_file(cached.clone()).await?;
             if &actual == expected {
                 return Ok(Fetched {
@@ -81,7 +86,7 @@ impl ArtifactCache {
                 actual = %actual,
                 "cached artifact no longer matches its digest; replacing it"
             );
-            let _ = tokio::fs::remove_file(&cached).await;
+            let _ = remove_file(&cached).await;
         }
         self.download(source, artifact_ref, expected, version_id, cached)
             .await
@@ -109,7 +114,7 @@ impl ArtifactCache {
             .join(format!("artifact-{}.tmp", rand::random::<u64>()));
         let result = self.write_verified(&mut stream, &temp, expected).await;
         let result = match result {
-            Ok(count) => tokio::fs::rename(&temp, &target)
+            Ok(count) => rename(&temp, &target)
                 .await
                 .map(|()| Fetched {
                     file: target,
@@ -119,7 +124,7 @@ impl ArtifactCache {
             Err(e) => Err(e),
         };
         if result.is_err() {
-            let _ = tokio::fs::remove_file(&temp).await;
+            let _ = remove_file(&temp).await;
         }
         result
     }
@@ -132,9 +137,7 @@ impl ArtifactCache {
         temp: &Path,
         expected: &Digest,
     ) -> Result<u64, ArtifactError> {
-        let mut file = tokio::fs::File::create(temp)
-            .await
-            .map_err(ArtifactError::transport)?;
+        let mut file = File::create(temp).await.map_err(ArtifactError::transport)?;
         let mut hasher = Sha256::new();
         let mut count: u64 = 0;
         while let Some(chunk) = stream
@@ -168,9 +171,9 @@ impl ArtifactCache {
 }
 
 async fn hash_file(path: PathBuf) -> Result<(Digest, u64), ArtifactError> {
-    tokio::task::spawn_blocking(move || -> io::Result<(Digest, u64)> {
+    task::spawn_blocking(move || -> io::Result<(Digest, u64)> {
         use std::io::Read;
-        let mut file = std::fs::File::open(&path)?;
+        let mut file = fs::File::open(&path)?;
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; BUFFER_SIZE];
         let mut size = 0u64;
@@ -190,7 +193,7 @@ async fn hash_file(path: PathBuf) -> Result<(Digest, u64), ArtifactError> {
 }
 
 /// A local file, read in fixed-size chunks.
-pub(crate) struct FileBody(pub(crate) tokio::fs::File);
+pub(crate) struct FileBody(pub(crate) File);
 
 #[async_trait]
 impl BodyReader for FileBody {
@@ -210,7 +213,7 @@ impl BodyReader for FileBody {
 /// wait for response headers; a stalled body would block a prepare (and so
 /// the reconcile) for ever, so the Rust host also bounds the gap between
 /// chunks.
-pub(crate) const BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// An HTTP response body.
 pub(crate) struct HttpBody(pub(crate) reqwest::Response);
@@ -218,7 +221,7 @@ pub(crate) struct HttpBody(pub(crate) reqwest::Response);
 #[async_trait]
 impl BodyReader for HttpBody {
     async fn next_chunk(&mut self) -> io::Result<Option<Bytes>> {
-        match tokio::time::timeout(BODY_IDLE_TIMEOUT, self.0.chunk()).await {
+        match time::timeout(BODY_IDLE_TIMEOUT, self.0.chunk()).await {
             Ok(Ok(chunk)) => Ok(chunk),
             Ok(Err(e)) => Err(io::Error::other(e)),
             Err(_) => Err(io::Error::new(
@@ -232,6 +235,7 @@ impl BodyReader for HttpBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Bytes1(Vec<Bytes>);
@@ -283,7 +287,7 @@ mod tests {
     }
 
     fn leftovers(dir: &Path) -> usize {
-        std::fs::read_dir(dir)
+        fs::read_dir(dir)
             .unwrap()
             .filter(|e| {
                 e.as_ref()
@@ -304,7 +308,7 @@ mod tests {
         let fetched = cache.fetch(&source, "mem://x", &d, None).await.unwrap();
         assert_eq!(fetched.file, dir.path().join("sha256").join(d.hex()));
         assert_eq!(fetched.bytes, 14);
-        assert_eq!(std::fs::read(&fetched.file).unwrap(), b"hello artifact");
+        assert_eq!(fs::read(&fetched.file).unwrap(), b"hello artifact");
         cache.fetch(&source, "mem://x", &d, None).await.unwrap();
         assert_eq!(
             source.opens.load(Ordering::SeqCst),
@@ -318,10 +322,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = ArtifactCache::new(dir.path(), DEFAULT_MAX_BYTES).unwrap();
         let d = digest(b"good bytes");
-        std::fs::write(cache.path_for(&d), b"poison").unwrap();
+        fs::write(cache.path_for(&d), b"poison").unwrap();
         let source = memory(b"good bytes");
         let fetched = cache.fetch(&source, "mem://x", &d, None).await.unwrap();
-        assert_eq!(std::fs::read(fetched.file).unwrap(), b"good bytes");
+        assert_eq!(fs::read(fetched.file).unwrap(), b"good bytes");
         assert_eq!(source.opens.load(Ordering::SeqCst), 1);
     }
 

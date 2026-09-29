@@ -13,14 +13,21 @@ use tracing::info;
 
 use crate::manager::{ConsumerFactory, QueueManager};
 use crate::RouterError;
+use fc_queue::nats::NatsConfig;
+use fc_queue::nats::NatsQueueConsumer;
+use fc_queue::postgres;
+use fc_queue::postgres::PostgresQueue;
+use fc_queue::sqs::SqsQueueConsumer;
+use sqlx::postgres::PgPoolOptions;
+use std::env;
 
 /// An SQS client from the default AWS chain (`AWS_REGION`, the task role,
 /// `AWS_ENDPOINT_URL[_SQS]`). In dev mode it points at LocalStack
 /// (`LOCALSTACK_ENDPOINT`, default `http://localhost:4566`).
 pub async fn sqs_client(dev_mode: bool) -> aws_sdk_sqs::Client {
     let config = if dev_mode {
-        let endpoint_url = std::env::var("LOCALSTACK_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:4566".to_string());
+        let endpoint_url =
+            env::var("LOCALSTACK_ENDPOINT").unwrap_or_else(|_| "http://localhost:4566".to_string());
         info!(endpoint = %endpoint_url, "Configuring SQS client for LocalStack");
         aws_config::defaults(aws_config::BehaviorVersion::latest())
             .endpoint_url(&endpoint_url)
@@ -62,7 +69,7 @@ impl ConsumerFactory for SchemeConsumerFactory {
                     visibility_timeout = config.visibility_timeout,
                     "Creating SQS consumer from config"
                 );
-                let consumer = fc_queue::sqs::SqsQueueConsumer::from_queue_url(
+                let consumer = SqsQueueConsumer::from_queue_url(
                     self.sqs_client.clone(),
                     config.uri.clone(),
                     config.visibility_timeout as i32,
@@ -81,7 +88,7 @@ impl ConsumerFactory for SchemeConsumerFactory {
 async fn build_nats_consumer(
     config: &QueueConfig,
 ) -> Result<Arc<dyn fc_queue::QueueConsumer>, RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri)
+    let nats_config = NatsConfig::from_uri(&config.uri)
         .map_err(RouterError::consumer(&config.name, "invalid NATS URI"))?;
     info!(
         queue_name = %config.name,
@@ -90,7 +97,7 @@ async fn build_nats_consumer(
         subject = %nats_config.subject,
         "Creating NATS JetStream consumer from config"
     );
-    let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
+    let consumer = NatsQueueConsumer::new(nats_config)
         .await
         .map_err(RouterError::consumer(
             &config.name,
@@ -108,13 +115,13 @@ async fn build_nats_consumer(
 async fn build_postgres_consumer(
     config: &QueueConfig,
 ) -> Result<Arc<dyn fc_queue::QueueConsumer>, RouterError> {
-    let max_connections = fc_queue::postgres::default_max_connections();
+    let max_connections = postgres::default_max_connections();
     info!(
         queue_name = %config.name,
         max_connections,
         "Creating Postgres queue consumer from config"
     );
-    let pool = sqlx::postgres::PgPoolOptions::new()
+    let pool = PgPoolOptions::new()
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
@@ -129,7 +136,7 @@ async fn build_postgres_consumer(
     } else {
         config.visibility_timeout
     };
-    let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
+    let consumer = PostgresQueue::new(pool, config.name.clone(), visibility);
 
     use fc_queue::EmbeddedQueue;
     consumer.init_schema().await.map_err(RouterError::consumer(

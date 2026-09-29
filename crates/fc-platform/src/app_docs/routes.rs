@@ -1,6 +1,11 @@
 //! Application docs routes (Go's docs plane), at their full paths:
 //! `/api/docs*` and `POST /api/applications/{appCode}/docs/sync`.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::extract::DefaultBodyLimit;

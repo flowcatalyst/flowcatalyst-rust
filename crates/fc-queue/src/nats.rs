@@ -20,7 +20,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
+use async_nats::connection::State;
+use async_nats::jetstream::consumer::pull::MessagesError;
+use async_nats::jetstream::consumer::pull::Stream;
+use async_nats::jetstream::consumer::StreamError;
+use async_nats::jetstream::Message;
 use fc_common::QueuedMessage;
+use std::result;
+use tokio::sync;
+use tokio::time;
 
 /// Configuration for the NATS JetStream consumer
 #[derive(Debug, Clone)]
@@ -212,7 +220,7 @@ pub struct NatsQueueConsumer {
     consumer: Arc<RwLock<PullConsumer>>,
     running: AtomicBool,
     /// Maps receipt handle (`streamName:streamSequence`) -> JetStream message for ack/nack
-    pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>>,
+    pending_messages: Arc<DashMap<String, Message>>,
     /// Receiving end of the standing subscription's bounded channel. A
     /// `Mutex` rather than requiring `&mut self` on `poll()` — the trait
     /// takes `&self` (shared across `Arc<dyn QueueConsumer>`), and in
@@ -220,7 +228,7 @@ pub struct NatsQueueConsumer {
     /// (`spawn_consumer_poll_task`'s single loop per consumer), so this
     /// lock is never contended in practice; it exists for soundness, not
     /// throughput.
-    receiver: tokio::sync::Mutex<mpsc::Receiver<QueuedMessage>>,
+    receiver: sync::Mutex<mpsc::Receiver<QueuedMessage>>,
     /// Cancels the background subscription-draining task — see
     /// [`Self::stop`]. Cancelling it also unblocks a `poll()` parked on
     /// `receiver.recv()`: the background task's `tx` (channel sender) is
@@ -267,10 +275,7 @@ pub struct NatsQueueConsumer {
 async fn open_subscription(
     consumer: &PullConsumer,
     batch_size: usize,
-) -> std::result::Result<
-    async_nats::jetstream::consumer::pull::Stream,
-    async_nats::jetstream::consumer::StreamError,
-> {
+) -> result::Result<Stream, StreamError> {
     consumer
         .stream()
         .max_messages_per_batch(batch_size)
@@ -287,7 +292,7 @@ async fn open_subscription(
 async fn resubscribe(
     consumer: &PullConsumer,
     batch_size: usize,
-) -> std::result::Result<async_nats::jetstream::consumer::pull::Stream, QueueError> {
+) -> result::Result<Stream, QueueError> {
     let mut probe = consumer.clone();
     probe
         .info()
@@ -300,13 +305,13 @@ async fn resubscribe(
 
 /// Everything the background forwarding task owns.
 struct Forwarder {
-    stream: async_nats::jetstream::consumer::pull::Stream,
+    stream: Stream,
     consumer: PullConsumer,
     batch_size: usize,
     stream_name: String,
     consumer_name: String,
     queue_id: String,
-    pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>>,
+    pending_messages: Arc<DashMap<String, Message>>,
     cancel: CancellationToken,
     last_delivery: Arc<Mutex<Instant>>,
     healthy: Arc<AtomicBool>,
@@ -319,9 +324,7 @@ struct Forwarder {
 /// refuses, needs a fresh subscription (Go: any non-heartbeat `Next` error
 /// triggers a resubscribe). A missed heartbeat or a failed pull request is
 /// re-issued by async-nats internally, so the loop just keeps draining.
-fn is_terminal_subscription_error(
-    err: &async_nats::jetstream::consumer::pull::MessagesError,
-) -> bool {
+fn is_terminal_subscription_error(err: &MessagesError) -> bool {
     use async_nats::jetstream::consumer::pull::MessagesErrorKind;
     matches!(
         err.kind(),
@@ -394,7 +397,7 @@ async fn forward(mut f: Forwarder) {
                             );
                             tokio::select! {
                                 _ = f.cancel.cancelled() => return,
-                                _ = tokio::time::sleep(backoff) => {}
+                                _ = time::sleep(backoff) => {}
                             }
                             backoff = (backoff * 2).min(Duration::from_secs(5));
                         }
@@ -577,8 +580,7 @@ impl NatsQueueConsumer {
         );
 
         let queue_id = format!("{}/{}", config.stream_name, config.consumer_name);
-        let pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>> =
-            Arc::new(DashMap::new());
+        let pending_messages: Arc<DashMap<String, Message>> = Arc::new(DashMap::new());
 
         // Item 2: open the standing subscription and spawn the task that
         // drains it into `rx`'s bounded channel. `max_messages_per_batch`
@@ -627,7 +629,7 @@ impl NatsQueueConsumer {
             consumer: Arc::new(RwLock::new(consumer)),
             running: AtomicBool::new(true),
             pending_messages,
-            receiver: tokio::sync::Mutex::new(rx),
+            receiver: sync::Mutex::new(rx),
             stream_cancel,
             total_polled: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),
@@ -641,10 +643,7 @@ impl NatsQueueConsumer {
 
     /// Extract receipt handle from a JetStream message.
     /// Format: `streamName:streamSequence`
-    fn receipt_handle_from_message(
-        msg: &async_nats::jetstream::Message,
-        stream_name: &str,
-    ) -> Option<String> {
+    fn receipt_handle_from_message(msg: &Message, stream_name: &str) -> Option<String> {
         msg.info()
             .ok()
             .map(|info| format!("{}:{}", stream_name, info.stream_sequence))
@@ -850,10 +849,7 @@ impl QueueConsumer for NatsQueueConsumer {
         }
 
         // Check the underlying NATS connection state
-        matches!(
-            self.client.connection_state(),
-            async_nats::connection::State::Connected
-        )
+        matches!(self.client.connection_state(), State::Connected)
     }
 
     /// G13: "now" for as long as the connection reads `Connected` and the
@@ -871,12 +867,7 @@ impl QueueConsumer for NatsQueueConsumer {
     fn last_broker_activity(&self) -> Option<Instant> {
         let subscribed =
             self.running.load(Ordering::SeqCst) && self.subscription_healthy.load(Ordering::SeqCst);
-        if subscribed
-            && matches!(
-                self.client.connection_state(),
-                async_nats::connection::State::Connected
-            )
-        {
+        if subscribed && matches!(self.client.connection_state(), State::Connected) {
             Some(Instant::now())
         } else {
             self.last_delivery.lock().ok().map(|g| *g)

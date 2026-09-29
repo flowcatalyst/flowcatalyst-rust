@@ -337,7 +337,7 @@ the function's page in the SPA (the version tag reads `FAILED`, with the code as
 
 ### What is proven
 
-`bin/fc-server/tests/jvm_function_host_e2e.rs` runs the whole path against a Postgres container, with signatures
+`bin/fc-server/tests/it/jvm_function_host_e2e.rs` runs the whole path against a Postgres container, with signatures
 `required` (a private Sigstore trust root given to the platform and both hosts):
 
 - The platform (`fc-server`) runs with the stream processor and scheduled jobs on. Java's host runs from a scratch
@@ -353,7 +353,7 @@ the function's page in the SPA (the version tag reads `FAILED`, with the code as
 - Disabling the function unloads it, and the host stops cleanly on `SIGTERM`.
 
 ```sh
-cargo test -p fc-server --test jvm_function_host_e2e -- --ignored --nocapture
+cargo test -p fc-server --test it jvm_function_host_e2e:: -- --ignored --nocapture
 ```
 
 It needs Docker, a JDK 25 (`java`, `javac`) and Maven 3.9, and skips with a message when one is missing. It builds

@@ -1,18 +1,9 @@
-//! Audit Log Aggregate
+//! The `audit` aggregate (fc-platform-iam), and its routes.
 //!
-//! Audit logging for platform operations.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod bff;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::audit::*;
+
 pub mod routes;
-pub mod service;
-pub mod stored_redaction;
-
-// Re-export main types
 pub use routes::{audit_logs_router, routes};
-pub use entity::AuditLog;
-pub use repository::AuditLogRepository;
-pub use service::AuditService;

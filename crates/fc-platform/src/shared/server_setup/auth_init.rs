@@ -6,10 +6,15 @@
 
 use std::sync::Arc;
 
+use crate::auth::refresh_token;
+use crate::auth::signing_keys;
 use crate::repository::Repositories;
 use crate::service::{
     AuthConfig, AuthService, AuthorizationService, OidcSyncService, PasswordService,
 };
+use fc_common::config;
+use std::env;
+use std::fs;
 
 /// Bundle of auth-related services every binary needs.
 ///
@@ -77,14 +82,14 @@ impl AuthInitConfig {
             default_issuer,
         );
 
-        let non_empty = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let non_empty = |k: &str| env::var(k).ok().filter(|v| !v.trim().is_empty());
         let private_key_path =
             non_empty("FC_JWT_PRIVATE_KEY_PATH").or_else(|| non_empty("FC_JWT_SIGNING_KEY_PATH"));
         let public_key_path = non_empty("FC_JWT_PUBLIC_KEY_PATH");
         let previous_public_key = non_empty("FC_JWT_PUBLIC_KEY_PATH_PREVIOUS")
-            .and_then(|p| std::fs::read_to_string(&p).ok())
-            .map(|pem| crate::auth::signing_keys::normalize_pem(&pem))
-            .or_else(crate::auth::signing_keys::previous_public_key_from_env);
+            .and_then(|p| fs::read_to_string(&p).ok())
+            .map(|pem| signing_keys::normalize_pem(&pem))
+            .or_else(signing_keys::previous_public_key_from_env);
 
         Self {
             issuer,
@@ -114,7 +119,7 @@ impl AuthInitConfig {
 /// A lifetime in seconds: the first parseable value among `names`, or
 /// `default` when there is none or it is not positive (Go `positiveOr`).
 fn ttl_from_env(names: &[&str], default: i64) -> i64 {
-    let v = fc_common::config::env_first_parse(names, 0i64);
+    let v = config::env_first_parse(names, 0i64);
     if v > 0 {
         v
     } else {
@@ -161,7 +166,7 @@ pub fn init_auth_services(
     }
     // Go stamps this lifetime on each freshly issued refresh token, and it is
     // the family's absolute cap (rotation carries the first deadline forward).
-    crate::auth::refresh_token::set_refresh_token_ttl_secs(config_refresh_ttl);
+    refresh_token::set_refresh_token_ttl_secs(config_refresh_ttl);
     let auth = Arc::new(auth_service);
     let authz = Arc::new(
         AuthorizationService::new(repos.role_repo.clone())

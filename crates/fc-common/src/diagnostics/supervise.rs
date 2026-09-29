@@ -22,7 +22,10 @@ use std::sync::Mutex;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use std::any::Any;
+use std::process;
 use tokio::task::JoinHandle;
+use tokio::time;
 
 /// What a panic in a supervised loop means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +70,7 @@ pub fn note_task_panic(name: &'static str) {
 struct CatchUnwind<F>(F);
 
 impl<F: Future> Future for CatchUnwind<F> {
-    type Output = Result<F::Output, Box<dyn std::any::Any + Send>>;
+    type Output = Result<F::Output, Box<dyn Any + Send>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // SAFETY: structural pinning of the only field; it is never moved.
@@ -82,7 +85,7 @@ impl<F: Future> Future for CatchUnwind<F> {
 
 /// Run `fut` to completion, turning a panic into `Err(payload)`. The
 /// future is dropped (its guards run) before this returns.
-pub async fn catch_panic<F: Future>(fut: F) -> Result<F::Output, Box<dyn std::any::Any + Send>> {
+pub async fn catch_panic<F: Future>(fut: F) -> Result<F::Output, Box<dyn Any + Send>> {
     CatchUnwind(fut).await
 }
 
@@ -120,7 +123,7 @@ where
                     exit_code = code,
                     "background task panicked and cannot be restarted in place; exiting so the process is replaced"
                 );
-                std::process::exit(code);
+                process::exit(code);
             }
             OnPanic::Restart => {
                 if started.elapsed() >= HEALTHY_RUN {
@@ -132,7 +135,7 @@ where
                     restart_in_ms = backoff.as_millis() as u64,
                     "background task panicked; restarting it"
                 );
-                tokio::time::sleep(backoff).await;
+                time::sleep(backoff).await;
                 backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         }
@@ -142,6 +145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -184,7 +188,7 @@ mod tests {
     #[tokio::test]
     async fn aborting_the_supervisor_stops_the_loop() {
         let handle = spawn_supervised("test_abort_loop", OnPanic::Restart, || {
-            std::future::pending::<()>()
+            future::pending::<()>()
         });
         handle.abort();
         assert!(handle.await.unwrap_err().is_cancelled());

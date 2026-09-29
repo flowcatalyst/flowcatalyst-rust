@@ -9,11 +9,13 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use rand::RngCore;
 use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
+use rsa::rand_core::OsRng;
 use rsa::{RsaPrivateKey, RsaPublicKey};
+use std::fs;
 use std::path::Path;
 
 pub fn generate_rsa_pems(private_path: &Path, public_path: &Path) -> Result<()> {
-    let mut rng = rsa::rand_core::OsRng;
+    let mut rng = OsRng;
     let private = RsaPrivateKey::new(&mut rng, 2048).context("generate RSA key")?;
     let public = RsaPublicKey::from(&private);
     let private_pem = private
@@ -22,9 +24,9 @@ pub fn generate_rsa_pems(private_path: &Path, public_path: &Path) -> Result<()> 
     let public_pem = public
         .to_public_key_pem(LineEnding::LF)
         .context("encode public key")?;
-    std::fs::write(private_path, private_pem.as_bytes())
+    fs::write(private_path, private_pem.as_bytes())
         .with_context(|| format!("write {}", private_path.display()))?;
-    std::fs::write(public_path, public_pem)
+    fs::write(public_path, public_pem)
         .with_context(|| format!("write {}", public_path.display()))?;
     Ok(())
 }

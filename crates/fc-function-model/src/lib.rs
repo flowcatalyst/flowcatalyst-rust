@@ -12,7 +12,7 @@
 //! `wasm32-unknown-unknown`.
 //!
 //! Every error code and message is Java's, and
-//! `tests/manifest_golden.rs` holds the port to Java's own answers.
+//! `tests/it/manifest_golden.rs` holds the port to Java's own answers.
 //!
 //! | Module | Java source (`platform/function/`) |
 //! |---|---|

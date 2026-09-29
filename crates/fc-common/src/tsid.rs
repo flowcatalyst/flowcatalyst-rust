@@ -257,6 +257,9 @@ fn rand_u16() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::thread;
+    use std::time::Duration;
 
     /// Ids from one process are strictly increasing, even many within one
     /// millisecond (Go parity; the scheduler orders a group's jobs by id last).
@@ -302,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_uniqueness() {
-        let mut ids = std::collections::HashSet::new();
+        let mut ids = HashSet::new();
         for _ in 0..1000 {
             let id = generate(EntityType::Client);
             assert!(ids.insert(id), "Duplicate TSID generated");
@@ -328,7 +331,7 @@ mod tests {
     #[test]
     fn test_sortability() {
         let id1 = generate(EntityType::Client);
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
         let id2 = generate(EntityType::Client);
         assert!(id1 < id2, "TSIDs should be lexicographically sortable");
     }

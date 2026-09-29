@@ -35,6 +35,8 @@ use serde::{Serialize, Serializer};
 pub use fc_common::audit_redaction::{
     is_secret_key, redact, redact_document, redacted_command_json, AuditMasked, MASK,
 };
+use serde::ser;
+use std::any;
 
 /// A command whose [`AuditMasked`] fields the audit row should mask.
 ///
@@ -46,7 +48,7 @@ pub struct Audited<'a, C: ?Sized>(pub &'a C);
 impl<C: Serialize + AuditMasked + ?Sized> Serialize for Audited<'_, C> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         redacted_command_json(self.0)
-            .map_err(serde::ser::Error::custom)?
+            .map_err(ser::Error::custom)?
             .serialize(serializer)
     }
 }
@@ -55,7 +57,7 @@ impl<C: Serialize + AuditMasked + ?Sized> Serialize for Audited<'_, C> {
 /// type name, looking through a generic wrapper such as [`Audited`] to the
 /// command inside.
 pub(crate) fn command_name<C: ?Sized>() -> String {
-    let full = std::any::type_name::<C>().trim_end_matches('>');
+    let full = any::type_name::<C>().trim_end_matches('>');
     let innermost = full.rsplit('<').next().unwrap_or(full);
     innermost
         .rsplit("::")

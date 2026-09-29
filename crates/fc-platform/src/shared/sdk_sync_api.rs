@@ -19,6 +19,9 @@ use crate::dispatch_pool::operations::{
 use crate::event_type::operations::{
     SyncEventTypeInput, SyncEventTypesCommand, SyncEventTypesUseCase,
 };
+use crate::function::entity::TriggerObjectKind;
+use crate::function::trigger_object_repository::TriggerObjectRepository;
+use crate::principal::operations;
 use crate::principal::operations::{
     SyncPrincipalInput, SyncPrincipalsCommand, SyncPrincipalsUseCase,
 };
@@ -27,6 +30,7 @@ use crate::role::operations::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase}
 use crate::scheduled_job::operations::{
     ScheduledJobSyncEntry, SyncScheduledJobsCommand, SyncScheduledJobsUseCase,
 };
+use crate::shared::authorization_service::checks;
 use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -34,6 +38,8 @@ use crate::subscription::operations::{
     EventTypeBindingInput, SyncSubscriptionInput, SyncSubscriptionsCommand,
     SyncSubscriptionsUseCase,
 };
+use crate::usecase::Committed;
+use crate::usecase::PgUnitOfWork;
 use crate::usecase::{ExecutionContext, UseCase};
 
 // ---------------------------------------------------------------------------
@@ -49,21 +55,9 @@ pub struct SyncQuery {
     pub remove_unlisted: bool,
 }
 
-/// Sync result response (shared across all sync endpoints)
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResultResponse {
-    pub application_code: String,
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
-    pub synced_codes: Vec<String>,
-    /// Principal sync only: the emails whose `passwordHash` was ignored
-    /// because the user already existed (decision #22). Omitted when empty,
-    /// as Java's `passwordHashIgnored`.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub password_hash_ignored: Vec<String>,
-}
+/// Sync result response (shared across all sync endpoints; fc-platform-core,
+/// because app_docs's sync answers it too).
+pub use fc_platform_core::shared::api_common::SyncResultResponse;
 
 // ---------------------------------------------------------------------------
 // Roles sync
@@ -275,18 +269,18 @@ fn default_active() -> bool {
 /// SDK Sync service state
 #[derive(Clone)]
 pub struct SdkSyncState {
-    pub sync_roles_use_case: Arc<SyncRolesUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_event_types_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_processes_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_roles_use_case: Arc<SyncRolesUseCase<PgUnitOfWork>>,
+    pub sync_event_types_use_case: Arc<SyncEventTypesUseCase<PgUnitOfWork>>,
+    pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<PgUnitOfWork>>,
+    pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<PgUnitOfWork>>,
+    pub sync_processes_use_case: Arc<SyncProcessesUseCase<PgUnitOfWork>>,
+    pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<PgUnitOfWork>>,
+    pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<PgUnitOfWork>>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
     /// A function's own pool and jobs, which the pool and job syncs leave
     /// alone (`function-invocation.md` §4.2).
-    pub trigger_objects: Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
+    pub trigger_objects: Arc<TriggerObjectRepository>,
     /// The principal sync's users; also which synced emails already exist,
     /// for `passwordHashIgnored`.
     pub principal_repo: Arc<crate::PrincipalRepository>,
@@ -295,7 +289,7 @@ pub struct SdkSyncState {
     pub client_repo: Arc<crate::ClientRepository>,
     /// The principal sync runs its rows, events and audit entries in one
     /// transaction.
-    pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
+    pub unit_of_work: Arc<PgUnitOfWork>,
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +375,7 @@ pub(super) async fn sync_roles(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncRolesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_roles(&auth.0)?;
+    checks::can_sync_roles(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -449,7 +443,7 @@ pub(super) async fn sync_event_types(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncEventTypesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_event_types(&auth.0)?;
+    checks::can_sync_event_types(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -515,7 +509,7 @@ pub(super) async fn sync_subscriptions(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncSubscriptionsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_subscriptions(&auth.0)?;
+    checks::can_sync_subscriptions(&auth.0)?;
     let app = state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -621,7 +615,7 @@ pub(super) async fn sync_dispatch_pools(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncDispatchPoolsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_dispatch_pools(&auth.0)?;
+    checks::can_sync_dispatch_pools(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -645,7 +639,7 @@ pub(super) async fn sync_dispatch_pools(
         remove_unlisted: query.remove_unlisted,
         protected_ids: state
             .trigger_objects
-            .object_ids(crate::function::entity::TriggerObjectKind::Pool)
+            .object_ids(TriggerObjectKind::Pool)
             .await?
             .into_iter()
             .collect(),
@@ -696,13 +690,13 @@ pub(super) async fn sync_principals(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncPrincipalsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_principals(&auth.0)?;
+    checks::can_sync_principals(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
 
-    let password_hash_ignored = crate::principal::operations::password_hashes_ignored(
+    let password_hash_ignored = operations::password_hashes_ignored(
         &state.principal_repo,
         req.principals
             .iter()
@@ -739,7 +733,7 @@ pub(super) async fn sync_principals(
                 .into_committed()
         })
         .await
-        .map(crate::usecase::Committed::into_inner)
+        .map(Committed::into_inner)
     {
         Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
@@ -778,7 +772,7 @@ pub(super) async fn sync_scheduled_jobs(
     Path(app_code): Path<String>,
     Json(req): Json<SyncScheduledJobsRequest>,
 ) -> Result<Json<SyncScheduledJobsResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_scheduled_jobs_app(&auth.0)?;
+    checks::can_sync_scheduled_jobs_app(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -810,7 +804,7 @@ pub(super) async fn sync_scheduled_jobs(
         archive_unlisted: req.archive_unlisted,
         protected_ids: state
             .trigger_objects
-            .object_ids(crate::function::entity::TriggerObjectKind::ScheduledJob)
+            .object_ids(TriggerObjectKind::ScheduledJob)
             .await?
             .into_iter()
             .collect(),
@@ -859,7 +853,7 @@ pub(super) async fn sync_processes(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncProcessesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_processes(&auth.0)?;
+    checks::can_sync_processes(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -957,7 +951,7 @@ pub(super) async fn sync_openapi(
     Path(app_code): Path<String>,
     Json(req): Json<SyncOpenApiSpecRequest>,
 ) -> Result<Json<SyncOpenApiSpecResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_application_openapi(&auth.0)?;
+    checks::can_sync_application_openapi(&auth.0)?;
 
     let app = state
         .app_access

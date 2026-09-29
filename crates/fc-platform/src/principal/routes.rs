@@ -3,6 +3,11 @@
 //! The two-factor reset and the developer credentials nest under the same
 //! prefix from their own modules (`mfa`, `developer_credential`).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

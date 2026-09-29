@@ -2,6 +2,7 @@
 
 use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
+use crate::client::SyncResult;
 use serde::{Deserialize, Serialize};
 
 /// Request to create a dispatch pool.
@@ -195,7 +196,7 @@ impl DispatchPools<'_> {
         app_code: &str,
         req: &SyncDispatchPoolsRequest,
         remove_unlisted: bool,
-    ) -> Result<crate::client::SyncResult, ClientError> {
+    ) -> Result<SyncResult, ClientError> {
         let query = if remove_unlisted {
             "?removeUnlisted=true"
         } else {

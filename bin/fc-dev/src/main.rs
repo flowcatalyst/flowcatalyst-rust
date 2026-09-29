@@ -20,7 +20,60 @@ use tracing::{error, info, warn};
 
 use rust_embed::Embed;
 
+use axum::http::header;
+use axum::http::HeaderMap;
+use axum::http::HeaderValue;
+use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::response::Response;
+use fc_common::config;
+use fc_common::diagnostics;
+use fc_common::diagnostics::Exposition;
+use fc_common::logging;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig};
+use fc_platform::api::DispatchJobsState;
+use fc_platform::api::FilterOptionsState;
+#[cfg(feature = "web")]
+use fc_platform::auth::routes;
+#[cfg(feature = "web")]
+use fc_platform::developer_credential::routes::developer_credentials_state;
+use fc_platform::dispatch_job::reaper;
+use fc_platform::dispatch_job::signing_guard::SigningGuard;
+use fc_platform::principal::entity::UserScope;
+#[cfg(feature = "web")]
+use fc_platform::principal::routes::{principal_go_state, principals_state};
+use fc_platform::role::entity::roles;
+use fc_platform::router;
+use fc_platform::seed::platform_event_types;
+use fc_platform::service::RoleSyncService;
+use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_platform::shared::default_processes;
+use fc_platform::shared::encryption_service::EncryptionService;
+use fc_platform::shared::integrity_scan;
+use fc_platform::shared::rate_limit_store;
+use fc_platform::shared::rate_limit_store::RateLimitPolicies;
+use fc_platform::shared::secret_backfill;
+use fc_platform::shared::server_setup;
+use fc_platform::shared::server_setup::AuthInitConfig;
+use fc_platform::shared::server_setup::PlatformContext;
+use fc_platform::shared::server_setup::PlatformRoutesConfig;
+use fc_router::{
+    api::create_router as create_api_router, HealthService, HealthServiceConfig,
+    HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
+    WarningServiceConfig,
+};
+use sqlx::postgres::PgPoolOptions;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 /// Embedded frontend static files (compiled into the binary from frontend/dist/).
 /// In dev, set FC_STATIC_DIR to override with a live directory.
@@ -33,11 +86,6 @@ use fc_outbox::http_dispatcher::HttpDispatcherConfig;
 use fc_outbox::postgres::PostgresOutboxRepository;
 use fc_queue::postgres::PostgresQueue;
 use fc_queue::EmbeddedQueue;
-use fc_router::{
-    api::create_router as create_api_router, HealthService, HealthServiceConfig,
-    HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
-    WarningServiceConfig,
-};
 
 // Platform imports
 use fc_platform::api::event_type_filters_router;
@@ -274,7 +322,7 @@ struct RunArgs {
     /// used by `fc-dev stop` and to refuse a second instance.
     /// [default: <userDataDir>/flowcatalyst/fcdev.pid]
     #[arg(long, env = "FC_DEV_PID_FILE", value_name = "FILE")]
-    pid_file: Option<std::path::PathBuf>,
+    pid_file: Option<PathBuf>,
 
     /// The in-process function host (on by default).
     #[command(flatten)]
@@ -307,7 +355,7 @@ async fn main() -> Result<()> {
     //
     // Not for `fc-dev fn`: a project's `.env` holds its application's
     // service account, which must not shadow the fn CLI's own credentials.
-    if std::env::args_os().nth(1).is_none_or(|a| a != "fn") {
+    if env::args_os().nth(1).is_none_or(|a| a != "fn") {
         let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
     }
 
@@ -322,7 +370,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Upgrade(opts)) => {
-            fc_common::logging::init_logging("fc-dev");
+            logging::init_logging("fc-dev");
             return upgrade::run(&opts).await;
         }
         Some(Command::Mcp(opts)) => {
@@ -333,7 +381,7 @@ async fn main() -> Result<()> {
                     tracing_subscriber::EnvFilter::try_from_default_env()
                         .unwrap_or_else(|_| "info".into()),
                 )
-                .with_writer(std::io::stderr)
+                .with_writer(io::stderr)
                 .with_ansi(false)
                 .init();
             // Flags override the environment (Go's order).
@@ -343,7 +391,7 @@ async fn main() -> Result<()> {
                 ("FLOWCATALYST_CLIENT_SECRET", &opts.client_secret),
             ] {
                 if let Some(v) = value.as_deref().filter(|v| !v.is_empty()) {
-                    std::env::set_var(key, v);
+                    env::set_var(key, v);
                 }
             }
             let config = fc_mcp::Config::from_env()?;
@@ -358,19 +406,19 @@ async fn main() -> Result<()> {
             };
         }
         Some(Command::Init(args)) => {
-            fc_common::logging::init_logging("fc-dev init");
+            logging::init_logging("fc-dev init");
             return init::run(args).await;
         }
         Some(Command::Fresh(args)) => {
-            fc_common::logging::init_logging("fc-dev fresh");
+            logging::init_logging("fc-dev fresh");
             return fresh::run(args).await;
         }
         Some(Command::Outbox(args)) => {
-            fc_common::logging::init_logging("fc-dev outbox");
+            logging::init_logging("fc-dev outbox");
             return outbox::run(args).await;
         }
         Some(Command::Fn(args)) => {
-            std::process::exit(fn_cli::run(args).await);
+            process::exit(fn_cli::run(args).await);
         }
         Some(Command::Stop(args)) => {
             return stop::run(args);
@@ -380,8 +428,8 @@ async fn main() -> Result<()> {
 
     // Set dev defaults for env vars that aren't set
     // These make fc-dev zero-config (only DB URL needed).
-    if std::env::var("FC_DEV_MODE").is_err() {
-        std::env::set_var("FC_DEV_MODE", "true");
+    if env::var("FC_DEV_MODE").is_err() {
+        env::set_var("FC_DEV_MODE", "true");
     }
 
     // WebAuthn / passkeys default to localhost in fc-dev so the browser
@@ -392,11 +440,11 @@ async fn main() -> Result<()> {
     //   on :5173 and the fc-dev API on :8080 cover both the SPA dev
     //   server and the production-served frontend on the same port as
     //   the API.
-    if std::env::var("FC_WEBAUTHN_RP_ID").is_err() {
-        std::env::set_var("FC_WEBAUTHN_RP_ID", "localhost");
+    if env::var("FC_WEBAUTHN_RP_ID").is_err() {
+        env::set_var("FC_WEBAUTHN_RP_ID", "localhost");
     }
-    if std::env::var("FC_WEBAUTHN_ORIGINS").is_err() {
-        std::env::set_var(
+    if env::var("FC_WEBAUTHN_ORIGINS").is_err() {
+        env::set_var(
             "FC_WEBAUTHN_ORIGINS",
             "http://localhost:5173,http://localhost:8080",
         );
@@ -422,23 +470,23 @@ async fn main() -> Result<()> {
         "FC_JWT_SIGNING_KEY_PATH",
     ]
     .iter()
-    .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+    .any(|k| env::var_os(k).is_some_and(|v| !v.is_empty()));
     if !jwt_configured && go_signing_key.is_some() {
         if let Some(key) = &go_signing_key {
-            std::env::set_var("FC_JWT_SIGNING_KEY_PATH", key);
+            env::set_var("FC_JWT_SIGNING_KEY_PATH", key);
         }
     } else if !jwt_configured {
         let keys_dir = dirs::cache_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from("."))
             .join("flowcatalyst-dev")
             .join("jwt-keys");
-        std::env::set_var("FC_JWT_PRIVATE_KEY_PATH", keys_dir.join("private.key"));
-        std::env::set_var("FC_JWT_PUBLIC_KEY_PATH", keys_dir.join("public.key"));
+        env::set_var("FC_JWT_PRIVATE_KEY_PATH", keys_dir.join("private.key"));
+        env::set_var("FC_JWT_PUBLIC_KEY_PATH", keys_dir.join("public.key"));
     }
 
     // Initialize logging (JSON if LOG_FORMAT=json, text otherwise), with
     // the panic hook; then the process's one Prometheus registry.
-    fc_common::logging::init_logging("fc-dev");
+    logging::init_logging("fc-dev");
     fc_router::init_prometheus_recorder();
 
     // `fc-dev` (bare) and `fc-dev start` are equivalent — `start` exists for
@@ -478,7 +526,7 @@ async fn main() -> Result<()> {
     //    the database and override the URL that downstream code will use.
     #[cfg(feature = "embedded-db")]
     let mut embedded_db = if args.embedded_db {
-        if std::env::var_os("FC_DATABASE_URL").is_some() {
+        if env::var_os("FC_DATABASE_URL").is_some() {
             info!(
                 "Using the embedded Postgres; FC_DATABASE_URL / --database-url is ignored \
                  (pass --embedded-db=false to connect to it instead)"
@@ -496,7 +544,7 @@ async fn main() -> Result<()> {
         )
         .await?;
         args.database_url = db.url.clone();
-        std::env::set_var("FC_DATABASE_URL", &db.url);
+        env::set_var("FC_DATABASE_URL", &db.url);
         Some(db)
     } else {
         None
@@ -508,37 +556,34 @@ async fn main() -> Result<()> {
     // 1. Connect to Postgres early — the queue, control plane, stream
     //    processor, and unit-of-work all share the same pool.
     info!("Connecting to PostgreSQL...");
-    let pg_pool = fc_platform::shared::database::create_pool(&args.database_url)
+    let pg_pool = database::create_pool(&args.database_url)
         .await
         .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
 
-    fc_platform::shared::database::run_migrations(
-        &pg_pool,
-        fc_platform::shared::database::MigrationProfile::Embedded,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
+    database::run_migrations(&pg_pool, MigrationProfile::Embedded)
+        .await
+        .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
 
-    fc_platform::shared::database::seed_builtin_roles(&pg_pool)
+    database::seed_builtin_roles(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Built-in role seeding failed: {}", e))?;
 
-    fc_platform::shared::database::seed_platform_application(&pg_pool)
+    database::seed_platform_application(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
     // Go seeds the platform event-type catalogue on every start.
-    fc_platform::shared::database::seed_platform_event_types(&pg_pool)
+    database::seed_platform_event_types(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Platform event type seeding failed: {}", e))?;
 
-    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+    default_processes::seed_default_processes(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
 
     // Referential-integrity scan — warns when any aggregate delete path has
     // left orphan junction rows behind. Non-fatal; operator-visible.
-    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+    integrity_scan::run(&pg_pool).await;
 
     // Dev databases may hold secrets (e.g. IDP client secrets) stored in
     // plaintext before encrypt-on-write; reads now refuse those. Encrypt
@@ -551,10 +596,8 @@ async fn main() -> Result<()> {
     let own_database = embedded_db.is_some();
     #[cfg(not(feature = "embedded-db"))]
     let own_database = false;
-    if let Some(enc) = fc_platform::shared::encryption_service::EncryptionService::from_env() {
-        match fc_platform::shared::secret_backfill::backfill_secrets(&pg_pool, &enc, own_database)
-            .await
-        {
+    if let Some(enc) = EncryptionService::from_env() {
+        match secret_backfill::backfill_secrets(&pg_pool, &enc, own_database).await {
             Ok(reports) if own_database => {
                 for r in reports.iter().filter(|r| r.encrypted > 0) {
                     info!(column = %r.column, encrypted = r.encrypted, "Encrypted plaintext secrets");
@@ -648,7 +691,7 @@ async fn main() -> Result<()> {
                 "Connecting to outbox database"
             );
             Some(
-                sqlx::postgres::PgPoolOptions::new()
+                PgPoolOptions::new()
                     .max_connections(5)
                     .connect(outbox_db_url)
                     .await
@@ -719,25 +762,22 @@ async fn main() -> Result<()> {
 
     // Sync code-defined roles to database
     {
-        let role_sync =
-            fc_platform::service::RoleSyncService::new(Arc::new(RoleRepository::new(&pg_pool)));
+        let role_sync = RoleSyncService::new(Arc::new(RoleRepository::new(&pg_pool)));
         if let Err(e) = role_sync.sync_code_defined_roles().await {
             tracing::warn!("Role sync failed: {}", e);
         }
     }
 
     // 8c. Initialize auth services (auto-generate RSA keys for dev, like Java)
-    let auth_services = fc_platform::shared::server_setup::init_auth_services(
-        &repos,
-        fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:8080"),
-    )
-    .expect("Failed to initialize auth services");
+    let auth_services =
+        server_setup::init_auth_services(&repos, AuthInitConfig::from_env("http://localhost:8080"))
+            .expect("Failed to initialize auth services");
     info!("Auth services initialized");
 
     // 7b. Start outbox processor now that AuthService is ready — generate a
     //     long-lived internal service token so the outbox HTTP dispatcher can
     //     authenticate against the SDK batch endpoints.
-    let outbox_handle: Option<tokio::task::JoinHandle<()>> = if let Some(pool) = outbox_pool {
+    let outbox_handle: Option<JoinHandle<()>> = if let Some(pool) = outbox_pool {
         use fc_platform::principal::entity::Principal;
 
         // Anchor: the outbox forwards every client's messages. Go's fcdev
@@ -745,14 +785,14 @@ async fn main() -> Result<()> {
         let mut internal_principal = Principal::new_service(
             "outbox-processor",
             "Outbox Processor (internal)",
-            fc_platform::principal::entity::UserScope::Anchor,
+            UserScope::Anchor,
         );
         // The ingest routes need `platform:messaging:batch:*-write`, and an
         // event or job of any application's type may be ingested only by a
         // caller that may sign as it. The dev outbox forwards every
         // application's messages, so it holds the built-in super-admin role
         // (seeded before serving), as Go's fcdev bootstrap principal does.
-        internal_principal.assign_role(fc_platform::role::entity::roles::super_admin().name);
+        internal_principal.assign_role(roles::super_admin().name);
         let token = auth_services
             .auth
             .generate_access_token(&internal_principal)
@@ -799,7 +839,7 @@ async fn main() -> Result<()> {
     //     embedded queue → router → /api/dispatch/process). fc-dev's router
     //     consumes exactly one queue, so every job goes to it rather than to
     //     per-tenant queues.
-    let _scheduler_handle: Option<tokio::task::JoinHandle<()>> = if args.scheduler_enabled {
+    let _scheduler_handle: Option<JoinHandle<()>> = if args.scheduler_enabled {
         use fc_platform::scheduler::{
             DispatchAuthService, DispatchScheduler, PoolCodeResolver, SchedulerConfig,
             SingleQueuePublisher,
@@ -825,7 +865,7 @@ async fn main() -> Result<()> {
             pool_codes,
         );
 
-        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel = CancellationToken::new();
         let mut shutdown_rx = shutdown_tx.subscribe();
         let stop = cancel.clone();
         tokio::spawn(async move {
@@ -839,17 +879,17 @@ async fn main() -> Result<()> {
 
         // The stranded-sibling reaper (Go's A-01 backstop).
         {
-            let cancel = tokio_util::sync::CancellationToken::new();
+            let cancel = CancellationToken::new();
             let stop = cancel.clone();
             let mut shutdown_rx = shutdown_tx.subscribe();
             tokio::spawn(async move {
                 let _ = shutdown_rx.recv().await;
                 stop.cancel();
             });
-            tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+            tokio::spawn(reaper::run_reaper(
                 Arc::new(fc_platform::DispatchJobRepository::new(&pg_pool)),
-                fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
-                fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+                reaper::DEFAULT_REAPER_INTERVAL,
+                reaper::DEFAULT_PROCESSING_LIVE_AFTER,
                 cancel,
             ));
         }
@@ -862,19 +902,16 @@ async fn main() -> Result<()> {
 
     // 7d. Start scheduled-job scheduler (cron-driven instance creation +
     // webhook delivery). Independent of the dispatch_job scheduler above.
-    let _scheduled_job_scheduler: Option<tokio::task::JoinHandle<()>> = {
+    let _scheduled_job_scheduler: Option<JoinHandle<()>> = {
         use fc_platform::scheduled_job::scheduler::{
             ScheduledJobSchedulerConfig, ScheduledJobSchedulerService,
         };
         // Firings are signed with each job's application's credentials
         // (Java JobDispatcher).
-        let credentials = Arc::new(
-            fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver::new(
-                repos.service_account_repo.clone(),
-                fc_platform::shared::encryption_service::EncryptionService::from_env()
-                    .map(Arc::new),
-            ),
-        );
+        let credentials = Arc::new(OutboundCredentialsResolver::new(
+            repos.service_account_repo.clone(),
+            EncryptionService::from_env().map(Arc::new),
+        ));
         let svc = ScheduledJobSchedulerService::new(
             ScheduledJobSchedulerConfig::from_env(),
             repos.scheduled_job_repo.clone(),
@@ -913,27 +950,22 @@ async fn main() -> Result<()> {
     // 8e. Build platform API router via shared builder (handles ~38 state structs).
     // Event fan-out runs as a background service (started below); the request
     // path doesn't need the queue/dispatch deps wired in here.
-    let rate_limit_store =
-        fc_platform::shared::rate_limit_store::build_rate_limit_store(repos.pool.clone()).await;
-    let rate_limit_policies =
-        std::sync::Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
+    let rate_limit_store = rate_limit_store::build_rate_limit_store(repos.pool.clone()).await;
+    let rate_limit_policies = Arc::new(RateLimitPolicies::from_env());
 
-    let ctx = fc_platform::shared::server_setup::PlatformContext::new(
+    let ctx = PlatformContext::new(
         &repos,
         &auth_services,
         &unit_of_work,
-        fc_platform::shared::server_setup::PlatformRoutesConfig {
+        PlatformRoutesConfig {
             rate_limit_store: rate_limit_store.clone(),
             rate_limit_policies: rate_limit_policies.clone(),
             session_cookie_secure: false,
-            session_cookie_same_site:
-                fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE
-                    .to_string(),
-            session_token_expiry_secs:
-                fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,
+            session_cookie_same_site: PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string(),
+            session_token_expiry_secs: PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,
             static_dir: None, // fc-dev handles SPA serving itself (embedded or FC_STATIC_DIR)
             oidc_login_external_base_url: Some(
-                std::env::var("FC_EXTERNAL_BASE_URL")
+                env::var("FC_EXTERNAL_BASE_URL")
                     .unwrap_or_else(|_| "http://localhost:4200".to_string()),
             ),
             well_known_external_base_url: format!("http://localhost:{}", args.api_port),
@@ -944,10 +976,7 @@ async fn main() -> Result<()> {
 
     // Go's auth purger (expired auth rows, lapsed OAuth secret overlaps,
     // login-attempts partitions), every minute.
-    fc_platform::shared::server_setup::spawn_auth_purger(
-        &repos.pool,
-        repos.oauth_client_repo.clone(),
-    );
+    server_setup::spawn_auth_purger(&repos.pool, repos.oauth_client_repo.clone());
 
     // Background prune for the Postgres rate-limit table (no-op for Redis).
     // Runs hourly; keeps `iam_rate_limit_events` from growing past peak QPS
@@ -956,7 +985,7 @@ async fn main() -> Result<()> {
         let store = rate_limit_store.clone();
         let max_window = rate_limit_policies.max_window();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            let mut tick = time::interval(Duration::from_secs(3600));
             tick.tick().await; // skip the immediate-fire tick
             loop {
                 tick.tick().await;
@@ -976,20 +1005,19 @@ async fn main() -> Result<()> {
     // and `/auth/check-domain` use.
     #[cfg(feature = "web")]
     let web_auth = (
-        fc_platform::auth::routes::auth_state(&ctx),
-        fc_platform::auth::routes::oidc_login_state(&ctx).password_setup_hint,
+        routes::auth_state(&ctx),
+        routes::oidc_login_state(&ctx).password_setup_hint,
     );
     // The users section runs the principal API's own handler bodies, so it
     // takes the states those handlers were built with.
     #[cfg(feature = "web")]
     let web_users = fc_web::UserAdminStates {
-        principals: fc_platform::principal::routes::principals_state(&ctx),
-        principal_go: fc_platform::principal::routes::principal_go_state(&ctx),
+        principals: principals_state(&ctx),
+        principal_go: principal_go_state(&ctx),
         two_factor: ctx.two_factor.clone(),
-        developer_credentials:
-            fc_platform::developer_credential::routes::developer_credentials_state(&ctx),
+        developer_credentials: developer_credentials_state(&ctx),
     };
-    let (platform_app, platform_openapi) = fc_platform::router::build(&ctx);
+    let (platform_app, platform_openapi) = router::build(&ctx);
 
     // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
     // event-types sync writes only deltas, and OpenAPI sync no-ops when
@@ -1011,10 +1039,10 @@ async fn main() -> Result<()> {
     // Dev-specific extra route states (the shared builder doesn't wire
     // /api/dispatch-jobs or /api/event-types/filters — fc-dev does
     // this itself as compatibility for the generated frontend client).
-    let dispatch_jobs_state = fc_platform::api::DispatchJobsState {
+    let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
         client_repo: repos.client_repo.clone(),
-        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+        signing: Arc::new(SigningGuard::new(
             repos.subscription_repo.clone(),
             repos.connection_repo.clone(),
             repos.service_account_repo.clone(),
@@ -1022,7 +1050,7 @@ async fn main() -> Result<()> {
             repos.principal_repo.clone(),
         )),
     };
-    let filter_options_state = fc_platform::api::FilterOptionsState {
+    let filter_options_state = FilterOptionsState {
         client_repo: repos.client_repo.clone(),
         event_type_repo: repos.event_type_repo.clone(),
         subscription_repo: repos.subscription_repo.clone(),
@@ -1093,40 +1121,34 @@ async fn main() -> Result<()> {
 
     // Static frontend serving — uses FC_STATIC_DIR if set (for live reload),
     // otherwise serves from the embedded frontend assets compiled into the binary.
-    let api_app = if let Ok(static_dir) = std::env::var("FC_STATIC_DIR") {
-        let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
+    let api_app = if let Ok(static_dir) = env::var("FC_STATIC_DIR") {
+        let index_path = PathBuf::from(&static_dir).join("index.html");
         if index_path.exists() {
             info!(dir = %static_dir, "Serving frontend from filesystem (live reload)");
-            let app = fc_platform::router::serve_spa(api_app, &static_dir);
+            let app = router::serve_spa(api_app, &static_dir);
             #[cfg(feature = "web")]
             let app = app.fallback_service(fc_web::service(
                 web_deps.take().expect("web deps used once"),
-                fc_platform::router::serve_spa(Router::new(), &static_dir),
+                router::serve_spa(Router::new(), &static_dir),
             ));
             app
         } else {
             warn!(dir = %static_dir, "FC_STATIC_DIR set but index.html not found — using embedded assets");
-            api_app.fallback(axum::routing::get(embedded_asset_handler))
+            api_app.fallback(get(embedded_asset_handler))
         }
     } else {
         info!("Serving embedded frontend (compiled into binary)");
         let app = api_app
-            .route("/auth/login", axum::routing::get(embedded_spa_handler))
-            .route(
-                "/auth/forgot-password",
-                axum::routing::get(embedded_spa_handler),
-            )
-            .route(
-                "/auth/reset-password",
-                axum::routing::get(embedded_spa_handler),
-            );
+            .route("/auth/login", get(embedded_spa_handler))
+            .route("/auth/forgot-password", get(embedded_spa_handler))
+            .route("/auth/reset-password", get(embedded_spa_handler));
         #[cfg(feature = "web")]
         let app = app.fallback_service(fc_web::service(
             web_deps.take().expect("web deps used once"),
-            Router::new().fallback(axum::routing::get(embedded_asset_handler)),
+            Router::new().fallback(get(embedded_asset_handler)),
         ));
         #[cfg(not(feature = "web"))]
-        let app = app.fallback(axum::routing::get(embedded_asset_handler));
+        let app = app.fallback(get(embedded_asset_handler));
         app
     };
 
@@ -1142,7 +1164,7 @@ async fn main() -> Result<()> {
         let mut shutdown_rx = shutdown_tx.subscribe();
         // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
         tokio::spawn(async move {
-            fc_platform::router::serve_api(api_listener, api_app, async move {
+            router::serve_api(api_listener, api_app, async move {
                 let _ = shutdown_rx.recv().await;
                 info!("API server shutting down");
             })
@@ -1245,14 +1267,14 @@ async fn main() -> Result<()> {
     info!("Press Ctrl+C to shutdown");
 
     // Wait for shutdown signal
-    fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
+    server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received, initiating graceful shutdown...");
 
     // The function host stops first, so its DRAINING heartbeat still
     // reaches the platform.
     if fn_host.is_running() {
-        let _ = tokio::time::timeout(Duration::from_secs(30), fn_host.close()).await;
-        let _ = std::fs::remove_file(&fn_cli_file);
+        let _ = time::timeout(Duration::from_secs(30), fn_host.close()).await;
+        let _ = fs::remove_file(&fn_cli_file);
     }
 
     // Broadcast shutdown to all components
@@ -1264,7 +1286,7 @@ async fn main() -> Result<()> {
 
     // Wait for all handles with timeout
     let shutdown_timeout = Duration::from_secs(30);
-    let _ = tokio::time::timeout(shutdown_timeout, async {
+    let _ = time::timeout(shutdown_timeout, async {
         let _ = api_handle.await;
         let _ = metrics_handle.await;
         let _ = manager_handle.await;
@@ -1285,7 +1307,7 @@ async fn main() -> Result<()> {
     }
 
     info!("FlowCatalyst Dev Monolith shutdown complete");
-    fc_common::logging::shutdown();
+    logging::shutdown();
     Ok(())
 }
 
@@ -1294,10 +1316,10 @@ async fn main() -> Result<()> {
 async fn start_mcp(
     api_port: u16,
     mut shutdown_rx: broadcast::Receiver<()>,
-) -> Result<tokio::task::JoinHandle<()>> {
+) -> Result<JoinHandle<()>> {
     let addr = fc_mcp::resolve_bind(
-        &std::env::var("FC_MCP_BIND").unwrap_or_else(|_| "127.0.0.1".to_string()),
-        fc_common::config::env_or_parse("FC_MCP_PORT", DEV_MCP_PORT),
+        &env::var("FC_MCP_BIND").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        config::env_or_parse("FC_MCP_PORT", DEV_MCP_PORT),
     )?;
     let config = fc_mcp::Config::from_env_or_base(&format!("http://localhost:{api_port}"))?;
     let listener = TcpListener::bind(addr).await?;
@@ -1314,7 +1336,7 @@ async fn start_mcp(
 /// A boolean environment flag (`true`/`1`/`yes`).
 #[allow(dead_code)]
 fn env_flag(name: &str) -> bool {
-    std::env::var(name)
+    env::var(name)
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes"))
         .unwrap_or(false)
 }
@@ -1322,7 +1344,7 @@ fn env_flag(name: &str) -> bool {
 /// The directory holding the state shared with Go's and Java's fcdev
 /// (`<userDataDir>/flowcatalyst`, beside the embedded cluster), when the
 /// command uses the embedded cluster.
-fn shared_state_dir(cli: &Cli) -> Option<std::path::PathBuf> {
+fn shared_state_dir(cli: &Cli) -> Option<PathBuf> {
     #[cfg(feature = "embedded-db")]
     {
         let embedded = match &cli.command {
@@ -1347,15 +1369,15 @@ fn shared_state_dir(cli: &Cli) -> Option<std::path::PathBuf> {
 /// readable by the others. Otherwise (an external database, or a command
 /// without one): the fixed dev key fc-dev has always used, so secrets in an
 /// existing external dev database stay readable.
-fn apply_dev_app_key(state_dir: Option<&std::path::Path>) {
-    if std::env::var_os("FLOWCATALYST_APP_KEY").is_some_and(|v| !v.is_empty()) {
+fn apply_dev_app_key(state_dir: Option<&Path>) {
+    if env::var_os("FLOWCATALYST_APP_KEY").is_some_and(|v| !v.is_empty()) {
         return;
     }
     if let Some(dir) = state_dir {
         let path = dir.join("app-key");
         match dev_paths::ensure_app_key_file(&path) {
             Ok(key) => {
-                std::env::set_var("FLOWCATALYST_APP_KEY", key);
+                env::set_var("FLOWCATALYST_APP_KEY", key);
                 return;
             }
             Err(e) => eprintln!(
@@ -1365,7 +1387,7 @@ fn apply_dev_app_key(state_dir: Option<&std::path::Path>) {
             ),
         }
     }
-    std::env::set_var(
+    env::set_var(
         "FLOWCATALYST_APP_KEY",
         "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
     );
@@ -1375,11 +1397,7 @@ fn apply_dev_app_key(state_dir: Option<&std::path::Path>) {
 /// processor's series), the tokio runtime and process series, and `fc_up`.
 async fn metrics_handler() -> String {
     let mut out = fc_router::init_prometheus_recorder().render();
-    fc_common::diagnostics::render_prometheus(
-        &mut out,
-        None,
-        fc_common::diagnostics::Exposition::Prometheus,
-    );
+    diagnostics::render_prometheus(&mut out, None, Exposition::Prometheus);
     out.push_str("# HELP fc_up FlowCatalyst is up\n# TYPE fc_up gauge\nfc_up 1\n");
     out
 }
@@ -1398,7 +1416,7 @@ async fn health_handler() -> Json<serde_json::Value> {
 /// Serve embedded frontend assets. Handles all GET requests that don't match API routes.
 /// For HTML requests or root, serves index.html (SPA fallback).
 /// For asset requests, serves the matching embedded file with correct MIME type.
-async fn embedded_asset_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+async fn embedded_asset_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
     // The shell asked for by name is the shell: never cacheable.
@@ -1417,16 +1435,13 @@ async fn embedded_asset_handler(uri: axum::http::Uri) -> impl axum::response::In
 
 /// An embedded file other than the shell: hashed `/assets/*` are
 /// immutable; anything else keeps default caching.
-fn embedded_file_response(path: &str, data: Vec<u8>) -> axum::response::Response {
+fn embedded_file_response(path: &str, data: Vec<u8>) -> Response {
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert(
-        axum::http::header::CONTENT_TYPE,
-        mime.as_ref().parse().unwrap(),
-    );
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, mime.as_ref().parse().unwrap());
     if path.starts_with("assets/") {
         headers.insert(
-            axum::http::header::CACHE_CONTROL,
+            header::CACHE_CONTROL,
             "public, max-age=31536000, immutable".parse().unwrap(),
         );
     }
@@ -1435,31 +1450,28 @@ fn embedded_file_response(path: &str, data: Vec<u8>) -> axum::response::Response
 
 /// Serve the embedded index.html (SPA entry point). Never cacheable
 /// (Java 8fd35a8b), so a browser never keeps a stale shell after an upgrade.
-async fn embedded_spa_handler() -> impl axum::response::IntoResponse {
+async fn embedded_spa_handler() -> impl IntoResponse {
     match FrontendAssets::get("index.html") {
         Some(file) => embedded_shell_response(file.data.to_vec()),
-        None => (
-            axum::http::StatusCode::NOT_FOUND,
-            "Frontend not embedded in this build",
-        )
-            .into_response(),
+        None => (StatusCode::NOT_FOUND, "Frontend not embedded in this build").into_response(),
     }
 }
 
-fn embedded_shell_response(html: Vec<u8>) -> axum::response::Response {
-    let mut headers = axum::http::HeaderMap::new();
+fn embedded_shell_response(html: Vec<u8>) -> Response {
+    let mut headers = HeaderMap::new();
     headers.insert(
-        axum::http::header::CONTENT_TYPE,
+        header::CONTENT_TYPE,
         "text/html; charset=utf-8".parse().unwrap(),
     );
     headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static(fc_platform::router::SPA_SHELL_CACHE_CONTROL),
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(router::SPA_SHELL_CACHE_CONTROL),
     );
     (headers, html).into_response()
 }
 
 use axum::response::IntoResponse;
+use fc_platform::event_type::operations::SyncEventTypeInput;
 
 /// Dev-only auto-sync of the Developer portal artefacts for the
 /// `platform` application. Mirrors the two BFF handlers
@@ -1493,7 +1505,7 @@ async fn auto_sync_developer_portal(
     // principal_id (and so audit logs / `synced_by` show a human, not a
     // synthetic system actor). `synced_by` is VARCHAR(17) — a TSID id
     // fits, an arbitrary string usually doesn't.
-    let admin_email = std::env::var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL")
+    let admin_email = env::var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL")
         .unwrap_or_else(|_| "admin@flowcatalyst.local".to_string());
     let principal_id = match principal_repo.find_by_email(&admin_email).await {
         Ok(Some(p)) => p.id,
@@ -1516,7 +1528,7 @@ async fn auto_sync_developer_portal(
     // sync: the sync (like Go's) records an "updated" event and audit row for
     // every listed type that exists, changed or not, and this runs on every
     // start — on a shared developer cluster that was 131 events per start.
-    let all_definitions = fc_platform::seed::platform_event_types::definitions();
+    let all_definitions = platform_event_types::definitions();
     let event_types_total = all_definitions.len();
     let stored = match event_type_repo.find_by_application("platform").await {
         Ok(rows) => rows,
@@ -1593,9 +1605,9 @@ async fn auto_sync_developer_portal(
 /// The platform event-type definitions worth syncing: those not stored yet,
 /// or whose name, description or 1.0 schema differs from the stored row.
 fn changed_event_type_definitions(
-    definitions: Vec<fc_platform::event_type::operations::SyncEventTypeInput>,
+    definitions: Vec<SyncEventTypeInput>,
     stored: &[fc_platform::EventType],
-) -> Vec<fc_platform::event_type::operations::SyncEventTypeInput> {
+) -> Vec<SyncEventTypeInput> {
     definitions
         .into_iter()
         .filter(|def| match stored.iter().find(|et| et.code == def.code) {
@@ -1619,8 +1631,10 @@ fn changed_event_type_definitions(
 mod spa_cache_tests {
     use super::*;
     use axum::http::header::CACHE_CONTROL;
+    use axum::response::Response;
+    use fc_platform::router;
 
-    fn cache_control(res: &axum::response::Response) -> Option<&str> {
+    fn cache_control(res: &Response) -> Option<&str> {
         res.headers()
             .get(CACHE_CONTROL)
             .map(|v| v.to_str().unwrap())
@@ -1631,10 +1645,7 @@ mod spa_cache_tests {
     #[test]
     fn the_embedded_shell_is_never_cacheable() {
         let shell = embedded_shell_response(b"<html></html>".to_vec());
-        assert_eq!(
-            cache_control(&shell),
-            Some(fc_platform::router::SPA_SHELL_CACHE_CONTROL)
-        );
+        assert_eq!(cache_control(&shell), Some(router::SPA_SHELL_CACHE_CONTROL));
         let asset = embedded_file_response("assets/index-abc.js", vec![]);
         assert_eq!(
             cache_control(&asset),
@@ -1657,7 +1668,7 @@ mod spa_cache_tests {
                 .into_response();
             assert_eq!(
                 cache_control(&res),
-                Some(fc_platform::router::SPA_SHELL_CACHE_CONTROL),
+                Some(router::SPA_SHELL_CACHE_CONTROL),
                 "{path}"
             );
         }
@@ -1667,6 +1678,7 @@ mod spa_cache_tests {
 #[cfg(test)]
 mod auto_sync_tests {
     use super::changed_event_type_definitions;
+    use fc_platform::event_type::entity::EventTypeCode;
     use fc_platform::event_type::operations::SyncEventTypeInput;
     use fc_platform::{EventType, SpecVersion};
     use serde_json::json;
@@ -1681,7 +1693,7 @@ mod auto_sync_tests {
     }
 
     fn stored(code: &str, name: &str, schema: Option<serde_json::Value>) -> EventType {
-        let code = fc_platform::event_type::entity::EventTypeCode::parse(code).expect("valid code");
+        let code = EventTypeCode::parse(code).expect("valid code");
         let mut et = EventType::new(code, name);
         if schema.is_some() {
             et.spec_versions = vec![SpecVersion::new(&et.id, "1.0", schema)];

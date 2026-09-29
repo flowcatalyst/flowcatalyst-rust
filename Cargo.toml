@@ -6,6 +6,12 @@ members = [
     "crates/fc-standby",
     "crates/fc-outbox",
     "crates/fc-stream",
+    "crates/fc-platform-core",
+    "crates/fc-platform-auth",
+    "crates/fc-platform-iam",
+    "crates/fc-platform-messaging",
+    "crates/fc-platform-scheduled-jobs",
+    "crates/fc-platform-functions",
     "crates/fc-platform",
     "crates/fc-sdk",
     "crates/fc-mcp",
@@ -159,3 +165,33 @@ testcontainers-modules = { version = "0.15", features = ["localstack", "redis", 
 wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3.19"
+
+# ── Build profiles ──────────────────────────────────────────────────────
+# Here rather than in .cargo/config.toml, so every build uses them: the
+# Docker image's (which copies no `.cargo/`) as well as a checkout's.
+# Measurements: docs/plans/build-speed-2026-09-28.md.
+
+[profile.dev]
+# Faster debug builds - reduced debug info
+debug = 1
+# Keep some optimizations for faster runtime during dev
+opt-level = 0
+
+[profile.dev.package."*"]
+# Optimize dependencies even in dev mode (they don't change often). This
+# covers the proc macros too, which run on every build of our crates.
+# opt-level 1 was measured: 20 % less CPU on a cold build, the same wall
+# time, and CPU-bound tests 25 % slower.
+opt-level = 2
+# File:line in backtraces, no variable info: dependencies are rarely stepped
+# through. Smaller dependency debug info in every Linux test binary.
+debug = "line-tables-only"
+
+[profile.release]
+# Thin LTO + single codegen unit — biggest size win for the binaries we
+# ship to users. Measured trade-off vs `codegen-units = 16`: 57 MB vs
+# 98 MB fc-dev (+41 MB), ~2x faster build. Build cost is paid once per
+# release; download size is paid by every user on every `fc-dev upgrade`.
+# Revisit only if Windows release builds become genuinely blocking.
+lto = "thin"
+codegen-units = 1

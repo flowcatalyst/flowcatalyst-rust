@@ -10,7 +10,7 @@ References: Go `internal/server/envcfg.go` (`LoadEnv`), `dbsecret.go`, `signing_
 `fc_platform::shared::{database, email_service, encryption_service, server_setup::auth_init}`,
 `fc_platform::auth::signing_keys`, `fc_platform::webauthn::webauthn_service`.
 
-Proof: `bin/fc-server/tests/prod_env_boot_test.rs` (Docker, `--ignored`) boots the real binary twice, once with the
+Proof: `bin/fc-server/tests/it/prod_env_boot_test.rs` (Docker, `--ignored`) boots the real binary twice, once with the
 platform task's environment and once with the worker's, against Postgres. The database credentials come through
 `DB_SECRET_PROVIDER`/`DB_SECRET_ARN`/`DB_HOST`/`DB_NAME` from a fake Secrets Manager (`AWS_ENDPOINT_URL`, no AWS
 call). The JWT keys are passed as SSM passes them (literal `\n`). The test then:

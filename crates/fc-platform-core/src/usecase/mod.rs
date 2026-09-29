@@ -1,0 +1,32 @@
+//! Use Case Infrastructure
+//!
+//! Provides the foundational patterns for implementing use cases:
+//! - `Committed<T>` - sealed proof of a unit-of-work commit; `UseCaseResult<T>` - a use case's outcome
+//! - `UseCaseError` - categorized error types for consistent handling
+//! - `DomainEvent` - trait for domain events with CloudEvents structure
+//! - `ExecutionContext` - tracing and principal context for use case execution
+//! - `Caller` - the authority a use case's `authorize` checks
+//! - `UnitOfWork` - atomic commit of entity + event + audit log
+
+pub mod audit_operation;
+pub mod caller;
+pub mod domain_event;
+pub mod error;
+pub mod execution_context;
+pub mod result;
+pub mod unit_of_work;
+pub mod use_case;
+
+pub use caller::{Caller, CallerCredential};
+pub use domain_event::{DomainEvent, EventMetadata, RecordedEvent};
+pub use error::{ErrorKind, OrNotFound, UseCaseError};
+pub use execution_context::ExecutionContext;
+pub use result::{Committed, UseCaseResult};
+pub use unit_of_work::{
+    DbTx, HasId, LockedRead, Persist, PgUnitOfWork, TxScopedUnitOfWork, UnitOfWork,
+};
+pub use use_case::UseCase;
+
+/// A command's declared audit-masked fields (see `fc_common::audit_redaction`).
+/// Every command a unit of work audits implements it; most declare none.
+pub use fc_common::audit_redaction::AuditMasked;

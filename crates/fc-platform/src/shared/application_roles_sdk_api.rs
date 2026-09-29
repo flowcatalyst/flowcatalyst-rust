@@ -14,6 +14,7 @@ use utoipa::ToSchema;
 use crate::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase,
 };
+use crate::shared::authorization_service::checks;
 use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -128,7 +129,7 @@ pub async fn list_roles(
     Path(app_code): Path<String>,
     Query(query): Query<ListRolesQuery>,
 ) -> Result<Json<ListRolesResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+    checks::can_read_roles(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -175,7 +176,7 @@ pub async fn create_role(
     Path(app_code): Path<String>,
     Json(req): Json<CreateRoleRequest>,
 ) -> Result<Json<RoleDto>, PlatformError> {
-    crate::shared::authorization_service::checks::can_create_roles(&auth.0)?;
+    checks::can_create_roles(&auth.0)?;
     // Also the 404 for an unknown application: the use case doesn't load
     // the app row.
     state
@@ -230,7 +231,7 @@ pub async fn delete_role(
     auth: Authenticated,
     Path((app_code, role_name)): Path<(String, String)>,
 ) -> Result<(), PlatformError> {
-    crate::shared::authorization_service::checks::can_delete_roles(&auth.0)?;
+    checks::can_delete_roles(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)

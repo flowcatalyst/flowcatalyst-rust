@@ -1,7 +1,12 @@
+use crate::{
+    EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, RejectedLog,
+    RejectedMessage, Result,
+};
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{PgPool, Row};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 use tracing::{debug, info, warn};
 
 /// Bound on the stored failure text (R-17). A pathological payload can
@@ -9,10 +14,6 @@ use tracing::{debug, info, warn};
 /// verbatim once per quarantined row.
 const MAX_QUARANTINE_ERROR_LEN: usize = 1000;
 
-use crate::{
-    EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, RejectedLog,
-    RejectedMessage, Result,
-};
 use fc_common::{Message, QueuedMessage};
 
 /// Postgres-backed queue that mimics SQS FIFO semantics for local development.
@@ -220,7 +221,7 @@ impl PostgresQueue {
 /// mirrored here, not something this port should silently "fix" by
 /// under-sizing relative to Go on the same host.
 pub fn default_max_connections() -> u32 {
-    let cpus = std::thread::available_parallelism()
+    let cpus = thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(1);
     cpus.max(4)
@@ -614,6 +615,7 @@ impl EmbeddedQueue for PostgresQueue {
 #[cfg(test)]
 mod pool_sizing_tests {
     use super::*;
+    use std::thread;
 
     /// Pins the `max(4, cpus)` formula itself (Go's `pgxpool.New` default)
     /// — independent of whatever core count this particular test host
@@ -642,7 +644,7 @@ mod pool_sizing_tests {
     /// runner and dev machine today).
     #[test]
     fn tracks_available_parallelism_above_the_floor() {
-        let reported = std::thread::available_parallelism()
+        let reported = thread::available_parallelism()
             .map(|n| n.get() as u32)
             .unwrap_or(1);
         let n = default_max_connections();

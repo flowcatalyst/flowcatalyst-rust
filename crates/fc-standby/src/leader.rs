@@ -19,6 +19,9 @@ use crate::error::{Result, StandbyError};
 /// Leader election configuration. Re-exported from `fc_common` — a single
 /// unified type replacing the previous per-crate duplicates in fc-outbox and fc-standby.
 pub use fc_common::LeaderElectionConfig;
+use std::future::Future;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Leadership status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,17 +152,17 @@ impl LeaderElection {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(
+            let mut interval = time::interval(Duration::from_secs(
                 election.config.heartbeat_interval_seconds.max(1),
             ));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
                         // A tick is two Redis round trips at most; bound it
                         // as a whole so nothing can wedge the loop.
-                        if tokio::time::timeout(
+                        if time::timeout(
                             REDIS_RESPONSE_TIMEOUT * 3,
                             election.election_tick(),
                         )
@@ -285,7 +288,7 @@ impl LeaderElection {
             end
         "#;
 
-        match tokio::time::timeout(
+        match time::timeout(
             REDIS_RESPONSE_TIMEOUT,
             redis::Script::new(script)
                 .key(&self.config.lock_key)
@@ -360,7 +363,7 @@ impl StandbyGuard {
     pub async fn run_if_leader<F, Fut, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = T>,
+        Fut: Future<Output = T>,
     {
         if self.election.is_leader() {
             Some(f().await)

@@ -5,6 +5,8 @@
 
 use super::domain_event::DomainEvent;
 use super::tracing_context::TracingContext;
+#[cfg(feature = "auth")]
+use crate::auth::{AccessTokenClaims, AuthContext};
 use crate::tsid;
 use chrono::{DateTime, Utc};
 
@@ -121,7 +123,7 @@ impl ExecutionContext {
     /// let result = use_case.execute(command, ctx).await;
     /// ```
     #[cfg(feature = "auth")]
-    pub fn from_auth(auth: &crate::auth::AuthContext) -> Self {
+    pub fn from_auth(auth: &AuthContext) -> Self {
         Self::create(auth.principal_id())
     }
 
@@ -129,7 +131,7 @@ impl ExecutionContext {
     ///
     /// Use this when you have the raw claims without a full AuthContext.
     #[cfg(feature = "auth")]
-    pub fn from_claims(claims: &crate::auth::AccessTokenClaims) -> Self {
+    pub fn from_claims(claims: &AccessTokenClaims) -> Self {
         Self::create(claims.principal_id())
     }
 
@@ -159,6 +161,7 @@ impl ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::task;
 
     #[test]
     fn create_generates_ids_and_sets_principal() {
@@ -189,7 +192,7 @@ mod tests {
     async fn create_picks_up_tracing_context_across_awaits() {
         let ctx = TracingContext::new("async-corr", Some("evt_cause".into()))
             .scope(async {
-                tokio::task::yield_now().await;
+                task::yield_now().await;
                 ExecutionContext::create("prn_async")
             })
             .await;

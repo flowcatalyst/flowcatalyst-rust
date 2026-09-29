@@ -19,6 +19,8 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use http_body_util::BodyExt;
+use std::sync::Arc;
+use tokio::time;
 use wasmtime_wasi_http::{RequestOptions, WasiBody, WasiHttpHooks};
 
 /// Java `AllowlistHttpCaller.DEFAULT_CALL_TIMEOUT`.
@@ -95,7 +97,7 @@ pub fn decide(allow: &HttpAllowlist, scheme: &str, host: &str, deadline: Instant
 /// The per-store `wasi:http` hooks: the policy, and the invocation's
 /// deadline.
 pub struct EgressHooks {
-    pub allow: std::sync::Arc<HttpAllowlist>,
+    pub allow: Arc<HttpAllowlist>,
     pub deadline: Instant,
 }
 
@@ -128,7 +130,7 @@ impl WasiHttpHooks for EgressHooks {
                 options.first_byte_timeout = cap(options.first_byte_timeout);
                 options.between_bytes_timeout = cap(options.between_bytes_timeout);
                 Box::new(async move {
-                    let sent = tokio::time::timeout(
+                    let sent = time::timeout(
                         timeout,
                         wasmtime_wasi_http::default_send_request(request, Some(options)),
                     );

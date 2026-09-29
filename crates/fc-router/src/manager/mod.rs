@@ -38,10 +38,18 @@ use fc_common::{PoolConfig, StallConfig};
 use fc_queue::QueueConsumer;
 
 use crate::circuit_breaker_registry::CircuitBreakerRegistry;
+use crate::flight_recorder::FlightRecorder;
+use crate::health::HealthService;
 use crate::mediator::{HttpMediator, HttpMediatorConfig, Mediator};
 use crate::pool::ProcessPool;
+use crate::settled::SettledReporter;
 use crate::warning::WarningService;
 use crate::Result;
+use std::collections::HashSet;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+use tokio::sync;
+use tokio::sync::Notify;
 
 mod consumers;
 mod reconcile;
@@ -131,7 +139,7 @@ pub struct QueueManager {
 
     /// Generation stamped on each in-flight entry at admission — see
     /// [`tracking::Tracked::generation`].
-    next_tracker_generation: std::sync::atomic::AtomicU64,
+    next_tracker_generation: AtomicU64,
 
     /// App message ID to pipeline key mapping for deduplication
     /// Wrapped in Arc so spawned tasks can share the same map
@@ -205,7 +213,7 @@ pub struct QueueManager {
     /// `reconcile.rs`/`synth_pools.rs`), since either can change what
     /// `has_pool_capacity` answers. Replaces the old fixed-2s-sleep
     /// backpressure pause.
-    capacity_notify: Arc<tokio::sync::Notify>,
+    capacity_notify: Arc<Notify>,
 
     /// R-59: idle tracker for every per-client fallback pool
     /// (`{identifier}-DEFAULT-POOL`) this manager synthesised on demand —
@@ -247,10 +255,10 @@ pub struct QueueManager {
 
     /// Serialises pool creation, so two first messages for one code cannot
     /// each build a pool (Go creates pools under `poolMu`).
-    pool_create_lock: tokio::sync::Mutex<()>,
+    pool_create_lock: sync::Mutex<()>,
 
     /// Generation stamped on every [`RunningConsumer`].
-    next_consumer_generation: std::sync::atomic::AtomicU64,
+    next_consumer_generation: AtomicU64,
 
     /// Latched by [`Self::stop_polling`] (Go: `pollingStopped`): the
     /// watchdog must not respawn the poll loops a drain just stopped, and a
@@ -263,7 +271,7 @@ pub struct QueueManager {
     restart_attempts: Mutex<HashMap<String, RestartRecord>>,
 
     /// Bound on a single `poll()` (Go: `consumerPollTimeout`, 30s).
-    poll_timeout: std::time::Duration,
+    poll_timeout: Duration,
 
     /// How many capacity deferrals one consumer may have outstanding before
     /// it stops polling into pools that are all full (Go:
@@ -272,7 +280,7 @@ pub struct QueueManager {
 
     /// Bound on building a replacement consumer (Go:
     /// `consumerRebuildTimeout`, 20s).
-    rebuild_timeout: std::time::Duration,
+    rebuild_timeout: Duration,
 
     /// Consumer factory for creating new queue consumers during config sync
     /// If None, new queues in config will be logged but not auto-created
@@ -297,7 +305,7 @@ pub struct QueueManager {
     shutdown: CancellationToken,
 
     /// Batch ID counter for grouping messages
-    batch_counter: std::sync::atomic::AtomicU64,
+    batch_counter: AtomicU64,
 
     /// Track broker message IDs that were successfully processed but failed to delete
     /// (due to expired receipt handle). When these reappear, delete them immediately.
@@ -341,7 +349,7 @@ pub struct QueueManager {
     /// deliveries still doing their job. Entries are dropped once a message
     /// leaves `in_pipeline` (see `forget_resolved_stalls`), so a later
     /// stall of the same id reports again.
-    stall_warned: Mutex<std::collections::HashSet<String>>,
+    stall_warned: Mutex<HashSet<String>>,
 
     /// Warning service for generating operational warnings
     warning_service: Arc<WarningService>,
@@ -359,7 +367,7 @@ pub struct QueueManager {
     circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
 
     /// Health service for recording consumer poll times
-    health_service: Option<Arc<crate::health::HealthService>>,
+    health_service: Option<Arc<HealthService>>,
 
     /// R-13/R-16: `FC_ROUTER_STRICT_ROUTING`. When `true`, `route_batch`
     /// ACKs (never delivers, never NACKs) a message with an empty
@@ -399,16 +407,16 @@ pub struct QueueManager {
 
     /// Handed to every pool this manager creates (ledger A-01) — see
     /// [`QueueManagerBuilder::settled_reporter`].
-    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
+    settled_reporter: Option<Arc<dyn SettledReporter>>,
 
     /// What happened to each message recently (routing, dispatch, group
     /// decisions, settlement), shared with every pool and callback — see
     /// [`crate::flight_recorder`].
-    flight_recorder: Arc<crate::flight_recorder::FlightRecorder>,
+    flight_recorder: Arc<FlightRecorder>,
 
     /// Messages removed without delivery because they could not be
     /// routed, by reason (see [`QueueManager::messages_rejected`]).
-    rejected: [std::sync::atomic::AtomicU64; 2],
+    rejected: [AtomicU64; 2],
 }
 
 /// `fc_messages_rejected_total{reason}`: a message the consumer could not
@@ -432,17 +440,17 @@ pub struct QueueManagerBuilder {
     mediator_factory: MediatorFactory,
     warning_service: Arc<WarningService>,
     circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
-    health_service: Option<Arc<crate::health::HealthService>>,
+    health_service: Option<Arc<HealthService>>,
     consumer_factory: Option<Arc<dyn ConsumerFactory>>,
     max_pools: usize,
     pool_warning_threshold: usize,
     stall_config: StallConfig,
     strict_routing: bool,
-    poll_timeout: std::time::Duration,
-    rebuild_timeout: std::time::Duration,
+    poll_timeout: Duration,
+    rebuild_timeout: Duration,
     deferral_budget: usize,
-    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
-    flight_recorder: Arc<crate::flight_recorder::FlightRecorder>,
+    settled_reporter: Option<Arc<dyn SettledReporter>>,
+    flight_recorder: Arc<FlightRecorder>,
 }
 
 impl QueueManagerBuilder {
@@ -462,17 +470,14 @@ impl QueueManagerBuilder {
             rebuild_timeout: QueueManager::DEFAULT_REBUILD_TIMEOUT,
             deferral_budget: QueueManager::DEFAULT_DEFERRAL_BUDGET,
             settled_reporter: None,
-            flight_recorder: Arc::new(crate::flight_recorder::FlightRecorder::default()),
+            flight_recorder: Arc::new(FlightRecorder::default()),
         }
     }
 
     /// The flight recorder the manager, its pools and its callbacks record
     /// into (default: [`crate::flight_recorder::DEFAULT_CAPACITY`] events;
     /// `FlightRecorder::new(0)` turns recording off).
-    pub fn flight_recorder(
-        mut self,
-        recorder: Arc<crate::flight_recorder::FlightRecorder>,
-    ) -> Self {
+    pub fn flight_recorder(mut self, recorder: Arc<FlightRecorder>) -> Self {
         self.flight_recorder = recorder;
         self
     }
@@ -481,7 +486,7 @@ impl QueueManagerBuilder {
     /// manager creates ACKs BLOCK_ON_ERROR siblings behind a terminally
     /// failed head and reports them through `reporter`. Unset, the siblings
     /// are handed back to the broker. See [`crate::settled`].
-    pub fn settled_reporter(mut self, reporter: Arc<dyn crate::settled::SettledReporter>) -> Self {
+    pub fn settled_reporter(mut self, reporter: Arc<dyn SettledReporter>) -> Self {
         self.settled_reporter = Some(reporter);
         self
     }
@@ -500,14 +505,14 @@ impl QueueManagerBuilder {
     /// `consumerPollTimeout`). A poll that hits it is an error for a
     /// backend that returns promptly, and an empty poll for one that blocks
     /// by contract while its broker link is healthy (NATS).
-    pub fn poll_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub fn poll_timeout(mut self, timeout: Duration) -> Self {
         self.poll_timeout = timeout;
         self
     }
 
     /// Bound on building a replacement consumer (default 20s, Go's
     /// `consumerRebuildTimeout`).
-    pub fn rebuild_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub fn rebuild_timeout(mut self, timeout: Duration) -> Self {
         self.rebuild_timeout = timeout;
         self
     }
@@ -527,7 +532,7 @@ impl QueueManagerBuilder {
     }
 
     /// Health service for recording consumer poll times.
-    pub fn health_service(mut self, health_service: Arc<crate::health::HealthService>) -> Self {
+    pub fn health_service(mut self, health_service: Arc<HealthService>) -> Self {
         self.health_service = Some(health_service);
         self
     }
@@ -572,16 +577,16 @@ impl QueueManagerBuilder {
 
         QueueManager {
             in_pipeline: Arc::new(DashMap::new()),
-            next_tracker_generation: std::sync::atomic::AtomicU64::new(0),
+            next_tracker_generation: AtomicU64::new(0),
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
             orphaned_draining: Mutex::new(Vec::new()),
-            capacity_notify: Arc::new(tokio::sync::Notify::new()),
+            capacity_notify: Arc::new(Notify::new()),
             synth_pools: DashMap::new(),
             consumers: Arc::new(ConsumerRegistry::default()),
             pool_configs: RwLock::new(HashMap::new()),
-            pool_create_lock: tokio::sync::Mutex::new(()),
-            next_consumer_generation: std::sync::atomic::AtomicU64::new(0),
+            pool_create_lock: sync::Mutex::new(()),
+            next_consumer_generation: AtomicU64::new(0),
             polling_stopped: AtomicBool::new(false),
             restart_attempts: Mutex::new(HashMap::new()),
             poll_timeout: self.poll_timeout,
@@ -592,12 +597,12 @@ impl QueueManagerBuilder {
             default_pool_code: "DEFAULT-POOL".to_string(), // Java: DEFAULT_POOL_CODE
             running: AtomicBool::new(true),
             shutdown,
-            batch_counter: std::sync::atomic::AtomicU64::new(0),
+            batch_counter: AtomicU64::new(0),
             pending_delete_broker_ids: Arc::new(DashMap::new()),
             max_pools: self.max_pools,
             pool_warning_threshold: self.pool_warning_threshold,
             stall_config: self.stall_config,
-            stall_warned: Mutex::new(std::collections::HashSet::new()),
+            stall_warned: Mutex::new(HashSet::new()),
             warning_service: self.warning_service,
             circuit_breaker_registry: self.circuit_breaker_registry,
             health_service: self.health_service,
@@ -613,9 +618,9 @@ impl QueueManagerBuilder {
 
 impl QueueManager {
     /// Go: `consumerPollTimeout`.
-    pub const DEFAULT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
     /// Go: `consumerRebuildTimeout`.
-    pub const DEFAULT_REBUILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+    pub const DEFAULT_REBUILD_TIMEOUT: Duration = Duration::from_secs(20);
     /// Go: `defaultDeferralBudget`.
     pub const DEFAULT_DEFERRAL_BUDGET: usize = 5000;
     /// Go: `consumerRestartCriticalAfter`.
@@ -672,7 +677,7 @@ impl QueueManager {
     /// `REJECTED_*` indexes): the manager's own tally and the
     /// `fc_messages_rejected_total{reason}` series.
     pub(crate) fn note_rejected(&self, reason: usize) {
-        self.rejected[reason].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.rejected[reason].fetch_add(1, Ordering::Relaxed);
         metrics::counter!("fc_messages_rejected_total", "reason" => REJECTED_REASONS[reason])
             .increment(1);
     }
@@ -683,12 +688,12 @@ impl QueueManager {
         REJECTED_REASONS
             .iter()
             .zip(&self.rejected)
-            .map(|(r, n)| (*r, n.load(std::sync::atomic::Ordering::Relaxed)))
+            .map(|(r, n)| (*r, n.load(Ordering::Relaxed)))
             .collect()
     }
 
     /// The flight recorder (see [`crate::flight_recorder`]).
-    pub fn flight_recorder(&self) -> &Arc<crate::flight_recorder::FlightRecorder> {
+    pub fn flight_recorder(&self) -> &Arc<FlightRecorder> {
         &self.flight_recorder
     }
 
@@ -758,7 +763,7 @@ impl QueueManager {
     /// The G12 capacity-freed gate — see the `capacity_notify` field's doc
     /// comment. `Consumer::poll` loops park on this via `notified()` when
     /// [`Self::has_pool_capacity`] answers false.
-    pub(super) fn capacity_notify(&self) -> &Arc<tokio::sync::Notify> {
+    pub(super) fn capacity_notify(&self) -> &Arc<Notify> {
         &self.capacity_notify
     }
 

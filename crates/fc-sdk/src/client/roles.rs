@@ -5,6 +5,7 @@
 
 use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
+use crate::client::SyncResult;
 use serde::{Deserialize, Serialize};
 
 /// Paginated list of roles — `GET /api/roles`.
@@ -195,7 +196,7 @@ impl Roles<'_> {
         app_code: &str,
         req: &SyncRolesRequest,
         remove_unlisted: bool,
-    ) -> Result<crate::client::SyncResult, ClientError> {
+    ) -> Result<SyncResult, ClientError> {
         let query = if remove_unlisted {
             "?removeUnlisted=true"
         } else {

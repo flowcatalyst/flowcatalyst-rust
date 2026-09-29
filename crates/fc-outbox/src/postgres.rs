@@ -239,6 +239,7 @@ impl OutboxRepository for PostgresOutboxRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use testcontainers::runners::AsyncRunner;
     use testcontainers::ContainerAsync;
     use testcontainers_modules::postgres::Postgres;
@@ -422,7 +423,7 @@ mod tests {
     #[ignore = "needs Docker"]
     async fn concurrent_claims_never_share_a_row() {
         let (_container, pool) = database().await;
-        let repo = std::sync::Arc::new(reset(&pool, GO_TS_JAVA).await);
+        let repo = Arc::new(reset(&pool, GO_TS_JAVA).await);
         for i in 0..200 {
             insert(&pool, &format!("r{i:03}"), "EVENT", None, "{}").await;
         }

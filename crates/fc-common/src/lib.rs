@@ -36,6 +36,13 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::any::Any;
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::result;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 use utoipa::ToSchema;
@@ -111,7 +118,7 @@ pub struct Message {
 }
 
 impl<'de> Deserialize<'de> for Message {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -330,7 +337,7 @@ pub trait MessageCallback: Send + Sync {
     /// The router's diagnostics context for this message, opaque here: the
     /// flight recorder's per-message context, which the pool reuses for the
     /// events it records instead of building its own. Defaults to none.
-    fn diagnostics(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+    fn diagnostics(&self) -> Option<&(dyn Any + Send + Sync)> {
         None
     }
 }
@@ -346,8 +353,8 @@ pub struct BatchMessage {
 }
 
 // Manual Debug since Box<dyn MessageCallback> isn't Debug
-impl std::fmt::Debug for BatchMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for BatchMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("BatchMessage")
             .field("message", &self.message)
             .field("receipt_handle", &self.receipt_handle)
@@ -756,13 +763,13 @@ pub enum OutboxStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownOutboxStatus(pub i32);
 
-impl std::fmt::Display for UnknownOutboxStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for UnknownOutboxStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "unknown outbox status code {}", self.0)
     }
 }
 
-impl std::error::Error for UnknownOutboxStatus {}
+impl error::Error for UnknownOutboxStatus {}
 
 impl OutboxStatus {
     /// Every status, in code order.
@@ -840,13 +847,13 @@ pub enum OutboxItemType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownOutboxItemType(pub String);
 
-impl std::fmt::Display for UnknownOutboxItemType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for UnknownOutboxItemType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "unknown outbox item type {:?}", self.0)
     }
 }
 
-impl std::error::Error for UnknownOutboxItemType {}
+impl error::Error for UnknownOutboxItemType {}
 
 impl OutboxItemType {
     /// All item types for iteration
@@ -875,8 +882,8 @@ impl OutboxItemType {
     }
 }
 
-impl std::fmt::Display for OutboxItemType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for OutboxItemType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -887,7 +894,7 @@ impl From<OutboxItemType> for &'static str {
     }
 }
 
-impl std::str::FromStr for OutboxItemType {
+impl FromStr for OutboxItemType {
     type Err = UnknownOutboxItemType;
 
     /// Strict, exact match on [`OutboxItemType::as_str`] (owner ruling X-06).

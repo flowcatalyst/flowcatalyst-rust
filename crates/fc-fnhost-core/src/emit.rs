@@ -13,6 +13,7 @@ use serde_json::Value;
 use tokio::runtime::Handle;
 
 use crate::control_plane::{ControlPlane, EmitItem, EmitRequest};
+use crate::java;
 
 /// An event a function publishes: the `flowcatalyst:function/events`
 /// `outbound-event` record.
@@ -73,12 +74,12 @@ impl Emitter {
         event: OutboundEvent,
         defaults: (String, Option<String>),
     ) -> Result<String, EmitFailure> {
-        if crate::java::is_blank(&event.event_type) {
+        if java::is_blank(&event.event_type) {
             return Err(EmitFailure::Invalid(
                 emit_error::INVALID_EVENT_TYPE_REQUIRED.to_owned(),
             ));
         }
-        if crate::java::is_blank(&event.dedup_id) {
+        if java::is_blank(&event.dedup_id) {
             return Err(EmitFailure::Invalid(
                 emit_error::DEDUP_ID_REQUIRED.to_owned(),
             ));

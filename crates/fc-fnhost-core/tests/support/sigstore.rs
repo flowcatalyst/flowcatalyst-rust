@@ -10,6 +10,7 @@
 use std::str::FromStr;
 use std::time::Duration;
 
+use base64::engine::general_purpose;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use der::asn1::{BitString, Ia5String, ObjectIdentifier, OctetString, UtcTime};
@@ -21,6 +22,7 @@ use p256::pkcs8::EncodePublicKey;
 use rand_core::{OsRng, RngCore};
 use serde_json::json;
 use sha2::{Digest, Sha256, Sha384};
+use std::str;
 use x509_cert::certificate::{TbsCertificate, Version};
 use x509_cert::ext::pkix::name::GeneralName;
 use x509_cert::ext::pkix::{
@@ -43,7 +45,7 @@ const RSA_SPKI_B64: &str =
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyEaBTQ+Qn0FzzwD1IfGrQUlsowrIQDEHkc+VOHO16IU4j0Vqz5hQuLycguzco2Ju+f9LF5DUIDz4EcB04VxiRghJIjsgB5GaxwV2x2sewGjGw9rgfd6YaVC+8+qSxLBH977jGoMfJzeBnd0sAJbAAI9ez8qQlMuJTWfl0e0IXaeO7Qr0pLbyUA6p00Yvp6CB80vd991UK14htaJzQx7zYsMw4wQvbP+DaHf61kVUcHMV4OI2hKSroilCDjYGs4x+bg7ZaF1oNbJ9T7qvxGCZ095p/mLaOENdluF0cKFXtkfVzK67wD30bqJhSP6OIdFvuGaYsxLKCKuwRaxxoV8B1QIDAQAB";
 
 pub fn b64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+    general_purpose::STANDARD.encode(bytes)
 }
 
 pub fn random_bytes(n: usize) -> Vec<u8> {
@@ -254,9 +256,7 @@ pub fn build(spec: &LeafSpec) -> Ecosystem {
         }
         LeafKey::Rsa => (
             None,
-            base64::engine::general_purpose::STANDARD
-                .decode(RSA_SPKI_B64)
-                .unwrap(),
+            general_purpose::STANDARD.decode(RSA_SPKI_B64).unwrap(),
         ),
     };
     let mut extensions = Vec::new();
@@ -477,7 +477,7 @@ pub fn pem(der: &[u8]) -> String {
     let lines: Vec<&str> = encoded
         .as_bytes()
         .chunks(64)
-        .map(|c| std::str::from_utf8(c).unwrap())
+        .map(|c| str::from_utf8(c).unwrap())
         .collect();
     format!(
         "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",

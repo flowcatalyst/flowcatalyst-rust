@@ -9,9 +9,14 @@
 //! decides what a dead task means (see [`super::supervise`]); the hook only
 //! guarantees the panic is never silent.
 
+use std::any::Any;
+use std::backtrace::Backtrace;
+use std::panic;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, Once};
+use std::thread;
 use std::time::{Duration, Instant};
+use tracing::dispatcher;
 
 static PANICS: AtomicU64 = AtomicU64::new(0);
 static INSTALL: Once = Once::new();
@@ -32,11 +37,11 @@ pub fn panic_count() -> u64 {
 /// message) still runs, so a panic during start-up is never lost either.
 pub fn install_panic_hook() {
     INSTALL.call_once(|| {
-        let previous = std::panic::take_hook();
+        let previous = panic::take_hook();
         let budget = Mutex::new((Instant::now(), 0u32));
-        std::panic::set_hook(Box::new(move |info| {
+        panic::set_hook(Box::new(move |info| {
             PANICS.fetch_add(1, Ordering::Relaxed);
-            if !tracing::dispatcher::has_been_set() {
+            if !dispatcher::has_been_set() {
                 previous(info);
                 return;
             }
@@ -45,7 +50,7 @@ pub fn install_panic_hook() {
                 .location()
                 .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
                 .unwrap_or_default();
-            let thread = std::thread::current();
+            let thread = thread::current();
             let thread = thread.name().unwrap_or("<unnamed>");
             let span = tracing::Span::current();
             let span_name = span.metadata().map(|m| m.name()).unwrap_or("");
@@ -58,7 +63,7 @@ pub fn install_panic_hook() {
                 b.1 <= BACKTRACES_PER_WINDOW
             };
             if capture {
-                let backtrace = std::backtrace::Backtrace::force_capture();
+                let backtrace = Backtrace::force_capture();
                 tracing::error!(
                     target: "panic",
                     panic_message = %message,
@@ -84,7 +89,7 @@ pub fn install_panic_hook() {
 }
 
 /// The text of a panic payload (`panic!("…")` gives a `&str` or `String`).
-pub fn payload_text(payload: &(dyn std::any::Any + Send)) -> String {
+pub fn payload_text(payload: &(dyn Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         (*s).to_string()
     } else if let Some(s) = payload.downcast_ref::<String>() {
@@ -97,12 +102,13 @@ pub fn payload_text(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::any::Any;
 
     #[test]
     fn payload_text_reads_both_string_kinds() {
-        let a: Box<dyn std::any::Any + Send> = Box::new("static");
-        let b: Box<dyn std::any::Any + Send> = Box::new(String::from("owned"));
-        let c: Box<dyn std::any::Any + Send> = Box::new(7u8);
+        let a: Box<dyn Any + Send> = Box::new("static");
+        let b: Box<dyn Any + Send> = Box::new(String::from("owned"));
+        let c: Box<dyn Any + Send> = Box::new(7u8);
         assert_eq!(payload_text(a.as_ref()), "static");
         assert_eq!(payload_text(b.as_ref()), "owned");
         assert_eq!(payload_text(c.as_ref()), "<non-string panic payload>");

@@ -5,8 +5,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use fc_parity::coverage;
 use fc_parity::Config;
+use std::fs;
 use std::path::PathBuf;
+use std::process;
 use std::process::Command;
+use tokio::signal;
 
 #[derive(Parser)]
 #[command(
@@ -89,20 +92,20 @@ async fn main() -> Result<()> {
     };
     let report = tokio::select! {
         r = fc_parity::run(&config) => r?,
-        _ = tokio::signal::ctrl_c() => anyhow::bail!("interrupted; sides and database container removed"),
+        _ = signal::ctrl_c() => anyhow::bail!("interrupted; sides and database container removed"),
     };
     println!(
         "parity report written to {}",
         config.report_dir.join("report.md").display()
     );
     println!("{}", report.summary_line());
-    std::process::exit(report.exit_code());
+    process::exit(report.exit_code());
 }
 
 fn extract_lockfile(go_src: PathBuf, out: PathBuf) -> Result<()> {
     let lock = go_src.join("api/openapi.lock.json");
     let doc: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&lock).with_context(|| format!("read {}", lock.display()))?,
+        &fs::read(&lock).with_context(|| format!("read {}", lock.display()))?,
     )?;
     let commit = Command::new("git")
         .arg("-C")
@@ -112,7 +115,7 @@ fn extract_lockfile(go_src: PathBuf, out: PathBuf) -> Result<()> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     let ops = coverage::extract_lockfile(&doc, "flowcatalyst-go api/openapi.lock.json", &commit)?;
-    std::fs::write(&out, serde_json::to_string_pretty(&ops)? + "\n")?;
+    fs::write(&out, serde_json::to_string_pretty(&ops)? + "\n")?;
     println!(
         "{} operations from {} @ {commit} → {}",
         ops.operations.len(),

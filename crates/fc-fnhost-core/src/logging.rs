@@ -30,6 +30,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
 use crate::env::EnvReader;
+use crate::java;
+use std::error;
+use std::io;
+use std::thread;
+use tracing_subscriber::fmt::layer;
 
 const RESERVED: [&str; 7] = ["time", "level", "msg", "logger", "thread", "err", "stack"];
 
@@ -69,7 +74,7 @@ pub fn format_of(raw: &str, stderr_is_terminal: bool) -> Format {
 /// else `info`.
 pub fn filter_directive(env: &EnvReader) -> String {
     let fc_level = env.get("FC_LOG_LEVEL");
-    if !crate::java::is_blank(fc_level) {
+    if !java::is_blank(fc_level) {
         return match fc_level.trim().to_ascii_lowercase().as_str() {
             "debug" | "trace" => "debug",
             "warn" | "warning" => "warn",
@@ -90,21 +95,15 @@ pub fn init(env: &EnvReader) {
     let format = format_of(
         env.first_set(&["FC_LOG_FORMAT", "LOG_FORMAT"])
             .unwrap_or(""),
-        std::io::stderr().is_terminal(),
+        io::stderr().is_terminal(),
     );
     let filter =
         EnvFilter::try_new(filter_directive(env)).unwrap_or_else(|_| EnvFilter::new("info"));
     let registry = tracing_subscriber::registry().with(filter);
     let _ = match format {
-        Format::Json => registry
-            .with(SlogJsonLayer::new(std::io::stderr))
-            .try_init(),
+        Format::Json => registry.with(SlogJsonLayer::new(io::stderr)).try_init(),
         Format::Text => registry
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr)
-                    .with_target(true),
-            )
+            .with(layer().with_writer(io::stderr).with_target(true))
             .try_init(),
     };
 }
@@ -191,7 +190,7 @@ impl Visit for FieldCollector {
     fn record_str(&mut self, field: &Field, value: &str) {
         self.push(field, JsonValue::Str(value.to_owned()));
     }
-    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+    fn record_error(&mut self, field: &Field, value: &(dyn error::Error + 'static)) {
         self.push(field, JsonValue::Str(value.to_string()));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
@@ -239,7 +238,7 @@ where
                 }
             }
         }
-        let thread = std::thread::current();
+        let thread = thread::current();
         let line = render_line(
             &now_rfc3339(),
             *event.metadata().level(),
@@ -377,17 +376,19 @@ mod tests {
     use super::*;
     use parking_lot::Mutex;
     use serde_json::Value;
+    use std::io;
     use std::sync::Arc;
+    use tracing::subscriber;
 
     #[derive(Clone, Default)]
     struct Capture(Arc<Mutex<Vec<u8>>>);
 
     impl Write for Capture {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.lock().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
@@ -404,7 +405,7 @@ mod tests {
         let subscriber = tracing_subscriber::registry()
             .with(EnvFilter::new("trace"))
             .with(SlogJsonLayer::new(sink.clone()));
-        tracing::subscriber::with_default(subscriber, f);
+        subscriber::with_default(subscriber, f);
         let bytes = sink.0.lock().clone();
         String::from_utf8(bytes)
             .unwrap()

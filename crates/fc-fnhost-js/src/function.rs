@@ -47,6 +47,11 @@ use crate::engine::Workers;
 use crate::isolate::{Isolate, Limits, Terminator};
 use crate::modules::{FunctionModules, VersionCode};
 use crate::ops::{ContextOut, HostState, InvocationState, VersionShared};
+use fc_fnhost_core::invoke::UsageMeter;
+use http::uri::Authority;
+use std::any::Any;
+use tokio::time;
+use tokio::time::Instant;
 
 pub struct JsFunction {
     workers: Arc<Workers>,
@@ -121,7 +126,7 @@ impl RequestParts {
         let authority = c
             .original_host
             .as_deref()
-            .filter(|h| h.parse::<http::uri::Authority>().is_ok())
+            .filter(|h| h.parse::<Authority>().is_ok())
             .unwrap_or("localhost");
         let mut url = format!("http://{authority}{}", c.path);
         if let Some(query) = &c.raw_query {
@@ -160,7 +165,7 @@ type Slot = Arc<Mutex<Option<Terminator>>>;
 struct Job {
     /// The invocation's usage meter: the isolate's peak memory (JS is not
     /// fuel-metered).
-    usage: fc_fnhost_core::invoke::UsageMeter,
+    usage: UsageMeter,
     base: Option<&'static [u8]>,
     code: VersionCode,
     limits: Limits,
@@ -321,11 +326,11 @@ impl Invoker for JsFunction {
             slot,
             armed: true,
         };
-        let deadline = tokio::time::Instant::from_std(context.deadline);
+        let deadline = Instant::from_std(context.deadline);
         let mut answer = answer;
         let outcome = tokio::select! {
             outcome = &mut answer => outcome,
-            _ = tokio::time::sleep_until(deadline) => {
+            _ = time::sleep_until(deadline) => {
                 stopper.stop();
                 answer.await
             }
@@ -373,7 +378,7 @@ impl FunctionInstance for JsFunction {
         self.closed.store(true, Ordering::Release);
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

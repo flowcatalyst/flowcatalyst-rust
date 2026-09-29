@@ -17,10 +17,16 @@
 
 use std::time::{Duration, Instant};
 
+use crate::java;
 use async_trait::async_trait;
 use bytes::Bytes;
 use fc_function_abi::{Caller, FunctionAddress, MultiMap, Response, Webhook};
 use indexmap::IndexMap;
+use std::fmt;
+use std::fmt::Formatter;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicU8;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// How the host calls a loaded version. Implemented by every runtime's
@@ -73,14 +79,14 @@ pub struct Consumption {
 /// per client. Shared (cheap to clone): a runtime may update it while the
 /// guest runs, so a guest stopped mid-run still reports what it used.
 #[derive(Clone, Default)]
-pub struct UsageMeter(std::sync::Arc<UsageCells>);
+pub struct UsageMeter(Arc<UsageCells>);
 
 #[derive(Default)]
 struct UsageCells {
-    fuel: std::sync::atomic::AtomicU64,
-    peak_memory: std::sync::atomic::AtomicU64,
+    fuel: AtomicU64,
+    peak_memory: AtomicU64,
     /// Bit 0: fuel was metered; bit 1: memory was.
-    metered: std::sync::atomic::AtomicU8,
+    metered: AtomicU8,
 }
 
 impl UsageMeter {
@@ -116,8 +122,8 @@ impl UsageMeter {
     }
 }
 
-impl std::fmt::Debug for UsageMeter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for UsageMeter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.read().fmt(f)
     }
 }
@@ -188,8 +194,8 @@ impl InvocationContext {
 }
 
 /// Body bytes and secrets never reach a log line.
-impl std::fmt::Debug for InvocationContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for InvocationContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("InvocationContext")
             .field("invocation_id", &self.invocation_id)
             .field("address", &self.address.render())
@@ -242,7 +248,7 @@ pub fn emit_defaults(
         if let Ok(inbound) = Webhook::event(body) {
             causation_id = Some(inbound.id);
             if let Some(correlation) = inbound.correlation_id {
-                if !crate::java::is_blank(&correlation) {
+                if !java::is_blank(&correlation) {
                     correlation_id = correlation;
                 }
             }

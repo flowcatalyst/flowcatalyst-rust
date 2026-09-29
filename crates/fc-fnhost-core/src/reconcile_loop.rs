@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::clock::SharedClock;
 use crate::reconciler::Reconciler;
+use tokio::time;
 
 /// Between the end of one run and the start of the next.
 pub const INTERVAL: Duration = Duration::from_secs(15);
@@ -74,7 +75,7 @@ impl ReconcileLoop {
                     () = cancel.cancelled() => return,
                 }
                 tokio::select! {
-                    () = tokio::time::sleep(interval) => {}
+                    () = time::sleep(interval) => {}
                     () = trigger.notified() => {}
                     () = cancel.cancelled() => return,
                 }
@@ -103,7 +104,7 @@ impl ReconcileLoop {
         self.cancel.cancel();
         let handle = self.handle.lock().take();
         if let Some(mut handle) = handle {
-            if tokio::time::timeout(CLOSE_JOIN_TIMEOUT, &mut handle)
+            if time::timeout(CLOSE_JOIN_TIMEOUT, &mut handle)
                 .await
                 .is_err()
             {

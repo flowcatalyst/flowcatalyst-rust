@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use fc_function_model::DnsLabel;
 use rand::Rng;
 
+use crate::java;
 use crate::signature::{Signatures, SignaturesMode};
+use std::env;
+use std::thread;
 
 /// A read-only view over an environment map with Java `EnvReader`'s rules:
 /// unset and empty are the same thing, and an unparseable value silently
@@ -23,7 +26,7 @@ impl EnvReader {
     /// The process environment (non-UTF-8 values are read lossily).
     pub fn system() -> Self {
         Self {
-            vars: std::env::vars_os()
+            vars: env::vars_os()
                 .map(|(k, v)| {
                     (
                         k.to_string_lossy().into_owned(),
@@ -117,7 +120,7 @@ impl TrustedProxies {
 
     /// Comma-separated; blank means the default list, not "trust nobody".
     pub fn parse_csv(raw: &str) -> Result<Self, String> {
-        if crate::java::is_blank(raw) {
+        if java::is_blank(raw) {
             return Ok(Self::default_list());
         }
         let mut cidrs = Vec::new();
@@ -300,7 +303,7 @@ impl HostEnv {
         let client_secret = required(env, "FC_FN_CLIENT_SECRET", &mut bad);
 
         let host_id_raw = env.get("FC_FN_HOST_ID");
-        let host_id = if crate::java::is_blank(host_id_raw) {
+        let host_id = if java::is_blank(host_id_raw) {
             default_host_id()
         } else {
             if !is_host_id(host_id_raw) {
@@ -376,7 +379,7 @@ impl HostEnv {
         .map_err(HostEnvError)?;
 
         let cache_dir = match env.get("FC_FN_CACHE_DIR") {
-            "" => std::env::temp_dir().join("fc-fn-cache"),
+            "" => env::temp_dir().join("fc-fn-cache"),
             dir => PathBuf::from(dir),
         };
 
@@ -407,7 +410,7 @@ impl HostEnv {
 /// Available cores minus one (at least 1): with every permit held by a
 /// spinning guest, a core is still left for the listener.
 pub fn default_max_executing() -> usize {
-    std::thread::available_parallelism()
+    thread::available_parallelism()
         .map_or(1, |n| n.get())
         .saturating_sub(1)
         .max(1)
@@ -415,7 +418,7 @@ pub fn default_max_executing() -> usize {
 
 fn required(env: &EnvReader, key: &str, bad: &mut Vec<String>) -> String {
     let value = env.get(key);
-    if crate::java::is_blank(value) {
+    if java::is_blank(value) {
         bad.push(key.to_owned());
     }
     value.to_owned()
@@ -458,7 +461,7 @@ pub fn default_host_id() -> String {
         .bytes()
         .map(|b| if host_id_byte(b) { b as char } else { '-' })
         .collect();
-    let hostname = if crate::java::is_blank(&sanitised) {
+    let hostname = if java::is_blank(&sanitised) {
         "fn-host".to_owned()
     } else {
         sanitised

@@ -10,10 +10,15 @@
 
 use anyhow::{bail, Context, Result};
 use indexmap::IndexMap;
+use std::fs;
+use std::fs::File;
+use std::net::TcpListener;
 use std::path::Path;
+use std::process;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
+use tokio::time;
 
 const HEALTH_BUDGET: Duration = Duration::from_secs(120);
 const STOP_GRACE: Duration = Duration::from_secs(15);
@@ -26,7 +31,7 @@ pub struct SubprocessSide {
 }
 
 pub fn free_port() -> Result<u16> {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").context("pick a free port")?;
+    let l = TcpListener::bind("127.0.0.1:0").context("pick a free port")?;
     Ok(l.local_addr()?.port())
 }
 
@@ -39,8 +44,8 @@ impl SubprocessSide {
     ) -> Result<Self> {
         let port = free_port()?;
         let base_url = format!("http://localhost:{port}");
-        let log = std::fs::File::create(log_file)
-            .with_context(|| format!("create {}", log_file.display()))?;
+        let log =
+            File::create(log_file).with_context(|| format!("create {}", log_file.display()))?;
         let mut cmd = Command::new(binary);
         cmd.envs(env)
             .env("FC_API_PORT", port.to_string())
@@ -83,7 +88,7 @@ impl SubprocessSide {
                     tail(log_file)
                 );
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            time::sleep(Duration::from_millis(250)).await;
         }
         let start_duration = t0.elapsed();
         tracing::info!(%label, %base_url, ?start_duration, "fc-server healthy");
@@ -101,14 +106,11 @@ impl SubprocessSide {
             return;
         }
         if let Some(pid) = self.child.id() {
-            let _ = std::process::Command::new("kill")
+            let _ = process::Command::new("kill")
                 .args(["-TERM", &pid.to_string()])
                 .status();
         }
-        if tokio::time::timeout(STOP_GRACE, self.child.wait())
-            .await
-            .is_err()
-        {
+        if time::timeout(STOP_GRACE, self.child.wait()).await.is_err() {
             tracing::warn!(label = %self.label, "did not exit within {STOP_GRACE:?} of SIGTERM; killing");
             let _ = self.child.kill().await;
         }
@@ -116,7 +118,7 @@ impl SubprocessSide {
 }
 
 fn tail(log_file: &Path) -> String {
-    let text = std::fs::read_to_string(log_file).unwrap_or_default();
+    let text = fs::read_to_string(log_file).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(30)..].join("\n")
 }

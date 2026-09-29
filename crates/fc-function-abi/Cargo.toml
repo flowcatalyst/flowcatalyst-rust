@@ -31,3 +31,8 @@ chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 [dev-dependencies]
 # Agreement test: the guest-side permission rule against the platform's own.
 fc-platform = { path = "../fc-platform" }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

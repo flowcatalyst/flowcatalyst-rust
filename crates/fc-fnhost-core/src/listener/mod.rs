@@ -62,6 +62,12 @@ use self::jwks::JwksKeySource;
 use self::permits::Permits;
 use self::pinned::PinnedVersions;
 use self::public_routes::PublicRouteTable;
+use reqwest::redirect::Policy;
+use std::io;
+use std::io::ErrorKind;
+use std::net;
+use tokio::task::JoinHandle;
+use tokio::time;
 
 /// What the listeners need beyond the reconciler.
 #[derive(Clone)]
@@ -131,7 +137,7 @@ impl Shared {
 
 struct Server {
     stop: watch::Sender<Option<Duration>>,
-    task: tokio::task::JoinHandle<()>,
+    task: JoinHandle<()>,
     serving: Arc<AtomicBool>,
 }
 
@@ -192,18 +198,14 @@ impl FnListener {
 
 #[async_trait]
 impl Listener for FnListener {
-    async fn start(
-        &self,
-        reconciler: Arc<Reconciler>,
-        metrics: Arc<FnMetrics>,
-    ) -> std::io::Result<()> {
+    async fn start(&self, reconciler: Arc<Reconciler>, metrics: Arc<FnMetrics>) -> io::Result<()> {
         let config = &self.config;
         let max_concurrency = usize::try_from(config.max_concurrency)
             .ok()
             .filter(|n| *n >= 1)
             .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
+                io::Error::new(
+                    ErrorKind::InvalidInput,
                     format!(
                         "FC_FN_MAX_CONCURRENCY must be at least 1: {}",
                         config.max_concurrency
@@ -226,9 +228,9 @@ impl Listener for FnListener {
         // Java's `HttpClient.newHttpClient()` never follows redirects.
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             .build()
-            .map_err(std::io::Error::other)?;
+            .map_err(io::Error::other)?;
         let verifier_clock = bearer::verifier_clock(&config.clock);
         let keys = Arc::new(JwksKeySource::new(
             http,
@@ -293,7 +295,7 @@ impl Listener for FnListener {
             let _ = server.stop.send(Some(timeout));
         }
         for server in running.servers {
-            if tokio::time::timeout(timeout + Duration::from_secs(5), server.task)
+            if time::timeout(timeout + Duration::from_secs(5), server.task)
                 .await
                 .is_err()
             {
@@ -304,8 +306,8 @@ impl Listener for FnListener {
     }
 }
 
-fn bind(ip: IpAddr, port: u16) -> std::io::Result<std::net::TcpListener> {
-    let listener = std::net::TcpListener::bind(SocketAddr::new(ip, port))?;
+fn bind(ip: IpAddr, port: u16) -> io::Result<net::TcpListener> {
+    let listener = net::TcpListener::bind(SocketAddr::new(ip, port))?;
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
@@ -313,10 +315,10 @@ fn bind(ip: IpAddr, port: u16) -> std::io::Result<std::net::TcpListener> {
 /// The accept loop for one entry. On stop: stop accepting, let open
 /// connections finish in-flight requests (bounded), then drop them.
 fn serve(
-    listener: std::net::TcpListener,
+    listener: net::TcpListener,
     shared: Arc<Shared>,
     entry: ListenerEntry,
-) -> std::io::Result<Server> {
+) -> io::Result<Server> {
     let listener = TcpListener::from_std(listener)?;
     let (stop, mut stopped) = watch::channel::<Option<Duration>>(None);
     let serving = Arc::new(AtomicBool::new(true));
@@ -332,7 +334,7 @@ fn serve(
                         Ok(accepted) => accepted,
                         Err(e) => {
                             tracing::warn!(err = %e, entry = entry.wire_value(), "accepting a connection failed");
-                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            time::sleep(Duration::from_millis(10)).await;
                             continue;
                         }
                     };
@@ -367,7 +369,7 @@ fn serve(
         // Every connection was told to stop: in-flight requests finish,
         // idle keep-alive connections close at once.
         let timeout = stopped.borrow().unwrap_or(Duration::ZERO);
-        if tokio::time::timeout(timeout, async {
+        if time::timeout(timeout, async {
             while connections.join_next().await.is_some() {}
         })
         .await

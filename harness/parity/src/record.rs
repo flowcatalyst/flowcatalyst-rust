@@ -3,6 +3,7 @@
 //! known binary body (the QR PNG, the OpenAPI document), raw text otherwise.
 
 use indexmap::IndexMap;
+use reqwest::header::HeaderMap;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -50,11 +51,7 @@ impl StepRecord {
     /// Classifies a raw response. Only the first value of each compared
     /// header is kept (as Java's `HttpHeaders.firstValue`). A body that
     /// claims JSON but does not parse is an error (Java's `readTree` throws).
-    pub fn from_response(
-        status: u16,
-        headers: &reqwest::header::HeaderMap,
-        body: &[u8],
-    ) -> anyhow::Result<Self> {
+    pub fn from_response(status: u16, headers: &HeaderMap, body: &[u8]) -> anyhow::Result<Self> {
         let mut compared = IndexMap::new();
         for name in COMPARED_HEADERS {
             if let Some(v) = headers.get(name) {

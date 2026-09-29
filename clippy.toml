@@ -1,0 +1,9 @@
+# Clippy configuration for the workspace.
+
+# `clippy::absolute_paths` (enabled in each crate's `[lints.clippy]`): a path
+# that starts at a crate root (`std::…`, `crate::…`, `fc_platform_core::…`)
+# may have at most two segments; import the item, or its module, instead
+# (CLAUDE.md "Imports"). Handler paths inside `routes!(…)` stay fully
+# qualified for the route-auth scanner: the `routes.rs` files and
+# `router.rs` allow the lint.
+absolute-paths-max-segments = 2

@@ -145,6 +145,7 @@ fn mask_value(value: &Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     /// Every case of `docs/spec/audit-redaction-vectors.json` (this repo's
     /// copy of the Java repo's canonical file).
@@ -154,7 +155,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/spec/audit-redaction-vectors.json"
         );
-        let bytes = std::fs::read(path).expect("read vectors");
+        let bytes = fs::read(path).expect("read vectors");
         let cases: Vec<Value> = serde_json::from_slice(&bytes).expect("parse vectors");
         assert!(!cases.is_empty());
         for case in &cases {

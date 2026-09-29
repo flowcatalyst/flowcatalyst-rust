@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use fc_common::config::{env_or, env_or_parse};
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -52,7 +53,7 @@ impl McpRole {
     }
 
     /// Binds the listener and serves until `stop` is cancelled.
-    pub async fn start(self, stop: CancellationToken) -> Result<tokio::task::JoinHandle<()>> {
+    pub async fn start(self, stop: CancellationToken) -> Result<JoinHandle<()>> {
         let listener = TcpListener::bind(self.addr)
             .await
             .with_context(|| format!("MCP listener on {}", self.addr))?;

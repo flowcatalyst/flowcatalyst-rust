@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use crate::{java, InvalidArgument, MultiMap};
+use std::fmt;
+use std::fmt::Formatter;
 
 /// The reason the Java host puts in the `500` it answers whenever a WASM guest
 /// fails: a trap, an Extism error, output that is not the reply shape, or no
@@ -133,8 +135,8 @@ impl Response {
     }
 }
 
-impl std::fmt::Debug for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("Response")
             .field("status", &self.status)
             .field("headers", &self.headers)
@@ -166,13 +168,14 @@ fn content_type_json() -> MultiMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str;
 
     fn header<'a>(r: &'a Response, name: &str) -> Option<&'a [String]> {
         r.headers().get(name).map(Vec::as_slice)
     }
 
     fn body(r: &Response) -> &str {
-        std::str::from_utf8(r.body()).unwrap()
+        str::from_utf8(r.body()).unwrap()
     }
 
     #[test]

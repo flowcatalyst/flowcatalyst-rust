@@ -1,0 +1,172 @@
+//! Regenerate Auth Token Use Case
+
+use async_trait::async_trait;
+use chrono::Utc;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::ServiceAccountTokenRegenerated;
+use crate::service_account::entity::WebhookAuthType;
+use crate::service_account::repository::ServiceAccountRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::encryption_service::{require_configured, EncryptionService};
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+/// Generate a bearer token with fc_ prefix
+fn generate_auth_token() -> String {
+    let random_part: String = (0..32)
+        .map(|_| {
+            let idx = rand::rng().random_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect();
+    format!("fc_{}", random_part)
+}
+
+/// Command for regenerating a service account's auth token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegenerateAuthTokenCommand {
+    /// Service account ID
+    pub service_account_id: String,
+}
+
+impl AuditMasked for RegenerateAuthTokenCommand {}
+
+/// Result returned from regenerate auth token use case.
+/// Contains the event plus one-time token that needs to be returned to caller.
+/// The token is never serialized, so this serializes exactly as the event.
+#[derive(Serialize)]
+pub struct RegenerateAuthTokenResult {
+    #[serde(flatten)]
+    pub event: ServiceAccountTokenRegenerated,
+    #[serde(skip_serializing)]
+    pub auth_token: String,
+}
+
+fc_platform_core::impl_domain_event!(RegenerateAuthTokenResult => event);
+
+/// Use case for regenerating a service account's auth token.
+pub struct RegenerateAuthTokenUseCase<U: UnitOfWork> {
+    service_account_repo: Arc<ServiceAccountRepository>,
+    unit_of_work: Arc<U>,
+    /// Encrypts the generated credential before it is stored. `None` when no
+    /// key is configured; the use case then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
+}
+
+impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
+    pub fn new(
+        service_account_repo: Arc<ServiceAccountRepository>,
+        unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
+    ) -> Self {
+        Self {
+            service_account_repo,
+            unit_of_work,
+            encryption,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
+    type Command = RegenerateAuthTokenCommand;
+    type Event = RegenerateAuthTokenResult;
+
+    async fn validate(&self, _command: &RegenerateAuthTokenCommand) -> Result<(), UseCaseError> {
+        Ok(())
+    }
+
+    /// Service accounts are written by anchors only: an account's tier follows
+    /// its client links, so a non-anchor could otherwise mint an ANCHOR-tier
+    /// account (the `can_*_service_accounts` rules).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
+    async fn authorize(
+        &self,
+        _command: &RegenerateAuthTokenCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(checks::require_anchor_scope(ctx.caller())?)
+    }
+
+    async fn execute(
+        &self,
+        command: RegenerateAuthTokenCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<RegenerateAuthTokenResult>, UseCaseError> {
+        // Find the service account
+        let mut service_account = self
+            .service_account_repo
+            .find_by_id(&command.service_account_id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!(
+                    "Service account with ID '{}' not found",
+                    command.service_account_id
+                ),
+            )?;
+
+        // Generate new token; the caller gets the plaintext once, only the
+        // `encrypted:` form is stored.
+        let auth_token = generate_auth_token();
+        let auth_token_ref =
+            require_configured(self.encryption.as_deref())?.encrypt_ref(&auth_token)?;
+        service_account.webhook_credentials.token = Some(auth_token_ref);
+        service_account.webhook_credentials.auth_type = WebhookAuthType::BearerToken;
+        service_account.updated_at = Utc::now();
+
+        // Create domain event
+        let event = ServiceAccountTokenRegenerated::new(&ctx, &service_account);
+
+        // Create result with one-time token
+        let result = RegenerateAuthTokenResult {
+            event: event.clone(),
+            auth_token,
+        };
+
+        // Atomic commit through UnitOfWork, then map the event onto our
+        // wrapper (carrying the one-time token).
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
+            .map(|committed| committed.map(|_| result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = RegenerateAuthTokenCommand {
+            service_account_id: "sa-123".to_string(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("sa-123"));
+    }
+
+    #[test]
+    fn test_generate_auth_token() {
+        let token = generate_auth_token();
+        assert!(token.starts_with("fc_"));
+        assert_eq!(token.len(), 35);
+    }
+}

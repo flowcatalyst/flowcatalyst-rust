@@ -1,0 +1,199 @@
+//! Reset Password Use Case
+//!
+//! Admin-initiated password reset for internal-auth users. Used from the user
+//! detail page when a user needs a new password and email-based reset isn't an
+//! option. Hashes the new password with the configured complexity policy (or a
+//! relaxed policy when the caller opts out) and commits atomically through
+//! `UnitOfWork` so events and audit logs are emitted.
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::PasswordResetCompleted;
+use crate::auth::password_service::PasswordService;
+use crate::portal::policy;
+use crate::principal::repository::PrincipalRepository;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordCommand {
+    pub principal_id: String,
+    /// Never serialised: the UnitOfWork persists the command into
+    /// `aud_logs.operation_json`, and a plaintext password must not land there.
+    #[serde(skip_serializing)]
+    pub new_password: String,
+    /// When `false`, skip the platform's complexity rules (uppercase/lowercase/
+    /// digit/special) and enforce only a 2-character minimum. Defaults to `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
+}
+
+impl AuditMasked for ResetPasswordCommand {}
+
+pub struct ResetPasswordUseCase<U: UnitOfWork> {
+    principal_repo: Arc<PrincipalRepository>,
+    password_service: Arc<PasswordService>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> ResetPasswordUseCase<U> {
+    pub fn new(
+        principal_repo: Arc<PrincipalRepository>,
+        password_service: Arc<PasswordService>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self {
+            principal_repo,
+            password_service,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
+    type Command = ResetPasswordCommand;
+    type Event = PasswordResetCompleted;
+
+    async fn validate(&self, command: &ResetPasswordCommand) -> Result<(), UseCaseError> {
+        if command.principal_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "PRINCIPAL_ID_REQUIRED",
+                "Principal ID is required",
+            ));
+        }
+        if command.new_password.is_empty() {
+            return Err(UseCaseError::validation(
+                "NEW_PASSWORD_REQUIRED",
+                "New password is required",
+            ));
+        }
+        // Go ResetPassword: the relaxed SDK path only needs 2 characters;
+        // otherwise Go's minimum length, the rest of its policy once the
+        // principal is loaded.
+        let min = if command.enforce_password_complexity == Some(false) {
+            2
+        } else {
+            policy::MIN_LENGTH
+        };
+        if command.new_password.len() < min {
+            return Err(UseCaseError::validation(
+                "PASSWORD_TOO_SHORT",
+                format!("newPassword must be at least {min} characters"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The target must be a user the caller administers (Go
+    /// `requireUserResourceAccess`, post-load): a client administrator manages
+    /// only CLIENT-tier users (403) of a client it reaches (else
+    /// `Principal_NOT_FOUND`, as a missing id). The coarse `can_write_principals` gate stays in
+    /// the handler, before anything is loaded.
+    /// The system caller (the emailed-token reset, which proved the token) sets
+    /// any user's password.
+    async fn authorize(
+        &self,
+        command: &ResetPasswordCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        if ctx.caller().is_system() {
+            return Ok(());
+        }
+        super::access::load_administered_user(
+            &self.principal_repo,
+            ctx.caller(),
+            &command.principal_id,
+            "Principal",
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn execute(
+        &self,
+        command: ResetPasswordCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<PasswordResetCompleted>, UseCaseError> {
+        // Load the principal.
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "PRINCIPAL_NOT_FOUND",
+                format!("Principal with ID '{}' not found", command.principal_id),
+            )?;
+
+        if !principal.is_user() {
+            return Err(UseCaseError::business_rule(
+                "NOT_A_USER",
+                "Password reset only applies to user principals",
+            ));
+        }
+
+        // OIDC-backed users don't have a local password to reset.
+        if principal.external_identity.is_some() {
+            return Err(UseCaseError::business_rule(
+                "OIDC_USER",
+                "Cannot reset password for OIDC-authenticated users",
+            ));
+        }
+
+        // Go's policy on the strict path, with the principal's email and
+        // name; the relaxed SDK path skips it (the caller owns its policy).
+        if command.enforce_password_complexity != Some(false) {
+            let email = principal.email().unwrap_or_default().to_string();
+            if let Some(v) = policy::validate(&command.new_password, &email, &principal.name) {
+                return Err(UseCaseError::validation(v.code, v.message));
+            }
+        }
+        let hash = self
+            .password_service
+            .rehash_password(&command.new_password)
+            .map_err(UseCaseError::from)?;
+
+        if let Some(identity) = principal.user_identity.as_mut() {
+            identity.password_hash = Some(hash);
+        }
+        principal.updated_at = chrono::Utc::now();
+
+        let event = PasswordResetCompleted::from_ctx(&ctx, &principal.id);
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_serialization() {
+        let cmd = ResetPasswordCommand {
+            principal_id: "user-1".to_string(),
+            new_password: "hunter22!".to_string(),
+            enforce_password_complexity: Some(false),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("principalId"));
+        assert!(json.contains("enforcePasswordComplexity"));
+        // The command is persisted into aud_logs.operation_json by the UoW.
+        assert!(!json.contains("newPassword"), "password leaked: {json}");
+        assert!(!json.contains("hunter22!"), "password leaked: {json}");
+    }
+
+    #[test]
+    fn command_still_deserializes_the_password() {
+        let cmd: ResetPasswordCommand =
+            serde_json::from_str(r#"{"principalId":"user-1","newPassword":"hunter22!"}"#).unwrap();
+        assert_eq!(cmd.new_password, "hunter22!");
+    }
+}

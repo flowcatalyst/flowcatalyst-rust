@@ -7,8 +7,17 @@ use super::*;
 use std::convert::Infallible;
 use std::time::Duration;
 
+use futures::stream;
+use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, StreamBody};
+use hyper::service;
+use std::future;
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::oneshot;
+use tokio::time;
 
 const IDLE: Duration = Duration::from_millis(400);
 const READ: Duration = Duration::from_millis(400);
@@ -23,7 +32,7 @@ fn timeouts() -> ListenerTimeouts {
     }
 }
 
-type TestBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
+type TestBody = BoxBody<Bytes, Infallible>;
 
 /// `/slow` answers after 1 s; `/stream` streams three chunks 300 ms apart;
 /// `/echo` and `/upload` read the whole body and answer its length; anything
@@ -32,14 +41,14 @@ async fn handle(request: Request<RequestBody>) -> Result<Response<TestBody>, Inf
     let path = request.uri().path().to_string();
     let body: TestBody = match path.as_str() {
         "/slow" => {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            time::sleep(Duration::from_secs(1)).await;
             Full::new(Bytes::from_static(b"slow")).boxed()
         }
         "/stream" => {
-            let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, Infallible>>(1);
+            let (tx, rx) = mpsc::channel::<Result<Frame<Bytes>, Infallible>>(1);
             tokio::spawn(async move {
                 for chunk in ["a", "b", "c"] {
-                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    time::sleep(Duration::from_millis(300)).await;
                     let _ = tx
                         .send(Ok(Frame::data(Bytes::from_static(chunk.as_bytes()))))
                         .await;
@@ -57,21 +66,20 @@ async fn handle(request: Request<RequestBody>) -> Result<Response<TestBody>, Inf
 }
 
 /// An mpsc receiver as a stream.
-fn tokio_stream_from<T>(mut rx: tokio::sync::mpsc::Receiver<T>) -> impl futures::Stream<Item = T> {
-    futures::stream::poll_fn(move |cx| rx.poll_recv(cx))
+fn tokio_stream_from<T>(mut rx: Receiver<T>) -> impl futures::Stream<Item = T> {
+    stream::poll_fn(move |cx| rx.poll_recv(cx))
 }
 
 /// A listener on a free port, serving [`handle`] under [`timeouts`].
-async fn start() -> std::net::SocketAddr {
+async fn start() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             tokio::spawn(async move {
-                let service = hyper::service::service_fn(handle);
-                let _ =
-                    serve_connection(stream, service, &timeouts(), std::future::pending()).await;
+                let service = service::service_fn(handle);
+                let _ = serve_connection(stream, service, &timeouts(), future::pending()).await;
             });
         }
     });
@@ -83,7 +91,7 @@ async fn start() -> std::net::SocketAddr {
 async fn read_until_closed(socket: &mut TcpStream, within: Duration) -> (bool, String) {
     let mut out = Vec::new();
     let mut buf = [0u8; 1024];
-    let closed = tokio::time::timeout(within, async {
+    let closed = time::timeout(within, async {
         loop {
             match socket.read(&mut buf).await {
                 Ok(0) | Err(_) => return,
@@ -100,7 +108,7 @@ async fn read_until_closed(socket: &mut TcpStream, within: Duration) -> (bool, S
 async fn read_response(socket: &mut TcpStream, end: &str) -> String {
     let mut out = Vec::new();
     let mut buf = [0u8; 1024];
-    tokio::time::timeout(Duration::from_secs(5), async {
+    time::timeout(Duration::from_secs(5), async {
         while !String::from_utf8_lossy(&out).ends_with(end) {
             let n = socket.read(&mut buf).await.unwrap();
             assert!(n > 0, "closed early: {}", String::from_utf8_lossy(&out));
@@ -124,7 +132,7 @@ async fn an_idle_keep_alive_connection_closes_after_the_idle_time() {
     assert!(first.starts_with("HTTP/1.1 200"), "{first}");
 
     // Still open well within the idle time: a second request is served.
-    tokio::time::sleep(IDLE / 2).await;
+    time::sleep(IDLE / 2).await;
     socket
         .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
         .await
@@ -219,7 +227,7 @@ async fn a_body_read_in_time_is_served() {
         .write_all(b"POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\n\r\nabc")
         .await
         .unwrap();
-    tokio::time::sleep(READ / 2).await;
+    time::sleep(READ / 2).await;
     socket.write_all(b"def").await.unwrap();
     let response = read_response(&mut socket, "\r\n\r\n6").await;
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
@@ -236,7 +244,7 @@ async fn a_streamed_upload_is_cut_only_when_it_stalls() {
         .await
         .unwrap();
     for _ in 0..5 {
-        tokio::time::sleep(READ / 2).await; // 1 s in all: past the read time
+        time::sleep(READ / 2).await; // 1 s in all: past the read time
         socket.write_all(b"x").await.unwrap();
     }
     let response = read_response(&mut socket, "\r\n\r\n5").await;
@@ -255,10 +263,10 @@ async fn a_streamed_upload_is_cut_only_when_it_stalls() {
 async fn shutdown_lets_the_in_flight_request_finish() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        let service = hyper::service::service_fn(handle);
+        let service = service::service_fn(handle);
         serve_connection(stream, service, &timeouts(), async {
             let _ = stop_rx.await;
         })
@@ -269,7 +277,7 @@ async fn shutdown_lets_the_in_flight_request_finish() {
         .write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    time::sleep(Duration::from_millis(100)).await;
     stop_tx.send(()).unwrap();
     let (closed, read) = read_until_closed(&mut socket, Duration::from_secs(3)).await;
     assert!(

@@ -15,6 +15,9 @@ use serde::Serialize;
 use tokio::process::{Child, Command};
 
 use crate::infra::free_port;
+use std::env;
+use std::process;
+use tokio::time;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum SideKind {
@@ -86,7 +89,7 @@ impl Proc {
         // AWS_*, DATABASE_URL …) can leak into either side.
         cmd.env_clear();
         for k in ["PATH", "HOME", "TMPDIR", "USER", "LANG"] {
-            if let Ok(v) = std::env::var(k) {
+            if let Ok(v) = env::var(k) {
                 cmd.env(k, v);
             }
         }
@@ -117,11 +120,11 @@ impl Proc {
             return;
         };
         if let Some(pid) = child.id() {
-            let _ = std::process::Command::new("kill")
+            let _ = process::Command::new("kill")
                 .args(["-TERM", &pid.to_string()])
                 .status();
         }
-        if tokio::time::timeout(grace, child.wait()).await.is_err() {
+        if time::timeout(grace, child.wait()).await.is_err() {
             let _ = child.kill().await;
         }
     }
@@ -161,7 +164,7 @@ impl Proc {
                     self.log.display()
                 );
             }
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            time::sleep(Duration::from_millis(300)).await;
         }
     }
 }

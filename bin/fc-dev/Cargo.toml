@@ -105,3 +105,8 @@ web = ["dep:fc-web"]
 # Diagnostics (docs/operations/diagnosing-stuck-processes.md): OTLP span
 # export (FC_OTEL_ENABLED=true).
 otel = ["fc-common/otel"]
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

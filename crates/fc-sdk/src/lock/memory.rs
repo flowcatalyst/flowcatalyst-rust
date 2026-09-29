@@ -99,6 +99,7 @@ impl LockProvider for MemoryLockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time;
 
     #[tokio::test]
     async fn noop_always_succeeds() {
@@ -135,7 +136,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        time::sleep(Duration::from_millis(20)).await;
         let h2 = lock.acquire("k", Duration::from_secs(30)).await.unwrap();
         assert!(h2.is_some(), "should acquire after previous TTL expires");
     }

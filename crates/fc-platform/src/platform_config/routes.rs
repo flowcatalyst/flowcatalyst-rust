@@ -2,6 +2,11 @@
 //! and Go's property and access routes at their full paths
 //! (`go_platform_config_router`).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::Router;

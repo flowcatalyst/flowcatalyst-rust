@@ -41,6 +41,12 @@ use std::io::{stdin, stdout, BufRead, Write};
 use std::path::PathBuf;
 use tracing::info;
 
+use crate::dev_paths;
+use crate::embedded_pg;
+use crate::embedded_pg::EmbeddedDbArgs;
+use crate::embedded_pg::Mode;
+use crate::embedded_pg::Reset;
+use base64::engine::general_purpose;
 use fc_common::tsid::{self, EntityType};
 use fc_platform::application::entity::{Application, ApplicationType};
 use fc_platform::application::repository::ApplicationRepository;
@@ -57,7 +63,11 @@ use fc_platform::principal::entity::{Principal, UserScope};
 use fc_platform::principal::repository::PrincipalRepository;
 use fc_platform::service_account::entity::{ServiceAccount, WebhookCredentials};
 use fc_platform::service_account::repository::ServiceAccountRepository;
+use fc_platform::shared::database;
+use fc_platform::shared::database::MigrationProfile;
+use fc_platform::shared::default_processes;
 use fc_platform::shared::encryption_service::EncryptionService;
+use std::collections::HashSet;
 
 #[derive(clap::Args, Debug)]
 pub struct InitArgs {
@@ -139,7 +149,7 @@ pub struct InitArgs {
     /// Embedded cluster location, port and PostGIS source.
     #[cfg(feature = "embedded-db")]
     #[command(flatten)]
-    pub embedded: crate::embedded_pg::EmbeddedDbArgs,
+    pub embedded: EmbeddedDbArgs,
 
     /// API base URL written into FLOWCATALYST_BASE_URL.
     #[arg(long, default_value = "http://localhost:8080")]
@@ -150,11 +160,11 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // Embedded PG (if enabled) — same data dir as the start path.
     #[cfg(feature = "embedded-db")]
     let (db_url, mut _embedded) = if args.embedded_db {
-        let emb = crate::embedded_pg::start(
+        let emb = embedded_pg::start(
             &args.embedded,
-            crate::embedded_pg::Reset::default(),
-            crate::embedded_pg::Mode::AttachOrStart,
-            &crate::dev_paths::default_pid_file(),
+            Reset::default(),
+            Mode::AttachOrStart,
+            &dev_paths::default_pid_file(),
         )
         .await?;
         let url = emb.url.clone();
@@ -165,27 +175,24 @@ pub async fn run(args: InitArgs) -> Result<()> {
     #[cfg(not(feature = "embedded-db"))]
     let db_url = args.database_url.clone();
 
-    let pool = fc_platform::shared::database::create_pool(&db_url)
+    let pool = database::create_pool(&db_url)
         .await
         .context("connect to database")?;
 
     // Migrations + system seeds are idempotent — safe to re-run.
-    fc_platform::shared::database::run_migrations(
-        &pool,
-        fc_platform::shared::database::MigrationProfile::Production,
-    )
-    .await
-    .context("run migrations")?;
-    fc_platform::shared::database::seed_builtin_roles(&pool)
+    database::run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .context("run migrations")?;
+    database::seed_builtin_roles(&pool)
         .await
         .context("seed built-in roles")?;
-    fc_platform::shared::database::seed_platform_application(&pool)
+    database::seed_platform_application(&pool)
         .await
         .context("seed platform application")?;
-    fc_platform::shared::database::seed_platform_event_types(&pool)
+    database::seed_platform_event_types(&pool)
         .await
         .context("seed platform event types")?;
-    fc_platform::shared::default_processes::seed_default_processes(&pool)
+    default_processes::seed_default_processes(&pool)
         .await
         .context("seed default processes")?;
 
@@ -393,7 +400,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     #[cfg(feature = "embedded-db")]
     if let Some(mut e) = _embedded {
-        crate::embedded_pg::stop(&mut e).await;
+        embedded_pg::stop(&mut e).await;
     }
     Ok(())
 }
@@ -539,7 +546,7 @@ fn generate_client_secret() -> Result<(String, String)> {
     use base64::Engine;
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
-    let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+    let plaintext = general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
     let enc = EncryptionService::from_env().ok_or_else(|| {
         anyhow::anyhow!(
@@ -569,7 +576,7 @@ fn generate_webhook_credentials() -> Result<WebhookCredentials> {
         .collect();
     let mut signing = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut signing);
-    let signing = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signing);
+    let signing = general_purpose::URL_SAFE_NO_PAD.encode(signing);
     let seal = |v: &str| {
         enc.encrypt_ref(v)
             .map_err(|e| anyhow::anyhow!("encrypting the service account's credentials: {e}"))
@@ -597,7 +604,7 @@ pub(crate) fn write_env_updates(path: &PathBuf, updates: &[(&str, &str)]) -> Res
     } else {
         original.split('\n').map(String::from).collect()
     };
-    let mut seen: std::collections::HashSet<&str> = Default::default();
+    let mut seen: HashSet<&str> = Default::default();
 
     for line in lines.iter_mut() {
         if let Some(eq) = line.find('=') {

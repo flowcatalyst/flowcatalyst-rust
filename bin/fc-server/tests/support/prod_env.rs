@@ -31,7 +31,18 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::Router;
+use std::env;
+use std::fs;
+use std::fs::File;
+use std::future::Future;
+use std::net;
+use std::path::PathBuf;
+use std::process;
+use std::process::ExitStatus;
+use std::thread;
+use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use tokio::time;
 
 pub const CLIENT_ID: &str = "oac_router_test";
 pub const CLIENT_SECRET: &str = "router-test-secret";
@@ -163,7 +174,7 @@ async fn sqs(
         .to_string();
     let body = if target.ends_with("ReceiveMessage") {
         // A short long-poll so the consumers don't spin.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        time::sleep(Duration::from_millis(500)).await;
         serde_json::json!({"Messages": []})
     } else if target.ends_with("GetQueueAttributes") {
         serde_json::json!({"Attributes": {
@@ -181,7 +192,7 @@ async fn sqs(
 }
 
 async fn serve(app: Router) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -190,7 +201,7 @@ async fn serve(app: Router) -> SocketAddr {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+    net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
@@ -287,7 +298,7 @@ pub struct RouterProcess {
     pub child: Child,
     pub api_port: u16,
     pub metrics_port: u16,
-    pub log_path: std::path::PathBuf,
+    pub log_path: PathBuf,
 }
 
 impl RouterProcess {
@@ -297,7 +308,7 @@ impl RouterProcess {
 
     /// Everything the process has logged so far.
     pub fn log(&self) -> String {
-        std::fs::read_to_string(&self.log_path).unwrap_or_default()
+        fs::read_to_string(&self.log_path).unwrap_or_default()
     }
 }
 
@@ -305,7 +316,7 @@ impl Drop for RouterProcess {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
         let log = self.log();
-        if std::thread::panicking() {
+        if thread::panicking() {
             let tail: String = log
                 .chars()
                 .rev()
@@ -319,7 +330,7 @@ impl Drop for RouterProcess {
                 self.log_path.display()
             );
         }
-        let _ = std::fs::remove_file(&self.log_path);
+        let _ = fs::remove_file(&self.log_path);
     }
 }
 
@@ -333,15 +344,15 @@ pub fn spawn_router(
     let (api_port, metrics_port) = (free_port(), free_port());
     // A file, not a pipe: nothing drains a pipe while the router runs, and
     // a full one would block its logging.
-    let log_path = std::env::temp_dir().join(format!(
+    let log_path = env::temp_dir().join(format!(
         "fc-router-prod-env-{}-{api_port}.log",
-        std::process::id()
+        process::id()
     ));
-    let log = std::fs::File::create(&log_path).expect("router log file");
+    let log = File::create(&log_path).expect("router log file");
     let mut cmd = Command::new(binary);
     cmd.env_clear();
     for key in ["PATH", "HOME", "TMPDIR"] {
-        if let Ok(v) = std::env::var(key) {
+        if let Ok(v) = env::var(key) {
             cmd.env(key, v);
         }
     }
@@ -372,7 +383,7 @@ pub fn spawn_router(
 pub async fn eventually<T, F, Fut>(timeout: Duration, what: &str, mut check: F) -> T
 where
     F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
+    Fut: Future<Output = Option<T>>,
 {
     let deadline = Instant::now() + timeout;
     loop {
@@ -380,7 +391,7 @@ where
             return v;
         }
         assert!(Instant::now() < deadline, "timed out waiting for: {what}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -467,11 +478,8 @@ pub async fn assert_production_contract(
 }
 
 /// Wait for `router` to exit, returning its status and log.
-pub async fn wait_exit(
-    mut router: RouterProcess,
-    timeout: Duration,
-) -> (std::process::ExitStatus, String) {
-    let status = tokio::time::timeout(timeout, router.child.wait())
+pub async fn wait_exit(mut router: RouterProcess, timeout: Duration) -> (ExitStatus, String) {
+    let status = time::timeout(timeout, router.child.wait())
         .await
         .expect("the router exits")
         .unwrap();

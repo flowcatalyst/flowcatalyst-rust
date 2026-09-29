@@ -15,6 +15,10 @@ use tracing::{debug, info};
 
 use crate::notification::NotificationService;
 use fc_common::{Warning, WarningCategory, WarningSeverity};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use tokio::runtime::Handle;
+use tokio::sync::Semaphore;
 
 /// Parse a severity name as the warnings API and `FC_NOTIFY_MIN_SEVERITY`
 /// accept it: case-insensitive `INFO`, `WARN`/`WARNING`, `ERROR` or
@@ -80,8 +84,8 @@ pub struct WarningService {
     /// Bounds the notification tasks `add_warning` spawns: a warning storm
     /// against a slow or hung channel used to spawn one task per warning
     /// without limit (Go's unbounded notification spawns).
-    notify_permits: Arc<tokio::sync::Semaphore>,
-    notifications_dropped: std::sync::atomic::AtomicU64,
+    notify_permits: Arc<Semaphore>,
+    notifications_dropped: AtomicU64,
 }
 
 impl WarningService {
@@ -90,8 +94,8 @@ impl WarningService {
             warnings: RwLock::new(HashMap::new()),
             config,
             notification_service: None,
-            notify_permits: Arc::new(tokio::sync::Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
-            notifications_dropped: std::sync::atomic::AtomicU64::new(0),
+            notify_permits: Arc::new(Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
+            notifications_dropped: AtomicU64::new(0),
         }
     }
 
@@ -104,8 +108,8 @@ impl WarningService {
             warnings: RwLock::new(HashMap::new()),
             config,
             notification_service: Some(notification),
-            notify_permits: Arc::new(tokio::sync::Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
-            notifications_dropped: std::sync::atomic::AtomicU64::new(0),
+            notify_permits: Arc::new(Semaphore::new(MAX_NOTIFICATIONS_IN_FLIGHT)),
+            notifications_dropped: AtomicU64::new(0),
         }
     }
 
@@ -150,7 +154,7 @@ impl WarningService {
         if let Some(ns) = self.notification_service.clone() {
             match (
                 self.notify_permits.clone().try_acquire_owned(),
-                tokio::runtime::Handle::try_current(),
+                Handle::try_current(),
             ) {
                 (Ok(permit), Ok(rt)) => {
                     rt.spawn(async move {
@@ -159,10 +163,7 @@ impl WarningService {
                     });
                 }
                 _ => {
-                    let dropped = self
-                        .notifications_dropped
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                        + 1;
+                    let dropped = self.notifications_dropped.fetch_add(1, Ordering::Relaxed) + 1;
                     if dropped.is_power_of_two() {
                         tracing::warn!(
                             dropped,
@@ -179,8 +180,7 @@ impl WarningService {
 
     /// Notifications dropped because too many deliveries were in flight.
     pub fn notifications_dropped(&self) -> u64 {
-        self.notifications_dropped
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.notifications_dropped.load(Ordering::Relaxed)
     }
 
     /// Add a warning. Returns the new warning's id.
@@ -436,6 +436,9 @@ impl Default for WarningService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future;
+    use tokio::runtime::Handle;
+    use tokio::task;
 
     /// A notification channel that never answers.
     struct Hung;
@@ -443,7 +446,7 @@ mod tests {
     #[async_trait::async_trait]
     impl NotificationService for Hung {
         async fn notify_warning(&self, _: &Warning) {
-            std::future::pending::<()>().await;
+            future::pending::<()>().await;
         }
         async fn notify_critical_error(&self, _: &str, _: &str) {}
         async fn notify_system_event(&self, _: &str, _: &str) {}
@@ -459,9 +462,7 @@ mod tests {
     async fn notification_spawns_are_bounded() {
         let service =
             WarningService::with_notification(WarningServiceConfig::default(), Arc::new(Hung));
-        let before = tokio::runtime::Handle::current()
-            .metrics()
-            .num_alive_tasks();
+        let before = Handle::current().metrics().num_alive_tasks();
         for i in 0..500 {
             service.add_warning(
                 WarningCategory::Processing,
@@ -470,11 +471,8 @@ mod tests {
                 "test".into(),
             );
         }
-        tokio::task::yield_now().await;
-        let spawned = tokio::runtime::Handle::current()
-            .metrics()
-            .num_alive_tasks()
-            - before;
+        task::yield_now().await;
+        let spawned = Handle::current().metrics().num_alive_tasks() - before;
         assert_eq!(spawned, MAX_NOTIFICATIONS_IN_FLIGHT);
         assert_eq!(
             service.notifications_dropped(),

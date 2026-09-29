@@ -23,7 +23,9 @@ use crate::login_attempt::repository::LoginAttemptRepository;
 use crate::mfa::repository::MfaRepository;
 use crate::password_reset::repository::PasswordResetTokenRepository;
 use crate::portal::repository::PortalFlowRepository;
+use crate::shared::error;
 use crate::OAuthClientRepository;
+use tokio::time;
 
 /// How often the purger sweeps (Go: `time.NewTicker(time.Minute)`).
 pub const PURGE_INTERVAL: Duration = Duration::from_secs(60);
@@ -86,7 +88,7 @@ impl AuthPurger {
 
     /// One sweep, at `now`. Each step runs whatever the others did.
     pub async fn run_once(&self, now: DateTime<Utc>) -> PurgeReport {
-        fn counted(what: &str, result: crate::shared::error::Result<u64>) -> u64 {
+        fn counted(what: &str, result: error::Result<u64>) -> u64 {
             match result {
                 Ok(n) => {
                     if n > 0 {
@@ -155,7 +157,7 @@ impl AuthPurger {
     /// Sweep every [`PURGE_INTERVAL`] for as long as the process runs.
     pub fn spawn(self) {
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(PURGE_INTERVAL);
+            let mut tick = time::interval(PURGE_INTERVAL);
             tick.tick().await; // skip the immediate-fire tick, as Go's ticker
             tracing::info!("auth purger started");
             loop {

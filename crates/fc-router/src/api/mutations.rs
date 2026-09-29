@@ -2,6 +2,7 @@
 //! circuit-breaker reset / reset-all, in-flight force-ACK.
 
 use super::AppState;
+use axum::http::header;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -9,6 +10,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
@@ -50,7 +52,7 @@ pub(crate) async fn update_pool_config(
         warn!(pool_code = %pool_code, "Pool update rejected (unknown pool or invalid concurrency)");
         return (
             StatusCode::NOT_FOUND,
-            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            [(header::CONTENT_TYPE, "application/problem+json")],
             Json(serde_json::json!({
                 "title": "Not Found",
                 "status": 404,
@@ -120,7 +122,7 @@ pub(crate) async fn reset_circuit_breaker(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Response {
-    let decoded_name = urlencoding::decode(&name).unwrap_or(std::borrow::Cow::Borrowed(&name));
+    let decoded_name = urlencoding::decode(&name).unwrap_or(Cow::Borrowed(&name));
 
     if state.circuit_breaker_registry.reset(&decoded_name) {
         info!(name = %decoded_name, "Circuit breaker reset");

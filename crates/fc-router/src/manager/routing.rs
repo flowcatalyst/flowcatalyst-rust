@@ -22,6 +22,14 @@ use crate::Result;
 
 use super::tracking::Tracked;
 use super::{ConsumerRegistry, QueueManager, RunningConsumer};
+use std::any::Any;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+use std::thread;
+use std::time::Duration;
+use tokio::runtime::Handle;
+use tokio::time;
+use tracing::field::Empty;
 
 /// Scope a broker-native message id to the queue it came from (G11,
 /// `docs/go-mirror/2026-09-06-go-fix-list.md`).
@@ -47,7 +55,7 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
 /// treated like a failed ack (the broker id goes to pending-delete, so its
 /// redelivery is deleted on sight); a nack that times out leaves the message
 /// to the broker's own visibility timeout. Go sets no such bound.
-const BROKER_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const BROKER_OP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
@@ -99,7 +107,7 @@ struct QueueMessageCallback {
     /// impl checks this and only fires fallback cleanup if no resolution
     /// happened. AcqRel ordering: the load in Drop must observe stores from
     /// any thread that called ack/nack.
-    completed: std::sync::atomic::AtomicBool,
+    completed: AtomicBool,
     /// Where settlement is recorded, with this message's pool, group and
     /// queue (see [`crate::flight_recorder`]).
     recorder: Arc<FlightRecorder>,
@@ -195,15 +203,14 @@ impl MessageCallback for QueueMessageCallback {
     }
 
     /// The flight-recorder context built at routing, shared with the pool.
-    fn diagnostics(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+    fn diagnostics(&self) -> Option<&(dyn Any + Send + Sync)> {
         Some(&self.event_ctx)
     }
 
     async fn ack(&self) {
         // Mark resolved BEFORE doing any await so the Drop impl knows we
         // owned the resolution even if a panic happens mid-await.
-        self.completed
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.completed.store(true, Ordering::Release);
 
         let (handle, broker_id) = match self.ownership() {
             Ownership::Owned {
@@ -226,11 +233,10 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
 
-        let acked =
-            match tokio::time::timeout(BROKER_OP_TIMEOUT, self.consumer().ack(&handle)).await {
-                Ok(r) => r.map_err(|e| e.to_string()),
-                Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
-            };
+        let acked = match time::timeout(BROKER_OP_TIMEOUT, self.consumer().ack(&handle)).await {
+            Ok(r) => r.map_err(|e| e.to_string()),
+            Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
+        };
         match &acked {
             Ok(()) => self
                 .recorder
@@ -270,8 +276,7 @@ impl MessageCallback for QueueMessageCallback {
 
     async fn nack(&self, delay_seconds: Option<u32>) {
         // Mark resolved BEFORE doing any await; see ack() above.
-        self.completed
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.completed.store(true, Ordering::Release);
 
         let handle = match self.ownership() {
             Ownership::Owned { receipt_handle, .. } => Some(receipt_handle),
@@ -293,7 +298,7 @@ impl MessageCallback for QueueMessageCallback {
                     ..Facts::default()
                 },
             );
-            match tokio::time::timeout(
+            match time::timeout(
                 BROKER_OP_TIMEOUT,
                 self.consumer().nack(&handle, delay_seconds),
             )
@@ -319,7 +324,7 @@ impl MessageCallback for QueueMessageCallback {
 impl Drop for QueueMessageCallback {
     fn drop(&mut self) {
         // Fast path: ack() or nack() ran, no fallback needed.
-        if self.completed.load(std::sync::atomic::Ordering::Acquire) {
+        if self.completed.load(Ordering::Acquire) {
             return;
         }
 
@@ -340,13 +345,13 @@ impl Drop for QueueMessageCallback {
         warn!(
             pipeline_key = %self.pipeline_key,
             app_message_id = %self.app_message_id,
-            panicking = std::thread::panicking(),
+            panicking = thread::panicking(),
             "Callback dropped without ack/nack — fallback cleanup ran (likely mediator panic or task cancel)"
         );
         self.recorder.record(
             EventKind::Abandoned,
             &self.event_ctx,
-            Facts::text(if std::thread::panicking() {
+            Facts::text(if thread::panicking() {
                 "worker panicked; fallback nack in 10s".to_string()
             } else {
                 "dropped unresolved (cancelled); fallback nack in 10s".to_string()
@@ -354,7 +359,7 @@ impl Drop for QueueMessageCallback {
         );
 
         if let Some(handle) = handle {
-            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            if let Ok(rt) = Handle::try_current() {
                 let consumer = self.consumer();
                 rt.spawn(async move {
                     let _ = consumer.nack(&handle, Some(10)).await;
@@ -371,7 +376,7 @@ fn batch_span(queue: &str, size: usize) -> tracing::Span {
     tracing::info_span!(
         "router.route_batch",
         queue = %queue,
-        batch = tracing::field::Empty,
+        batch = Empty,
         size,
     )
 }
@@ -429,8 +434,7 @@ impl QueueManager {
             .instrument(span)
             .await?;
         rc.set_dest_pools(outcome.fed_pools);
-        let due =
-            Instant::now() + std::time::Duration::from_secs(Self::CAPACITY_DEFER_SECONDS as u64);
+        let due = Instant::now() + Duration::from_secs(Self::CAPACITY_DEFER_SECONDS as u64);
         for _ in 0..outcome.deferred {
             rc.note_deferral(due);
         }
@@ -826,7 +830,7 @@ impl QueueManager {
                         in_pipeline: self.in_pipeline.clone(),
                         app_message_to_pipeline_key: self.app_message_to_pipeline_key.clone(),
                         pending_delete: self.pending_delete_broker_ids.clone(),
-                        completed: std::sync::atomic::AtomicBool::new(false),
+                        completed: AtomicBool::new(false),
                         recorder: self.flight_recorder.clone(),
                         event_ctx: event_ctx.clone(),
                     };
@@ -1002,9 +1006,8 @@ impl QueueManager {
     async fn group_by_pool(
         &self,
         messages: Vec<QueuedMessage>,
-    ) -> std::collections::HashMap<String, Vec<QueuedMessage>> {
-        let mut by_pool: std::collections::HashMap<String, Vec<QueuedMessage>> =
-            std::collections::HashMap::new();
+    ) -> HashMap<String, Vec<QueuedMessage>> {
+        let mut by_pool: HashMap<String, Vec<QueuedMessage>> = HashMap::new();
 
         for msg in messages {
             let code = &msg.message.pool_code;
@@ -1129,7 +1132,11 @@ mod callback_drop_tests {
     use async_trait::async_trait;
     use fc_common::{Message, QueuedMessage};
     use fc_queue::Result as QueueResult;
+    use std::future;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::time::Duration;
+    use tokio::time;
 
     /// Records ack/nack calls for assertions in unit tests.
     #[derive(Default)]
@@ -1215,7 +1222,7 @@ mod callback_drop_tests {
             in_pipeline: in_pipeline.clone(),
             app_message_to_pipeline_key: app_index.clone(),
             pending_delete,
-            completed: std::sync::atomic::AtomicBool::new(false),
+            completed: AtomicBool::new(false),
             recorder: Arc::new(FlightRecorder::new(64)),
             event_ctx: EventContext::new("app-msg-1").queue("queue-id"),
         };
@@ -1242,7 +1249,7 @@ mod callback_drop_tests {
         assert_eq!(app_index.len(), 0, "app index should be cleared on drop");
 
         // Fallback nack is fired via tokio::spawn — yield to let it run.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             consumer.nacks.load(AtomicOrdering::SeqCst),
             1,
@@ -1261,7 +1268,7 @@ mod callback_drop_tests {
         assert_eq!(consumer.acks.load(AtomicOrdering::SeqCst), 1);
 
         // Drop happens implicitly here — should NOT fire a nack.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert_eq!(
             consumer.nacks.load(AtomicOrdering::SeqCst),
             0,
@@ -1278,7 +1285,7 @@ mod callback_drop_tests {
         assert_eq!(in_pipeline.len(), 0);
         assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 1);
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         // Total should still be 1 — Drop did not add a second nack.
         assert_eq!(
             consumer.nacks.load(AtomicOrdering::SeqCst),
@@ -1442,10 +1449,10 @@ mod callback_drop_tests {
                 Ok(vec![])
             }
             async fn ack(&self, _: &str) -> QueueResult<()> {
-                std::future::pending().await
+                future::pending().await
             }
             async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
-                std::future::pending().await
+                future::pending().await
             }
             async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
                 Ok(())

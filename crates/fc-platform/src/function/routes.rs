@@ -3,6 +3,11 @@
 //! control plane (`/control/functions/*`), and the two unauthenticated
 //! documents (the manifest's JSON Schema and Java's function API contract).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::routing::{get, post};

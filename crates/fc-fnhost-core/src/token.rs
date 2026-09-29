@@ -13,6 +13,10 @@ use serde_json::Value;
 
 use crate::clock::SharedClock;
 use crate::control_plane::{ControlPlaneError, ControlPlaneErrorReason};
+use crate::java;
+use reqwest::header;
+use tokio::sync::Mutex;
+use url::form_urlencoded;
 
 /// A token is re-minted once it is within this margin of its expiry.
 const EXPIRY_MARGIN: chrono::Duration = chrono::Duration::seconds(60);
@@ -29,7 +33,7 @@ pub struct TokenSource {
     client_secret: String,
     clock: SharedClock,
     /// Held across a mint, so concurrent callers mint once.
-    cached: tokio::sync::Mutex<Option<(String, DateTime<Utc>)>>,
+    cached: Mutex<Option<(String, DateTime<Utc>)>>,
 }
 
 impl TokenSource {
@@ -46,7 +50,7 @@ impl TokenSource {
             client_id: client_id.into(),
             client_secret: client_secret.into(),
             clock,
-            cached: tokio::sync::Mutex::new(None),
+            cached: Mutex::new(None),
         }
     }
 
@@ -82,10 +86,7 @@ impl TokenSource {
         let request = self
             .client
             .post(format!("{}/oauth/token", self.platform_url))
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .timeout(MINT_TIMEOUT)
             .body(form);
         let response = request.send().await.map_err(|_| {
@@ -108,7 +109,7 @@ impl TokenSource {
             )
         })?;
         let access_token = match body.get("access_token") {
-            Some(Value::String(token)) if !crate::java::is_blank(token) => token.clone(),
+            Some(Value::String(token)) if !java::is_blank(token) => token.clone(),
             _ => {
                 return Err(ControlPlaneError::new(
                     ControlPlaneErrorReason::Unavailable,
@@ -133,7 +134,7 @@ impl TokenSource {
 }
 
 fn encode(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 impl fmt::Debug for TokenSource {
@@ -150,11 +151,13 @@ impl fmt::Debug for TokenSource {
 mod tests {
     use super::*;
     use crate::clock::ManualClock;
+    use crate::clock::SystemClock;
     use axum::extract::State;
     use axum::routing::post;
     use axum::Router;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use tokio::net::TcpListener;
 
     type Bodies = Arc<parking_lot::Mutex<Vec<String>>>;
 
@@ -175,7 +178,7 @@ mod tests {
                 ),
             )
             .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (url, mints, bodies)
@@ -202,13 +205,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_always_mints() {
         let (url, mints, _) = serve(3600).await;
-        let source = TokenSource::new(
-            Client::new(),
-            url,
-            "id",
-            "secret",
-            Arc::new(crate::clock::SystemClock),
-        );
+        let source = TokenSource::new(Client::new(), url, "id", "secret", Arc::new(SystemClock));
         source.token().await.unwrap();
         assert_eq!(source.refresh().await.unwrap(), "tok-1");
         assert_eq!(source.token().await.unwrap(), "tok-1");
@@ -222,7 +219,7 @@ mod tests {
             "http://127.0.0.1:1",
             "id",
             "super-secret",
-            Arc::new(crate::clock::SystemClock),
+            Arc::new(SystemClock),
         );
         let err = source.token().await.unwrap_err();
         assert!(!err.to_string().contains("super-secret"));

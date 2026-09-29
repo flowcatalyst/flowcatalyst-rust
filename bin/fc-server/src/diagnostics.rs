@@ -18,6 +18,7 @@
 
 use std::time::Duration;
 
+use axum::middleware;
 use axum::{
     extract::Query,
     http::{header, StatusCode},
@@ -25,14 +26,19 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use fc_common::diagnostics;
+use fc_common::diagnostics::Exposition;
+use fc_common::diagnostics::RuntimeReport;
+use fc_router::api::diagnostics::task_dump_response;
 use fc_router::api::platform_auth::{platform_auth_middleware, PlatformAuth};
 use serde::Deserialize;
+use std::env;
 
 /// The platform to verify diagnostics tokens against.
 pub fn platform_url(platform_enabled: bool, api_port: u16) -> Option<String> {
     ["FC_DIAGNOSTICS_PLATFORM_URL", "FC_ROUTER_PLATFORM_URL"]
         .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
+        .find_map(|k| env::var(k).ok().filter(|v| !v.trim().is_empty()))
         .or_else(|| platform_enabled.then(|| format!("http://127.0.0.1:{api_port}")))
 }
 
@@ -42,7 +48,7 @@ pub fn routes(platform_url: Option<&str>) -> Router {
     Router::new()
         .route("/diagnostics/runtime", get(runtime))
         .route("/diagnostics/task-dump", get(task_dump))
-        .layer(axum::middleware::from_fn_with_state(
+        .layer(middleware::from_fn_with_state(
             guard,
             platform_auth_middleware,
         ))
@@ -52,11 +58,7 @@ pub fn routes(platform_url: Option<&str>) -> Router {
 /// then Go's `fc_server_up`.
 pub fn metrics_text(handle: &metrics_exporter_prometheus::PrometheusHandle) -> Response {
     let mut out = handle.render();
-    fc_common::diagnostics::render_prometheus(
-        &mut out,
-        None,
-        fc_common::diagnostics::Exposition::Prometheus,
-    );
+    diagnostics::render_prometheus(&mut out, None, Exposition::Prometheus);
     out.push_str("# HELP fc_server_up Server is up\n# TYPE fc_server_up gauge\nfc_server_up 1\n");
     (
         StatusCode::OK,
@@ -75,9 +77,9 @@ struct RuntimeQuery {
     sample_ms: Option<u64>,
 }
 
-async fn runtime(Query(q): Query<RuntimeQuery>) -> Json<fc_common::diagnostics::RuntimeReport> {
+async fn runtime(Query(q): Query<RuntimeQuery>) -> Json<RuntimeReport> {
     let window = Duration::from_millis(q.sample_ms.unwrap_or(1000)).min(Duration::from_secs(10));
-    Json(fc_common::diagnostics::report(None, window).await)
+    Json(diagnostics::report(None, window).await)
 }
 
 #[derive(Deserialize, Default)]
@@ -88,13 +90,15 @@ struct DumpQuery {
 
 async fn task_dump(Query(q): Query<DumpQuery>) -> Response {
     let timeout = Duration::from_millis(q.timeout_ms.unwrap_or(5000)).min(Duration::from_secs(30));
-    fc_router::api::diagnostics::task_dump_response(timeout).await
+    task_dump_response(timeout).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body;
     use axum::body::Body;
+    use axum::http::Request;
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -104,7 +108,7 @@ mod tests {
         for path in ["/diagnostics/runtime", "/diagnostics/task-dump"] {
             let resp = app
                 .clone()
-                .oneshot(axum::http::Request::get(path).body(Body::empty()).unwrap())
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
             assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{path}");
@@ -115,9 +119,7 @@ mod tests {
     async fn metrics_carry_the_runtime_series() {
         let handle = fc_router::init_prometheus_recorder();
         let resp = metrics_text(&handle);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
+        let body = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("tokio_runtime_workers "), "{text}");
         assert!(text.contains("fc_server_up 1"));

@@ -10,7 +10,11 @@ use anyhow::{bail, Result};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::dev_paths;
 use crate::instance_guard::{process_alive, read_pid_file, remove_pid_file_if_owned};
+use std::fs;
+use std::io;
+use std::thread;
 
 #[derive(clap::Args, Debug)]
 pub struct StopArgs {
@@ -48,9 +52,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
 }
 
 pub fn run(args: StopArgs) -> Result<()> {
-    let pid_file = args
-        .pid_file
-        .unwrap_or_else(crate::dev_paths::default_pid_file);
+    let pid_file = args.pid_file.unwrap_or_else(dev_paths::default_pid_file);
 
     let Some(pid) = read_pid_file(&pid_file)? else {
         println!(
@@ -60,7 +62,7 @@ pub fn run(args: StopArgs) -> Result<()> {
         return Ok(());
     };
     if !process_alive(pid) {
-        let _ = std::fs::remove_file(&pid_file);
+        let _ = fs::remove_file(&pid_file);
         println!("No running fcdev instance (pid {pid} not alive); removed stale pid file.");
         return Ok(());
     }
@@ -99,7 +101,7 @@ fn signal(pid: u32, sig: Signal) -> Result<()> {
     };
     // SAFETY: kill(2) on a PID read from the PID file.
     if unsafe { libc::kill(pid as libc::pid_t, signo) } != 0 {
-        bail!("signal pid {pid}: {}", std::io::Error::last_os_error());
+        bail!("signal pid {pid}: {}", io::Error::last_os_error());
     }
     Ok(())
 }
@@ -116,7 +118,7 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
         if !process_alive(pid) {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(150));
+        thread::sleep(Duration::from_millis(150));
     }
     !process_alive(pid)
 }
@@ -124,6 +126,10 @@ fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instance_guard;
+    use std::fs;
+    use std::process::Command;
+    use std::thread;
 
     #[test]
     fn durations_parse_like_go() {
@@ -147,7 +153,7 @@ mod tests {
             timeout: Duration::from_secs(1),
         })
         .unwrap();
-        std::fs::write(&pid_file, "0\n").unwrap();
+        fs::write(&pid_file, "0\n").unwrap();
         run(StopArgs {
             pid_file: Some(pid_file.clone()),
             timeout: Duration::from_secs(1),
@@ -161,14 +167,11 @@ mod tests {
     fn stop_terminates_the_recorded_process() {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("fcdev.pid");
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
-        crate::instance_guard::write_pid_file(&pid_file, child.id()).unwrap();
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        instance_guard::write_pid_file(&pid_file, child.id()).unwrap();
         // Reap the child as soon as it exits so it isn't a live zombie.
         let pid = child.id();
-        let reaper = std::thread::spawn(move || child.wait());
+        let reaper = thread::spawn(move || child.wait());
         run(StopArgs {
             pid_file: Some(pid_file.clone()),
             timeout: Duration::from_secs(5),

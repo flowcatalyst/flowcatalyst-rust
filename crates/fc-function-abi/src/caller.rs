@@ -126,7 +126,7 @@ impl Principal {
 /// Java's `Caller.Principal.matches`, itself a verbatim copy of the Java
 /// platform's `Permission.matches`. It accepts any segment count, where the
 /// Rust platform's `matches_pattern` only handles four; the two agree on every
-/// four-segment code the platform issues (pinned by `tests/caller_agreement.rs`).
+/// four-segment code the platform issues (pinned by `tests/it/caller_agreement.rs`).
 pub fn permission_matches(held: &str, required: &str) -> bool {
     if held == required {
         return true;

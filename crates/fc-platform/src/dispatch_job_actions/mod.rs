@@ -1,11 +1,9 @@
-//! Operator actions on dispatch jobs, as Go serves them
-//! (`dispatchjob/api/api.go:75-78,109-112`, `dispatchjob/operations/*`):
-//! requeue, cancel, complete and the signing dry run. Kept apart from
-//! `dispatch_job/` (the scheduler's), which it only reads through.
+//! The `dispatch_job_actions` aggregate (fc-platform-messaging), and its routes.
+//!
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_messaging::dispatch_job_actions::*;
+
 pub mod routes;
-
 pub use routes::routes;

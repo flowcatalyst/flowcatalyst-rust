@@ -18,6 +18,18 @@ use tokio::sync::oneshot;
 
 use crate::metrics::{self, FnMetrics};
 use crate::reconciler::{Readiness, Reconciler};
+use axum::http::Uri;
+use fc_common::diagnostics;
+use fc_common::diagnostics::Exposition;
+use std::fs;
+use std::io;
+use std::net::TcpListener;
+use std::thread::Builder;
+use tokio::net;
+use tokio::runtime;
+use tokio::runtime::Handle;
+use tokio::task;
+use tokio::time;
 
 const NOT_FOUND_BODY: &str = r#"{"error":"NOT_FOUND","message":"not found"}"#;
 
@@ -44,24 +56,24 @@ impl Observability {
     /// Called from the host's runtime, whose tokio figures `/metrics` then
     /// reports (this listener runs on a runtime of its own, so it can still
     /// describe a main runtime that is stuck).
-    pub fn start(port: u16, probes: Probes) -> std::io::Result<Self> {
+    pub fn start(port: u16, probes: Probes) -> io::Result<Self> {
         let state = ObsState {
             probes,
-            main_runtime: tokio::runtime::Handle::try_current().ok(),
+            main_runtime: Handle::try_current().ok(),
         };
-        let listener = std::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))?;
+        let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))?;
         listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
         let (tx, rx) = oneshot::channel::<()>();
-        let thread = std::thread::Builder::new()
+        let thread = Builder::new()
             .name("fn-observability".into())
             .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("the observability runtime builds");
                 runtime.block_on(async move {
-                    let listener = match tokio::net::TcpListener::from_std(listener) {
+                    let listener = match net::TcpListener::from_std(listener) {
                         Ok(listener) => listener,
                         Err(e) => {
                             tracing::error!(err = %e, "observability listener could not start");
@@ -96,8 +108,8 @@ impl Observability {
             let _ = tx.send(());
         }
         if let Some(thread) = self.thread.take() {
-            let joined = tokio::task::spawn_blocking(move || thread.join());
-            if tokio::time::timeout(Duration::from_secs(10), joined)
+            let joined = task::spawn_blocking(move || thread.join());
+            if time::timeout(Duration::from_secs(10), joined)
                 .await
                 .is_err()
             {
@@ -115,26 +127,22 @@ fn json(status: StatusCode, body: String) -> Response {
 #[derive(Clone)]
 struct ObsState {
     probes: Probes,
-    main_runtime: Option<tokio::runtime::Handle>,
+    main_runtime: Option<Handle>,
 }
 
 /// The host's series, then the main runtime's `tokio_runtime_*` and the
 /// process's `process_*` series, before OpenMetrics' closing `# EOF`.
-fn with_runtime_series(mut text: String, main_runtime: Option<&tokio::runtime::Handle>) -> String {
+fn with_runtime_series(mut text: String, main_runtime: Option<&Handle>) -> String {
     let eof = text.rfind("# EOF").unwrap_or(text.len());
     let tail = text.split_off(eof);
     if main_runtime.is_some() {
-        fc_common::diagnostics::render_prometheus(
-            &mut text,
-            main_runtime,
-            fc_common::diagnostics::Exposition::OpenMetrics,
-        );
+        diagnostics::render_prometheus(&mut text, main_runtime, Exposition::OpenMetrics);
     }
     text.push_str(&tail);
     text
 }
 
-async fn handle(State(state): State<ObsState>, method: Method, uri: axum::http::Uri) -> Response {
+async fn handle(State(state): State<ObsState>, method: Method, uri: Uri) -> Response {
     let probes = &state.probes;
     if method != Method::GET {
         return json(StatusCode::NOT_FOUND, NOT_FOUND_BODY.to_owned());
@@ -213,7 +221,7 @@ fn memory_limit_bytes() -> Option<u64> {
         "/sys/fs/cgroup/memory/memory.limit_in_bytes",
     ]
     .iter()
-    .find_map(|path| std::fs::read_to_string(path).ok())
+    .find_map(|path| fs::read_to_string(path).ok())
     .and_then(|raw| parse_limit(&raw))
 }
 
@@ -228,12 +236,13 @@ fn parse_limit(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::runtime::Handle;
 
     /// The runtime series go before OpenMetrics' `# EOF`, in its counter
     /// naming.
     #[tokio::test]
     async fn runtime_series_precede_the_eof() {
-        let handle = tokio::runtime::Handle::current();
+        let handle = Handle::current();
         let out = with_runtime_series("fc_fn_loaded 1\n# EOF\n".to_string(), Some(&handle));
         assert!(out.ends_with("# EOF\n"), "{out}");
         assert!(out.contains("tokio_runtime_workers "));

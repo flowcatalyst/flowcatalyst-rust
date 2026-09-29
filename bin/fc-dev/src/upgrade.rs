@@ -19,6 +19,9 @@ use semver::Version;
 use tracing::{info, warn};
 
 use crate::UpgradeArgs;
+use self_update::backends::github::Update;
+use std::env::consts;
+use std::time::Duration;
 
 const REPO_OWNER: &str = "flowcatalyst";
 const REPO_NAME: &str = "flowcatalyst";
@@ -73,7 +76,7 @@ async fn find_latest_release() -> Result<Release> {
     let url =
         format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases?per_page=100");
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(Duration::from_secs(15))
         .user_agent(concat!("fc-dev/", env!("CARGO_PKG_VERSION")))
         .build()?;
     let resp = client
@@ -142,10 +145,10 @@ fn install(tag: &str) -> Result<()> {
         stripped_version,
         target,
         BIN_NAME,
-        std::env::consts::EXE_SUFFIX,
+        consts::EXE_SUFFIX,
     );
 
-    let status = self_update::backends::github::Update::configure()
+    let status = Update::configure()
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
         .bin_name(BIN_NAME)

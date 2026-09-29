@@ -23,14 +23,24 @@ use fc_common::{
     DispatchMode, MediationOutcome, MediationType, Message, PoolConfig, QueuedMessage, RouterConfig,
 };
 use fc_queue::QueueConsumer;
+use fc_router::flight_recorder::FlightRecorder;
 use fc_router::{Mediator, QueueManager};
+use std::env;
+use std::future;
+use std::io;
+use std::mem;
+use tokio::sync::Notify;
+use tokio::sync::Semaphore;
+use tokio::task;
+use tracing::subscriber;
+use tracing_subscriber::fmt;
 
 struct Instant200;
 
 #[async_trait]
 impl Mediator for Instant200 {
     async fn mediate(&self, _: &Message) -> MediationOutcome {
-        tokio::task::yield_now().await;
+        task::yield_now().await;
         MediationOutcome::success(200)
     }
 }
@@ -39,8 +49,8 @@ struct Counting {
     acked: AtomicU64,
     /// Admission window: the router takes at most 1000 unsettled messages
     /// (under the pool's 64 × 20 capacity), without spinning.
-    window: tokio::sync::Semaphore,
-    done: tokio::sync::Notify,
+    window: Semaphore,
+    done: Notify,
     total: u64,
 }
 
@@ -50,7 +60,7 @@ impl QueueConsumer for Counting {
         "bench-q"
     }
     async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
-        std::future::pending().await
+        future::pending().await
     }
     async fn ack(&self, _: &str) -> fc_queue::Result<()> {
         if self.acked.fetch_add(1, Ordering::Relaxed) + 1 == self.total {
@@ -100,7 +110,7 @@ fn message(i: u64) -> QueuedMessage {
 fn cpu_seconds() -> f64 {
     // SAFETY: getrusage only writes the zeroed struct it is handed.
     unsafe {
-        let mut usage: libc::rusage = std::mem::zeroed();
+        let mut usage: libc::rusage = mem::zeroed();
         libc::getrusage(libc::RUSAGE_SELF, &mut usage);
         let secs = |tv: libc::timeval| tv.tv_sec as f64 + tv.tv_usec as f64 / 1e6;
         secs(usage.ru_utime) + secs(usage.ru_stime)
@@ -132,8 +142,8 @@ async fn run(total: u64) -> Figures {
         .unwrap();
     let consumer = Arc::new(Counting {
         acked: AtomicU64::new(0),
-        window: tokio::sync::Semaphore::new(1000),
-        done: tokio::sync::Notify::new(),
+        window: Semaphore::new(1000),
+        done: Notify::new(),
         total,
     });
     let started = Instant::now();
@@ -165,9 +175,9 @@ async fn run(total: u64) -> Figures {
 // BASELINE-START (main has no flight recorder: use
 // `QueueManager::with_shared_mediator_for_testing(Arc::new(Instant200))`)
 fn new_manager() -> QueueManager {
-    let recorder = match std::env::var("FC_BENCH_RECORDER").as_deref() {
-        Ok("0") => fc_router::flight_recorder::FlightRecorder::new(0),
-        _ => fc_router::flight_recorder::FlightRecorder::default(),
+    let recorder = match env::var("FC_BENCH_RECORDER").as_deref() {
+        Ok("0") => FlightRecorder::new(0),
+        _ => FlightRecorder::default(),
     };
     QueueManager::builder_with_shared_mediator(Arc::new(Instant200))
         .flight_recorder(Arc::new(recorder))
@@ -176,7 +186,7 @@ fn new_manager() -> QueueManager {
 // BASELINE-END
 
 fn total() -> u64 {
-    std::env::var("FC_BENCH_MESSAGES")
+    env::var("FC_BENCH_MESSAGES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(200_000)
@@ -185,7 +195,7 @@ fn total() -> u64 {
 /// Median rate and median CPU per message of `FC_BENCH_RUNS` (default 5)
 /// runs.
 async fn median(total: u64) -> Figures {
-    let runs: usize = std::env::var("FC_BENCH_RUNS")
+    let runs: usize = env::var("FC_BENCH_RUNS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
@@ -216,7 +226,7 @@ async fn router_throughput() {
     let subscriber = tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new("info"))
         .with(
-            tracing_subscriber::fmt::layer()
+            fmt::layer()
                 .json()
                 .with_current_span(true)
                 .with_span_list(true)
@@ -224,9 +234,9 @@ async fn router_throughput() {
                 .with_line_number(true)
                 .with_target(true)
                 .flatten_event(true)
-                .with_writer(std::io::sink),
+                .with_writer(io::sink),
         );
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    subscriber::set_global_default(subscriber).unwrap();
     let logged = median(total).await;
 
     println!(

@@ -5,16 +5,20 @@
 
 use std::sync::OnceLock;
 
+use std::future;
+use std::sync::mpsc;
+use std::thread;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
+use tokio::runtime::Runtime;
 
 /// `postgres://postgres:postgres@127.0.0.1:<port>/postgres`.
 pub fn postgres() -> &'static str {
     static DSN: OnceLock<String> = OnceLock::new();
     DSN.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let runtime = Runtime::new().unwrap();
             runtime.block_on(async move {
                 let container = Postgres::default()
                     .start()
@@ -25,7 +29,7 @@ pub fn postgres() -> &'static str {
                     "postgres://postgres:postgres@127.0.0.1:{port}/postgres"
                 ))
                 .unwrap();
-                std::future::pending::<()>().await;
+                future::pending::<()>().await;
                 drop(container);
             });
         });

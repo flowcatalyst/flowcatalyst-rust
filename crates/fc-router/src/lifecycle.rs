@@ -56,10 +56,18 @@ use crate::circuit_breaker_registry::CircuitBreakerRegistry;
 use crate::config_sync::ConfigSyncService;
 use crate::health::HealthService;
 use crate::manager::QueueManager;
+use crate::queue_health_monitor;
+use crate::queue_health_monitor::QueueHealthConfig;
+use crate::queue_health_monitor::QueueHealthMonitor;
 use crate::standby::{spawn_leadership_monitor, StandbyAwareProcessor};
 use crate::warning::WarningService;
 use fc_common::diagnostics::{spawn_supervised, OnPanic};
 use fc_common::{WarningCategory, WarningSeverity};
+use futures::future;
+use std::mem;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 /// Configuration for the lifecycle manager
 #[derive(Debug, Clone)]
@@ -99,7 +107,7 @@ pub struct LifecycleConfig {
     pub stall_check_interval: Duration,
     /// Queue backlog/growth monitoring (Go: `QueueHealthMonitor`, every
     /// 30s against broker metrics). `None` disables it.
-    pub queue_health: Option<crate::queue_health_monitor::QueueHealthConfig>,
+    pub queue_health: Option<QueueHealthConfig>,
 }
 
 impl Default for LifecycleConfig {
@@ -117,7 +125,7 @@ impl Default for LifecycleConfig {
             circuit_breaker_max_idle: Duration::from_secs(3600), // 1 hour
             synth_pool_idle_ttl: Duration::from_secs(3600),  // 1 hour, matches Go's default
             stall_check_interval: Duration::from_secs(60),
-            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig::default()),
+            queue_health: Some(QueueHealthConfig::default()),
         }
     }
 }
@@ -131,7 +139,7 @@ pub struct LifecycleManager {
     /// handles were dropped and shutdown only *signalled*, never waited). The
     /// join is time-boxed: a task stuck mid-`.await` is left to be reaped at
     /// process exit rather than blocking shutdown indefinitely.
-    tasks: Vec<tokio::task::JoinHandle<()>>,
+    tasks: Vec<JoinHandle<()>>,
     warning_service: Arc<WarningService>,
     health_service: Arc<HealthService>,
     /// Optional config sync service
@@ -165,7 +173,7 @@ impl LifecycleManager {
         config: LifecycleConfig,
     ) -> Self {
         let shutdown = CancellationToken::new();
-        let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut tasks: Vec<JoinHandle<()>> = Vec::new();
 
         // Memory health monitor
         {
@@ -179,8 +187,8 @@ impl LifecycleManager {
                 let warning_service = warning_service.clone();
                 let token = token.clone();
                 async move {
-                    let mut ticker = tokio::time::interval(interval);
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    let mut ticker = time::interval(interval);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     loop {
                         tokio::select! {
@@ -227,8 +235,8 @@ impl LifecycleManager {
                     let health_service = health_service.clone();
                     let token = token.clone();
                     async move {
-                        let mut ticker = tokio::time::interval(interval);
-                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        let mut ticker = time::interval(interval);
+                        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
                         // The first tick fires immediately; nothing can be stalled yet.
                         ticker.tick().await;
 
@@ -270,8 +278,8 @@ impl LifecycleManager {
                     let manager = manager.clone();
                     let token = token.clone();
                     async move {
-                        let mut ticker = tokio::time::interval(interval);
-                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        let mut ticker = time::interval(interval);
+                        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
                         ticker.tick().await;
                         loop {
                             tokio::select! {
@@ -293,11 +301,8 @@ impl LifecycleManager {
         // `Server.Run`): backlog and sustained-growth warnings from broker
         // metrics. It was never started either.
         if let Some(qh_config) = config.queue_health.clone() {
-            let monitor = Arc::new(crate::queue_health_monitor::QueueHealthMonitor::new(
-                qh_config,
-                warning_service.clone(),
-            ));
-            tasks.push(crate::queue_health_monitor::spawn_queue_health_monitor(
+            let monitor = Arc::new(QueueHealthMonitor::new(qh_config, warning_service.clone()));
+            tasks.push(queue_health_monitor::spawn_queue_health_monitor(
                 monitor,
                 manager.clone(),
                 shutdown.child_token(),
@@ -317,8 +322,8 @@ impl LifecycleManager {
                     let warning_service = warning_service.clone();
                     let token = token.clone();
                     async move {
-                        let mut ticker = tokio::time::interval(interval);
-                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        let mut ticker = time::interval(interval);
+                        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                         loop {
                             tokio::select! {
@@ -352,8 +357,8 @@ impl LifecycleManager {
                     let health_service = health_service.clone();
                     let token = token.clone();
                     async move {
-                        let mut ticker = tokio::time::interval(interval);
-                        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                        let mut ticker = time::interval(interval);
+                        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                         loop {
                             tokio::select! {
@@ -397,8 +402,8 @@ impl LifecycleManager {
                 let health_service = health_service.clone();
                 let token = token.clone();
                 async move {
-                    let mut ticker = tokio::time::interval(interval);
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    let mut ticker = time::interval(interval);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     loop {
                         tokio::select! {
@@ -608,13 +613,10 @@ impl LifecycleManager {
 
         // Bounded-join: wait for the background loops to exit, but don't hang
         // shutdown on a task that's mid-flight past the deadline.
-        let handles = std::mem::take(&mut self.tasks);
+        let handles = mem::take(&mut self.tasks);
         if !handles.is_empty() {
-            let joined = tokio::time::timeout(
-                Self::SHUTDOWN_JOIN_TIMEOUT,
-                futures::future::join_all(handles),
-            )
-            .await;
+            let joined =
+                time::timeout(Self::SHUTDOWN_JOIN_TIMEOUT, future::join_all(handles)).await;
             match joined {
                 Ok(_) => info!("All lifecycle tasks stopped"),
                 Err(_) => warn!(
@@ -654,8 +656,8 @@ impl LifecycleManager {
             let token = token.clone();
             let registry = registry.clone();
             async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut ticker = time::interval(interval);
+                ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -693,8 +695,8 @@ impl LifecycleManager {
             let session_store = session_store.clone();
             let pending_states = pending_states.clone();
             async move {
-                let mut ticker = tokio::time::interval(interval);
-                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut ticker = time::interval(interval);
+                ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -721,8 +723,11 @@ mod tests {
     use crate::health::{HealthService, HealthServiceConfig};
     use crate::manager::QueueManager;
     use crate::mediator::HttpMediatorConfig;
+    use crate::queue_health_monitor::QueueHealthConfig;
     use crate::warning::WarningService;
     use fc_common::WarningCategory;
+    use std::time::Instant;
+    use tokio::time;
 
     #[test]
     fn test_default_config() {
@@ -744,7 +749,7 @@ mod tests {
         #[async_trait]
         impl crate::Mediator for Hang {
             async fn mediate(&self, _m: &Message) -> MediationOutcome {
-                tokio::time::sleep(Duration::from_secs(30)).await;
+                time::sleep(Duration::from_secs(30)).await;
                 MediationOutcome::success(200)
             }
         }
@@ -841,7 +846,7 @@ mod tests {
             health_report_interval: long,
             reaper_interval: long,
             stall_check_interval: Duration::from_millis(50),
-            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+            queue_health: Some(QueueHealthConfig {
                 check_interval: Duration::from_millis(50),
                 ..Default::default()
             }),
@@ -854,7 +859,7 @@ mod tests {
             config,
         );
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let stall = warning_service
                 .get_warnings_by_category(WarningCategory::Stall)
@@ -866,10 +871,10 @@ mod tests {
                 break;
             }
             assert!(
-                std::time::Instant::now() < deadline,
+                Instant::now() < deadline,
                 "stall={stall} backlog={backlog}: both detectors must run"
             );
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            time::sleep(Duration::from_millis(20)).await;
         }
         lifecycle.shutdown().await;
         manager
@@ -904,7 +909,7 @@ mod tests {
             circuit_breaker_max_idle: long,
             synth_pool_idle_ttl: long,
             stall_check_interval: long,
-            queue_health: Some(crate::queue_health_monitor::QueueHealthConfig {
+            queue_health: Some(QueueHealthConfig {
                 check_interval: long,
                 ..Default::default()
             }),
@@ -918,7 +923,7 @@ mod tests {
             long,
         );
 
-        tokio::time::timeout(Duration::from_secs(2), lifecycle.shutdown())
+        time::timeout(Duration::from_secs(2), lifecycle.shutdown())
             .await
             .expect("shutdown should complete promptly via CancellationToken");
 

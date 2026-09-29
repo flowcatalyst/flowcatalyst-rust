@@ -230,4 +230,4 @@ The default queue (`fc-default.fifo`) and pool (`DEFAULT`) are baked into the de
 - Pool definition: `crates/fc-common/src/lib.rs::PoolConfig`.
 - Dispatch pool aggregate: `crates/fc-platform/src/dispatch_pool/`.
 - Connection aggregate: `crates/fc-platform/src/connection/`.
-- Paused-connection filter: `crates/fc-platform/src/scheduler/poller.rs::PausedConnectionCache`.
+- Paused-connection filter: `crates/fc-platform-messaging/src/scheduler/poller.rs::PausedConnectionCache`.

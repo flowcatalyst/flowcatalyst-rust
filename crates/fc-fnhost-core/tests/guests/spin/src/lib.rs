@@ -2,7 +2,7 @@
 //! `?n=N` spins N loop iterations and answers (a tight loop: fuel
 //! metering's worst case); `?hash=N` hashes a 64 KiB buffer N times and
 //! answers (loads, stores and arithmetic: a more typical mix). Both are
-//! the fuel-overhead measurement's workloads (`tests/wasm_fuel.rs`).
+//! the fuel-overhead measurement's workloads (`tests/it/wasm_fuel.rs`).
 
 use common::{json, Json, Request};
 use wasip2::http::types::{IncomingRequest, ResponseOutparam};

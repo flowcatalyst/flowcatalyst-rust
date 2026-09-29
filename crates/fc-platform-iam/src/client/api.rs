@@ -1,0 +1,1149 @@
+//! Clients Admin API
+//!
+//! REST endpoints for client management.
+
+use std::sync::Arc;
+
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    Json,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::entity::{Client, ClientStatus};
+use super::repository::ClientRepository;
+use crate::application::operations::DisableApplicationForClientCommand;
+use crate::application::operations::DisableApplicationForClientUseCase;
+use crate::application::operations::EnableApplicationForClientCommand;
+use crate::application::operations::EnableApplicationForClientUseCase;
+use crate::application::operations::UpdateClientApplicationsCommand;
+use crate::application::operations::UpdateClientApplicationsUseCase;
+use crate::application::repository::ApplicationRepository;
+use crate::application::ApplicationClientConfigRepository;
+use crate::client::access;
+use crate::client::operations::ActivateClientUseCase;
+use crate::client::operations::AddClientNoteUseCase;
+use crate::client::operations::CreateClientUseCase;
+use crate::client::operations::DeleteClientUseCase;
+use crate::client::operations::SuspendClientUseCase;
+use crate::client::operations::UpdateClientUseCase;
+use fc_platform_core::permissions;
+use fc_platform_core::shared::api_common::CreatedResponse;
+use fc_platform_core::shared::api_common::PaginationParams;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::shared::enum_str;
+use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::PgUnitOfWork;
+use std::collections::HashSet;
+
+/// Create client request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateClientRequest {
+    /// Unique identifier/slug (URL-safe)
+    pub identifier: String,
+
+    /// Human-readable name
+    pub name: String,
+}
+
+/// Update client request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateClientRequest {
+    /// Human-readable name
+    pub name: Option<String>,
+}
+
+/// Status change request (for suspend/deactivate)
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusChangeRequest {
+    /// Reason for the status change
+    pub reason: String,
+}
+
+/// Status change response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusChangeResponse {
+    pub message: String,
+}
+
+/// Client response DTO
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientResponse {
+    pub id: String,
+    pub name: String,
+    pub identifier: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(format = DateTime)]
+    pub status_changed_at: Option<String>,
+    /// The client's notes, oldest first (Go `ClientResponse.notes`).
+    pub notes: Vec<ClientNoteResponse>,
+    #[schema(format = DateTime)]
+    pub created_at: String,
+    #[schema(format = DateTime)]
+    pub updated_at: String,
+}
+
+/// Go's `NoteResponse` (client/api/dto.go).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = NoteResponse)]
+pub struct ClientNoteResponse {
+    pub category: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added_by: Option<String>,
+    #[schema(format = DateTime)]
+    pub added_at: String,
+}
+
+impl From<Client> for ClientResponse {
+    fn from(c: Client) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            identifier: c.identifier,
+            status: c.status.as_str().to_string(),
+            status_reason: c.status_reason,
+            status_changed_at: c.status_changed_at.map(|t| t.to_rfc3339()),
+            notes: c
+                .notes
+                .into_iter()
+                .map(|n| ClientNoteResponse {
+                    category: n.category,
+                    text: n.text,
+                    added_by: n.added_by,
+                    added_at: n.added_at.to_rfc3339(),
+                })
+                .collect(),
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Client list response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientListResponse {
+    pub clients: Vec<ClientResponse>,
+    #[schema(value_type = i64)]
+    pub total: usize,
+}
+
+/// Query parameters for clients list
+#[derive(Debug, Deserialize, Default, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientsQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+
+    /// Filter by status (`ACTIVE`, `INACTIVE`, `SUSPENDED`). Absent returns
+    /// every client, as Go does; an unknown value is a 400.
+    pub status: Option<String>,
+}
+
+/// Search query parameters
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchQuery {
+    /// Search term (matches name or identifier)
+    pub q: Option<String>,
+    /// Search term alternative
+    pub query: Option<String>,
+}
+
+/// Add note request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AddNoteRequest {
+    /// Category of the note
+    pub category: String,
+    /// Note content
+    pub text: String,
+}
+
+/// Add note response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = StatusChangeResponse)]
+pub struct AddNoteResponse {
+    pub message: String,
+}
+
+/// Client application config response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientApplicationResponse {
+    /// Application ID
+    pub id: String,
+    /// Application code
+    pub code: String,
+    /// Application display name
+    pub name: String,
+    /// Application description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Application icon URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
+    /// Whether the application itself is active globally
+    pub active: bool,
+    /// Whether this application is enabled for this specific client
+    pub enabled_for_client: bool,
+}
+
+/// Client applications list response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientApplicationsResponse {
+    pub applications: Vec<ClientApplicationResponse>,
+    #[schema(value_type = i64)]
+    pub total: usize,
+}
+
+/// Update client applications request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateClientApplicationsRequest {
+    /// List of application IDs to enable
+    pub enabled_application_ids: Vec<String>,
+}
+
+/// Clients service state
+#[derive(Clone)]
+pub struct ClientsState {
+    pub client_repo: Arc<ClientRepository>,
+    pub application_repo: Arc<ApplicationRepository>,
+    pub application_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    pub create_use_case: Arc<CreateClientUseCase<PgUnitOfWork>>,
+    pub update_use_case: Arc<UpdateClientUseCase<PgUnitOfWork>>,
+    pub delete_use_case: Arc<DeleteClientUseCase<PgUnitOfWork>>,
+    pub activate_use_case: Arc<ActivateClientUseCase<PgUnitOfWork>>,
+    pub suspend_use_case: Arc<SuspendClientUseCase<PgUnitOfWork>>,
+    pub add_note_use_case: Arc<AddClientNoteUseCase<PgUnitOfWork>>,
+    pub update_applications_use_case: Arc<UpdateClientApplicationsUseCase<PgUnitOfWork>>,
+    pub enable_application_use_case: Arc<EnableApplicationForClientUseCase<PgUnitOfWork>>,
+    pub disable_application_use_case: Arc<DisableApplicationForClientUseCase<PgUnitOfWork>>,
+}
+
+/// Create a new client
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "clients",
+    operation_id = "createClient",
+    request_body = CreateClientRequest,
+    responses(
+        (status = 201, description = "Client created", body = CreatedResponse),
+        (status = 400, description = "Validation error"),
+        (status = 409, description = "Duplicate identifier")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn create_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Json(req): Json<CreateClientRequest>,
+) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
+    use crate::client::operations::CreateClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_create_clients(&auth.0)?;
+
+    let cmd = CreateClientCommand {
+        name: req.name,
+        identifier: req.identifier,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatedResponse::new(event.client_id)),
+    ))
+}
+
+/// Get client by ID
+#[utoipa::path(
+    get,
+    path = "/{id}",
+    tag = "clients",
+    operation_id = "getClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 200, description = "Client found", body = ClientResponse),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ClientResponse>, PlatformError> {
+    checks::can_read_clients(&auth.0)?;
+
+    // Check access
+    access::ensure_visible(&auth.0, &id)?;
+
+    let client = state
+        .client_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Client", &id))?;
+
+    Ok(Json(client.into()))
+}
+
+/// The status the client list filters on. Absent or empty means no filter:
+/// every client, as Go's list returns (client/api/api.go:59-70). An unknown
+/// value is a 400 (X-06), never "no filter".
+fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, PlatformError> {
+    enum_str::parse_opt(enum_str::non_empty(status))
+}
+
+/// List clients
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "clients",
+    operation_id = "listClients",
+    params(
+        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client (Rust extension)")
+    ),
+    responses(
+        (status = 200, description = "List of clients", body = ClientListResponse),
+        (status = 400, description = "Unknown status")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_clients(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Query(query): Query<ClientsQuery>,
+) -> Result<Json<ClientListResponse>, PlatformError> {
+    checks::can_read_clients(&auth.0)?;
+
+    let status = list_status_filter(query.status.as_deref())?;
+    let clients = state.client_repo.list(status).await?;
+
+    // Filter by access
+    let filtered: Vec<ClientResponse> = clients
+        .into_iter()
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .map(|c| c.into())
+        .collect();
+
+    let total = filtered.len();
+    Ok(Json(ClientListResponse {
+        clients: filtered,
+        total,
+    }))
+}
+
+/// Update client
+#[utoipa::path(
+    put,
+    path = "/{id}",
+    tag = "clients",
+    operation_id = "updateClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    request_body = UpdateClientRequest,
+    responses(
+        (status = 204, description = "Client updated"),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateClientRequest>,
+) -> Result<StatusCode, PlatformError> {
+    use crate::client::operations::UpdateClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_update_clients(&auth.0)?;
+
+    let cmd = UpdateClientCommand {
+        client_id: id,
+        name: req.name,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.update_use_case.run(cmd, ctx).await.into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete client (soft delete)
+#[utoipa::path(
+    delete,
+    path = "/{id}",
+    tag = "clients",
+    operation_id = "deleteClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 204, description = "Client deleted"),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<StatusCode, PlatformError> {
+    use crate::client::operations::DeleteClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_delete_clients(&auth.0)?;
+
+    let cmd = DeleteClientCommand { client_id: id };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.delete_use_case.run(cmd, ctx).await.into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ============================================================================
+// Status Management Endpoints
+// ============================================================================
+
+/// Activate a client
+///
+/// Transitions a suspended or pending client to active status.
+#[utoipa::path(
+    post,
+    path = "/{id}/activate",
+    tag = "clients",
+    operation_id = "activateClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 200, description = "Client activated", body = StatusChangeResponse),
+        (status = 404, description = "Client not found"),
+        (status = 403, description = "Insufficient permissions")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn activate_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    use crate::client::operations::ActivateClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_activate_clients(&auth.0)?;
+
+    let cmd = ActivateClientCommand {
+        client_id: id.clone(),
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.activate_use_case.run(cmd, ctx).await.into_result()?;
+
+    tracing::info!(client_id = %id, principal_id = %auth.0.principal_id, "Client activated");
+
+    Ok(Json(StatusChangeResponse {
+        message: "Client activated".to_string(),
+    }))
+}
+
+/// Go `SuspendClientRequest`: the body of `suspend`, the same member as
+/// [`StatusChangeRequest`] (documentation only; the handler reads a
+/// `StatusChangeRequest`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[allow(dead_code)]
+pub struct SuspendClientRequest {
+    pub reason: String,
+}
+
+/// Suspend a client
+///
+/// Suspends a client (e.g., for billing issues). Requires a reason.
+#[utoipa::path(
+    post,
+    path = "/{id}/suspend",
+    tag = "clients",
+    operation_id = "suspendClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    request_body = SuspendClientRequest,
+    responses(
+        (status = 200, description = "Client suspended", body = StatusChangeResponse),
+        (status = 404, description = "Client not found"),
+        (status = 403, description = "Insufficient permissions")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn suspend_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<StatusChangeRequest>,
+) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    use crate::client::operations::SuspendClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_suspend_clients(&auth.0)?;
+
+    let reason_for_log = req.reason.clone();
+    let cmd = SuspendClientCommand {
+        client_id: id.clone(),
+        reason: req.reason,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.suspend_use_case.run(cmd, ctx).await.into_result()?;
+
+    tracing::info!(
+        client_id = %id,
+        principal_id = %auth.0.principal_id,
+        reason = %reason_for_log,
+        "Client suspended"
+    );
+
+    Ok(Json(StatusChangeResponse {
+        message: "Client suspended".to_string(),
+    }))
+}
+
+/// Deactivate a client (soft delete)
+///
+/// Deactivates/soft-deletes a client. Requires a reason.
+#[utoipa::path(
+    post,
+    path = "/{id}/deactivate",
+    tag = "clients",
+    operation_id = "deactivateClient",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    request_body = StatusChangeRequest,
+    responses(
+        (status = 200, description = "Client deactivated", body = StatusChangeResponse),
+        (status = 404, description = "Client not found"),
+        (status = 403, description = "Insufficient permissions")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn deactivate_client(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<StatusChangeRequest>,
+) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    // Deactivation is a soft delete — `DeleteClientUseCase` handles it.
+    // The reason string is retained in logs; the use case emits the
+    // `ClientDeleted` domain event + audit record.
+    use crate::client::operations::DeleteClientCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_deactivate_clients(&auth.0)?;
+
+    let reason_for_log = req.reason.clone();
+    let cmd = DeleteClientCommand {
+        client_id: id.clone(),
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.delete_use_case.run(cmd, ctx).await.into_result()?;
+
+    tracing::info!(
+        client_id = %id,
+        principal_id = %auth.0.principal_id,
+        reason = %reason_for_log,
+        "Client deactivated"
+    );
+
+    Ok(Json(StatusChangeResponse {
+        message: "Client deactivated".to_string(),
+    }))
+}
+
+/// Search clients
+#[utoipa::path(
+    get,
+    path = "/search",
+    tag = "clients",
+    operation_id = "searchClientsByQuery",
+    params(
+        ("q" = Option<String>, Query, description = "Search term")
+    ),
+    responses(
+        (status = 200, description = "Search results", body = ClientListResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn search_clients(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<ClientListResponse>, PlatformError> {
+    checks::can_read_clients(&auth.0)?;
+
+    let search_term = query.q.or(query.query).unwrap_or_default();
+
+    let clients = if search_term.is_empty() {
+        state.client_repo.find_all().await?
+    } else {
+        state.client_repo.search(&search_term).await?
+    };
+
+    // Filter by access if not anchor
+    let clients: Vec<Client> = if auth.0.is_anchor() {
+        clients
+    } else {
+        clients
+            .into_iter()
+            .filter(|c| auth.0.can_access_client(&c.id))
+            .collect()
+    };
+
+    let total = clients.len();
+    let responses: Vec<ClientResponse> = clients.into_iter().map(|c| c.into()).collect();
+
+    Ok(Json(ClientListResponse {
+        clients: responses,
+        total,
+    }))
+}
+
+/// Get client by identifier
+#[utoipa::path(
+    get,
+    path = "/by-identifier/{identifier}",
+    tag = "clients",
+    operation_id = "getClientByIdentifier",
+    params(
+        ("identifier" = String, Path, description = "Client identifier/slug")
+    ),
+    responses(
+        (status = 200, description = "Client found", body = ClientResponse),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_client_by_identifier(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(identifier): Path<String>,
+) -> Result<Json<ClientResponse>, PlatformError> {
+    checks::can_read_clients(&auth.0)?;
+
+    let client = state
+        .client_repo
+        .find_by_identifier(&identifier)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Client", &identifier))?;
+
+    // Check access
+    access::ensure_visible(&auth.0, &client.id)?;
+
+    Ok(Json(client.into()))
+}
+
+/// Add note to client
+#[utoipa::path(
+    post,
+    path = "/{id}/notes",
+    tag = "clients",
+    operation_id = "addClientNote",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    request_body = AddNoteRequest,
+    responses(
+        (status = 200, description = "Note added", body = AddNoteResponse),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn add_note(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<AddNoteRequest>,
+) -> Result<Json<AddNoteResponse>, PlatformError> {
+    use crate::client::operations::AddClientNoteCommand;
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_update_clients(&auth.0)?;
+
+    let cmd = AddClientNoteCommand {
+        client_id: id.clone(),
+        category: req.category,
+        text: req.text,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    state.add_note_use_case.run(cmd, ctx).await.into_result()?;
+
+    tracing::info!(
+        client_id = %id,
+        principal_id = %auth.0.principal_id,
+        "Note added to client"
+    );
+
+    Ok(Json(AddNoteResponse {
+        message: "Note added".to_string(),
+    }))
+}
+
+/// Get client applications
+#[utoipa::path(
+    get,
+    path = "/{id}/applications",
+    tag = "clients",
+    operation_id = "getClientApplications",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    responses(
+        (status = 200, description = "Client applications", body = ClientApplicationsResponse),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_client_applications(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ClientApplicationsResponse>, PlatformError> {
+    // Check access
+    access::ensure_visible(&auth.0, &id)?;
+
+    // Verify client exists
+    let _client = state
+        .client_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Client", &id))?;
+
+    // Get all applications and their configs for this client
+    let mut applications = Vec::new();
+
+    // Get ALL applications (not just active)
+    let all_apps = state.application_repo.find_all().await?;
+    let configs = state
+        .application_client_config_repo
+        .find_by_client(&id)
+        .await?;
+    let enabled_app_ids: HashSet<_> = configs
+        .iter()
+        .filter(|c| c.enabled)
+        .map(|c| c.application_id.as_str())
+        .collect();
+
+    for app in all_apps {
+        applications.push(ClientApplicationResponse {
+            id: app.id.clone(),
+            code: app.code.clone(),
+            name: app.name.clone(),
+            description: app.description.clone(),
+            icon_url: app.icon_url.clone(),
+            active: app.active,
+            enabled_for_client: enabled_app_ids.contains(app.id.as_str()),
+        });
+    }
+
+    let total = applications.len();
+    Ok(Json(ClientApplicationsResponse {
+        applications,
+        total,
+    }))
+}
+
+/// Enable application for client
+#[utoipa::path(
+    post,
+    path = "/{id}/applications/{applicationId}/enable",
+    tag = "clients",
+    operation_id = "enableClientApplication",
+    params(
+        ("id" = String, Path, description = "Client ID"),
+        ("applicationId" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 204, description = "Application enabled"),
+        (status = 404, description = "Client or application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn enable_application(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path((id, application_id)): Path<(String, String)>,
+) -> Result<StatusCode, PlatformError> {
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_update_clients(&auth.0)?;
+
+    let use_case = &state.enable_application_use_case;
+
+    let command = EnableApplicationForClientCommand {
+        application_id,
+        client_id: id,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    use_case.run(command, ctx).await.into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Disable application for client
+#[utoipa::path(
+    post,
+    path = "/{id}/applications/{applicationId}/disable",
+    tag = "clients",
+    operation_id = "disableClientApplication",
+    params(
+        ("id" = String, Path, description = "Client ID"),
+        ("applicationId" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 204, description = "Application disabled"),
+        (status = 404, description = "Client or application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn disable_application(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path((id, application_id)): Path<(String, String)>,
+) -> Result<StatusCode, PlatformError> {
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    checks::can_update_clients(&auth.0)?;
+
+    let use_case = &state.disable_application_use_case;
+
+    let command = DisableApplicationForClientCommand {
+        application_id,
+        client_id: id,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    use_case.run(command, ctx).await.into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Update client applications (bulk)
+#[utoipa::path(
+    put,
+    path = "/{id}/applications",
+    tag = "clients",
+    operation_id = "updateClientApplications",
+    params(
+        ("id" = String, Path, description = "Client ID")
+    ),
+    request_body = UpdateClientApplicationsRequest,
+    responses(
+        (status = 204, description = "Applications updated"),
+        (status = 404, description = "Client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_client_applications(
+    State(state): State<ClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateClientApplicationsRequest>,
+) -> Result<StatusCode, PlatformError> {
+    checks::can_update_clients(&auth.0)?;
+
+    use fc_platform_core::usecase::{ExecutionContext, UseCase};
+
+    let use_case = &state.update_applications_use_case;
+
+    let command = UpdateClientApplicationsCommand {
+        client_id: id,
+        enabled_application_ids: req.enabled_application_ids,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    use_case.run(command, ctx).await.into_result()?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ─── Go-parity search (formerly search_api.rs) ────────────────────────────────
+//
+// `POST /api/clients/search` (Go `client/api/api.go:39`, `searchClients`):
+// `{term}` → `{clients, total}`, at most 50 by identifier. Go's gate is
+// `CanReadClients` = anchor and `platform:admin:client:view`.
+
+#[derive(Clone)]
+pub struct ClientSearchState {
+    pub client_repo: Arc<ClientRepository>,
+}
+
+/// Go `SearchClientRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchClientRequest {
+    pub term: String,
+}
+
+/// Search clients by name or identifier.
+#[utoipa::path(
+    post,
+    path = "/api/clients/search",
+    tag = "clients",
+    operation_id = "searchClients",
+    request_body = SearchClientRequest,
+    responses(
+        (status = 200, description = "Matching clients", body = ClientListResponse),
+        (status = 403, description = "Not an anchor holding platform:admin:client:view")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn search_clients_by_body(
+    State(state): State<ClientSearchState>,
+    auth: Authenticated,
+    Json(req): Json<SearchClientRequest>,
+) -> Result<Json<ClientListResponse>, PlatformError> {
+    checks::require_anchor_scope(&auth.0)?;
+    checks::require_permission(&auth.0, permissions::admin::CLIENT_READ)?;
+    let clients: Vec<ClientResponse> = state
+        .client_repo
+        .search_top(&req.term)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(ClientListResponse {
+        total: clients.len(),
+        clients,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::entity::{Client, ClientStatus};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use chrono::Utc;
+
+    fn make_test_client() -> Client {
+        let now = Utc::now();
+        Client {
+            id: "clt_ABCDEFGHIJKLM".to_string(),
+            name: "Acme Corporation".to_string(),
+            identifier: "acme-corp".to_string(),
+            status: ClientStatus::Active,
+            status_reason: None,
+            status_changed_at: None,
+            notes: vec![],
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    // --- ClientResponse serialization ---
+
+    #[test]
+    fn test_client_response_serialization() {
+        let client = make_test_client();
+        let response = ClientResponse::from(client);
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(json["id"], "clt_ABCDEFGHIJKLM");
+        assert_eq!(json["name"], "Acme Corporation");
+        assert_eq!(json["identifier"], "acme-corp");
+        assert_eq!(json["status"], "ACTIVE");
+        assert!(json["statusReason"].is_null());
+        assert!(json["statusChangedAt"].is_null());
+        // Verify camelCase field names
+        assert!(json.get("createdAt").is_some());
+        assert!(json.get("updatedAt").is_some());
+        // Verify no snake_case leak
+        assert!(json.get("status_reason").is_none());
+        assert!(json.get("status_changed_at").is_none());
+        assert!(json.get("created_at").is_none());
+    }
+
+    #[test]
+    fn test_client_response_with_suspension() {
+        let mut client = make_test_client();
+        client.suspend("Payment overdue");
+
+        let response = ClientResponse::from(client);
+        let json = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(json["status"], "SUSPENDED");
+        assert_eq!(json["statusReason"], "Payment overdue");
+        assert!(
+            json["statusChangedAt"].is_string(),
+            "statusChangedAt should be ISO 8601 string"
+        );
+    }
+
+    // --- CreateClientRequest deserialization ---
+
+    #[test]
+    fn test_create_client_request_deserialization() {
+        let json = serde_json::json!({
+            "identifier": "new-client",
+            "name": "New Client"
+        });
+
+        let req: CreateClientRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.identifier, "new-client");
+        assert_eq!(req.name, "New Client");
+    }
+
+    #[test]
+    fn test_create_client_request_camel_case() {
+        // Verify that camelCase deserialization works (not just exact match)
+        let json = serde_json::json!({
+            "identifier": "test-id",
+            "name": "Test Name"
+        });
+
+        let req: CreateClientRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.identifier, "test-id");
+    }
+
+    #[test]
+    fn test_create_client_request_missing_identifier() {
+        let json = serde_json::json!({
+            "name": "Test"
+        });
+
+        let result = serde_json::from_value::<CreateClientRequest>(json);
+        assert!(result.is_err(), "Should fail without identifier");
+    }
+
+    #[test]
+    fn test_create_client_request_missing_name() {
+        let json = serde_json::json!({
+            "identifier": "test"
+        });
+
+        let result = serde_json::from_value::<CreateClientRequest>(json);
+        assert!(result.is_err(), "Should fail without name");
+    }
+
+    #[test]
+    fn test_create_client_request_empty_json() {
+        let json = serde_json::json!({});
+        let result = serde_json::from_value::<CreateClientRequest>(json);
+        assert!(result.is_err(), "Should fail with empty JSON");
+    }
+
+    // --- UpdateClientRequest ---
+
+    #[test]
+    fn test_update_client_request_deserialization() {
+        let json = serde_json::json!({
+            "name": "Updated Name"
+        });
+
+        let req: UpdateClientRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.name, Some("Updated Name".to_string()));
+    }
+
+    #[test]
+    fn test_update_client_request_empty() {
+        let json = serde_json::json!({});
+        let req: UpdateClientRequest = serde_json::from_value(json).unwrap();
+        assert!(req.name.is_none());
+    }
+
+    // --- StatusChangeRequest ---
+
+    #[test]
+    fn test_status_change_request_deserialization() {
+        let json = serde_json::json!({
+            "reason": "Payment issue"
+        });
+
+        let req: StatusChangeRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.reason, "Payment issue");
+    }
+
+    #[test]
+    fn test_status_change_request_missing_reason() {
+        let json = serde_json::json!({});
+        let result = serde_json::from_value::<StatusChangeRequest>(json);
+        assert!(result.is_err(), "Should fail without reason");
+    }
+
+    // --- ClientListResponse ---
+
+    #[test]
+    fn test_client_list_response_serialization() {
+        let client = make_test_client();
+        let list = ClientListResponse {
+            clients: vec![ClientResponse::from(client)],
+            total: 1,
+        };
+
+        let json = serde_json::to_value(&list).unwrap();
+        assert!(json["clients"].is_array());
+        assert_eq!(json["clients"].as_array().unwrap().len(), 1);
+        assert_eq!(json["total"], 1);
+    }
+
+    // --- AddNoteRequest ---
+
+    #[test]
+    fn test_add_note_request_deserialization() {
+        let json = serde_json::json!({
+            "category": "billing",
+            "text": "Payment received"
+        });
+
+        let req: AddNoteRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.category, "billing");
+        assert_eq!(req.text, "Payment received");
+    }
+
+    #[test]
+    fn test_add_note_request_missing_fields() {
+        let json = serde_json::json!({ "category": "billing" });
+        let result = serde_json::from_value::<AddNoteRequest>(json);
+        assert!(result.is_err(), "Should fail without text");
+    }
+    #[test]
+    fn list_status_filter_is_strict() {
+        // Absent or empty: no filter, every client (Go).
+        assert_eq!(list_status_filter(None).unwrap(), None);
+        assert_eq!(list_status_filter(Some("")).unwrap(), None);
+        assert_eq!(
+            list_status_filter(Some("SUSPENDED")).unwrap(),
+            Some(ClientStatus::Suspended)
+        );
+        assert_eq!(
+            list_status_filter(Some("INACTIVE")).unwrap(),
+            Some(ClientStatus::Inactive)
+        );
+        // Unknown or wrongly-cased values are a 400, not "no filter".
+        for bad in ["paused", "active", "ALL"] {
+            let err = list_status_filter(Some(bad)).unwrap_err();
+            assert_eq!(
+                IntoResponse::into_response(err).status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+    }
+}

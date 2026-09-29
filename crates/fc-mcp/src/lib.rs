@@ -26,8 +26,15 @@ use rmcp::{
     ServiceExt,
 };
 
+use axum::routing;
 pub use config::{resolve_bind, Config};
 pub use server::FcMcpServer;
+use std::future::Future;
+use std::net::SocketAddr;
+use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio::signal;
+use tokio_util::sync::CancellationToken;
 
 fn build_server(config: &Config) -> FcMcpServer {
     let http = reqwest::Client::builder()
@@ -50,7 +57,7 @@ async fn assert_platform_reachable(base_url: &str) -> Result<()> {
     // make the user wait forever if they typoed the URL.
     let url = format!("{}/q/ready", base_url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
+        .timeout(Duration::from_secs(3))
         .user_agent(concat!("fc-mcp/", env!("CARGO_PKG_VERSION")))
         .build()?;
 
@@ -79,11 +86,11 @@ pub async fn run_stdio(config: Config) -> Result<()> {
 
 /// Run the MCP server as a streamable HTTP service on `addr` at `/mcp`,
 /// after checking the platform is reachable, until Ctrl-C.
-pub async fn run_http(config: Config, addr: std::net::SocketAddr) -> Result<()> {
+pub async fn run_http(config: Config, addr: SocketAddr) -> Result<()> {
     assert_platform_reachable(&config.base_url).await?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(addr).await?;
     serve_http(config, listener, async {
-        let _ = tokio::signal::ctrl_c().await;
+        let _ = signal::ctrl_c().await;
     })
     .await
 }
@@ -94,10 +101,10 @@ pub async fn run_http(config: Config, addr: std::net::SocketAddr) -> Result<()> 
 /// tool call reaches the platform on its own.
 pub async fn serve_http(
     config: Config,
-    listener: tokio::net::TcpListener,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    listener: TcpListener,
+    shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    let cancel = tokio_util::sync::CancellationToken::new();
+    let cancel = CancellationToken::new();
     let factory_config = config.clone();
     let service = StreamableHttpService::new(
         move || Ok(build_server(&factory_config)),
@@ -107,7 +114,7 @@ pub async fn serve_http(
 
     let router = axum::Router::new()
         .nest_service("/mcp", service)
-        .route("/health", axum::routing::get(|| async { "" }));
+        .route("/health", routing::get(|| async { "" }));
     let addr = listener.local_addr()?;
     tracing::info!(
         base = %config.base_url,

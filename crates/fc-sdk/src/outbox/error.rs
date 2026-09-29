@@ -1,6 +1,8 @@
 //! Errors returned by the simple outbox API ([`OutboxManager`](super::OutboxManager),
 //! [`OutboxDriver`](super::OutboxDriver), the payload writers and schema setup).
 
+use std::error;
+
 /// Failure to write outbox rows.
 #[derive(Debug, thiserror::Error)]
 pub enum OutboxError {
@@ -20,5 +22,5 @@ pub enum OutboxError {
 
     /// A custom [`OutboxDriver`](super::OutboxDriver) failed; box the native error here.
     #[error("outbox driver error: {0}")]
-    Driver(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Driver(#[source] Box<dyn error::Error + Send + Sync>),
 }

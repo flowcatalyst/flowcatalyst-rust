@@ -13,11 +13,16 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tokio::sync::Mutex;
 
+use crate::api::Response;
 use crate::api::{truncate, Api, ServiceAccount};
 use crate::infra::{free_port, Infra};
 use crate::receiver::{Delivery, Receiver};
 use crate::scenario::{Scenario, Stimulus};
 use crate::stack::{Proc, ProcSpec, SideEnv, SideKind};
+use std::collections::HashSet;
+use std::fs;
+use std::process::Command;
+use tokio::time;
 
 pub const ADMIN_EMAIL: &str = "harness-admin@harness.test";
 /// No identity words (Go refuses PASSWORD_CONTAINS_IDENTITY).
@@ -116,7 +121,7 @@ impl Side {
         jwt_private: PathBuf,
         jwt_public: PathBuf,
     ) -> anyhow::Result<Side> {
-        std::fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir)?;
         let db_name = format!("fc_{}", kind.label());
         infra.create_database(&db_name)?;
         let (receiver, addr) = Receiver::start().await?;
@@ -440,7 +445,7 @@ impl Side {
         self.start_proc(self.outbox_spec(&token), Duration::from_secs(60), false)
             .await?;
         // Fan-out subscription cache (1s) and router config fetch.
-        tokio::time::sleep(Duration::from_secs(6)).await;
+        time::sleep(Duration::from_secs(6)).await;
         let mut dead = Vec::new();
         for (name, p) in self.procs.lock().await.iter_mut() {
             if !p.is_running() {
@@ -660,7 +665,7 @@ impl Side {
         }
         let stopped = t.elapsed();
         if action == "down" && down_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(down_ms)).await;
+            time::sleep(Duration::from_millis(down_ms)).await;
         }
         let res = p.start(&self.dir);
         let _ = p.wait_healthy(Duration::from_secs(60)).await;
@@ -715,7 +720,7 @@ impl Side {
             let me = Arc::clone(self);
             let d = d.clone();
             disruption_tasks.push(tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(d.at_ms)).await;
+                time::sleep(Duration::from_millis(d.at_ms)).await;
                 let at = start.elapsed();
                 let r = me.proc_action(&d.process, &d.action, d.down_ms).await;
                 format!("at {at:?}: {r}")
@@ -789,7 +794,7 @@ impl Side {
         };
         match st {
             Stimulus::Pause { ms } => {
-                tokio::time::sleep(Duration::from_millis(*ms)).await;
+                time::sleep(Duration::from_millis(*ms)).await;
             }
             Stimulus::Events {
                 target,
@@ -925,11 +930,10 @@ impl Side {
 
     async fn settle(&self, s: &Scenario, run: &mut SideRun, start: Instant) {
         let deadline = start + Duration::from_millis(s.settle.timeout_ms);
-        let expected: std::collections::HashSet<&str> =
-            run.sent.iter().map(|m| m.hk.as_str()).collect();
+        let expected: HashSet<&str> = run.sent.iter().map(|m| m.hk.as_str()).collect();
         loop {
             let deliveries = self.receiver.deliveries(&s.name);
-            let accepted: std::collections::HashSet<&str> = deliveries
+            let accepted: HashSet<&str> = deliveries
                 .iter()
                 .filter(|d| d.accepted)
                 .filter_map(|d| d.hk.as_deref())
@@ -950,14 +954,14 @@ impl Side {
             if done {
                 run.settled = true;
                 run.settle_ms = start.elapsed().as_millis() as u64;
-                tokio::time::sleep(Duration::from_millis(s.settle.quiet_ms)).await;
+                time::sleep(Duration::from_millis(s.settle.quiet_ms)).await;
                 return;
             }
             if Instant::now() > deadline {
                 run.settle_ms = start.elapsed().as_millis() as u64;
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            time::sleep(Duration::from_millis(500)).await;
         }
     }
 
@@ -1003,7 +1007,7 @@ impl Side {
     }
 }
 
-fn record_batch(errors: &mut Vec<String>, what: &str, r: &crate::api::Response) {
+fn record_batch(errors: &mut Vec<String>, what: &str, r: &Response) {
     if !(200..300).contains(&r.status) {
         errors.push(format!("{what} -> {} {}", r.status, truncate(&r.text, 300)));
         return;
@@ -1056,7 +1060,7 @@ fn health_urls(api: u16, metrics: u16) -> Vec<String> {
 }
 
 fn create_queue(container: &str, name: &str) -> anyhow::Result<()> {
-    let out = std::process::Command::new("docker")
+    let out = Command::new("docker")
         .args([
             "exec",
             container,
@@ -1080,7 +1084,7 @@ fn create_queue(container: &str, name: &str) -> anyhow::Result<()> {
 
 /// Messages visible / in flight on a queue (diagnostics only).
 pub fn queue_depth(container: &str, name: &str) -> Option<(u64, u64)> {
-    let out = std::process::Command::new("docker")
+    let out = Command::new("docker")
         .args([
             "exec",
             container,

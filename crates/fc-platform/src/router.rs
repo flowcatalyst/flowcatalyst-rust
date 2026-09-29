@@ -7,9 +7,14 @@
 //! and adds what spans all of them: the OpenAPI documents and Swagger UI,
 //! `/health`, Go's extractor-rejection envelope, the SPA, and the
 //! profile-only gate. It imports no handler or state type
-//! (`tests/route_wiring_convention_test.rs`).
+//! (`tests/it/route_wiring_convention_test.rs`).
 //!
 //! The binaries add their own layers on top (`AuthLayer`, tracing, CORS).
+
+#![allow(
+    clippy::absolute_paths,
+    reason = "the module list: the route-wiring scanner reads each `crate::<module>::routes(ctx)`"
+)]
 
 use axum::{
     response::{IntoResponse, Json},

@@ -1,0 +1,69 @@
+[package]
+name = "fc-platform-iam"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FlowCatalyst Platform - tenancy, identity and access (clients, applications, principals, roles, service accounts, OAuth clients, identity providers), for now with the sign-in flows and messaging that later move to their own crates"
+
+[dependencies]
+# The kernel: use cases, errors, the authorization context, middleware.
+fc-platform-core = { path = "../fc-platform-core" }
+fc-common = { path = "../fc-common" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+# Database (PostgreSQL)
+sqlx = { workspace = true, features = ["postgres"] }
+
+# Web framework
+axum = { workspace = true }
+utoipa = { workspace = true }
+
+# Authentication
+jsonwebtoken = { workspace = true }
+sha2 = "0.10"
+base64 = "0.22"
+argon2 = "0.5"
+# Verifies bcrypt hashes migrated from Laravel apps ($2y$), as Go does
+bcrypt = "0.19"
+rsa = { version = "0.9", features = ["pem"] }
+rand = { workspace = true }
+
+# HTTP client for OIDC. Inherit from workspace so we pick up the
+# `default-features = false` + rustls-tls posture; declaring our own
+# reqwest here used to re-enable `default-tls` via feature unification
+# and drag OpenSSL/native-tls back into every binary.
+reqwest = { workspace = true }
+urlencoding = "2.1"
+
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+bon = { workspace = true }
+
+# Regex for pattern matching
+regex = { workspace = true }
+
+# Concurrent cache
+dashmap = { workspace = true }
+
+[dev-dependencies]
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+tower = { workspace = true, features = ["util"] }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

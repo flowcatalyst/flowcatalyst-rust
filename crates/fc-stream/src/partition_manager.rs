@@ -34,6 +34,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::health::StreamHealth;
+use tokio::time;
 
 const PARTITIONED_PARENTS: &[&str] = &[
     "msg_events",
@@ -128,7 +129,7 @@ pub async fn run(
         }
 
         tokio::select! {
-            _ = tokio::time::sleep(config.tick_interval) => {}
+            _ = time::sleep(config.tick_interval) => {}
             _ = cancel.cancelled() => { break; }
         }
     }

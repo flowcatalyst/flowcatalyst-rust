@@ -4,6 +4,8 @@
 //! stdout JSON output the dev server might emit). ANSI colors are only
 //! emitted to TTYs; piping fc-dev into a file or `tee` gets plain text.
 
+use crate::version_check;
+use std::io;
 use std::io::{IsTerminal, Write};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -15,9 +17,9 @@ const INNER: usize = 60;
 
 /// `fn_ports`: the function host's private and public ports, when it runs.
 pub fn print(api_port: u16, metrics_port: u16, fn_ports: Option<(u16, u16)>) {
-    let upgrade = crate::version_check::cached_upgrade_available();
-    let color = std::io::stderr().is_terminal();
-    let mut out = std::io::stderr().lock();
+    let upgrade = version_check::cached_upgrade_available();
+    let color = io::stderr().is_terminal();
+    let mut out = io::stderr().lock();
     let _ = render(
         &mut out,
         api_port,
@@ -35,7 +37,7 @@ fn render<W: Write>(
     fn_ports: Option<(u16, u16)>,
     upgrade: Option<&str>,
     color: bool,
-) -> std::io::Result<()> {
+) -> io::Result<()> {
     let c = Colors::new(color);
 
     // ─── top border with title ──────────────────────────────────────────
@@ -111,7 +113,7 @@ fn row<W: Write>(
     value: &str,
     value_color: &str,
     c: &Colors,
-) -> std::io::Result<()> {
+) -> io::Result<()> {
     // Content layout: 2-space left margin, 11-char label column, value, padding.
     let label_col_width = 11;
     let left_margin = 2;

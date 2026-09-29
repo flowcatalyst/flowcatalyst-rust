@@ -76,7 +76,7 @@ impl<U: UnitOfWork> UseCase for CreateWidgetUseCase<U> {
     /// `execute`'s 404 (Go's order: load → 404 → 403). A handler's exact
     /// refusal carries through with `UseCaseError::verbatim`.
     /// An empty `Ok(())` needs an entry, with a reason, in
-    /// `tests/use_case_shape_convention_test.rs`'s `EMPTY_AUTHORIZE`.
+    /// `tests/it/use_case_shape_convention_test.rs`'s `EMPTY_AUTHORIZE`.
     async fn authorize(
         &self,
         command: &CreateWidgetCommand,
@@ -116,11 +116,11 @@ mod tests { /* validation order, error codes; Docker tests live in tests/ */ }
 
 | Rule | Test |
 |---|---|
-| Every `execute` happy path reaches a `unit_of_work.*` call | `tests/uow_convention_test.rs` (and `Committed` is sealed, so skipping it doesn't compile) |
-| `authorize` is not an empty `Ok(())` without an allowlisted reason | `tests/use_case_shape_convention_test.rs` (`every_use_case_authorizes_or_says_why_not`) |
-| File shape: command, struct + `new`, `impl UseCase` with `validate`, `authorize`, `execute` in that order | `tests/use_case_shape_convention_test.rs` (`use_cases_follow_the_template_shape`) |
-| Every `/api` write handler calls a permission check | `tests/route_auth_convention_test.rs` |
-| Sync use cases write only through `commit_sync` | `tests/uow_convention_test.rs` |
+| Every `execute` happy path reaches a `unit_of_work.*` call | `tests/it/uow_convention_test.rs` (and `Committed` is sealed, so skipping it doesn't compile) |
+| `authorize` is not an empty `Ok(())` without an allowlisted reason | `tests/it/use_case_shape_convention_test.rs` (`every_use_case_authorizes_or_says_why_not`) |
+| File shape: command, struct + `new`, `impl UseCase` with `validate`, `authorize`, `execute` in that order | `tests/it/use_case_shape_convention_test.rs` (`use_cases_follow_the_template_shape`) |
+| Every `/api` write handler calls a permission check | `tests/it/route_auth_convention_test.rs` |
+| Sync use cases write only through `commit_sync` | `tests/it/uow_convention_test.rs` |
 
 ## Building the context
 

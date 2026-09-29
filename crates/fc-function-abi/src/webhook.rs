@@ -184,7 +184,7 @@ fn parse_instant(key: &str, raw: &str) -> Result<Timestamp, WebhookFormatError> 
 }
 
 /// Java `function-api/src/test/java/io/flowcatalyst/function/WebhookTest.java`
-/// and `EventTest.java`. The golden tables (`tests/java_golden.rs`) hold the
+/// and `EventTest.java`. The golden tables (`tests/it/java_golden.rs`) hold the
 /// rest of Java's answers.
 #[cfg(test)]
 mod tests {

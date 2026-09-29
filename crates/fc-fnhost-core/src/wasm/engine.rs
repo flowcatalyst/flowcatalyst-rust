@@ -8,6 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest as _, Sha256};
+use std::hash;
+use std::io;
+use std::thread;
+use std::thread::Builder;
 use wasmtime::{Config, Engine, InstanceAllocationStrategy, OptLevel, PoolingAllocationConfig};
 
 /// The wasmtime release this host is built against (the exact pin in
@@ -101,7 +105,7 @@ pub fn fingerprint(engine: &Engine) -> String {
     hasher.0.update(b"wasmtime ");
     hasher.0.update(WASMTIME_VERSION.as_bytes());
     hasher.0.update(b"\0");
-    std::hash::Hash::hash(&engine.precompile_compatibility_hash(), &mut hasher);
+    hash::Hash::hash(&engine.precompile_compatibility_hash(), &mut hasher);
     hex::encode(&hasher.0.finalize()[..16])
 }
 
@@ -124,21 +128,19 @@ pub struct EpochTicker {
 }
 
 impl EpochTicker {
-    pub fn start(engine: &Engine) -> std::io::Result<Self> {
+    pub fn start(engine: &Engine) -> io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
         let weak = engine.weak();
         let flag = stop.clone();
-        std::thread::Builder::new()
-            .name("fn-epoch".into())
-            .spawn(move || {
-                while !flag.load(Ordering::Relaxed) {
-                    std::thread::sleep(EPOCH_TICK);
-                    match weak.upgrade() {
-                        Some(engine) => engine.increment_epoch(),
-                        None => return,
-                    }
+        Builder::new().name("fn-epoch".into()).spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                thread::sleep(EPOCH_TICK);
+                match weak.upgrade() {
+                    Some(engine) => engine.increment_epoch(),
+                    None => return,
                 }
-            })?;
+            }
+        })?;
         Ok(Self { stop })
     }
 }

@@ -18,6 +18,10 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::env;
+use std::fs;
+use std::net::IpAddr;
+use std::net::SocketAddr;
 
 const DEFAULT_BASE_URL: &str = "http://localhost:8080";
 
@@ -80,7 +84,7 @@ impl Config {
 }
 
 fn env_opt(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|s| !s.is_empty())
+    env::var(name).ok().filter(|s| !s.is_empty())
 }
 
 /// Where `fc-dev`'s `mcp_bootstrap::write_credentials_file` writes them.
@@ -101,7 +105,7 @@ fn read_credentials_file() -> Result<Option<CredentialsFile>> {
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let bytes = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
     let parsed: CredentialsFile = serde_json::from_slice(&bytes).with_context(|| {
         format!(
             "parsing {} (regenerate with `fc-dev` restart)",
@@ -129,16 +133,16 @@ fn missing_creds_error() -> anyhow::Error {
 /// The MCP HTTP listener's address: `bind` as a full `host:port`, or a bare
 /// host (Go's `FC_MCP_BIND`, default `127.0.0.1`) joined with `port` (Go's
 /// `FC_MCP_PORT`).
-pub fn resolve_bind(bind: &str, port: u16) -> Result<std::net::SocketAddr> {
+pub fn resolve_bind(bind: &str, port: u16) -> Result<SocketAddr> {
     let bind = bind.trim();
-    if let Ok(addr) = bind.parse::<std::net::SocketAddr>() {
+    if let Ok(addr) = bind.parse::<SocketAddr>() {
         return Ok(addr);
     }
     let host = bind.trim_start_matches('[').trim_end_matches(']');
-    let ip: std::net::IpAddr = host
+    let ip: IpAddr = host
         .parse()
         .with_context(|| format!("MCP bind address {bind:?} is not an IP or IP:port"))?;
-    Ok(std::net::SocketAddr::new(ip, port))
+    Ok(SocketAddr::new(ip, port))
 }
 
 #[cfg(test)]

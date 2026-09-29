@@ -33,6 +33,8 @@ use sha2::{Digest, Sha256};
 
 use super::client::FnClient;
 use super::{parse_duration, print_json, AddressOpts, CliError, Ctx, Io, OutputMode};
+use std::fs;
+use tokio::time;
 
 #[derive(clap::Args, Debug)]
 pub struct PublishArgs {
@@ -213,7 +215,7 @@ async fn publish_version(
     address: &str,
     args: &PublishArgs,
 ) -> Result<Published, CliError> {
-    let bytes = std::fs::read(&args.artifact)
+    let bytes = fs::read(&args.artifact)
         .map_err(|e| CliError::Other(format!("could not read {}: {e}", args.artifact.display())))?;
     let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
     let manifest = read_manifest(&args.manifest)?;
@@ -254,7 +256,7 @@ async fn publish_version(
     };
     let mut body = json!({"artifactRef": artifact_ref, "digest": digest, "manifest": manifest});
     if let Some(bundle) = &args.bundle {
-        let bundle = std::fs::read_to_string(bundle)
+        let bundle = fs::read_to_string(bundle)
             .map_err(|e| CliError::Other(format!("could not read {}: {e}", bundle.display())))?;
         body["signatureBundle"] = Value::String(bundle);
     }
@@ -313,7 +315,7 @@ pub async fn ensure_function_exists(
 }
 
 pub fn read_manifest(path: &Path) -> Result<Value, CliError> {
-    let raw = std::fs::read_to_string(path)
+    let raw = fs::read_to_string(path)
         .map_err(|e| CliError::Other(format!("could not read {}: {e}", path.display())))?;
     serde_json::from_str(&raw).map_err(|e| {
         CliError::Usage(format!(
@@ -367,7 +369,7 @@ async fn promote_when_ready(
                 print_timeout(ctx, io, address, version, &status)?;
                 return Err(CliError::Reported);
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            time::sleep(Duration::from_secs(1)).await;
         }
     }
     Ok(client

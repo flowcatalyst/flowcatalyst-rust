@@ -5,6 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fs;
 use std::path::Path;
 
 /// One `METHOD /path` entry, from the lockfile or `surface.json`.
@@ -17,8 +21,8 @@ pub struct Route {
     pub operation_id: Option<String>,
 }
 
-impl std::fmt::Display for Route {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for Route {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}", self.method, self.path)
     }
 }
@@ -84,7 +88,7 @@ fn is_hit(route: &Route, requested: &[RequestedRoute]) -> bool {
 }
 
 pub fn load_lockfile(path: &Path) -> Result<LockfileOperations> {
-    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
 }
 
@@ -93,7 +97,7 @@ pub fn load_surface(path: &Path) -> Result<Vec<Route>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let lines: Vec<String> =
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     lines

@@ -6,35 +6,32 @@ license.workspace = true
 description = "FlowCatalyst Platform - Core domain models, services, and APIs"
 
 [dependencies]
+# The kernel: use cases, errors, the authorization context, middleware.
+fc-platform-core = { path = "../fc-platform-core" }
+# The domain crates; this one assembles them (routes, context, OpenAPI).
+fc-platform-auth = { path = "../fc-platform-auth" }
+fc-platform-iam = { path = "../fc-platform-iam" }
+fc-platform-messaging = { path = "../fc-platform-messaging" }
+fc-platform-scheduled-jobs = { path = "../fc-platform-scheduled-jobs" }
+fc-platform-functions = { path = "../fc-platform-functions" }
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
-fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
-# FunctionAddress, shared with the function host and the guest PDK. Without
-# the Extism envelope, which is the host's business.
-fc-function-abi = { path = "../fc-function-abi" }
-# The manifest and the function value types, shared with the function host.
-fc-function-model = { path = "../fc-function-model" }
-# Sigstore verification of a published version's signature bundle.
-fc-function-signing = { path = "../fc-function-signing" }
 # The listener timeouts (owner ruling 10), shared with the function host.
 fc-http-listener = { path = "../fc-http-listener" }
 
 # Async runtime
 tokio = { workspace = true }
-async-trait = { workspace = true }
 futures = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
-indexmap = { workspace = true }
 
 # Database (PostgreSQL)
 sqlx = { workspace = true, features = ["postgres"] }
 
 # Web framework
 axum = { workspace = true }
-axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 utoipa = { workspace = true, features = ["yaml"] }
@@ -44,107 +41,47 @@ serde_norway = "0.9"
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
 
-# Authentication
-jsonwebtoken = { workspace = true }
-hmac = "0.12"
-sha2 = "0.10"
-# Two-factor authentication (TOTP, RFC 6238, as Go's pquerna/otp): SHA-1
-# HOTP, the base32 shared secret, and the enrolment QR code rendered as a PNG.
-sha1 = "0.10"
-data-encoding = "2"
-qrcodegen = "1.8"
-flate2 = "1"
-crc32fast = "1"
-# Streams an artifact from the blob store to the host (control plane).
-tokio-util = { workspace = true, features = ["io"] }
-base64 = "0.22"
-argon2 = "0.5"
-# Verifies bcrypt hashes migrated from Laravel apps ($2y$), as Go does
-bcrypt = "0.19"
-rsa = { version = "0.9", features = ["pem"] }
-rand = { workspace = true }
-webauthn-rs = { workspace = true }
-
-## webauthn-rs-core pulls `openssl` for attestation crypto — that's a
-## hard dep of the crate, not switchable. Adding it here with the
-## `vendored` feature flips `openssl-sys` to build OpenSSL from source
-## via the `openssl-src` crate instead of linking against a system
-## install. Net effect: the Windows release CI no longer needs
-## `vcpkg install openssl:x64-windows-static-md` — the openssl-src
-## build artifact lands in target/ and gets reused via rust-cache.
-## On Linux/macOS the first build is ~1-2 min slower (one-off),
-## subsequent builds hit the cache and are unchanged.
-##
-## This dep is unused by fc-platform's own code; the feature
-## propagates through workspace-wide unification to webauthn-rs's
-## openssl pull. Keep it here (not in fc-server) so dev builds in
-## fc-platform get the same toolchain shape as release builds.
-openssl = { version = "0.10", features = ["vendored"] }
-
-# HTTP client for OIDC. Inherit from workspace so we pick up the
-# `default-features = false` + rustls-tls posture; declaring our own
-# reqwest here used to re-enable `default-tls` via feature unification
-# and drag OpenSSL/native-tls back into every binary.
-reqwest = { workspace = true }
-urlencoding = "2.1"
-
-# Email
-lettre = { workspace = true }
-
-# Encryption
-aes-gcm = { workspace = true }
-
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
-chrono-tz = "0.10"
-cron = "0.15"
 tracing = { workspace = true }
-thiserror = { workspace = true }
-bon = { workspace = true }
 anyhow = { workspace = true }
 time = "0.3"
 
-# Regex for pattern matching
-regex = { workspace = true }
-
-# Concurrent cache
-dashmap = { workspace = true }
-
-# Token-bucket rate limiter
-governor = { workspace = true }
-nonzero_ext = { workspace = true }
-
-# Distributed rate limiter (Redis when FC_REDIS_URL is set, Postgres fallback)
-redis = { workspace = true }
-
-# Scheduler dependencies
-parking_lot = { workspace = true }
-subtle = { workspace = true }
-hex = { workspace = true }
-metrics = { workspace = true }
-
-# AWS Secrets Manager (for DB credential refresh)
-aws-config = { workspace = true }
-aws-sdk-secretsmanager = { workspace = true }
-# The s3:// function-artifact store (FC_FN_ARTIFACT_STORE).
-aws-sdk-s3 = { workspace = true }
-
 [dev-dependencies]
+# What the integration tests use directly (the platform's own crates use
+# them as normal dependencies).
+async-trait = { workspace = true }
+aws-config = { workspace = true }
+base64 = "0.22"
+bcrypt = "0.19"
+chrono-tz = "0.10"
+cron = "0.15"
+fc-function-abi = { path = "../fc-function-abi" }
+fc-function-signing = { path = "../fc-function-signing" }
+fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
+hex = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+sha2 = "0.10"
+tokio-util = { workspace = true, features = ["io"] }
+urlencoding = "2.1"
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
 # Log capture in unit tests.
 tracing-subscriber = { workspace = true }
 # The dispatch scheduler's SQS publish, end to end against LocalStack.
 aws-sdk-sqs = { workspace = true }
-# The event fan-out (tests/dispatch_fan_out_test.rs): it writes the jobs the
+# The event fan-out (tests/it/dispatch_fan_out_test.rs): it writes the jobs the
 # scheduler claims.
 fc-stream = { path = "../fc-stream" }
 # The function host's webhook verifier: deliveries the platform signs must
-# pass it (tests/function_promote_golden_test.rs).
+# pass it (tests/it/function_promote_golden_test.rs).
 fc-fnhost-core = { path = "../fc-fnhost-core" }
 # The deployed host's runtimes, JS included (tests/function_host_e2e_test.rs).
 fc-fnhost-js = { path = "../fc-fnhost-js" }
 # The router's (and function host's) platform-token verifier: the tokens the
-# platform mints must pass it (tests/router_token_contract_test.rs).
+# platform mints must pass it (tests/it/router_token_contract_test.rs).
 fc-platform-jwks = { path = "../fc-platform-jwks" }
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
@@ -156,6 +93,9 @@ http-body-util = "0.1"
 tempfile = { workspace = true }
 
 [lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
 # A `_ =>` arm over one of our own enums hides a new variant from every
 # match that should decide what it means. List the variants instead; an
 # `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.

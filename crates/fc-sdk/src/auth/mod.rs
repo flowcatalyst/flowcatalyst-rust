@@ -112,6 +112,7 @@ pub enum AuthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error;
 
     #[test]
     fn auth_error_token_expired_display() {
@@ -140,7 +141,7 @@ mod tests {
     #[test]
     fn auth_error_is_std_error() {
         let err = AuthError::TokenExpired;
-        let _: &dyn std::error::Error = &err;
+        let _: &dyn error::Error = &err;
     }
 
     #[test]

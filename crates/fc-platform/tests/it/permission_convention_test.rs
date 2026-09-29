@@ -1,0 +1,359 @@
+//! Convention test: every write handler under `/api/*` must call an
+//! authorization check.
+//!
+//! Since the URL-tier split (`/api/admin` vs `/api/sdk`) is gone, permissions
+//! are the only thing gating write access. Missing a permission call on a
+//! POST/PUT/PATCH/DELETE handler is a privilege-escalation bug. This test
+//! scans every `#[utoipa::path(...)]`-annotated write handler and asserts
+//! that its body contains one of the known auth-check patterns.
+//!
+//! If you add a legitimately-unauthenticated write handler (e.g. a platform
+//! callback), add the file or handler name to one of the skip lists below
+//! with a comment explaining why.
+
+use crate::support::sources;
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+
+/// Any of these substrings in a handler body counts as a permission check.
+/// Keep in sync with `shared::authorization_service::checks`,
+/// `AuthorizationService` methods, and `AuthContext` helpers.
+const AUTH_CHECK_PATTERNS: &[&str] = &[
+    // checks module functions (shared::authorization_service::checks)
+    "require_anchor",
+    "require_permission",
+    "require_client_access",
+    "is_admin(",
+    "can_read_",
+    "can_write_",
+    "can_create_",
+    "can_update_",
+    "can_delete_",
+    "can_retry_",
+    // State-transition verbs (currently used by scheduled_job for lifecycle
+    // actions that aren't a plain CRUD update). Keep additions narrow —
+    // adding a new prefix here is documenting that the project considers
+    // it a recognised permission family.
+    "can_pause_",
+    "can_resume_",
+    "can_fire_",
+    // Client lifecycle (Go's CanActivateClients / CanSuspendClients /
+    // CanDeactivateClients) and client-access grants (owner decision #25).
+    "can_activate_",
+    "can_suspend_",
+    "can_deactivate_",
+    "can_grant_",
+    "can_revoke_",
+    // Role assignment and role administration (owner rulings 14, #25).
+    "can_assign_",
+    "can_administer_",
+    // SDK sync endpoints (`/api/applications/{appCode}/*/sync`).
+    "can_sync_",
+    // AuthorizationService method calls
+    ".authorize(",
+    // AuthContext inline checks (used in conditionals that return 403)
+    ".is_anchor()",
+    ".can_access_client(",
+    ".has_permission(",
+];
+
+/// Handler files that contain endpoints which legitimately don't need a
+/// permission check (platform callbacks, public endpoints, health, etc.).
+const FILE_SKIPLIST: &[&str] = &[
+    // Unauthenticated public endpoints
+    "shared/public_api.rs",
+    "shared/well_known_api.rs",
+    // OAuth 2.0 token / introspection / revocation — authenticated by client
+    // credentials, not bearer JWT with permissions.
+    "oauth/", // matches any oauth/* file
+    // User-facing login/logout/password-reset flows. Auth is the act of
+    // proving identity, not permission-gated.
+    "auth/auth_api.rs",
+    "auth/password_reset_api.rs",
+    "auth/login_api.rs",
+    "auth/oidc_login_api.rs",
+    "auth/oidc_interaction_api.rs",
+    "auth/client_selection_api.rs",
+    // Platform infrastructure — called by internal message router, not users.
+    "shared/dispatch_process_api.rs",
+    // BFF surface (cookie-auth, /bff/*) — separate permission story.
+    "shared/bff_",
+    "shared/debug_api.rs",
+    "shared/filter_options_api.rs",
+    // Monitoring/observability — anchor-gated at the route layer.
+    "shared/monitoring_api.rs",
+    // /api/me — returns the caller's own identity; authenticated but no
+    // further permission needed.
+    "shared/me_api.rs",
+    // WebAuthn credential management is principal-scoped: the
+    // `Authenticated` extractor proves identity, and every operation
+    // (register/authenticate/delete) is implicitly scoped to the caller's
+    // own credentials (`principal_id == credential.owner`). There is no
+    // "manage other people's passkeys" surface to permission-gate, so the
+    // `can_*` family doesn't apply. Authentication is the gate.
+    "webauthn/api.rs",
+    // The legacy SDK dispatch-jobs batch endpoint is being retired into the
+    // main dispatch-jobs router; its auth is the bearer JWT of the calling
+    // service account, not a granular permission.
+    // TODO: add can_write_dispatch_jobs explicitly here.
+    // "shared/sdk_dispatch_jobs_api.rs",
+];
+
+/// Specific handlers to skip, identified as `"path/suffix::fn_name"`. The
+/// `path/suffix` must be a substring of the file path relative to `src/`.
+const FN_SKIPLIST: &[&str] = &[
+    // OAuth 2.0 protocol endpoints — authenticated by RFC-defined credentials
+    // (client_id/client_secret, token-in-body), not by platform permissions.
+    // The protocol is the gate.
+    "auth/oauth_api.rs::token",      // POST /oauth/token (RFC 6749)
+    "auth/oauth_api.rs::introspect", // POST /oauth/introspect (RFC 7662)
+    "auth/oauth_api.rs::revoke",     // POST /oauth/revoke (RFC 7009)
+    // /auth/client/switch — part of the authenticated login flow; no extra
+    // permission needed to pick a different client for your own session.
+    "shared/client_selection_api.rs::switch_client",
+    // Documentation-only `#[utoipa::path]` stubs for Go's alias spellings
+    // (`regenerate-token`, `regenerate-secret`); never routed. The routes
+    // are served by `regenerate_auth_token` / `regenerate_signing_secret`,
+    // which check `can_update_service_accounts`.
+    "service_account/api.rs::regenerate_token_alias",
+    "service_account/api.rs::regenerate_secret_alias",
+];
+
+fn should_skip(path: &Path) -> bool {
+    let rel = sources::strip_src(path)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    FILE_SKIPLIST.iter().any(|skip| rel.contains(skip))
+}
+
+/// Parse write handlers out of a file. Each returned entry is
+/// (fn_name, body_text, line_number).
+fn extract_write_handlers(content: &str) -> Vec<(String, String, usize)> {
+    extract_handlers(content, |attr| {
+        // Check if first positional arg is a write method.
+        let args_inside = attr
+            .trim_start()
+            .strip_prefix("#[utoipa::path(")
+            .unwrap_or(attr)
+            .trim();
+        let first_token = args_inside
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .find(|t| !t.is_empty())
+            .unwrap_or("");
+        matches!(first_token, "post" | "put" | "patch" | "delete")
+    })
+}
+
+/// Parse the `#[utoipa::path(...)]` handlers whose attribute text passes
+/// `wanted`. Each returned entry is (fn_name, body_text, line_number).
+fn extract_handlers(content: &str, wanted: impl Fn(&str) -> bool) -> Vec<(String, String, usize)> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        // Find a `#[utoipa::path(` attribute.
+        if line.trim_start().starts_with("#[utoipa::path(") {
+            // Accumulate the attribute spanning multiple lines until the
+            // matching `)]`.
+            let mut attr = String::new();
+            let attr_start = i;
+            let mut depth = 0i32;
+            let mut closed = false;
+            while i < lines.len() {
+                let l = lines[i];
+                attr.push_str(l);
+                attr.push('\n');
+                for ch in l.chars() {
+                    if ch == '(' {
+                        depth += 1;
+                    } else if ch == ')' {
+                        depth -= 1;
+                    }
+                }
+                i += 1;
+                if depth <= 0 && attr.contains(")]") {
+                    closed = true;
+                    break;
+                }
+            }
+            if !closed {
+                continue;
+            }
+
+            if !wanted(&attr) {
+                continue;
+            }
+
+            // Find the next `pub async fn NAME(` or `pub fn NAME(` or
+            // `async fn NAME(` or `fn NAME(`.
+            while i < lines.len() {
+                let l = lines[i];
+                if let Some(fn_name) = extract_fn_name(l) {
+                    // Read the body: count braces starting from the first `{`.
+                    let (body, _end) = read_balanced_body(&lines, i);
+                    out.push((fn_name, body, attr_start + 1));
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn extract_fn_name(line: &str) -> Option<String> {
+    // Match `fn NAME(` or `fn NAME<...>(`.
+    let idx = line.find(" fn ")?;
+    let after = &line[idx + 4..];
+    let end = after
+        .find(|c: char| c == '(' || c == '<' || c.is_whitespace())
+        .unwrap_or(after.len());
+    let name = after[..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// Starting from `start_line` (which contains a `fn NAME(` signature), find
+/// the matching `{ ... }` block and return its full text plus the index of
+/// the line after the closing brace.
+fn read_balanced_body(lines: &[&str], start_line: usize) -> (String, usize) {
+    let mut depth = 0i32;
+    let mut started = false;
+    let mut body = String::new();
+    let mut i = start_line;
+    while i < lines.len() {
+        let l = lines[i];
+        body.push_str(l);
+        body.push('\n');
+        for ch in l.chars() {
+            if ch == '{' {
+                started = true;
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+            }
+        }
+        i += 1;
+        if started && depth == 0 {
+            break;
+        }
+    }
+    (body, i)
+}
+
+fn has_auth_check(body: &str) -> bool {
+    AUTH_CHECK_PATTERNS.iter().any(|pat| body.contains(pat))
+}
+
+#[test]
+fn every_write_handler_calls_an_auth_check() {
+    let skip_keys: HashSet<&str> = FN_SKIPLIST.iter().copied().collect();
+
+    let mut files = Vec::new();
+    files.extend(sources::rs_files());
+
+    let mut violations: Vec<String> = Vec::new();
+
+    for file in &files {
+        if should_skip(file) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        let rel = sources::strip_src(file)
+            .unwrap_or(file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (fn_name, body, line_no) in extract_write_handlers(&content) {
+            let key = format!("{}::{}", rel, fn_name);
+            if skip_keys.contains(key.as_str()) {
+                continue;
+            }
+            if !has_auth_check(&body) {
+                violations.push(format!("{}:{} fn {}", rel, line_no, fn_name));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let mut msg = String::from(
+            "\n\nWrite handlers (POST/PUT/PATCH/DELETE) without an authorization check.\n\
+             Every `/api/*` write handler must call one of: require_anchor, \
+             require_permission, can_*, is_admin, or AuthorizationService::authorize.\n\
+             If a handler legitimately needs no permission check (platform callback, \
+             public endpoint, login flow), add it to FILE_SKIPLIST or FN_SKIPLIST \
+             in this test with a comment explaining why.\n\n\
+             Violators:\n",
+        );
+        for v in &violations {
+            msg.push_str("  - ");
+            msg.push_str(v);
+            msg.push('\n');
+        }
+        panic!("{}", msg);
+    }
+}
+
+/// Every handler addressed by `{appCode}` must confine the caller to its
+/// applications (`require_application_access`), after its permission check
+/// when it has one. A permission alone lets one application's service
+/// account act on another application.
+#[test]
+fn every_app_code_handler_checks_application_access() {
+    let mut files = Vec::new();
+    files.extend(sources::rs_files());
+
+    let mut checked = 0;
+    let mut violations: Vec<String> = Vec::new();
+    for file in &files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        let rel = sources::strip_src(file)
+            .unwrap_or(file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (fn_name, body, line_no) in
+            extract_handlers(&content, |attr| attr.contains("{appCode}"))
+        {
+            checked += 1;
+            let Some(scope_at) = body.find("require_application_access") else {
+                violations.push(format!(
+                    "{}:{} fn {} (no application check)",
+                    rel, line_no, fn_name
+                ));
+                continue;
+            };
+            let permission_at = AUTH_CHECK_PATTERNS
+                .iter()
+                .filter_map(|p| body.find(p))
+                .min();
+            if permission_at.is_some_and(|at| at > scope_at) {
+                violations.push(format!(
+                    "{}:{} fn {} (application check before the permission check)",
+                    rel, line_no, fn_name
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "found no {{appCode}} handlers — has the path spelling changed?"
+    );
+    assert!(
+        violations.is_empty(),
+        "\n\n`{{appCode}}` handlers must call `require_application_access` after their \
+         permission check:\n  - {}\n",
+        violations.join("\n  - ")
+    );
+}

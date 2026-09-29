@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use crate::mfa::notify::PlatformName;
 use crate::platform_config::repository::PlatformConfigRepository;
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -83,7 +84,7 @@ pub struct PublicApiState {
 pub(super) async fn get_platform_info(
     State(state): State<PublicApiState>,
 ) -> Json<PlatformInfoResponse> {
-    let platform_name = crate::mfa::notify::PlatformName {
+    let platform_name = PlatformName {
         configs: Some(state.config_repo.clone()),
     }
     .resolve()

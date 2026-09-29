@@ -335,7 +335,7 @@ give its OAuth client to the host. Publishing is a separate identity: a pipeline
 | `FC_DRAIN_TIMEOUT_SECONDS` | `60` | In-flight wait at shutdown. The JVM exits `143` after its shutdown hook. Java's drain only flags the reconciler, so the host's row usually keeps `ACTIVE` until it goes stale |
 | `FC_LOG_FORMAT` / `FC_LOG_LEVEL` (or `RUST_LOG`) | JSON off a terminal / `info` | Logging |
 
-The check that this works end to end is `bin/fc-server/tests/jvm_function_host_e2e.rs`; see
+The check that this works end to end is `bin/fc-server/tests/it/jvm_function_host_e2e.rs`; see
 [functions](../developers/functions.md#what-is-proven).
 ---
 

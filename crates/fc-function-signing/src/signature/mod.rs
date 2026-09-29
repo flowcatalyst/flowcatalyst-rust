@@ -24,6 +24,8 @@ pub use trust_root::{CertificateAuthority, TransparencyLog, TrustRoot};
 pub use verifier::SignatureVerifier;
 
 use crate::digest::SignerIdentity;
+use crate::java;
+use std::path::Path;
 
 /// The outcome of [`SignatureVerifier::verify`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,10 +143,10 @@ impl Signatures {
                     .to_owned(),
             ),
             SignaturesMode::Required => {
-                let root = if crate::java::is_blank(trust_root_path) {
+                let root = if java::is_blank(trust_root_path) {
                     TrustRoot::sigstore_public_good()
                 } else {
-                    TrustRoot::from_file(std::path::Path::new(trust_root_path)).map_err(|_| {
+                    TrustRoot::from_file(Path::new(trust_root_path)).map_err(|_| {
                         format!("FC_FN_TRUST_ROOT points at a file that could not be read: '{trust_root_path}'")
                     })?
                 };

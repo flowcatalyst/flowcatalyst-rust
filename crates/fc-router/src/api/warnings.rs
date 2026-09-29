@@ -10,6 +10,7 @@ use axum::{
 };
 use fc_common::{Warning, WarningCategory};
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use tracing::debug;
 use utoipa::ToSchema;
 
@@ -75,7 +76,7 @@ pub(crate) async fn list_warnings(
     }
 
     // Sort by created_at descending (newest first)
-    warnings.sort_by_key(|w| std::cmp::Reverse(w.created_at));
+    warnings.sort_by_key(|w| Reverse(w.created_at));
 
     Json(warnings)
 }

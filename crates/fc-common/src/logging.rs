@@ -47,6 +47,8 @@
 //! }
 //! ```
 
+use crate::diagnostics;
+use std::env;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
@@ -67,7 +69,7 @@ use tracing_subscriber::{
 /// and, when built in and switched on, the OTLP layer (see
 /// [`extra_layers`]).
 pub fn init_logging(service_name: &str) {
-    let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    let log_format = env::var("LOG_FORMAT").unwrap_or_default();
     install(service_name, log_format.eq_ignore_ascii_case("json"));
 }
 
@@ -75,7 +77,7 @@ pub fn init_logging(service_name: &str) {
 /// JSON unless `LOG_FORMAT` says otherwise (`text`), and the level from
 /// `RUST_LOG`, else Go's `FC_LOG_LEVEL`, else info.
 pub fn init_production_logging(service_name: &str) {
-    let format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    let format = env::var("LOG_FORMAT").unwrap_or_default();
     install(
         service_name,
         format.is_empty() || format.eq_ignore_ascii_case("json"),
@@ -84,7 +86,7 @@ pub fn init_production_logging(service_name: &str) {
 
 fn env_filter() -> EnvFilter {
     EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(go_log_level(std::env::var("FC_LOG_LEVEL").ok())))
+        .unwrap_or_else(|_| EnvFilter::new(go_log_level(env::var("FC_LOG_LEVEL").ok())))
 }
 
 /// Go's `FC_LOG_LEVEL` (`internal/logging`), the fallback when `RUST_LOG`
@@ -106,7 +108,7 @@ fn go_log_level(raw: Option<String>) -> &'static str {
 /// line with each span's duration when it closes (debugging only: it is a
 /// line per message).
 fn span_events() -> FmtSpan {
-    match std::env::var("FC_LOG_SPAN_EVENTS")
+    match env::var("FC_LOG_SPAN_EVENTS")
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
@@ -181,14 +183,14 @@ fn install(service_name: &str, json: bool) {
         // A second init in one process (tests, subcommands): keep the first.
         return;
     }
-    crate::diagnostics::init();
+    diagnostics::init();
 }
 
 type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
 
 fn env_true(name: &str) -> bool {
     matches!(
-        std::env::var(name)
+        env::var(name)
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
@@ -240,16 +242,19 @@ mod otel {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_http::{Bytes, HttpError, Request, Response};
     use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
-    use opentelemetry_sdk::trace::Sampler;
+    use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+    use std::env;
     use std::sync::OnceLock;
+    use std::time::Duration;
+    use tokio::runtime::Handle;
     use tracing_subscriber::Layer;
 
-    static PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLock::new();
+    static PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
     #[derive(Debug)]
     struct Client {
         http: reqwest::Client,
-        runtime: tokio::runtime::Handle,
+        runtime: Handle,
     }
 
     #[async_trait::async_trait]
@@ -278,19 +283,19 @@ mod otel {
     }
 
     pub(super) fn layer(service_name: &str) -> Result<Option<BoxedLayer>, String> {
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_| "no tokio runtime to export from".to_string())?;
-        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        let runtime =
+            Handle::try_current().map_err(|_| "no tokio runtime to export from".to_string())?;
+        let endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "http://localhost:4318".to_string());
         let traces = format!("{}/v1/traces", endpoint.trim_end_matches('/'));
-        let service = std::env::var("OTEL_SERVICE_NAME")
+        let service = env::var("OTEL_SERVICE_NAME")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| service_name.to_string());
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| e.to_string())?;
         let exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -299,7 +304,7 @@ mod otel {
             .with_endpoint(traces)
             .build()
             .map_err(|e| e.to_string())?;
-        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        let provider = SdkTracerProvider::builder()
             .with_sampler(sampler())
             .with_batch_exporter(exporter)
             .with_resource(
@@ -323,7 +328,7 @@ mod otel {
     /// error and slow trace with tail sampling in the collector; the head
     /// cannot know yet how a message will end.
     fn sampler() -> Sampler {
-        let ratio = std::env::var("FC_OTEL_SAMPLE_RATIO")
+        let ratio = env::var("FC_OTEL_SAMPLE_RATIO")
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|r| (0.0..=1.0).contains(r))
@@ -359,6 +364,12 @@ pub fn init_default_logging() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+    use std::io::Write;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use tracing::subscriber;
+    use tracing_subscriber::fmt::MakeWriter;
 
     #[test]
     fn test_env_filter_parsing() {
@@ -369,19 +380,19 @@ mod tests {
 
     /// A buffer the JSON layer writes into.
     #[derive(Clone, Default)]
-    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    struct Capture(Arc<Mutex<Vec<u8>>>);
 
-    impl std::io::Write for Capture {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    impl Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
 
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    impl<'a> MakeWriter<'a> for Capture {
         type Writer = Capture;
         fn make_writer(&'a self) -> Capture {
             self.clone()
@@ -396,7 +407,7 @@ mod tests {
         let subscriber = tracing_subscriber::registry()
             .with(EnvFilter::new("info"))
             .with(json_layer!().with_writer(capture.clone()));
-        tracing::subscriber::with_default(subscriber, || {
+        subscriber::with_default(subscriber, || {
             let span = tracing::info_span!(
                 "router.dispatch",
                 message_id = "msg-1",

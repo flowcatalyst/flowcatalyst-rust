@@ -3,6 +3,11 @@
 //! `POST /api/dispatch-jobs/batch` (`shared::sdk_dispatch_jobs_api`,
 //! platform infrastructure).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use axum::extract::DefaultBodyLimit;
 use axum::routing::post;
 use axum::Router;

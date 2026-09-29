@@ -89,6 +89,7 @@ impl TracingContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::task;
 
     #[test]
     fn new_and_accessors() {
@@ -149,7 +150,7 @@ mod tests {
     async fn scope_sets_and_restores() {
         let result = TracingContext::new("async-corr", None)
             .scope(async {
-                tokio::task::yield_now().await;
+                task::yield_now().await;
                 TracingContext::current()
                     .unwrap()
                     .correlation_id()
@@ -170,7 +171,7 @@ mod tests {
                 tokio::spawn(
                     TracingContext::new(format!("corr-{i}"), None).scope(async move {
                         for _ in 0..10 {
-                            tokio::task::yield_now().await;
+                            task::yield_now().await;
                             assert_eq!(
                                 TracingContext::current().unwrap().correlation_id(),
                                 format!("corr-{i}")

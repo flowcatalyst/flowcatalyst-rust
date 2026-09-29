@@ -1,0 +1,422 @@
+//! OIDC User and Role Synchronization Service
+//!
+//! CRITICAL SECURITY: This service implements the IDP role authorization control.
+//!
+//! Only IDP roles that are explicitly authorized in the idp_role_mappings table
+//! are accepted during OIDC login. This prevents partners/customers from
+//! injecting unauthorized roles via compromised or misconfigured IDPs.
+//!
+//! Example attack prevented:
+//! - Partner IDP is compromised and grants all users "super-admin" role
+//! - This service rejects the role because it's not in idp_role_mappings
+//! - Attack is logged and prevented
+
+use chrono::Utc;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
+
+use fc_platform_core::principal_kind::UserScope;
+use fc_platform_core::shared::error::Result;
+use fc_platform_iam::auth::config_entity::IdpRoleMapping;
+use fc_platform_iam::{
+    auth::config_repository::IdpRoleMappingRepository, principal::repository::PrincipalRepository,
+};
+use fc_platform_iam::{
+    principal::entity::{ExternalIdentity, Principal},
+    service_account::entity::AssignmentSource,
+};
+
+/// Assignment source for IDP-synced roles
+pub const IDP_SYNC_SOURCE: AssignmentSource = AssignmentSource::IdpSync;
+
+/// The identity an IdP asserted at OIDC login, to be synced into a principal.
+#[derive(Debug, Clone, Copy)]
+pub struct OidcIdentity<'a> {
+    pub email: &'a str,
+    pub name: &'a str,
+    /// The token's subject (the IdP's user ID).
+    pub external_idp_id: &'a str,
+    pub provider_id: &'a str,
+    /// Home tenant; `None` for anchor-domain users.
+    pub client_id: Option<&'a str>,
+    pub scope: UserScope,
+}
+
+/// OIDC User and Role Synchronization Service
+/// An identity provider's role-sync setting for one login: the names its
+/// allow-list resolves to, or `None` for no restriction.
+#[derive(Debug, Clone, Copy)]
+pub struct RoleSync<'a> {
+    pub allowed_role_names: Option<&'a [String]>,
+}
+
+pub struct OidcSyncService {
+    principal_repo: Arc<PrincipalRepository>,
+    idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
+}
+
+impl OidcSyncService {
+    pub fn new(
+        principal_repo: Arc<PrincipalRepository>,
+        idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
+    ) -> Self {
+        Self {
+            principal_repo,
+            idp_role_mapping_repo,
+        }
+    }
+
+    /// Synchronize user information from OIDC token.
+    /// Creates or updates the user principal based on OIDC claims.
+    pub async fn sync_oidc_user(&self, identity: &OidcIdentity<'_>) -> Result<Principal> {
+        let OidcIdentity {
+            email,
+            name,
+            external_idp_id,
+            provider_id,
+            client_id,
+            scope,
+        } = *identity;
+        // Try to find existing user by email
+        let existing = self.principal_repo.find_by_email(email).await?;
+
+        // TS stores idpType as "OIDC", not the full issuer URL
+        let idp_type = "OIDC";
+
+        let mut principal = if let Some(mut existing_principal) = existing {
+            // Update existing user
+            existing_principal.name = name.to_string();
+
+            if let Some(ref mut identity) = existing_principal.user_identity {
+                identity.external_id = Some(external_idp_id.to_string());
+                identity.provider = Some(idp_type.to_string());
+            }
+
+            existing_principal.external_identity = Some(ExternalIdentity {
+                provider_id: idp_type.to_string(),
+                external_id: external_idp_id.to_string(),
+            });
+
+            existing_principal.updated_at = Utc::now();
+
+            self.principal_repo.update(&existing_principal).await?;
+            existing_principal
+        } else {
+            // Create new user
+            let mut new_principal = Principal::new_user(email, scope);
+            new_principal.name = name.to_string();
+
+            if let Some(ref mut identity) = new_principal.user_identity {
+                identity.external_id = Some(external_idp_id.to_string());
+                identity.provider = Some(idp_type.to_string());
+            }
+
+            new_principal.external_identity = Some(ExternalIdentity {
+                provider_id: idp_type.to_string(),
+                external_id: external_idp_id.to_string(),
+            });
+
+            if let Some(cid) = client_id {
+                new_principal.client_id = Some(cid.to_string());
+            }
+
+            self.principal_repo.insert(&new_principal).await?;
+            new_principal
+        };
+
+        // Update last login
+        principal.update_last_login();
+        self.principal_repo.update(&principal).await?;
+
+        info!(
+            principal_id = %principal.id,
+            email = %email,
+            provider = %provider_id,
+            "OIDC user synchronized"
+        );
+
+        Ok(principal)
+    }
+
+    /// CRITICAL SECURITY: Synchronize IDP roles to internal roles.
+    ///
+    /// This method implements the IDP role authorization security control.
+    /// Only IDP roles that are explicitly authorized in the idp_role_mappings
+    /// table are accepted. Any unauthorized role is rejected and logged.
+    ///
+    /// Flow:
+    /// 1. For each IDP role name from the token:
+    ///    a. Look up the role in idp_role_mappings
+    ///    b. If found: Accept and add the mapped internal role name
+    ///    c. If NOT found: REJECT and log as security warning
+    /// 2. Remove all existing IDP-sourced roles from the principal
+    /// 3. Assign all authorized internal role names with "IDP_SYNC" source
+    ///
+    /// SECURITY NOTE: This prevents the following attack:
+    /// - A compromised or misconfigured IDP grants unauthorized roles (e.g., "super-admin")
+    /// - This service rejects the role because it's not in idp_role_mappings
+    /// - Platform administrator must explicitly authorize IDP roles before they work
+    /// - All rejections are logged for security auditing
+    ///
+    /// `idp_role_names` are the role names from the OIDC token (e.g. from
+    /// `realm_access.roles`). Returns the accepted internal role names
+    /// (e.g. `platform:tenant-admin`).
+    pub async fn sync_idp_roles(
+        &self,
+        principal: &mut Principal,
+        idp_role_names: &[String],
+    ) -> Result<HashSet<String>> {
+        let mut authorized_role_names: HashSet<String> = HashSet::new();
+        let email = principal.email().unwrap_or("unknown").to_string();
+
+        if idp_role_names.is_empty() {
+            info!(
+                principal_id = %principal.id,
+                "No IDP roles provided"
+            );
+        } else {
+            // SECURITY: Only accept IDP roles that are explicitly authorized in idp_role_mappings
+            for idp_role_name in idp_role_names {
+                let mapping = self.find_idp_role_mapping(idp_role_name).await?;
+
+                if let Some(mapping) = mapping {
+                    // This IDP role is authorized - map to internal role name
+                    authorized_role_names.insert(mapping.platform_role_name.clone());
+                    debug!(
+                        principal_id = %principal.id,
+                        idp_role = %idp_role_name,
+                        internal_role = %mapping.platform_role_name,
+                        "Accepted IDP role"
+                    );
+                } else {
+                    // SECURITY: Reject unauthorized IDP role
+                    // This prevents malicious/misconfigured IDPs from granting unauthorized access
+                    warn!(
+                        principal_id = %principal.id,
+                        email = %email,
+                        idp_role = %idp_role_name,
+                        "SECURITY: REJECTED unauthorized IDP role. Role not found in idp_role_mappings table. \
+                         Platform administrator must explicitly authorize this IDP role before it can be used."
+                    );
+                }
+            }
+        }
+
+        // Remove all existing IDP-sourced roles
+        let removed_count = principal.remove_roles_by_source(IDP_SYNC_SOURCE);
+        if removed_count > 0 {
+            debug!(
+                principal_id = %principal.id,
+                removed_count = removed_count,
+                "Removed old IDP-sourced roles"
+            );
+        }
+
+        // Assign all authorized internal role names
+        let mut assigned_count = 0;
+        for role_name in &authorized_role_names {
+            // Check if role is already assigned from another source
+            if !principal.has_role(role_name) {
+                principal.assign_role_with_source(role_name, IDP_SYNC_SOURCE);
+                assigned_count += 1;
+            } else {
+                debug!(
+                    principal_id = %principal.id,
+                    role = %role_name,
+                    "Role already assigned from another source"
+                );
+            }
+        }
+
+        // Save updated principal
+        self.principal_repo.update(principal).await?;
+
+        info!(
+            principal_id = %principal.id,
+            email = %email,
+            provided_count = idp_role_names.len(),
+            authorized_count = authorized_role_names.len(),
+            assigned_count = assigned_count,
+            "IDP role sync complete"
+        );
+
+        Ok(authorized_role_names)
+    }
+
+    /// Sync IDP roles, bounded by the identity provider's allow-list: with
+    /// `allowed_role_names` set, only mapped roles named in it are assigned
+    /// (an empty list admits none); `None` is no restriction.
+    pub async fn sync_idp_roles_filtered(
+        &self,
+        principal: &mut Principal,
+        idp_role_names: &[String],
+        allowed_role_names: Option<&[String]>,
+    ) -> Result<HashSet<String>> {
+        let mut authorized_role_names: HashSet<String> = HashSet::new();
+        let email = principal.email().unwrap_or("unknown").to_string();
+
+        if idp_role_names.is_empty() {
+            info!(
+                principal_id = %principal.id,
+                "No IDP roles provided"
+            );
+        } else {
+            for idp_role_name in idp_role_names {
+                let mapping = self.find_idp_role_mapping(idp_role_name).await?;
+
+                if let Some(mapping) = mapping {
+                    // Check against the provider's allow-list, if it has one
+                    if let Some(allowed) = allowed_role_names {
+                        if !allowed.contains(&mapping.platform_role_name) {
+                            debug!(
+                                principal_id = %principal.id,
+                                idp_role = %idp_role_name,
+                                internal_role = %mapping.platform_role_name,
+                                "Skipped IDP role: not in identity provider allowed_role_ids"
+                            );
+                            continue;
+                        }
+                    }
+
+                    authorized_role_names.insert(mapping.platform_role_name.clone());
+                    debug!(
+                        principal_id = %principal.id,
+                        idp_role = %idp_role_name,
+                        internal_role = %mapping.platform_role_name,
+                        "Accepted IDP role"
+                    );
+                } else {
+                    warn!(
+                        principal_id = %principal.id,
+                        email = %email,
+                        idp_role = %idp_role_name,
+                        "SECURITY: REJECTED unauthorized IDP role. Role not found in idp_role_mappings table."
+                    );
+                }
+            }
+        }
+
+        // Remove all existing IDP-sourced roles
+        let removed_count = principal.remove_roles_by_source(IDP_SYNC_SOURCE);
+        if removed_count > 0 {
+            debug!(
+                principal_id = %principal.id,
+                removed_count = removed_count,
+                "Removed old IDP-sourced roles"
+            );
+        }
+
+        // Assign all authorized internal role names
+        let mut assigned_count = 0;
+        for role_name in &authorized_role_names {
+            if !principal.has_role(role_name) {
+                principal.assign_role_with_source(role_name, IDP_SYNC_SOURCE);
+                assigned_count += 1;
+            }
+        }
+
+        self.principal_repo.update(principal).await?;
+
+        info!(
+            principal_id = %principal.id,
+            email = %email,
+            provided_count = idp_role_names.len(),
+            authorized_count = authorized_role_names.len(),
+            assigned_count = assigned_count,
+            "IDP role sync complete (filtered)"
+        );
+
+        Ok(authorized_role_names)
+    }
+
+    /// Full OIDC sync: sync both user info and roles. This is the main method
+    /// called during the OIDC login callback.
+    ///
+    /// `idp_role_names` are the token's roles (see [`Self::sync_idp_roles`]).
+    /// `role_sync` is the identity provider's setting (Go's 040): `None`
+    /// when the provider has role sync off, which leaves the user's roles,
+    /// however sourced, alone.
+    pub async fn sync_oidc_login(
+        &self,
+        identity: &OidcIdentity<'_>,
+        idp_role_names: &[String],
+        role_sync: Option<RoleSync<'_>>,
+    ) -> Result<Principal> {
+        // Sync user information
+        let mut principal = self.sync_oidc_user(identity).await?;
+
+        // CRITICAL SECURITY: Sync IDP roles with authorization check
+        if let Some(sync) = role_sync {
+            self.sync_idp_roles_filtered(&mut principal, idp_role_names, sync.allowed_role_names)
+                .await?;
+        }
+
+        Ok(principal)
+    }
+
+    /// Find IDP role mapping by IDP role name
+    async fn find_idp_role_mapping(&self, idp_role_name: &str) -> Result<Option<IdpRoleMapping>> {
+        // For now, search across all IDP types
+        // In production, you might want to filter by IDP type
+        let mappings = self.idp_role_mapping_repo.find_all().await?;
+
+        Ok(mappings
+            .into_iter()
+            .find(|m| m.idp_role_name == idp_role_name))
+    }
+
+    /// Audit log all IDP role mappings for a principal.
+    /// Used for security auditing and debugging.
+    pub async fn audit_idp_roles(&self, principal_id: &str) -> Result<String> {
+        let principal = self.principal_repo.find_by_id(principal_id).await?;
+
+        match principal {
+            Some(p) => {
+                let idp_roles: Vec<_> = p.roles.iter().filter(|r| r.is_idp_sync()).collect();
+
+                let mut audit = format!(
+                    "Principal {} has {} IDP-sourced roles:\n",
+                    principal_id,
+                    idp_roles.len()
+                );
+
+                for assignment in idp_roles {
+                    audit.push_str(&format!(
+                        "  - Role: {}, assigned at {}\n",
+                        assignment.role,
+                        assignment.assigned_at.to_rfc3339()
+                    ));
+                }
+
+                Ok(audit)
+            }
+            None => Ok(format!("Principal {} not found", principal_id)),
+        }
+    }
+
+    /// Get IDP roles for a principal
+    pub async fn get_idp_roles(&self, principal_id: &str) -> Result<Vec<String>> {
+        let principal = self.principal_repo.find_by_id(principal_id).await?;
+
+        Ok(principal
+            .map(|p| {
+                p.roles
+                    .iter()
+                    .filter(|r| r.is_idp_sync())
+                    .map(|r| r.role.clone())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_idp_sync_source_constant() {
+        assert_eq!(IDP_SYNC_SOURCE.as_str(), "IDP_SYNC");
+    }
+}

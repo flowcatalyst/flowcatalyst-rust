@@ -25,7 +25,9 @@ use utoipa::ToSchema;
 use crate::dispatch_pool::router_config_repository::{
     RouterConfigRepository, RouterPoolRow, RouterSubscriptionRow,
 };
+use crate::permissions;
 use crate::shared::authorization_service::checks;
+use crate::shared::dispatch_queue;
 use crate::shared::dispatch_queue::{
     compose_name, compose_pool_code, tenant_for, NameError, Priority, QueueSettings,
 };
@@ -99,7 +101,7 @@ pub fn build_document(
         .collect();
 
     // Tenants in first-seen order: Go's, then every client's.
-    let mut tenants: Vec<String> = vec![crate::shared::dispatch_queue::TENANT_PLATFORM.to_string()];
+    let mut tenants: Vec<String> = vec![dispatch_queue::TENANT_PLATFORM.to_string()];
     let add = |t: &str, tenants: &mut Vec<String>| {
         if !tenants.iter().any(|x| x == t) {
             tenants.push(t.to_string());
@@ -166,7 +168,7 @@ pub async fn get_router_config(
     auth: Authenticated,
 ) -> Result<Json<RouterConfigDocument>, PlatformError> {
     checks::require_anchor_scope(&auth.0)?;
-    checks::require_permission(&auth.0, crate::permissions::admin::DISPATCH_POOL_READ)?;
+    checks::require_permission(&auth.0, permissions::admin::DISPATCH_POOL_READ)?;
     let (pools, subscriptions, clients) = tokio::try_join!(
         state.repo.pools(),
         state.repo.active_subscriptions(),

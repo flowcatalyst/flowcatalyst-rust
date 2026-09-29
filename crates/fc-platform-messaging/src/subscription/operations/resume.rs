@@ -1,0 +1,120 @@
+//! Resume Subscription Use Case
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::SubscriptionResumed;
+use crate::subscription::repository::SubscriptionRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+/// Command for resuming a paused subscription.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeSubscriptionCommand {
+    /// Subscription ID to resume
+    pub subscription_id: String,
+}
+
+impl AuditMasked for ResumeSubscriptionCommand {}
+
+/// Use case for resuming a paused subscription.
+pub struct ResumeSubscriptionUseCase<U: UnitOfWork> {
+    subscription_repo: Arc<SubscriptionRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> ResumeSubscriptionUseCase<U> {
+    pub fn new(subscription_repo: Arc<SubscriptionRepository>, unit_of_work: Arc<U>) -> Self {
+        Self {
+            subscription_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for ResumeSubscriptionUseCase<U> {
+    type Command = ResumeSubscriptionCommand;
+    type Event = SubscriptionResumed;
+
+    async fn validate(&self, command: &ResumeSubscriptionCommand) -> Result<(), UseCaseError> {
+        if command.subscription_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "SUBSCRIPTION_ID_REQUIRED",
+                "Subscription ID is required",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Go `CheckScopeAccess` on the stored subscription (Go checks it post-load): a
+    /// client's subscription needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing subscription is `execute`'s 404.
+    async fn authorize(
+        &self,
+        command: &ResumeSubscriptionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        if let Some(target) = self
+            .subscription_repo
+            .find_by_id(&command.subscription_id)
+            .await?
+        {
+            caller_reach::check_scope_access(ctx.caller(), target.client_id.as_deref())?;
+        }
+        Ok(())
+    }
+
+    async fn execute(
+        &self,
+        command: ResumeSubscriptionCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<SubscriptionResumed>, UseCaseError> {
+        // Fetch existing subscription
+        let mut subscription = self
+            .subscription_repo
+            .find_by_id(&command.subscription_id)
+            .await
+            .or_not_found(
+                "SUBSCRIPTION_NOT_FOUND",
+                format!(
+                    "Subscription with ID '{}' not found",
+                    command.subscription_id
+                ),
+            )?;
+
+        // Unconditional, as Go: a repeat is a no-op write that still
+        // records the event (`subscription/operations/resume.go`).
+
+        // Resume the subscription
+        subscription.resume();
+
+        // Create domain event
+        let event = SubscriptionResumed::new(&ctx, &subscription.id);
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&subscription, &*self.subscription_repo, event, &command)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = ResumeSubscriptionCommand {
+            subscription_id: "sub-123".to_string(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("subscriptionId"));
+    }
+}

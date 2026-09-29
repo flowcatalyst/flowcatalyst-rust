@@ -1,17 +1,9 @@
-//! Dispatch Pool Aggregate
+//! The `dispatch_pool` aggregate (fc-platform-messaging), and its routes.
 //!
-//! Message dispatch pool management.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
-pub mod router_config_repository;
+pub use fc_platform_messaging::dispatch_pool::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::DispatchPoolsState;
 pub use routes::{dispatch_pools_router, routes};
-pub use entity::{DispatchPool, DispatchPoolStatus};
-pub use repository::DispatchPoolRepository;

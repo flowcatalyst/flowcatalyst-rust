@@ -44,7 +44,7 @@ provisioning audit rows now match Go's inside a step that still differs for othe
 ## What this branch changed
 
 Each fix follows Go's handler and use case, with a Docker test in
-`crates/fc-platform/tests/principal_go_parity_test.rs`.
+`crates/fc-platform/tests/it/principal_go_parity_test.rs`.
 
 1. **No-op principal update.** Go's `UpdateUser` (`principal/operations/update.go`) applies whatever was sent, saves
    and records `UserUpdated` even when nothing changed; it refuses only a blank name (`NAME_REQUIRED`) and an email

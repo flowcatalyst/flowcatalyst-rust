@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use deno_core::v8;
+use std::ptr;
 
 /// One isolate's `ArrayBuffer` budget.
 #[derive(Debug)]
@@ -52,7 +53,7 @@ impl Budget {
 
 unsafe extern "C" fn allocate(budget: &Budget, len: usize) -> *mut c_void {
     if !budget.reserve(len) {
-        return std::ptr::null_mut();
+        return ptr::null_mut();
     }
     // `calloc` of 0 may return null; V8 treats null as a failure, so ask
     // for at least one byte.
@@ -65,7 +66,7 @@ unsafe extern "C" fn allocate(budget: &Budget, len: usize) -> *mut c_void {
 
 unsafe extern "C" fn allocate_uninitialized(budget: &Budget, len: usize) -> *mut c_void {
     if !budget.reserve(len) {
-        return std::ptr::null_mut();
+        return ptr::null_mut();
     }
     let data = unsafe { libc::malloc(len.max(1)) };
     if data.is_null() {

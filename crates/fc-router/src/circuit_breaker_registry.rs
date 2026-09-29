@@ -423,6 +423,7 @@ impl Default for CircuitBreakerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn test_circuit_breaker_trips_on_failure_ratio() {
@@ -501,7 +502,7 @@ mod tests {
         );
 
         // Wait for reset timeout
-        std::thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(60));
 
         // Should transition to half-open on next allow_request
         assert!(registry.allow_request(endpoint));
@@ -541,7 +542,7 @@ mod tests {
         );
 
         // Wait for reset timeout
-        std::thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(60));
 
         // Transition to half-open
         assert!(registry.allow_request(endpoint));

@@ -36,11 +36,24 @@ use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
 use crate::group_flush::GroupFlushRegistry;
 use crate::mediator::Mediator;
 use crate::metrics::PoolMetricsCollector;
+use crate::settled;
+use crate::settled::SettledJob;
+use crate::settled::SettledReport;
+use crate::settled::SettledReporter;
 use crate::Result;
+use fc_common::diagnostics;
+use fc_common::diagnostics::panic;
+use fc_common::diagnostics::supervise;
 use fc_common::{
     BatchMessage, DispatchMode, EnhancedPoolMetrics, MediationOutcome, MediationResult, Message,
     MessageCallback, PoolConfig, PoolStats,
 };
+use std::cmp;
+use std::mem;
+use std::time::Instant;
+use tokio::sync::Notify;
+use tokio::sync::SemaphorePermit;
+use tokio::time;
 
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
@@ -68,7 +81,7 @@ const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 pub(crate) struct QueueSlotReleaser {
     queue_size: Arc<AtomicU32>,
     capacity: u32,
-    notify: Arc<tokio::sync::Notify>,
+    notify: Arc<Notify>,
 }
 
 impl QueueSlotReleaser {
@@ -545,7 +558,7 @@ impl WorkerGuard {
     }
 
     fn release_slot(&mut self) {
-        if std::mem::take(&mut self.slot_held) {
+        if mem::take(&mut self.slot_held) {
             self.queue_size.release();
         }
     }
@@ -657,14 +670,14 @@ async fn nack_all(tasks: Vec<PoolTask>, queue_size: &QueueSlotReleaser, delay: O
 async fn ack_and_report_siblings(
     siblings: Vec<PoolTask>,
     queue_size: &QueueSlotReleaser,
-    reporter: &Arc<dyn crate::settled::SettledReporter>,
+    reporter: &Arc<dyn SettledReporter>,
     pool_code: &str,
     group_id: &str,
 ) {
     const REASON: &str = "head failed under BLOCK_ON_ERROR";
-    let jobs: Vec<crate::settled::SettledJob> = siblings
+    let jobs: Vec<SettledJob> = siblings
         .iter()
-        .filter_map(|task| crate::settled::settled_job_from_message(&task.message))
+        .filter_map(|task| settled::settled_job_from_message(&task.message))
         .collect();
     let acked = siblings.len();
     for task in siblings {
@@ -679,9 +692,9 @@ async fn ack_and_report_siblings(
         reason = REASON,
         "Acked untried group messages behind a failed head"
     );
-    crate::settled::spawn_report(
+    settled::spawn_report(
         reporter.clone(),
-        crate::settled::SettledReport {
+        SettledReport {
             pool_code: pool_code.to_string(),
             group: group_id.to_string(),
             reason: REASON.to_string(),
@@ -817,16 +830,16 @@ async fn mediate_guarded(
             ..Facts::default()
         },
     );
-    match fc_common::diagnostics::catch_panic(mediator.mediate(&task.message)).await {
+    match diagnostics::catch_panic(mediator.mediate(&task.message)).await {
         Ok(outcome) => outcome,
         Err(payload) => {
-            let message = fc_common::diagnostics::panic::payload_text(payload.as_ref());
+            let message = panic::payload_text(payload.as_ref());
             error!(
                 message_id = %task.message.id,
                 panic_message = %message,
                 "Mediator panicked; releasing the message to the broker"
             );
-            fc_common::diagnostics::supervise::note_task_panic("router.mediate");
+            supervise::note_task_panic("router.mediate");
             recorder.record(EventKind::Panicked, ctx, Facts::text(message.clone()));
             MediationOutcome::error_process(
                 Some(PANIC_RELEASE_DELAY_SECS),
@@ -956,7 +969,7 @@ struct MessageGroupHandler {
     /// call sites that flip `processing`. A `parked_at` that keeps ageing
     /// while `processing` stays `false` is the operator "blocked groups"
     /// signature: nothing has come back to resume the group.
-    parked_at: Option<std::time::Instant>,
+    parked_at: Option<Instant>,
 }
 
 impl MessageGroupHandler {
@@ -1004,7 +1017,7 @@ impl MessageGroupHandler {
         self.parked_at = if processing {
             None
         } else {
-            Some(std::time::Instant::now())
+            Some(Instant::now())
         };
     }
 }
@@ -1035,7 +1048,7 @@ pub struct MediatingEntry {
     /// elapsed-ms figure at snapshot time rather than exposed as a wall
     /// clock timestamp (matches `MediatingInfo`'s wire shape, which is
     /// `elapsedTimeMs` only — no absolute-time field).
-    pub mediated_at: std::time::Instant,
+    pub mediated_at: Instant,
 }
 
 /// One live message group a pool is currently holding — the operator
@@ -1122,7 +1135,7 @@ pub struct ProcessPool {
     /// `QueueManager` overwrites it with its one shared gate via
     /// [`Self::with_capacity_notify`] so every pool's crossing wakes the
     /// same consumer poll loops.
-    capacity_notify: Arc<tokio::sync::Notify>,
+    capacity_notify: Arc<Notify>,
 
     /// Active workers counter (Arc for sharing across tasks)
     active_workers: Arc<AtomicU32>,
@@ -1187,7 +1200,7 @@ pub struct ProcessPool {
     /// Ledger A-01: when set, BLOCK_ON_ERROR siblings behind a terminally
     /// failed head are ACKed and reported to the platform, as Go does;
     /// when `None` they are handed back to the broker.
-    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
+    settled_reporter: Option<Arc<dyn SettledReporter>>,
 
     /// Where dispatches, group decisions and panics are recorded — the
     /// manager's shared [`FlightRecorder`]; a standalone pool records
@@ -1227,7 +1240,7 @@ impl ProcessPool {
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
-            capacity_notify: Arc::new(tokio::sync::Notify::new()),
+            capacity_notify: Arc::new(Notify::new()),
             active_workers: Arc::new(AtomicU32::new(0)),
             mediating: Arc::new(DashMap::new()),
             mediating_seq: Arc::new(AtomicU64::new(0)),
@@ -1251,10 +1264,7 @@ impl ProcessPool {
     /// Wire (or, with `None`, leave off) the A-01 settled-message reporter
     /// — see the field's doc comment. `QueueManager` hands every pool it
     /// creates the one reporter it was built with.
-    pub fn with_settled_reporter(
-        mut self,
-        reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
-    ) -> Self {
+    pub fn with_settled_reporter(mut self, reporter: Option<Arc<dyn SettledReporter>>) -> Self {
         self.settled_reporter = reporter;
         self
     }
@@ -1265,7 +1275,7 @@ impl ProcessPool {
     /// consumer poll loops; a pool built directly for a standalone test
     /// keeps its own private, never-waited-on `Notify` if this is never
     /// called.
-    pub(crate) fn with_capacity_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+    pub(crate) fn with_capacity_notify(mut self, notify: Arc<Notify>) -> Self {
         self.capacity_notify = notify;
         self
     }
@@ -1276,7 +1286,7 @@ impl ProcessPool {
     /// with the same value those two already use, without a third
     /// inline copy of the formula.
     fn capacity(&self) -> u32 {
-        std::cmp::max(
+        cmp::max(
             self.config.concurrency * QUEUE_CAPACITY_MULTIPLIER,
             MIN_QUEUE_CAPACITY,
         )
@@ -1473,7 +1483,7 @@ impl ProcessPool {
                     // Circuit breaker admission/recording lives entirely inside
                     // `mediator.mediate` (see `mediator.rs`); an open breaker
                     // comes back as `MediationResult::CircuitOpen`.
-                    let start = std::time::Instant::now();
+                    let start = Instant::now();
                     let outcome = mediate_guarded(&mediator, &task, &recorder, &ctx).await;
                     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -1517,7 +1527,7 @@ impl ProcessPool {
                                     task.callback.nack(disposition.nack_delay_secs()).await;
                                     return;
                                 }
-                                _ = tokio::time::sleep(disposition.retry_after) => {}
+                                _ = time::sleep(disposition.retry_after) => {}
                             }
                         }
                     }
@@ -1662,7 +1672,7 @@ impl ProcessPool {
                     );
                     guard.worker.begin(key);
 
-                    let start = std::time::Instant::now();
+                    let start = Instant::now();
                     let outcome = mediate_guarded(&mediator, &task, &recorder, &ctx).await;
                     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -1792,7 +1802,7 @@ impl ProcessPool {
                                     // already taken) instead of holding it.
                                     release_group(&group_handlers, &group_id, &queue_size, head_delay).await;
                                 }
-                                _ = tokio::time::sleep(disposition.retry_after) => {}
+                                _ = time::sleep(disposition.retry_after) => {}
                             }
                         }
                     }
@@ -1829,7 +1839,7 @@ impl ProcessPool {
                 queue: task.queue_identifier.clone(),
                 target: task.message.mediation_target.clone(),
                 attempts: task.attempts,
-                mediated_at: std::time::Instant::now(),
+                mediated_at: Instant::now(),
             },
         );
         key
@@ -1859,7 +1869,7 @@ impl ProcessPool {
     /// takes its OWN lock) happens after that lock is released, so the two
     /// locks are never nested.
     pub fn group_snapshot(&self) -> Vec<GroupInfo> {
-        let now_instant = std::time::Instant::now();
+        let now_instant = Instant::now();
         let now_utc = chrono::Utc::now();
         // Convert a monotonic `Instant` to an approximate wall-clock
         // `DateTime<Utc>` by measuring its signed offset from "now" and
@@ -1868,7 +1878,7 @@ impl ProcessPool {
         // suppression expiry (always in the future) below. Good enough for
         // operator display; never used for anything needing clock-accurate
         // arithmetic.
-        let to_wall_clock = |instant: std::time::Instant| {
+        let to_wall_clock = |instant: Instant| {
             if instant >= now_instant {
                 let delta = instant - now_instant;
                 now_utc + chrono::Duration::from_std(delta).unwrap_or_default()
@@ -2204,7 +2214,7 @@ impl ProcessPool {
             concurrency: current_concurrency,
             active_workers: self.active_workers.load(Ordering::Relaxed),
             queue_size: self.queue_size.load(Ordering::Relaxed),
-            queue_capacity: std::cmp::max(
+            queue_capacity: cmp::max(
                 current_concurrency * QUEUE_CAPACITY_MULTIPLIER,
                 MIN_QUEUE_CAPACITY,
             ),
@@ -2287,9 +2297,9 @@ impl ProcessPool {
             let permits_to_acquire = (-diff) as usize;
             let timeout = Duration::from_secs(60);
 
-            match tokio::time::timeout(timeout, self.acquire_permits(permits_to_acquire)).await {
+            match time::timeout(timeout, self.acquire_permits(permits_to_acquire)).await {
                 Ok(permits) => {
-                    std::mem::forget(permits);
+                    mem::forget(permits);
                     self.concurrency.store(new_concurrency, Ordering::SeqCst);
                     info!(
                         pool_code = %self.config.code,
@@ -2316,7 +2326,7 @@ impl ProcessPool {
     }
 
     /// Helper to acquire multiple permits (needed for concurrency decrease)
-    async fn acquire_permits(&self, count: usize) -> Vec<tokio::sync::SemaphorePermit<'_>> {
+    async fn acquire_permits(&self, count: usize) -> Vec<SemaphorePermit<'_>> {
         let mut permits = Vec::with_capacity(count);
         for _ in 0..count {
             permits.push(self.semaphore.acquire().await.expect("semaphore closed"));
@@ -2388,7 +2398,7 @@ mod disposition_tests {
     //! Go's `pool.go` (`DispositionOf`, `retryDelay`, `deferredDelay`,
     //! `retryOrRelease`, `nackDelay`). Pure/synchronous — no pool, mediator,
     //! or broker needed. End-to-end group behaviour is pinned in
-    //! `tests/cascade_dispatch_mode_test.rs` and `tests/pool_tests.rs`.
+    //! `tests/it/cascade_dispatch_mode_test.rs` and `tests/it/pool_tests.rs`.
     use super::*;
     use fc_common::MediationOutcome;
 
@@ -2667,6 +2677,7 @@ mod parked_group_tests {
     //! messages and no drainer is restarted.
     use super::*;
     use std::sync::atomic::AtomicU32;
+    use tokio::time;
 
     struct Succeeds;
 
@@ -2733,7 +2744,7 @@ mod parked_group_tests {
             if acks.load(Ordering::SeqCst) == 1 && pool.group_snapshot().is_empty() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            time::sleep(Duration::from_millis(5)).await;
         }
         assert_eq!(
             acks.load(Ordering::SeqCst),

@@ -4,6 +4,11 @@
 //! setup and reset) behind the shared `/auth` per-IP limit, and `/oauth`
 //! behind its own per-IP limit and the distributed token-endpoint budget.
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use std::sync::Arc;
 
 use axum::response::{IntoResponse, Json};

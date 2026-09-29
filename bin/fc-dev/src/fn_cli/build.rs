@@ -17,6 +17,8 @@ use std::process::{Command, Stdio};
 use serde_json::{json, Value};
 
 use super::{print_json, CliError, Ctx, Io, OutputMode};
+use std::fs;
+use std::io;
 
 pub const TARGET: &str = "wasm32-wasip2";
 
@@ -65,9 +67,8 @@ fn run_npm(ctx: &Ctx<'_>, args: &BuildArgs, io: &mut Io<'_>) -> Result<i32, CliE
                 .into(),
         ));
     }
-    let package: Value =
-        serde_json::from_str(&std::fs::read_to_string(args.dir.join("package.json"))?)
-            .map_err(|e| CliError::Other(format!("package.json is not JSON: {e}")))?;
+    let package: Value = serde_json::from_str(&fs::read_to_string(args.dir.join("package.json"))?)
+        .map_err(|e| CliError::Other(format!("package.json is not JSON: {e}")))?;
     let has_script = |name: &str| package["scripts"][name].is_string();
     if !has_script("build") {
         return Err(CliError::Other(
@@ -80,7 +81,7 @@ fn run_npm(ctx: &Ctx<'_>, args: &BuildArgs, io: &mut Io<'_>) -> Result<i32, CliE
         let status = npm()
             .args(what)
             .current_dir(&args.dir)
-            .stdout(Stdio::from(std::io::stderr()))
+            .stdout(Stdio::from(io::stderr()))
             .stderr(Stdio::inherit())
             .status()
             .map_err(|e| CliError::Other(format!("could not run npm: {e}")))?;

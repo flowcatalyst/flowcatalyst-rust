@@ -45,3 +45,8 @@ tracing-subscriber = { workspace = true }
 fc-function-abi = { path = "../fc-function-abi" }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

@@ -37,6 +37,11 @@ WORKDIR /app
 # supply-chain.md). Pinned; `--locked` builds it from its own lockfile.
 ARG CARGO_AUDITABLE_VERSION=0.7.6
 RUN cargo install --locked "cargo-auditable@${CARGO_AUDITABLE_VERSION}"
+# lld links the release binary, as `.cargo/config.toml` has it for a Linux
+# checkout (GNU ld, the aarch64 default, is 4-6x slower:
+# docs/plans/build-speed-2026-09-28.md, section 4.2). The builds below pass
+# `-fuse-ld=lld` in RUSTFLAGS (which would replace config rustflags).
+RUN apt-get update && apt-get install -y --no-install-recommends lld && rm -rf /var/lib/apt/lists/*
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
@@ -66,8 +71,9 @@ COPY --from=planner /app/recipe.json recipe.json
 # lockfile (it is never built here).
 COPY crates/fc-web ./crates/fc-web
 # `--locked`: the versions (and checksums) in Cargo.lock, or fail.
-RUN if [ "$FC_TASKDUMP" = "1" ]; then \
-      export RUSTFLAGS="--cfg tokio_unstable" FEATURES="--features fc-server/taskdump"; \
+RUN export RUSTFLAGS="-C link-arg=-fuse-ld=lld"; \
+    if [ "$FC_TASKDUMP" = "1" ]; then \
+      export RUSTFLAGS="$RUSTFLAGS --cfg tokio_unstable" FEATURES="--features fc-server/taskdump"; \
     fi; \
     cargo chef cook --release --locked --recipe-path recipe.json $FEATURES
 
@@ -86,8 +92,9 @@ COPY docs/published ./docs/published
 # means the workspace package version.
 ARG FC_BUILD_VERSION=
 ENV FC_BUILD_VERSION=${FC_BUILD_VERSION}
-RUN if [ "$FC_TASKDUMP" = "1" ]; then \
-      export RUSTFLAGS="--cfg tokio_unstable" FEATURES="--features taskdump"; \
+RUN export RUSTFLAGS="-C link-arg=-fuse-ld=lld"; \
+    if [ "$FC_TASKDUMP" = "1" ]; then \
+      export RUSTFLAGS="$RUSTFLAGS --cfg tokio_unstable" FEATURES="--features taskdump"; \
     fi; \
     cargo auditable build --release --locked -p fc-server --bin fc-server $FEATURES
 

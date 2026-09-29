@@ -48,8 +48,15 @@ use crate::http_dispatcher::{
 use crate::repository::{InvalidRow, OutboxRepository};
 use crate::LeaderElectionConfig;
 
+use fc_common::diagnostics;
+use fc_common::diagnostics::supervise;
 #[cfg(feature = "standby")]
 use fc_standby::{LeaderElection, LeadershipStatus};
+use std::mem;
+use std::slice;
+use tokio::time;
+use tokio::time::Instant;
+use tracing::field::Empty;
 
 /// Outbox processor configuration. Defaults are Go's `DefaultConfig`.
 #[derive(Debug, Clone)]
@@ -321,7 +328,7 @@ impl EnhancedOutboxProcessor {
         if let Err(e) = self
             .core
             .repository
-            .requeue(item.item_type, std::slice::from_ref(&item.id))
+            .requeue(item.item_type, slice::from_ref(&item.id))
             .await
         {
             warn!(group, id = %item.id, error = %e, "Outbox unblock re-queue failed");
@@ -412,15 +419,14 @@ impl EnhancedOutboxProcessor {
     /// Go's `Run`: two tickers, polling and recovery, both only while this
     /// processor is primary.
     async fn run_loop(&self) {
-        let mut poll = tokio::time::interval(self.core.config.poll_interval);
+        let mut poll = time::interval(self.core.config.poll_interval);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let recovery_every = if self.core.config.recovery_interval.is_zero() {
             Duration::from_secs(60)
         } else {
             self.core.config.recovery_interval
         };
-        let mut recovery =
-            tokio::time::interval_at(tokio::time::Instant::now() + recovery_every, recovery_every);
+        let mut recovery = time::interval_at(Instant::now() + recovery_every, recovery_every);
         recovery.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         // A panic in one poll or recovery pass is logged (by the panic
@@ -436,7 +442,7 @@ impl EnhancedOutboxProcessor {
                         Ok(Ok(())) => {}
                         Ok(Err(e)) => warn!(error = %e, "Outbox claim failed"),
                         Err(_) => {
-                            fc_common::diagnostics::supervise::note_task_panic("outbox.poll");
+                            supervise::note_task_panic("outbox.poll");
                             error!("Outbox poll panicked; the next poll runs as usual");
                         }
                     }
@@ -449,7 +455,7 @@ impl EnhancedOutboxProcessor {
                         Ok(Ok(_)) => {}
                         Ok(Err(e)) => warn!(error = %e, "Outbox recover stuck failed"),
                         Err(_) => {
-                            fc_common::diagnostics::supervise::note_task_panic("outbox.recovery");
+                            supervise::note_task_panic("outbox.recovery");
                             error!("Outbox recovery panicked; the next pass runs as usual");
                         }
                     }
@@ -495,7 +501,7 @@ struct Held<'a> {
 
 impl Drop for Held<'_> {
     fn drop(&mut self) {
-        self.core.done(std::mem::take(&mut self.ids));
+        self.core.done(mem::take(&mut self.ids));
     }
 }
 
@@ -549,7 +555,7 @@ impl Core {
 
     /// Go's `tick`: claim, then hand grouped items to their groups and send
     /// ungrouped items as one batch per type.
-    #[tracing::instrument(name = "outbox.poll", skip_all, fields(claimed = tracing::field::Empty))]
+    #[tracing::instrument(name = "outbox.poll", skip_all, fields(claimed = Empty))]
     async fn poll(self: Arc<Self>) -> anyhow::Result<()> {
         if self.in_flight_count() >= self.config.max_in_flight {
             debug!("Outbox poll skipped: max in flight");
@@ -623,7 +629,7 @@ impl Core {
             while !batch.is_empty() {
                 let rest = batch.split_off(batch.len().min(chunk));
                 let core = Arc::clone(&self);
-                let this = std::mem::replace(&mut batch, rest);
+                let this = mem::replace(&mut batch, rest);
                 let span = tracing::info_span!(
                     parent: None,
                     "outbox.forward",
@@ -633,11 +639,11 @@ impl Core {
                 );
                 tokio::spawn(
                     async move {
-                        if fc_common::diagnostics::catch_panic(core.dispatch_batch(this))
+                        if diagnostics::catch_panic(core.dispatch_batch(this))
                             .await
                             .is_err()
                         {
-                            fc_common::diagnostics::supervise::note_task_panic("outbox.forward");
+                            supervise::note_task_panic("outbox.forward");
                             error!("Outbox batch send panicked; its rows are recovered");
                         }
                     }
@@ -656,7 +662,7 @@ impl Core {
             .repository
             .mark_failed(
                 row.item_type,
-                std::slice::from_ref(&row.id),
+                slice::from_ref(&row.id),
                 OutboxStatus::BadRequest,
                 &row.error,
                 false,
@@ -750,7 +756,7 @@ impl Core {
     async fn dispatch_one(&self, item: &OutboxItem) -> bool {
         let outcome = self
             .dispatcher
-            .send_batch(std::slice::from_ref(item))
+            .send_batch(slice::from_ref(item))
             .await
             .into_iter()
             .next()
@@ -761,7 +767,7 @@ impl Core {
         if outcome.is_success() {
             return match self
                 .repository
-                .mark_success(item.item_type, std::slice::from_ref(&item.id))
+                .mark_success(item.item_type, slice::from_ref(&item.id))
                 .await
             {
                 Ok(()) => {
@@ -780,7 +786,7 @@ impl Core {
             .repository
             .mark_failed(
                 item.item_type,
-                std::slice::from_ref(&item.id),
+                slice::from_ref(&item.id),
                 outcome.status,
                 &outcome.message,
                 requeue,
@@ -824,6 +830,7 @@ impl GroupHandler for Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn defaults_are_gos() {
@@ -853,11 +860,11 @@ mod tests {
             ("FC_OUTBOX_POLL_INTERVAL_MS", "not a number"),
         ];
         for (k, v) in vars {
-            std::env::set_var(k, v);
+            env::set_var(k, v);
         }
         let config = EnhancedProcessorConfig::from_env();
         for (k, _) in vars {
-            std::env::remove_var(k);
+            env::remove_var(k);
         }
         assert_eq!(config.http_config.api_base_url, "http://go-name");
         assert_eq!(config.http_config.api_token.as_deref(), Some("old-token"));

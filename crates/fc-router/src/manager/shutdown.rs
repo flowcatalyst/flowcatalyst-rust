@@ -11,8 +11,18 @@ use futures::future;
 use tracing::{debug, info, warn};
 
 use super::QueueManager;
+use crate::flight_recorder::EventContext;
+use crate::flight_recorder::EventKind;
+use crate::flight_recorder::Facts;
 use crate::pool::ProcessPool;
 use crate::Result;
+use fc_common::diagnostics;
+use fc_common::diagnostics::OnPanic;
+use std::sync::atomic::Ordering;
+use tokio::task::JoinHandle;
+use tokio::time;
+use tokio::time::Instant;
+use tokio::time::MissedTickBehavior;
 
 impl QueueManager {
     /// Start the queue manager and all consumers.
@@ -34,10 +44,7 @@ impl QueueManager {
             // (`add_consumer`) are started here. `spawn_consumer_poll_task`
             // is a no-op for an instance whose loop is running, so this
             // check only keeps the start-up path quiet.
-            if rc
-                .poll_task_started
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
+            if rc.poll_task_started.load(Ordering::SeqCst) {
                 debug!(
                     consumer = %rc.identifier(),
                     "start(): consumer already has a poll task running (started via config sync)"
@@ -49,8 +56,7 @@ impl QueueManager {
 
         // Item 5: every configured consumer now has a poll task spawned —
         // flip the readiness gate `api::health::health_handler` reads.
-        self.consumers_started
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.consumers_started.store(true, Ordering::SeqCst);
 
         // Defence-in-depth: reaper for stuck `in_pipeline` entries.
         handles.push(self.clone().spawn_in_pipeline_reaper());
@@ -71,35 +77,31 @@ impl QueueManager {
     /// Defence-in-depth reaper for stuck `in_pipeline` entries, alongside
     /// the lifecycle manager's 5-minute sweep: same rule, finer cadence.
     /// Exits when the manager's shutdown token is cancelled.
-    fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+    fn spawn_in_pipeline_reaper(self: Arc<Self>) -> JoinHandle<()> {
         let token = self.shutdown.child_token();
         // Supervised: a panic is logged and the reaper restarted.
-        fc_common::diagnostics::spawn_supervised(
-            "router.in_pipeline_reaper",
-            fc_common::diagnostics::OnPanic::Restart,
-            move || {
-                let manager = self.clone();
-                let token = token.clone();
-                async move {
-                    let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    // Skip the immediate first tick so we don't reap during startup.
-                    ticker.tick().await;
+        diagnostics::spawn_supervised("router.in_pipeline_reaper", OnPanic::Restart, move || {
+            let manager = self.clone();
+            let token = token.clone();
+            async move {
+                let mut ticker = time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
+                ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                // Skip the immediate first tick so we don't reap during startup.
+                ticker.tick().await;
 
-                    loop {
-                        tokio::select! {
-                            _ = ticker.tick() => {
-                                manager.reap_in_pipeline(Self::IN_PIPELINE_TTL);
-                            }
-                            _ = token.cancelled() => {
-                                info!("In-pipeline reaper shutting down");
-                                break;
-                            }
+                loop {
+                    tokio::select! {
+                        _ = ticker.tick() => {
+                            manager.reap_in_pipeline(Self::IN_PIPELINE_TTL);
+                        }
+                        _ = token.cancelled() => {
+                            info!("In-pipeline reaper shutting down");
+                            break;
                         }
                     }
                 }
-            },
-        )
+            }
+        })
     }
 
     /// Graceful shutdown, in Go's order (`Server.Run`'s shutdown sequence):
@@ -140,8 +142,7 @@ impl QueueManager {
     /// stalled-consumer watchdog will not respawn what this stopped, and a
     /// config reload will not start new consumers. Idempotent.
     pub fn stop_polling(&self) {
-        self.polling_stopped
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.polling_stopped.store(true, Ordering::SeqCst);
         for rc in self
             .consumers
             .active()
@@ -156,26 +157,22 @@ impl QueueManager {
 
     /// Whether [`Self::stop_polling`] has run.
     pub fn polling_stopped(&self) -> bool {
-        self.polling_stopped
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.polling_stopped.load(Ordering::SeqCst)
     }
 
     /// Wait until every started poll loop (active or detaching) has exited,
     /// or `deadline`. Returns whether they all did.
-    pub(crate) async fn await_poll_loops(&self, deadline: tokio::time::Instant) -> bool {
+    pub(crate) async fn await_poll_loops(&self, deadline: Instant) -> bool {
         let loops: Vec<_> = self
             .consumers
             .active()
             .into_iter()
             .chain(self.consumers.detaching())
-            .filter(|rc| {
-                rc.poll_task_started
-                    .load(std::sync::atomic::Ordering::SeqCst)
-            })
+            .filter(|rc| rc.poll_task_started.load(Ordering::SeqCst))
             .map(|rc| rc.poll_exited.clone())
             .collect();
         let all = future::join_all(loops.iter().map(|t| t.cancelled()));
-        if tokio::time::timeout_at(deadline, all).await.is_ok() {
+        if time::timeout_at(deadline, all).await.is_ok() {
             return true;
         }
         warn!("Shutdown: a stopped poll loop was still receiving at the drain deadline");
@@ -212,12 +209,12 @@ impl QueueManager {
         let nacks = abandoned.iter().filter_map(|m| {
             let consumer = self.consumers.resolve(&m.queue_identifier, 0)?;
             self.flight_recorder.record(
-                crate::flight_recorder::EventKind::ReleasedAtShutdown,
-                &crate::flight_recorder::EventContext::new(m.message_id.as_str())
+                EventKind::ReleasedAtShutdown,
+                &EventContext::new(m.message_id.as_str())
                     .pool(m.pool_code.as_str())
                     .group(m.message_group_id.as_deref())
                     .queue(m.queue_identifier.as_str()),
-                crate::flight_recorder::Facts::text(format!(
+                Facts::text(format!(
                     "still in a worker when the drain budget ran out; nacked, visible in {}s",
                     Self::ABANDONED_NACK_DELAY_SECS
                 )),
@@ -230,8 +227,7 @@ impl QueueManager {
                     .is_ok()
             })
         });
-        let outcome =
-            tokio::time::timeout(Self::ABANDONED_NACK_TIMEOUT, future::join_all(nacks)).await;
+        let outcome = time::timeout(Self::ABANDONED_NACK_TIMEOUT, future::join_all(nacks)).await;
         let released = match outcome {
             Ok(results) => results.into_iter().filter(|ok| *ok).count(),
             Err(_) => 0,
@@ -295,8 +291,8 @@ impl QueueManager {
         }
 
         // Wait for every pool's tracked tasks to finish, bounded by a timeout.
-        let deadline = tokio::time::Instant::now() + drain_timeout;
-        let drained = tokio::time::timeout_at(
+        let deadline = Instant::now() + drain_timeout;
+        let drained = time::timeout_at(
             deadline,
             future::join_all(pools.iter().map(|p| p.wait_drained())),
         )
@@ -329,8 +325,7 @@ impl QueueManager {
         }
 
         // 3. Tear down. From here nothing more is routed or reconfigured.
-        self.running
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running.store(false, Ordering::SeqCst);
         self.shutdown.cancel();
 
         // Go's Shutdown: every consumer — active or still detaching — is
@@ -382,6 +377,8 @@ mod start_double_spawn_tests {
     use fc_common::{PoolConfig, RouterConfig};
     use fc_queue::QueueConsumer;
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use tokio::sync::Notify;
+    use tokio::time;
 
     /// Blocks `poll()` forever (until `stop()`) on an un-fired `Notify`,
     /// counting how many times it's actually called — the real poll loop
@@ -391,7 +388,7 @@ mod start_double_spawn_tests {
     struct BlockingPollConsumer {
         id: &'static str,
         poll_calls: AtomicU32,
-        block: tokio::sync::Notify,
+        block: Notify,
     }
 
     impl BlockingPollConsumer {
@@ -399,7 +396,7 @@ mod start_double_spawn_tests {
             Self {
                 id,
                 poll_calls: AtomicU32::new(0),
-                block: tokio::sync::Notify::new(),
+                block: Notify::new(),
             }
         }
 
@@ -461,11 +458,11 @@ mod start_double_spawn_tests {
         let rc = manager.consumers.get("dup").expect("registered");
         let poll_task = manager.spawn_consumer_poll_task(rc);
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
         assert_eq!(counter.poll_calls(), 1);
 
         let start_task = tokio::spawn(manager.clone().start());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert_eq!(
             counter.poll_calls(),
@@ -474,8 +471,8 @@ mod start_double_spawn_tests {
         );
 
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), poll_task).await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+        let _ = time::timeout(Duration::from_secs(2), poll_task).await;
+        let _ = time::timeout(Duration::from_secs(2), start_task).await;
     }
 
     /// Regression guard: a consumer that was only ever registered (never
@@ -501,7 +498,7 @@ mod start_double_spawn_tests {
         manager.add_consumer(consumer).await;
 
         let start_task = tokio::spawn(manager.clone().start());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        time::sleep(Duration::from_millis(50)).await;
 
         assert!(
             counter.poll_calls() > 0,
@@ -509,6 +506,6 @@ mod start_double_spawn_tests {
         );
 
         manager.shutdown().await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+        let _ = time::timeout(Duration::from_secs(2), start_task).await;
     }
 }

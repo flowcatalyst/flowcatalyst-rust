@@ -43,9 +43,13 @@ use crate::control_plane::{ControlPlane, Fetched};
 use crate::desired::{DesiredDocument, Entry, Mode, Role};
 use crate::fingerprint::settings_fingerprint;
 use crate::heartbeat::{HeartbeatReport, HostState, LoadState, LoadedEntry};
+use crate::java;
 use crate::loader::{LoadOutcome, LoadRequest, LoadedFunction, Loaders, RUNTIME_UNSUPPORTED};
 use crate::registry::FunctionRegistry;
 use crate::signature::{SignatureVerifier, Signatures, Verification};
+use futures::stream;
+use std::path::Path;
+use tokio::sync;
 
 /// A lazy entry idle longer than this is closed but keeps its route. A
 /// constant, not a knob.
@@ -151,9 +155,9 @@ pub struct Reconciler {
     registry: Arc<FunctionRegistry>,
     state: Mutex<State>,
     /// One lock per address, so concurrent loads of one address load once.
-    load_locks: Mutex<HashMap<FunctionAddress, Arc<tokio::sync::Mutex<()>>>>,
+    load_locks: Mutex<HashMap<FunctionAddress, Arc<sync::Mutex<()>>>>,
     /// Serialises whole cycles (the loop, start-up and close all call in).
-    cycle: tokio::sync::Mutex<()>,
+    cycle: sync::Mutex<()>,
     observer: RwLock<Arc<dyn ReconcileObserver>>,
     post_reconcile: RwLock<Vec<Arc<dyn Fn() + Send + Sync>>>,
     draining: AtomicBool,
@@ -183,7 +187,7 @@ impl Reconciler {
             registry,
             state: Mutex::new(State::default()),
             load_locks: Mutex::new(HashMap::new()),
-            cycle: tokio::sync::Mutex::new(()),
+            cycle: sync::Mutex::new(()),
             observer: RwLock::new(Arc::new(NoopObserver)),
             post_reconcile: RwLock::new(Vec::new()),
             draining: AtomicBool::new(false),
@@ -319,7 +323,7 @@ impl Reconciler {
                 .filter(|e| !state.prepared.contains_key(&e.version_id))
                 .collect()
         };
-        futures::stream::iter(pending)
+        stream::iter(pending)
             .for_each_concurrent(MAX_CONCURRENT_PREPARES, |entry| self.prepare_one(entry))
             .await;
     }
@@ -385,7 +389,7 @@ impl Reconciler {
         }
     }
 
-    fn load_lock(&self, address: &FunctionAddress) -> Arc<tokio::sync::Mutex<()>> {
+    fn load_lock(&self, address: &FunctionAddress) -> Arc<sync::Mutex<()>> {
         self.load_locks
             .lock()
             .entry(address.clone())
@@ -430,7 +434,7 @@ impl Reconciler {
         self.apply_load_outcome(outcome, entry, false).await;
     }
 
-    async fn attempt_load(&self, path: &std::path::Path, entry: &Entry) -> LoadOutcome {
+    async fn attempt_load(&self, path: &Path, entry: &Entry) -> LoadOutcome {
         match self.loaders.get(entry.manifest.runtime.wire_value()) {
             Some(loader) => {
                 loader
@@ -907,7 +911,7 @@ impl Reconciler {
 /// one exactly.
 fn verify_signature(verifier: &SignatureVerifier, entry: &Entry) -> Result<(), String> {
     let bundle = match &entry.signature_bundle {
-        Some(bundle) if !crate::java::is_blank(bundle) => bundle,
+        Some(bundle) if !java::is_blank(bundle) => bundle,
         _ => return Err("UNSIGNED".to_owned()),
     };
     let Some(recorded) = &entry.signer else {

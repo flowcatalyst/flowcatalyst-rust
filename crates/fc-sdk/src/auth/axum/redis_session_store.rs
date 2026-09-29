@@ -9,8 +9,8 @@
 use async_trait::async_trait;
 use axum::http::header::{HeaderMap, SET_COOKIE};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rand::RngCore;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
@@ -18,6 +18,9 @@ use redis::AsyncCommands;
 use crate::auth::AuthError;
 
 use super::session::{CookieAttrs, SessionPayload, SessionStore};
+use std::cmp;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 const SID_LEN: usize = 32;
 
@@ -75,10 +78,7 @@ impl SessionStore for RedisSessionStore {
         let sid = generate_sid();
         let body = serde_json::to_string(session)
             .map_err(|e| AuthError::Crypto(format!("serialize session: {e}")))?;
-        let ttl_ms = std::cmp::max(
-            1,
-            session.expires_at - now_ms(),
-        );
+        let ttl_ms = cmp::max(1, session.expires_at - now_ms());
         let mut conn = self.conn.clone();
         let _: () = conn
             .pset_ex(self.key(&sid), body, ttl_ms as u64)
@@ -100,8 +100,8 @@ impl SessionStore for RedisSessionStore {
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
 }

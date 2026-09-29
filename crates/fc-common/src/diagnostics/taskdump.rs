@@ -9,6 +9,10 @@
 //! `docs/operations/diagnosing-stuck-processes.md` for why it is a build
 //! choice rather than a runtime one.
 
+use std::error;
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Formatter;
 use std::time::Duration;
 use tokio::runtime::Handle;
 
@@ -34,8 +38,8 @@ pub enum TaskDumpError {
     TimedOut(Duration),
 }
 
-impl std::fmt::Display for TaskDumpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for TaskDumpError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             TaskDumpError::NotAvailable => f.write_str(
                 "task dumps are not available in this build: it needs --cfg tokio_unstable and \
@@ -53,7 +57,7 @@ impl std::fmt::Display for TaskDumpError {
     }
 }
 
-impl std::error::Error for TaskDumpError {}
+impl error::Error for TaskDumpError {}
 
 /// Dump every task on `handle`'s runtime as text: one block per task with
 /// its id and async backtrace. Bounded by `timeout` (tokio's dump never
@@ -104,12 +108,13 @@ pub async fn task_dump(_handle: &Handle, _timeout: Duration) -> Result<String, T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn answers_by_build() {
         // A task parked in a known place, for the dump to show.
         let parked = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            time::sleep(Duration::from_secs(60)).await;
         });
         let r = task_dump(&Handle::current(), Duration::from_secs(5)).await;
         if TASKDUMP_AVAILABLE {

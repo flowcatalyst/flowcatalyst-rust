@@ -3,6 +3,8 @@
 use std::fmt;
 
 use crate::dns_label::DnsLabel;
+use std::env;
+use std::net::Ipv6Addr;
 
 /// One URL template with an optional `{pool}` placeholder, resolved per
 /// manifest pool at promote. A single-pool environment (or dev) names the
@@ -75,7 +77,7 @@ impl PoolUrlTemplate {
 
     /// From `FC_FN_POOL_URL`, or [`PoolUrlTemplate::DEFAULT`] when unset.
     pub fn from_env() -> Result<PoolUrlTemplate, InvalidPoolUrl> {
-        Self::parse(&std::env::var("FC_FN_POOL_URL").unwrap_or_else(|_| Self::DEFAULT.to_string()))
+        Self::parse(&env::var("FC_FN_POOL_URL").unwrap_or_else(|_| Self::DEFAULT.to_string()))
     }
 
     /// The template exactly as configured.
@@ -305,7 +307,7 @@ fn server(chars: &[char], start: usize, end: usize) -> Option<(bool, usize)> {
             return None;
         }
         let literal: String = chars[p + 1..close].iter().collect();
-        literal.parse::<std::net::Ipv6Addr>().ok()?;
+        literal.parse::<Ipv6Addr>().ok()?;
         p = close + 1;
     } else {
         p = ipv4(chars, p, end).or_else(|| hostname(chars, p, end))?;

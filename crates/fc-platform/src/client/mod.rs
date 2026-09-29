@@ -1,16 +1,9 @@
-//! Client Aggregate
+//! The `client` aggregate (fc-platform-iam), and its routes.
 //!
-//! Client management - tenants in the platform.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod access;
-pub mod api;
-pub mod entity;
-pub mod operations;
-pub mod repository;
+pub use fc_platform_iam::client::*;
+
 pub mod routes;
-
-// Re-export main types
-pub use api::ClientsState;
-pub use entity::{Client, ClientStatus};
-pub use repository::ClientRepository;
 pub use routes::{clients_router, routes};

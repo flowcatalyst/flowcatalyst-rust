@@ -1,10 +1,11 @@
+use std::error;
 use thiserror::Error;
 
 /// A type-erased, thread-safe error. Used for backends whose client
 /// libraries return a different generic error type per operation (the AWS
 /// SDK's `SdkError<OpError, _>`, async-nats' `Error<Kind>`), so a single
 /// variant can still carry the original error as its `source()`.
-pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub type BoxError = Box<dyn error::Error + Send + Sync + 'static>;
 
 #[derive(Error, Debug)]
 pub enum QueueError {

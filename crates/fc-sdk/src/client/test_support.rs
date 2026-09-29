@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::FlowCatalystClient;
+use tokio::net::TcpListener;
 
 /// One request the stub received.
 #[derive(Debug, Clone)]
@@ -70,7 +71,7 @@ impl MockPlatform {
             })
             .collect();
         let routes = Arc::new(routes);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let log = requests.clone();

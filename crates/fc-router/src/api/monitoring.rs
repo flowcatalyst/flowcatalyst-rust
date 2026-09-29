@@ -12,8 +12,12 @@ use axum::{
 use chrono::Utc;
 use fc_common::{HealthReport, HealthStatus, PoolStats};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::Instant;
 use utoipa::ToSchema;
 
 /// The upper-case wire name of a [`HealthStatus`] in monitoring responses.
@@ -165,13 +169,10 @@ pub(crate) struct DashboardHealthDetails {
     degradation_reason: Option<String>,
 }
 
-static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 fn get_uptime_millis() -> u64 {
-    START_TIME
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64
+    START_TIME.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// Health endpoint for dashboard
@@ -615,10 +616,10 @@ pub(crate) struct InFlightCheckBatchRequest {
 pub(crate) async fn in_flight_message_check_batch_handler(
     State(state): State<AppState>,
     Json(body): Json<InFlightCheckBatchRequest>,
-) -> Result<Json<std::collections::HashMap<String, bool>>, (axum::http::StatusCode, String)> {
+) -> Result<Json<HashMap<String, bool>>, (StatusCode, String)> {
     if body.message_ids.len() > IN_FLIGHT_CHECK_BATCH_LIMIT {
         return Err((
-            axum::http::StatusCode::BAD_REQUEST,
+            StatusCode::BAD_REQUEST,
             format!(
                 "messageIds exceeds limit of {} (got {}). Split the request.",
                 IN_FLIGHT_CHECK_BATCH_LIMIT,
@@ -627,7 +628,7 @@ pub(crate) async fn in_flight_message_check_batch_handler(
         ));
     }
 
-    let mut result = std::collections::HashMap::with_capacity(body.message_ids.len());
+    let mut result = HashMap::with_capacity(body.message_ids.len());
     for id in body.message_ids {
         let present = state.queue_manager.is_in_flight_by_app_id(&id);
         result.insert(id, present);
@@ -660,7 +661,7 @@ pub(crate) async fn get_circuit_breaker_state(
     Path(name): Path<String>,
 ) -> Response {
     // URL decode the name
-    let decoded_name = urlencoding::decode(&name).unwrap_or(std::borrow::Cow::Borrowed(&name));
+    let decoded_name = urlencoding::decode(&name).unwrap_or(Cow::Borrowed(&name));
 
     match state.circuit_breaker_registry.get_state(&decoded_name) {
         Some(breaker_state) => {
@@ -741,7 +742,7 @@ pub(crate) async fn dashboard_mediating_handler(
 ) -> Json<Vec<MediatingInfo>> {
     let limit = query.limit.unwrap_or(200);
     let pool_filter = query.pool_code.as_deref();
-    let now = std::time::Instant::now();
+    let now = Instant::now();
 
     let mut out: Vec<MediatingInfo> = state
         .queue_manager
@@ -758,7 +759,7 @@ pub(crate) async fn dashboard_mediating_handler(
             elapsed_time_ms: now.saturating_duration_since(e.mediated_at).as_millis() as u64,
         })
         .collect();
-    out.sort_by_key(|a| std::cmp::Reverse(a.elapsed_time_ms));
+    out.sort_by_key(|a| Reverse(a.elapsed_time_ms));
     out.truncate(limit);
     Json(out)
 }
@@ -861,7 +862,7 @@ pub(crate) async fn in_flight_message_detail_handler(
         mediating_elapsed_ms: None,
     };
 
-    let now = std::time::Instant::now();
+    let now = Instant::now();
     if let Some(m) = state
         .queue_manager
         .mediating_snapshot()

@@ -38,6 +38,9 @@ use deno_core::{
     SourceCodeCacheInfo,
 };
 use deno_error::JsErrorBox;
+use std::collections::hash_map::DefaultHasher;
+use std::future::Future;
+use std::pin::Pin;
 
 /// The bundle's own specifier.
 pub const BUNDLE: &str = "function:///bundle.js";
@@ -113,7 +116,7 @@ pub struct VersionCode {
 impl VersionCode {
     pub fn new(bundle: &str, entrypoint: &str) -> Self {
         use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let mut hasher = DefaultHasher::new();
         bundle.hash(&mut hasher);
         Self {
             bundle: bundle.into(),
@@ -237,7 +240,7 @@ impl ModuleLoader for FunctionModules {
         specifier: ModuleSpecifier,
         hash: u64,
         code_cache: &[u8],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
+    ) -> Pin<Box<dyn Future<Output = ()>>> {
         if specifier.as_str() == BUNDLE && hash == self.code.hash {
             *self.made_cache.borrow_mut() = Some(code_cache.to_vec());
         }

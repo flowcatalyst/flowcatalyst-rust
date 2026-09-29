@@ -48,7 +48,7 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - [x] Read endpoints enforce Go's read permissions (many only require a login today) (`feat/go-authz`;
       `docs/parity/read-permissions-vs-go.md`)
 - [x] Route-auth guardrail: a convention test that every `/api` and `/bff` route authenticates unless
-      allowlisted (`feat/go-authz`: `tests/route_auth_convention_test.rs`)
+      allowlisted (`feat/go-authz`: `tests/it/route_auth_convention_test.rs`)
 - [x] `/auth/me` returns effective permissions plus scope/tier; the SPA hides nav items the user can't use
       (decision #8) (`feat/go-authz`)
 - [x] Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`,

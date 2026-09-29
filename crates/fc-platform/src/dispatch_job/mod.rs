@@ -1,16 +1,9 @@
-//! Dispatch Job Aggregate
+//! The `dispatch_job` aggregate (fc-platform-messaging), and its routes.
 //!
-//! Individual message dispatch job tracking.
+//! `routes.rs` is wiring (it builds the states and use cases from the
+//! `PlatformContext`), so it lives in the assembly crate.
 
-pub mod api;
-pub mod delivery_credentials;
-pub mod entity;
-pub mod reaper;
-pub mod repository;
+pub use fc_platform_messaging::dispatch_job::*;
+
 pub mod routes;
-pub mod signing_guard;
-
-// Re-export main types
 pub use routes::{dispatch_jobs_router, routes};
-pub use entity::{DispatchJob, DispatchStatus};
-pub use repository::DispatchJobRepository;

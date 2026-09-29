@@ -29,6 +29,9 @@ use std::sync::{LazyLock, Mutex};
 use std::task::Waker;
 
 use deno_core::v8;
+use std::mem;
+use std::sync::MutexGuard;
+use std::thread;
 
 #[derive(Default)]
 struct Entry {
@@ -41,7 +44,7 @@ struct Entry {
 static ENTRIES: LazyLock<Mutex<HashMap<usize, Entry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn entries() -> std::sync::MutexGuard<'static, HashMap<usize, Entry>> {
+fn entries() -> MutexGuard<'static, HashMap<usize, Entry>> {
     // A panic while the lock is held cannot leave an entry half-updated.
     ENTRIES.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -50,11 +53,10 @@ fn entries() -> std::sync::MutexGuard<'static, HashMap<usize, Entry>> {
 pub fn key(isolate: v8::UnsafeRawIsolatePtr) -> usize {
     // SAFETY: `UnsafeRawIsolatePtr` is `#[repr(transparent)]` over the
     // C++ isolate pointer, the pointer V8 passes to the platform's hooks.
-    unsafe { std::mem::transmute::<v8::UnsafeRawIsolatePtr, usize>(isolate) }
+    unsafe { mem::transmute::<v8::UnsafeRawIsolatePtr, usize>(isolate) }
 }
 
-const _: () =
-    assert!(std::mem::size_of::<v8::UnsafeRawIsolatePtr>() == std::mem::size_of::<usize>());
+const _: () = assert!(mem::size_of::<v8::UnsafeRawIsolatePtr>() == mem::size_of::<usize>());
 
 fn post(isolate: *mut c_void, task: v8::Task, delayed: bool) {
     let mut map = entries();
@@ -106,7 +108,7 @@ impl v8::PlatformImpl for FunctionPlatform {
 /// The platform V8 is started with: V8's default platform, with at most 4
 /// background threads (as deno_core's own), and these hooks.
 pub fn new() -> v8::SharedRef<v8::Platform> {
-    let threads = std::thread::available_parallelism()
+    let threads = thread::available_parallelism()
         .map(|n| n.get() as u32)
         .unwrap_or(4)
         .min(4);
@@ -142,10 +144,7 @@ pub fn close(isolate: usize) {
         let entry = map.entry(isolate).or_default();
         entry.closed = true;
         entry.waker = None;
-        (
-            std::mem::take(&mut entry.tasks),
-            std::mem::take(&mut entry.delayed),
-        )
+        (mem::take(&mut entry.tasks), mem::take(&mut entry.delayed))
     };
     drop(tasks);
     drop(delayed);

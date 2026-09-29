@@ -1,0 +1,70 @@
+[package]
+name = "fc-platform-messaging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FlowCatalyst Platform - messaging: event types, events, subscriptions, connections, dispatch pools and jobs, the dispatch scheduler, processes"
+
+[dependencies]
+# The kernel. IAM lookups go through `fc_platform_core::directory`
+# (the assembly injects fc-platform-iam's implementations).
+fc-platform-core = { path = "../fc-platform-core" }
+fc-common = { path = "../fc-common" }
+fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+# Database (PostgreSQL)
+sqlx = { workspace = true, features = ["postgres"] }
+
+# Web framework
+axum = { workspace = true }
+utoipa = { workspace = true }
+
+hmac = "0.12"
+sha2 = "0.10"
+# Streams an artifact from the blob store to the host (control plane).
+tokio-util = { workspace = true, features = ["io"] }
+
+# HTTP client for OIDC. Inherit from workspace so we pick up the
+# `default-features = false` + rustls-tls posture; declaring our own
+# reqwest here used to re-enable `default-tls` via feature unification
+# and drag OpenSSL/native-tls back into every binary.
+reqwest = { workspace = true }
+
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+bon = { workspace = true }
+
+# Regex for pattern matching
+regex = { workspace = true }
+
+# Concurrent cache
+dashmap = { workspace = true }
+
+# Scheduler dependencies
+parking_lot = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+metrics = { workspace = true }
+
+[dev-dependencies]
+# `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
+fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"
+# A `_ =>` arm over one of our own enums hides a new variant from every
+# match that should decide what it means. List the variants instead; an
+# `#[allow]` with a reason is for foreign or `#[non_exhaustive]` enums only.
+wildcard_enum_match_arm = "warn"

@@ -1,0 +1,317 @@
+//! Create Email Domain Mapping Use Case
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::EmailDomainMappingCreated;
+use crate::email_domain_mapping::entity;
+use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+use crate::identity_provider::repository::IdentityProviderRepository;
+use fc_platform_core::shared::authorization_service::checks;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
+
+/// Command for creating a new email domain mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEmailDomainMappingCommand {
+    pub email_domain: String,
+    pub identity_provider_id: String,
+    pub scope_type: ScopeType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_client_id: Option<String>,
+    #[serde(default)]
+    pub additional_client_ids: Vec<String>,
+    #[serde(default)]
+    pub granted_client_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_oidc_tenant_id: Option<String>,
+    #[serde(default)]
+    pub allowed_role_ids: Vec<String>,
+    #[serde(default)]
+    pub sync_roles_from_idp: bool,
+    /// Go's 2FA policy (emaildomainmapping/operations/create.go:21-25).
+    #[serde(default, flatten)]
+    pub two_factor: TwoFactorPolicyInput,
+}
+
+/// The per-domain second-factor policy on create (Go `require2fa`,
+/// `allowed2faMethods`, `rememberDeviceEnabled`, `rememberDeviceDays`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoFactorPolicyInput {
+    #[serde(default, rename = "require2fa")]
+    pub require_2fa: bool,
+    #[serde(default, rename = "allowed2faMethods")]
+    pub allowed_2fa_methods: Vec<String>,
+    #[serde(default)]
+    pub remember_device_enabled: bool,
+    #[serde(default)]
+    pub remember_device_days: i32,
+}
+
+impl AuditMasked for CreateEmailDomainMappingCommand {}
+
+pub struct CreateEmailDomainMappingUseCase<U: UnitOfWork> {
+    edm_repo: Arc<EmailDomainMappingRepository>,
+    idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
+    pub fn new(
+        edm_repo: Arc<EmailDomainMappingRepository>,
+        idp_repo: Arc<IdentityProviderRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self {
+            edm_repo,
+            idp_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
+    type Command = CreateEmailDomainMappingCommand;
+    type Event = EmailDomainMappingCreated;
+
+    async fn validate(
+        &self,
+        command: &CreateEmailDomainMappingCommand,
+    ) -> Result<(), UseCaseError> {
+        let email_domain = command.email_domain.trim().to_lowercase();
+        if email_domain.is_empty() {
+            return Err(UseCaseError::validation(
+                "EMAIL_DOMAIN_REQUIRED",
+                "Email domain is required",
+            ));
+        }
+        super::create_rules::validate_domain(&email_domain)?;
+
+        if command.identity_provider_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "IDENTITY_PROVIDER_ID_REQUIRED",
+                "Identity provider ID is required",
+            ));
+        }
+        super::create_rules::validate_scope(
+            command.scope_type,
+            command.primary_client_id.as_deref(),
+        )?;
+
+        entity::validate_two_factor(
+            command.two_factor.require_2fa,
+            &command.two_factor.allowed_2fa_methods,
+        )?;
+
+        Ok(())
+    }
+
+    /// Email-domain mappings are platform-owner data, written by anchors only
+    /// (Go's `Can*EmailDomainMappings` are `anchorWith`).
+    /// The handler's gate checks this, with the permission, before the body
+    /// is read; here it holds for every caller (fc-web, orchestrations).
+    async fn authorize(
+        &self,
+        _command: &CreateEmailDomainMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        Ok(checks::require_anchor_scope(ctx.caller())?)
+    }
+
+    async fn execute(
+        &self,
+        command: CreateEmailDomainMappingCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<EmailDomainMappingCreated>, UseCaseError> {
+        let email_domain = command.email_domain.trim().to_lowercase();
+
+        // Go does not require the identity provider to exist yet
+        // (emaildomainmapping/operations/create.go); a known multi-tenant
+        // one still needs the tenant pin below.
+        let idp = self
+            .idp_repo
+            .find_by_id(&command.identity_provider_id)
+            .await?;
+
+        // Check for duplicate email domain
+        if self
+            .edm_repo
+            .find_by_email_domain(&email_domain)
+            .await?
+            .is_some()
+        {
+            return Err(UseCaseError::business_rule(
+                "DOMAIN_ALREADY_MAPPED",
+                format!("Email domain '{}' is already mapped", email_domain),
+            ));
+        }
+
+        let scope_type = command.scope_type;
+
+        let mut mapping =
+            EmailDomainMapping::new(&email_domain, &command.identity_provider_id, scope_type);
+        mapping.primary_client_id = command.primary_client_id.clone();
+        mapping.additional_client_ids = command.additional_client_ids.clone();
+        mapping.granted_client_ids = command.granted_client_ids.clone();
+        mapping.required_oidc_tenant_id = command.required_oidc_tenant_id.clone();
+        mapping.allowed_role_ids = command.allowed_role_ids.clone();
+        mapping.sync_roles_from_idp = command.sync_roles_from_idp;
+        mapping.require_2fa = command.two_factor.require_2fa;
+        mapping.remember_device_enabled = command.two_factor.remember_device_enabled;
+        if command.two_factor.remember_device_days > 0 {
+            mapping.remember_device_days = command.two_factor.remember_device_days;
+        }
+        mapping.allowed_2fa_methods = command.two_factor.allowed_2fa_methods.clone();
+        super::require_tenant_pin(idp.is_some_and(|i| i.oidc_multi_tenant), &mapping)?;
+
+        let event = EmailDomainMappingCreated::new(&ctx, &mapping.id, &mapping.email_domain);
+
+        self.unit_of_work
+            .commit(&mapping, &*self.edm_repo, event, &command)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "example.com".to_string(),
+            identity_provider_id: "idp-123".to_string(),
+            scope_type: ScopeType::Anchor,
+            primary_client_id: Some("client-456".to_string()),
+            sync_roles_from_idp: true,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("emailDomain"));
+        assert!(json.contains("example.com"));
+        assert!(json.contains("identityProviderId"));
+        assert!(json.contains("idp-123"));
+        assert!(json.contains("primaryClientId"));
+        assert!(json.contains("client-456"));
+        assert!(json.contains("syncRolesFromIdp"));
+
+        let deserialized: CreateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.email_domain, "example.com");
+        assert_eq!(deserialized.identity_provider_id, "idp-123");
+        assert_eq!(deserialized.scope_type, ScopeType::Anchor);
+        assert_eq!(
+            deserialized.primary_client_id,
+            Some("client-456".to_string())
+        );
+        assert!(deserialized.sync_roles_from_idp);
+    }
+
+    #[test]
+    fn test_command_serialization_without_optional_fields() {
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "test.org".to_string(),
+            identity_provider_id: "idp-1".to_string(),
+            scope_type: ScopeType::Client,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        // primaryClientId should be skipped when None
+        assert!(!json.contains("primaryClientId"));
+    }
+
+    #[test]
+    fn test_validate_empty_email_domain() {
+        // Replicate the validation logic from validate() — email_domain is trimmed
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "   ".to_string(),
+            identity_provider_id: "idp-1".to_string(),
+            scope_type: ScopeType::Anchor,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+        let trimmed = cmd.email_domain.trim().to_lowercase();
+        assert!(
+            trimmed.is_empty(),
+            "Whitespace-only email domain should be treated as empty"
+        );
+    }
+
+    #[test]
+    fn test_validate_empty_identity_provider_id() {
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "example.com".to_string(),
+            identity_provider_id: "  ".to_string(),
+            scope_type: ScopeType::Anchor,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+        assert!(
+            cmd.identity_provider_id.trim().is_empty(),
+            "Whitespace-only IDP ID should be treated as empty"
+        );
+    }
+
+    #[test]
+    fn test_validate_valid_inputs() {
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "example.com".to_string(),
+            identity_provider_id: "idp-123".to_string(),
+            scope_type: ScopeType::Anchor,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+        let trimmed = cmd.email_domain.trim().to_lowercase();
+        assert!(!trimmed.is_empty());
+        assert!(!cmd.identity_provider_id.trim().is_empty());
+    }
+
+    #[test]
+    fn test_email_domain_normalized_to_lowercase() {
+        let cmd = CreateEmailDomainMappingCommand {
+            email_domain: "  EXAMPLE.COM  ".to_string(),
+            identity_provider_id: "idp-1".to_string(),
+            scope_type: ScopeType::Client,
+            primary_client_id: None,
+            sync_roles_from_idp: false,
+            additional_client_ids: vec![],
+            granted_client_ids: vec![],
+            required_oidc_tenant_id: None,
+            allowed_role_ids: vec![],
+            two_factor: Default::default(),
+        };
+        let normalized = cmd.email_domain.trim().to_lowercase();
+        assert_eq!(normalized, "example.com");
+    }
+}

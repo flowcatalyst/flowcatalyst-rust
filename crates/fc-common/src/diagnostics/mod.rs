@@ -24,6 +24,7 @@ pub use supervise::{catch_panic, spawn_supervised, supervise, OnPanic};
 pub use taskdump::{task_dump, TaskDumpError, TASKDUMP_AVAILABLE};
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::runtime::Handle;
 
@@ -44,7 +45,7 @@ pub struct RuntimeReport {
     pub process: process::ProcessSnapshot,
     pub panics: u64,
     /// Panics caught per supervised background task.
-    pub task_restarts: std::collections::BTreeMap<&'static str, u64>,
+    pub task_restarts: BTreeMap<&'static str, u64>,
     pub taskdump_available: bool,
 }
 

@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::health::StreamHealth;
+use tokio::time;
 
 /// Health-tracker name for the event projection (reported by the stream
 /// health endpoints).
@@ -49,7 +50,7 @@ pub async fn run(
 
         if sleep_ms > 0 {
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = time::sleep(Duration::from_millis(sleep_ms)) => {}
                 _ = cancel.cancelled() => { break; }
             }
         }
@@ -128,6 +129,7 @@ fn adaptive_sleep(count: u32, batch_size: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time;
 
     // --- adaptive_sleep tests ---
 
@@ -177,7 +179,7 @@ mod tests {
         let cancel = CancellationToken::new();
         cancel.cancel();
 
-        tokio::time::timeout(
+        time::timeout(
             Duration::from_secs(1),
             run(pool, 100, health.clone(), cancel),
         )

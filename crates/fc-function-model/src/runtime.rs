@@ -22,6 +22,7 @@
 
 use crate::enum_str::str_enum;
 use crate::ValidationError;
+use std::str;
 
 /// What a runtime's `entrypoint` must look like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +173,7 @@ impl ArtifactKind {
         if prefix.is_empty() || prefix.contains(&0) {
             return ArtifactKind::Binary;
         }
-        match std::str::from_utf8(prefix) {
+        match str::from_utf8(prefix) {
             Ok(_) => ArtifactKind::Text,
             // Only an incomplete character at the very end (`error_len`
             // None) is a cut, not an invalid byte.

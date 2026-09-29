@@ -214,6 +214,6 @@ Within the platform, `aud_logs` records every operator action — including secr
 - Database resolution: `bin/fc-server/src/main.rs::resolve_database_url`.
 - Secret refresh task: `crates/fc-platform/src/shared/database.rs::start_secret_refresh`.
 - AWS secret provider: `crates/fc-platform/src/shared/database.rs::AwsSecretProvider`.
-- JWT key loading: `crates/fc-platform/src/auth/auth_service.rs::AuthService::new`.
-- Encryption service: `crates/fc-platform/src/shared/encryption_service.rs`.
+- JWT key loading: `crates/fc-platform-iam/src/auth/auth_service.rs::AuthService::new`.
+- Encryption service: `crates/fc-platform-core/src/shared/encryption_service.rs`.
 - Webhook signing: `crates/fc-router/src/mediator.rs::sign`.

@@ -3,8 +3,8 @@
 Owner decisions 2026-09-25, follow-up "Read permissions": many Rust list and read endpoints only required a
 login where Go checks a permission. This file lists every `GET` the Rust platform mounts under `/api` and
 `/bff`, the gate Go puts on it, and Rust's gate before and after the change. The route list is the one
-`crates/fc-platform/tests/route_auth_convention_test.rs` reads from the router
-(`ROUTE_INVENTORY=1 cargo test -p fc-platform --test route_auth_convention_test -- --nocapture`).
+`crates/fc-platform/tests/it/route_auth_convention_test.rs` reads from the router
+(`ROUTE_INVENTORY=1 cargo test -p fc-platform --test it route_auth_convention_test:: -- --nocapture`).
 
 Go references are `flowcatalyst-go/internal/platform/…`; `anchorWith(p)` is Go's "anchor scope, then
 permission `p`" (`shared/auth/auth.go:704`). Unless a row says otherwise, a refusal answers as Go: 403
@@ -14,7 +14,7 @@ Every route below also sits behind the profile-only gate (Go `ProfileOnlyWithout
 and no permission gets 403 `NO_PLATFORM_ROLE` everywhere except `/auth/*`, `/portal/*` and `GET /api/me`.
 
 **46 GET routes changed gate.** They are marked **changed**. The Docker test
-`crates/fc-platform/tests/read_permissions_test.rs` hits each with an under-privileged caller.
+`crates/fc-platform/tests/it/read_permissions_test.rs` hits each with an under-privileged caller.
 
 ## Changed
 

@@ -36,6 +36,8 @@ use super::params::{self, Param};
 use super::placeholders;
 use super::pools::{Borrow, PoolLease, SharePermit};
 use super::rows::{RowWriter, RowsAnswer};
+use crate::java;
+use tokio::time;
 
 /// A version's databases, by `db[].name`.
 pub type DbBindings = HashMap<String, Arc<PoolLease>>;
@@ -184,13 +186,13 @@ impl Database {
                 self.name
             )));
         }
-        let deadline = tokio::time::Instant::from_std(self.deadline);
-        let share = tokio::time::timeout_at(deadline, self.lease.share().acquire())
+        let deadline = time::Instant::from_std(self.deadline);
+        let share = time::timeout_at(deadline, self.lease.share().acquire())
             .await
             .map_err(|_| DbFailure::no_connection_in_time())?;
         let entry = self.lease.entry();
         let pool = entry.pool();
-        let conn = match tokio::time::timeout_at(deadline, pool.acquire()).await {
+        let conn = match time::timeout_at(deadline, pool.acquire()).await {
             Ok(conn) => conn.map_err(|e| DbFailure::from_sqlx(&self.name, &e))?,
             // Busy (every connection held) is a timeout; room in the pool
             // and still no connection is a database that would not connect.
@@ -292,7 +294,7 @@ impl Drop for Transaction {
 }
 
 fn check(sql: &str) -> Result<(), DbFailure> {
-    if crate::java::is_blank(sql) {
+    if java::is_blank(sql) {
         return Err(DbFailure::bad_request(
             "sql is required and must be a non-empty string",
         ));

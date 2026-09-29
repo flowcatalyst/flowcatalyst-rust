@@ -14,6 +14,8 @@ use serde_json::Value;
 
 use crate::digest::{Digest, SignerIdentity};
 use crate::java;
+use crate::log_throttle::LogThrottle;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -38,8 +40,7 @@ pub enum Mode {
 /// throttled to one line a minute (Java 892c711b): a live function must not
 /// lose a route or change its dispatch mode without a trace.
 fn read_manifest(node: Option<&Value>) -> Result<Manifest, String> {
-    static DROPPED_LOG: crate::log_throttle::LogThrottle =
-        crate::log_throttle::LogThrottle::new(std::time::Duration::from_secs(60));
+    static DROPPED_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(60));
     let root = node.map_or(JsonNode::Null, JsonNode::from);
     let (manifest, dropped) = Manifest::read_stored_reporting(&root).map_err(|e| e.to_string())?;
     if !dropped.is_empty() {
@@ -348,6 +349,7 @@ fn parse_public_route(node: &Value) -> Result<PublicRouteRef, String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::digest;
     use serde_json::json;
 
     pub(crate) fn entry_json(address: &str, version: i32, role: &str, mode: &str) -> Value {
@@ -425,7 +427,7 @@ pub(crate) mod tests {
             [
                 (
                     "app.svc.bad".to_owned(),
-                    format!("UNREADABLE:{}", crate::digest::DIGEST_INVALID_MESSAGE)
+                    format!("UNREADABLE:{}", digest::DIGEST_INVALID_MESSAGE)
                 ),
                 (
                     "app.svc.role".to_owned(),

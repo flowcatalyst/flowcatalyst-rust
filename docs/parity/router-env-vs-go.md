@@ -131,7 +131,7 @@ Now as Go's `ConfigSource` and `Watch` (`crates/fc-router/src/config_sync.rs`):
 - **Credentials without a config URL** are ignored, as Go.
 - **Deviation.** Go's token request has no timeout of its own. Rust's shares the config client's 10s.
 
-**Role catalogue.** Rust's built-in `platform:router` (`crates/fc-platform/src/role/entity.rs`)
+**Role catalogue.** Rust's built-in `platform:router` (`crates/fc-platform-iam/src/role/entity.rs`)
 grants exactly `platform:messaging:dispatch-pool:view`, like Go's (`seed/roles.go`). That is what
 `GET /api/dispatch/router-config` checks, with anchor scope. The route itself is being added on
 `feat/go-routes`; the delivery harness serves a shim document until it lands.
@@ -207,7 +207,7 @@ As Go's `common.QueueConfig.UnmarshalJSON`:
 
 ## Proof
 
-- `bin/fc-server/tests/router_role_prod_env.rs` starts the `fc-server` binary with every variable
+- `bin/fc-server/tests/it/router_role_prod_env.rs` starts the `fc-server` binary with every variable
   above (fake values, **no database variable**) against local stand-ins:
   - a platform (`/oauth/token`, a bearer-only `/api/dispatch/router-config`,
     `/api/dispatch/settled`);
@@ -229,6 +229,6 @@ As Go's `common.QueueConfig.UnmarshalJSON`:
   - `settled`;
   - `bootstrap::env` (the production task definition, the half-credential refusals, alias
     precedence, notification names);
-  - `tests/settled_reporter_test.rs` (siblings ACKed and reported).
+  - `tests/it/settled_reporter_test.rs` (siblings ACKed and reported).
 - The delivery harness (`harness/delivery`) now starts both sides' routers from `fc-server` with the
   task definition's names, plus harness plumbing.

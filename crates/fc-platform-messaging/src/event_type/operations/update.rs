@@ -1,0 +1,158 @@
+//! Update Event Type Use Case
+
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use super::events::EventTypeUpdated;
+use crate::event_type::repository::EventTypeRepository;
+use fc_platform_core::shared::caller_reach;
+use fc_platform_core::usecase::AuditMasked;
+use fc_platform_core::usecase::{
+    Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
+};
+
+/// Command for updating an existing event type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateEventTypeCommand {
+    /// Event type ID to update
+    pub event_type_id: String,
+
+    /// New name (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// New description (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Whether events of this type are carried per client (Go
+    /// `clientScoped`); `None` leaves it unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_scoped: Option<bool>,
+}
+
+impl AuditMasked for UpdateEventTypeCommand {}
+
+/// Use case for updating an existing event type.
+pub struct UpdateEventTypeUseCase<U: UnitOfWork> {
+    event_type_repo: Arc<EventTypeRepository>,
+    unit_of_work: Arc<U>,
+}
+
+impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
+    pub fn new(event_type_repo: Arc<EventTypeRepository>, unit_of_work: Arc<U>) -> Self {
+        Self {
+            event_type_repo,
+            unit_of_work,
+        }
+    }
+}
+
+#[async_trait]
+impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
+    type Command = UpdateEventTypeCommand;
+    type Event = EventTypeUpdated;
+
+    async fn validate(&self, command: &UpdateEventTypeCommand) -> Result<(), UseCaseError> {
+        if command.event_type_id.trim().is_empty() {
+            return Err(UseCaseError::validation(
+                "EVENT_TYPE_ID_REQUIRED",
+                "Event type ID is required",
+            ));
+        }
+
+        if command.name.is_none()
+            && command.description.is_none()
+            && command.client_scoped.is_none()
+        {
+            return Err(UseCaseError::validation(
+                "NO_UPDATES",
+                "At least one field must be provided for update",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Go `CheckScopeAccess` on the stored event type (Go checks it post-load):
+    /// a client's type needs that client, a platform one anchor scope (403
+    /// `SCOPE_FORBIDDEN`). A missing type is `execute`'s 404. Holds for the
+    /// `/api`, `/bff` and fc-web routes alike.
+    async fn authorize(
+        &self,
+        command: &UpdateEventTypeCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(), UseCaseError> {
+        if let Some(event_type) = self
+            .event_type_repo
+            .find_by_id(&command.event_type_id)
+            .await?
+        {
+            caller_reach::check_scope_access(ctx.caller(), event_type.client_id.as_deref())?;
+        }
+        Ok(())
+    }
+
+    async fn execute(
+        &self,
+        command: UpdateEventTypeCommand,
+        ctx: ExecutionContext,
+    ) -> Result<Committed<EventTypeUpdated>, UseCaseError> {
+        // Fetch existing event type
+        let mut event_type = self
+            .event_type_repo
+            .find_by_id(&command.event_type_id)
+            .await
+            .or_not_found(
+                "EVENT_TYPE_NOT_FOUND",
+                format!("Event type with ID '{}' not found", command.event_type_id),
+            )?;
+
+        // Apply updates. Go's `UpdateEventType` saves and emits even when
+        // nothing changed: a repeated update is a 204, not an error.
+        if let Some(ref name) = command.name {
+            event_type.name = name.trim().to_string();
+        }
+        if let Some(ref desc) = command.description {
+            event_type.description = Some(desc.clone());
+        }
+        if let Some(client_scoped) = command.client_scoped {
+            event_type.client_scoped = client_scoped;
+        }
+        event_type.updated_at = chrono::Utc::now();
+
+        // Create domain event
+        let event = EventTypeUpdated::new(
+            &ctx,
+            &event_type.id,
+            &event_type.name,
+            event_type.description.as_deref(),
+        );
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_command_serialization() {
+        let cmd = UpdateEventTypeCommand {
+            event_type_id: "et-123".to_string(),
+            name: Some("New Name".to_string()),
+            description: Some("New Description".to_string()),
+            client_scoped: None,
+        };
+
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("eventTypeId"));
+        assert!(json.contains("New Name"));
+    }
+}

@@ -45,6 +45,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      # Split DWARF: each test executable keeps a skeleton and the line
+      # tables, the rest goes to `.dwo` files beside the objects; half the
+      # size, backtraces keep file:line (docs/plans/build-speed-2026-09-28.md,
+      # section 4.2). Linux only, so set here rather than in the profile.
+      CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: unpacked
     steps:
       - uses: actions/checkout@v4
 

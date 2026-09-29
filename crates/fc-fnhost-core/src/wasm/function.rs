@@ -52,8 +52,20 @@ use super::egress::EgressHooks;
 use super::guest::{FunctionShared, GuestState, InvocationData, MeteredLimits};
 use super::output::GuestOutput;
 use super::WasmRuntime;
+use crate::db::DbBindings;
+use crate::db::DbSession;
 use crate::invoke::{InvocationContext, InvokeError, Invoker};
 use crate::loader::FunctionInstance;
+use http::uri::Authority;
+use hyper::body::Body;
+use std::any::Any;
+use std::convert::Infallible;
+use std::fmt;
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::Receiver;
+use tokio::sync::oneshot::Sender;
+use tokio::task::JoinHandle;
+use tokio::time;
 
 pub struct WasmFunction {
     runtime: Arc<WasmRuntime>,
@@ -62,7 +74,7 @@ pub struct WasmFunction {
     /// The version's database pool memberships; released at close, so the
     /// pools it alone used close with it (the last invocation holding a
     /// clone has drained by then).
-    databases: parking_lot::Mutex<Option<Arc<crate::db::DbBindings>>>,
+    databases: parking_lot::Mutex<Option<Arc<DbBindings>>>,
     closed: AtomicBool,
 }
 
@@ -71,7 +83,7 @@ impl WasmFunction {
         runtime: Arc<WasmRuntime>,
         pre: ProxyPre<GuestState>,
         shared: Arc<FunctionShared>,
-        databases: Option<Arc<crate::db::DbBindings>>,
+        databases: Option<Arc<DbBindings>>,
     ) -> Self {
         Self {
             runtime,
@@ -110,7 +122,7 @@ impl WasmFunction {
             },
             function: self.shared.clone(),
             invocation: InvocationData::from(context),
-            db: crate::db::DbSession::new(self.databases.lock().clone(), context.deadline),
+            db: DbSession::new(self.databases.lock().clone(), context.deadline),
         }
     }
 
@@ -166,7 +178,7 @@ enum GuestEnd {
 }
 
 type Head = Result<hyper::Response<HyperOutgoingBody>, ErrorCode>;
-type Outparam = tokio::sync::oneshot::Receiver<Head>;
+type Outparam = Receiver<Head>;
 
 /// How much fuel a store starts with, and so what "spent" is measured
 /// from: the limit, or (unlimited) `u64::MAX`, which no invocation spends
@@ -198,7 +210,7 @@ async fn run_guest(
     pre: ProxyPre<GuestState>,
     state: GuestState,
     request: hyper::Request<Full<Bytes>>,
-    outparam: tokio::sync::oneshot::Sender<Head>,
+    outparam: Sender<Head>,
     deadline: Instant,
     stop: CancellationToken,
     fuel: Option<Option<u64>>,
@@ -246,7 +258,7 @@ async fn run_instance(
     mut store: &mut Store<GuestState>,
     pre: ProxyPre<GuestState>,
     request: hyper::Request<Full<Bytes>>,
-    outparam: tokio::sync::oneshot::Sender<Head>,
+    outparam: Sender<Head>,
 ) -> GuestEnd {
     let proxy = match pre.instantiate_async(&mut store).await {
         Ok(proxy) => proxy,
@@ -260,9 +272,8 @@ async fn run_instance(
         Err(e) if is_out_of_fuel(&e) => return GuestEnd::OutOfFuel,
         Err(e) => return GuestEnd::Failed(format!("instantiation failed: {e:#}")),
     };
-    let body = request.map(|b| {
-        b.map_err(|never: std::convert::Infallible| -> wasmtime_wasi_http::Error { match never {} })
-    });
+    let body = request
+        .map(|b| b.map_err(|never: Infallible| -> wasmtime_wasi_http::Error { match never {} }));
     let incoming = match store
         .data_mut()
         .http()
@@ -310,7 +321,7 @@ impl Invoker for WasmFunction {
         let stdout = GuestOutput::new(self.shared.logger.clone(), tracing::Level::INFO);
         let stderr = GuestOutput::new(self.shared.logger.clone(), tracing::Level::WARN);
         let state = self.state(&context, &stdout, &stderr);
-        let (sender, outparam) = tokio::sync::oneshot::channel();
+        let (sender, outparam) = oneshot::channel();
         let guest = {
             let stop = stop.clone();
             let run = run_guest(
@@ -406,8 +417,8 @@ enum Driven {
 
 impl WasmFunction {
     async fn drive(&self, guest: &mut GuestTask, outparam: Outparam, deadline: Instant) -> Driven {
-        let deadline = tokio::time::Instant::from_std(deadline);
-        let head = match tokio::time::timeout_at(deadline, outparam).await {
+        let deadline = time::Instant::from_std(deadline);
+        let head = match time::timeout_at(deadline, outparam).await {
             Err(_) => {
                 guest.stop.cancel();
                 return Driven::Timeout;
@@ -420,7 +431,7 @@ impl WasmFunction {
         };
         let (parts, body) = head.into_parts();
         let cap = self.shared.response_cap;
-        let body = match tokio::time::timeout_at(deadline, collect_capped(body, cap)).await {
+        let body = match time::timeout_at(deadline, collect_capped(body, cap)).await {
             Err(_) => {
                 guest.stop.cancel();
                 return Driven::Timeout;
@@ -430,10 +441,7 @@ impl WasmFunction {
         };
         // The handler must return before the call ends; the deadline still
         // applies.
-        if tokio::time::timeout_at(deadline, guest.wait())
-            .await
-            .is_err()
-        {
+        if time::timeout_at(deadline, guest.wait()).await.is_err() {
             guest.stop.cancel();
             return Driven::Timeout;
         }
@@ -453,7 +461,7 @@ impl WasmFunction {
 
 /// The spawned guest; `finish_by` always waits for it to be gone.
 struct GuestTask {
-    handle: Option<tokio::task::JoinHandle<GuestEnd>>,
+    handle: Option<JoinHandle<GuestEnd>>,
     /// Set once the task is over (`None` inside: it panicked).
     end: Option<Option<GuestEnd>>,
     stop: CancellationToken,
@@ -472,11 +480,8 @@ impl GuestTask {
 
     /// Waits for the task to end, stopping it at `deadline` if it has not.
     async fn finish_by(&mut self, deadline: Instant) -> Option<GuestEnd> {
-        let deadline = tokio::time::Instant::from_std(deadline);
-        if tokio::time::timeout_at(deadline, self.wait())
-            .await
-            .is_err()
-        {
+        let deadline = time::Instant::from_std(deadline);
+        if time::timeout_at(deadline, self.wait()).await.is_err() {
             self.stop.cancel();
             self.wait().await;
         }
@@ -496,8 +501,8 @@ impl Drop for GuestTask {
 /// The body, whole, or an error once it passes `cap` bytes.
 async fn collect_capped<B>(mut body: B, cap: usize) -> Result<Vec<u8>, String>
 where
-    B: hyper::body::Body<Data = Bytes> + Unpin,
-    B::Error: std::fmt::Debug,
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: fmt::Debug,
 {
     let mut out = Vec::new();
     while let Some(frame) = body.frame().await {
@@ -524,7 +529,7 @@ fn to_request(c: &InvocationContext) -> Result<hyper::Request<Full<Bytes>>, Stri
     let authority = c
         .original_host
         .as_deref()
-        .filter(|h| h.parse::<http::uri::Authority>().is_ok())
+        .filter(|h| h.parse::<Authority>().is_ok())
         .unwrap_or("localhost");
     let uri = http::Uri::builder()
         .scheme("http")
@@ -564,7 +569,7 @@ impl FunctionInstance for WasmFunction {
         self.databases.lock().take();
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }

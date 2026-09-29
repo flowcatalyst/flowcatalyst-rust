@@ -2,6 +2,11 @@
 //! `/bff/events` (SPA, cookie), and the high-volume ingest
 //! `POST /api/events/batch` (`shared::batch_api`, platform infrastructure).
 
+#![allow(
+    clippy::absolute_paths,
+    reason = "handler paths stay fully qualified: the route-auth scanner reads them"
+)]
+
 use axum::extract::DefaultBodyLimit;
 use axum::routing::post;
 use axum::Router;

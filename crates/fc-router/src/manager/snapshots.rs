@@ -12,6 +12,15 @@ use fc_common::PoolStats;
 use crate::pool::ProcessPool;
 
 use super::{PoolState, QueueManager};
+use crate::flight_recorder::EventContext;
+use crate::flight_recorder::EventKind;
+use crate::flight_recorder::Facts;
+use crate::group_flush::GroupSuppression;
+use crate::pool::BufferedMessage;
+use crate::pool::GroupInfo;
+use crate::pool::MediatingEntry;
+use std::cmp::Reverse;
+use std::time::Instant;
 
 impl QueueManager {
     /// Check if any pool has capacity to accept messages.
@@ -65,7 +74,7 @@ impl QueueManager {
             }
             room
         };
-        dest_has_room || rc.deferrals_outstanding(std::time::Instant::now()) < self.deferral_budget
+        dest_has_room || rc.deferrals_outstanding(Instant::now()) < self.deferral_budget
     }
 
     /// Get statistics for all active pools.
@@ -97,7 +106,7 @@ impl QueueManager {
 
     /// Every message currently inside a worker, across every pool this
     /// manager is tracking — the operator "Mediating" dashboard view.
-    pub fn mediating_snapshot(&self) -> Vec<crate::pool::MediatingEntry> {
+    pub fn mediating_snapshot(&self) -> Vec<MediatingEntry> {
         self.all_pools()
             .iter()
             .flat_map(|p| p.mediating_snapshot())
@@ -105,7 +114,7 @@ impl QueueManager {
     }
 
     /// Where `message_id` is buffered behind its group's head, in any pool.
-    pub fn find_buffered(&self, message_id: &str) -> Option<crate::pool::BufferedMessage> {
+    pub fn find_buffered(&self, message_id: &str) -> Option<BufferedMessage> {
         self.all_pools()
             .iter()
             .find_map(|p| p.find_buffered(message_id))
@@ -136,7 +145,7 @@ impl QueueManager {
 
     /// Every live message group across every pool this manager is
     /// tracking — the operator "blocked groups" view (ledger R-04).
-    pub fn blocked_groups(&self) -> Vec<crate::pool::GroupInfo> {
+    pub fn blocked_groups(&self) -> Vec<GroupInfo> {
         self.all_pools()
             .iter()
             .flat_map(|p| p.group_snapshot())
@@ -223,12 +232,12 @@ impl QueueManager {
         self.in_pipeline.remove(&pipeline_key);
         self.app_message_to_pipeline_key.remove(message_id);
         self.flight_recorder.record(
-            crate::flight_recorder::EventKind::Untracked,
-            &crate::flight_recorder::EventContext::new(entry.message_id.as_str())
+            EventKind::Untracked,
+            &EventContext::new(entry.message_id.as_str())
                 .pool(entry.pool_code.as_str())
                 .group(entry.message_group_id.as_deref())
                 .queue(entry.queue_identifier.as_str()),
-            crate::flight_recorder::Facts::text(format!(
+            Facts::text(format!(
                 "force-acked by an operator (broker ack {})",
                 if broker_acked { "succeeded" } else { "failed" }
             )),
@@ -317,7 +326,7 @@ impl QueueManager {
             .collect();
 
         // Sort by elapsed time descending (oldest first)
-        messages.sort_by_key(|m| std::cmp::Reverse(m.elapsed_time_ms));
+        messages.sort_by_key(|m| Reverse(m.elapsed_time_ms));
 
         // Apply limit
         messages.truncate(limit);
@@ -368,9 +377,9 @@ pub struct InFlightMessageInfo {
 
 impl InFlightMessageInfo {
     fn of(t: &super::tracking::Tracked) -> Self {
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let wall = chrono::Utc::now();
-        let ago = |i: std::time::Instant| {
+        let ago = |i: Instant| {
             wall - chrono::Duration::milliseconds(
                 now.saturating_duration_since(i).as_millis() as i64
             )
@@ -415,5 +424,5 @@ pub struct GroupFlushSnapshot {
     pub active_count: usize,
     pub total_flushes: u64,
     pub total_suppressed: u64,
-    pub groups: Vec<crate::group_flush::GroupSuppression>,
+    pub groups: Vec<GroupSuppression>,
 }
