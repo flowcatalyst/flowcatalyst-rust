@@ -3,8 +3,7 @@
 //! Represents a tenant/organization in the multi-tenant system.
 
 use chrono::{DateTime, Utc};
-use fc_platform_core::shared::tsid;
-use fc_platform_core::shared::tsid::EntityType;
+use fc_platform_core::shared::id::ClientId;
 use serde::{Deserialize, Serialize};
 
 /// Client status — matches TypeScript ClientStatus enum
@@ -65,8 +64,7 @@ impl ClientNote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Client {
-    /// TSID as Crockford Base32 string
-    pub id: String,
+    pub id: ClientId,
 
     /// Human-readable name
     pub name: String,
@@ -99,7 +97,7 @@ impl Client {
     pub fn new(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: tsid::generate(EntityType::Client),
+            id: ClientId::generate(),
             name: name.into(),
             identifier: identifier.into(),
             status: ClientStatus::Active,
@@ -157,17 +155,16 @@ mod tests {
     fn test_new_client() {
         let client = Client::new("Acme Corp", "acme-corp");
 
-        assert!(!client.id.is_empty());
         assert!(
-            client.id.starts_with("clt_"),
+            client.id.as_str().starts_with("clt_"),
             "ID should have clt_ prefix, got: {}",
             client.id
         );
         assert_eq!(
-            client.id.len(),
+            client.id.as_str().len(),
             17,
             "Typed ID should be 17 chars, got: {}",
-            client.id.len()
+            client.id.as_str().len()
         );
         assert_eq!(client.name, "Acme Corp");
         assert_eq!(client.identifier, "acme-corp");

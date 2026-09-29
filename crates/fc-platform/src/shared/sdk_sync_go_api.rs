@@ -127,7 +127,7 @@ pub async fn sync_connections(
             };
             let client = client.ok_or_else(|| PlatformError::not_found_code("Client", r))?;
             // The use case checks the caller holds it (403).
-            Some(client.id)
+            Some(client.id.into_string())
         }
         _ => None,
     };

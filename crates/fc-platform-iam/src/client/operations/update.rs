@@ -132,7 +132,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
         client.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = ClientUpdated::new(&ctx, &client.id, &client.name);
+        let event = ClientUpdated::new(&ctx, client.id.as_str(), &client.name);
 
         // Atomic commit
         self.unit_of_work

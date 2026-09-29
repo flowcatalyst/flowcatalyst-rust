@@ -100,7 +100,7 @@ impl<U: UnitOfWork> UseCase for AddClientNoteUseCase<U> {
         let note = ClientNote::new(category, text).with_author(&ctx.principal_id);
         client.add_note(note);
 
-        let event = ClientNoteAdded::new(&ctx, &client.id, category, text);
+        let event = ClientNoteAdded::new(&ctx, client.id.as_str(), category, text);
 
         self.unit_of_work
             .commit(&client, &*self.client_repo, event, &command)

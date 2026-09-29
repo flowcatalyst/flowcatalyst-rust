@@ -120,7 +120,7 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
         client.suspend(reason);
 
         // Create domain event
-        let event = ClientSuspended::new(&ctx, &client.id, reason);
+        let event = ClientSuspended::new(&ctx, client.id.as_str(), reason);
 
         // Atomic commit
         self.unit_of_work

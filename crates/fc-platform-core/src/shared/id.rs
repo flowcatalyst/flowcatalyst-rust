@@ -151,6 +151,20 @@ impl<K> AsRef<str> for Id<K> {
     }
 }
 
+/// An id widens to a plain string freely (the reverse takes `parse`), so
+/// `impl Into<String>` parameters accept one.
+impl<K> From<Id<K>> for String {
+    fn from(id: Id<K>) -> Self {
+        id.0
+    }
+}
+
+impl<K> From<&Id<K>> for String {
+    fn from(id: &Id<K>) -> Self {
+        id.0.clone()
+    }
+}
+
 impl<K: IdKind> FromStr for Id<K> {
     type Err = InvalidId;
     fn from_str(s: &str) -> Result<Self, InvalidId> {

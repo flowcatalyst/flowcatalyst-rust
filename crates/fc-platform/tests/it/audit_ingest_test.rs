@@ -31,7 +31,7 @@ async fn ingest_skips_inaccessible_clients_and_honours_performed_at() {
     let theirs = Client::new("Theirs", "theirs");
     app.repos.client_repo.insert(&mine).await.expect("client");
     app.repos.client_repo.insert(&theirs).await.expect("client");
-    let token = app.service_account_token(&mine.id);
+    let token = app.service_account_token(mine.id.as_str());
 
     let before = Utc::now();
     let resp = app

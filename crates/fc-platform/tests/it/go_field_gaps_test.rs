@@ -34,7 +34,7 @@ async fn setup() -> TestApp {
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
     let c = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&c).await.unwrap();
-    c.id
+    c.id.to_string()
 }
 
 async fn get_json(app: &TestApp, path: &str, token: &str) -> Value {

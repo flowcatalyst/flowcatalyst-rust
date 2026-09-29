@@ -149,7 +149,7 @@ impl ClientSelectionState {
             UserScope::Anchor => {
                 // Anchor users have access to all active clients
                 let clients = self.client_repo.find_active().await?;
-                Ok(clients.into_iter().map(|c| c.id).collect())
+                Ok(clients.into_iter().map(|c| c.id.into_string()).collect())
             }
             UserScope::Client => {
                 // Client users have access to their home client + explicit grants
@@ -235,7 +235,7 @@ pub async fn list_accessible_clients(
         .await?
         .into_iter()
         .map(|client| ClientInfo {
-            id: client.id,
+            id: client.id.to_string(),
             name: client.name,
             identifier: client.identifier,
         })
@@ -305,7 +305,7 @@ pub async fn switch_client(
     Ok(Json(SwitchClientResponse {
         token,
         client: ClientInfo {
-            id: client.id,
+            id: client.id.to_string(),
             name: client.name,
             identifier: client.identifier,
         },
@@ -335,7 +335,7 @@ pub async fn get_current_client(
     let client = if let Some(ref client_id) = principal.client_id {
         if let Some(c) = state.client_repo.find_by_id(client_id).await? {
             Some(ClientInfo {
-                id: c.id,
+                id: c.id.to_string(),
                 name: c.name,
                 identifier: c.identifier,
             })

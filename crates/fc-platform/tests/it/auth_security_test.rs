@@ -559,7 +559,7 @@ async fn client_selection_and_passkeys_take_the_session_cookie_only() {
     for client in &clients {
         app.repos
             .principal_repo
-            .grant_client_access(partner.id.as_str(), &client.id)
+            .grant_client_access(partner.id.as_str(), client.id.as_str())
             .await
             .unwrap();
     }

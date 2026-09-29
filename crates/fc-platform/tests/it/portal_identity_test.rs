@@ -49,7 +49,7 @@ async fn client(app: &TestApp, identifier: &str) -> String {
         .insert(&c)
         .await
         .expect("insert client");
-    c.id
+    c.id.to_string()
 }
 
 /// A client-scoped user holding `platform:portal-administrator` for `client_id`.

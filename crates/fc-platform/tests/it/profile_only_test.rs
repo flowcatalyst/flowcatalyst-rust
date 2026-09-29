@@ -60,7 +60,7 @@ async fn a_roleless_user_reaches_only_its_profile() {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // A service account without roles is exempt: its route answers.
-    let service = app.service_account_token(&client.id);
+    let service = app.service_account_token(client.id.as_str());
     let (status, body) = read_json(app.get("/api/clients", &service).await).await;
     assert_ne!(body["error"], "NO_PLATFORM_ROLE", "{status} {body}");
 

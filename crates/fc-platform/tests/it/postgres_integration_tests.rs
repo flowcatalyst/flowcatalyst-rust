@@ -98,7 +98,7 @@ async fn test_client_crud() {
 
     // Read
     let found = repo
-        .find_by_id(&client.id)
+        .find_by_id(client.id.as_str())
         .await
         .expect("Failed to find client");
     assert!(found.is_some());
@@ -126,7 +126,7 @@ async fn test_client_crud() {
         .await
         .expect("Failed to update client");
 
-    let suspended = repo.find_by_id(&client.id).await.unwrap().unwrap();
+    let suspended = repo.find_by_id(client.id.as_str()).await.unwrap().unwrap();
     assert_eq!(suspended.status, ClientStatus::Suspended);
     assert_eq!(
         suspended.status_reason,
@@ -242,9 +242,9 @@ async fn test_principal_with_client_access() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(found.client_id, Some(client.id.clone()));
+    assert_eq!(found.client_id, Some(client.id.to_string()));
     assert_eq!(found.scope, UserScope::Client);
-    assert!(found.can_access_client(&client.id));
+    assert!(found.can_access_client(client.id.as_str()));
 }
 
 // ─── Role Repository Tests ───────────────────────────────────────────────
@@ -578,7 +578,7 @@ async fn test_unit_of_work_commit() {
     // Commit an event via UnitOfWork
     let uow = PgUnitOfWork::new(pool.clone());
     let ctx = ExecutionContext::system("test-principal-id");
-    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
+    let event = ClientCreated::new(&ctx, client.id.as_str(), &client.name, &client.identifier);
 
     #[derive(serde::Serialize)]
     struct CreateClientCommand {
@@ -603,7 +603,7 @@ async fn test_unit_of_work_commit() {
     // Verify audit log was persisted
     let audit_repo = AuditLogRepository::new(&pool);
     let logs = audit_repo
-        .find_by_entity("Client", &client.id, 10)
+        .find_by_entity("Client", client.id.as_str(), 10)
         .await
         .expect("Failed to query audit logs");
     assert!(!logs.is_empty(), "At least one audit log should exist");
@@ -636,7 +636,8 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
         let repo = &client_repo;
         let ctx = &ctx;
         async move {
-            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier);
+            let event =
+                ClientCreated::new(ctx, client.id.as_str(), &client.name, &client.identifier);
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };

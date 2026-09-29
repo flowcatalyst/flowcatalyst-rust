@@ -348,10 +348,34 @@ async fn functions_crud_reach_and_pagination() {
         is_micros_timestamp(&platform_fn["createdAt"]),
         "{platform_fn}"
     );
-    let a_fn = create_function(&app, &anchor, "billing", "invoices", "a-only", Some(&a.id)).await;
-    assert_eq!(a_fn["clientId"], a.id);
-    let b_fn = create_function(&app, &anchor, "billing", "invoices", "b-only", Some(&b.id)).await;
-    let a_ship = create_function(&app, &anchor, "shipping", "labels", "print", Some(&a.id)).await;
+    let a_fn = create_function(
+        &app,
+        &anchor,
+        "billing",
+        "invoices",
+        "a-only",
+        Some(a.id.as_str()),
+    )
+    .await;
+    assert_eq!(a_fn["clientId"], a.id.as_str());
+    let b_fn = create_function(
+        &app,
+        &anchor,
+        "billing",
+        "invoices",
+        "b-only",
+        Some(b.id.as_str()),
+    )
+    .await;
+    let a_ship = create_function(
+        &app,
+        &anchor,
+        "shipping",
+        "labels",
+        "print",
+        Some(a.id.as_str()),
+    )
+    .await;
 
     // Create failures, with Java's codes.
     let body = |app_code: &str, runtime: &str| json!({"applicationCode": app_code, "serviceName": "invoices", "name": "create", "runtime": runtime});
@@ -412,7 +436,7 @@ async fn functions_crud_reach_and_pagination() {
     // 403 SCOPE_FORBIDDEN (nothing exists yet to hide).
     let a_manager = token(
         &app,
-        As::client(&[&a.id], &[FUNCTION_VIEW, FUNCTION_MANAGE]),
+        As::client(&[a.id.as_str()], &[FUNCTION_VIEW, FUNCTION_MANAGE]),
     )
     .await;
     let mut for_b = body("billing", "wasm");
@@ -582,7 +606,7 @@ async fn functions_crud_reach_and_pagination() {
         &app,
         As {
             applications: Some(&[&billing.id]),
-            ..As::client(&[&a.id], &[FUNCTION_VIEW])
+            ..As::client(&[a.id.as_str()], &[FUNCTION_VIEW])
         },
     )
     .await;
@@ -609,7 +633,7 @@ async fn functions_crud_reach_and_pagination() {
         &app,
         As {
             applications: Some(&[&billing.id]),
-            ..As::client(&[&a.id], &[FUNCTION_MANAGE])
+            ..As::client(&[a.id.as_str()], &[FUNCTION_MANAGE])
         },
     )
     .await;
@@ -759,7 +783,15 @@ async fn status_pools_and_live() {
     let a = client(&app, "acme").await;
     let b = client(&app, "bravo").await;
     let anchor = token(&app, As::anchor(ALL)).await;
-    let f = create_function(&app, &anchor, "billing", "invoices", "create", Some(&a.id)).await;
+    let f = create_function(
+        &app,
+        &anchor,
+        "billing",
+        "invoices",
+        "create",
+        Some(a.id.as_str()),
+    )
+    .await;
     let fid = f["id"].as_str().unwrap();
     let path = "/api/functions/billing.invoices.create";
 
@@ -849,12 +881,12 @@ async fn status_pools_and_live() {
     assert_eq!(list["data"][0]["live"]["version"], 1);
 
     // Status reach: the owning client yes, another client 404.
-    let owner = token(&app, As::client(&[&a.id], &[FUNCTION_VIEW])).await;
+    let owner = token(&app, As::client(&[a.id.as_str()], &[FUNCTION_VIEW])).await;
     assert_eq!(
         get(&app, &format!("{path}/status"), &owner).await.0,
         StatusCode::OK
     );
-    let stranger = token(&app, As::client(&[&b.id], &[FUNCTION_VIEW])).await;
+    let stranger = token(&app, As::client(&[b.id.as_str()], &[FUNCTION_VIEW])).await;
     assert_error(
         &get(&app, &format!("{path}/status"), &stranger).await,
         StatusCode::NOT_FOUND,
@@ -1293,7 +1325,11 @@ async fn policies() {
         StatusCode::BAD_REQUEST,
         "CEILING_INVALID",
     );
-    let non_anchor = token(&app, As::client(&[&low.id], &[FUNCTION_POLICY_MANAGE])).await;
+    let non_anchor = token(
+        &app,
+        As::client(&[low.id.as_str()], &[FUNCTION_POLICY_MANAGE]),
+    )
+    .await;
     assert_error(
         &get(&app, "/api/function-policies", &non_anchor).await,
         StatusCode::FORBIDDEN,
@@ -1392,7 +1428,7 @@ async fn domains_and_routes() {
     );
     let a_manager = token(
         &app,
-        As::client(&[&a.id], &[FUNCTION_VIEW, FUNCTION_DOMAIN_MANAGE]),
+        As::client(&[a.id.as_str()], &[FUNCTION_VIEW, FUNCTION_DOMAIN_MANAGE]),
     )
     .await;
     assert_error(
@@ -1434,7 +1470,7 @@ async fn domains_and_routes() {
     )
     .await;
     assert_eq!(of_a[0]["hostname"], "api.example.org");
-    assert_eq!(of_a[0]["owner"], a.id);
+    assert_eq!(of_a[0]["owner"], a.id.as_str());
     let (status, hidden) = get(&app, "/api/function-domains?clientId=platform", &a_manager).await;
     assert_eq!((status, hidden), (StatusCode::OK, json!([])));
 
@@ -1449,7 +1485,7 @@ async fn domains_and_routes() {
     assert_eq!(zone["hostname"], "api.example.org");
     let b_viewer = token(
         &app,
-        As::client(&[&b.id], &[FUNCTION_VIEW, FUNCTION_DOMAIN_MANAGE]),
+        As::client(&[b.id.as_str()], &[FUNCTION_VIEW, FUNCTION_DOMAIN_MANAGE]),
     )
     .await;
     assert_error(
@@ -1474,8 +1510,24 @@ async fn domains_and_routes() {
     );
 
     // Routes (written at promote in P5; inserted here).
-    let a_fn = create_function(&app, &anchor, "billing", "invoices", "create", Some(&a.id)).await;
-    let b_fn = create_function(&app, &anchor, "billing", "invoices", "other", Some(&b.id)).await;
+    let a_fn = create_function(
+        &app,
+        &anchor,
+        "billing",
+        "invoices",
+        "create",
+        Some(a.id.as_str()),
+    )
+    .await;
+    let b_fn = create_function(
+        &app,
+        &anchor,
+        "billing",
+        "invoices",
+        "other",
+        Some(b.id.as_str()),
+    )
+    .await;
     for (id, fid, host, prefix, aliases) in [
         (
             "fnr_1",

@@ -547,12 +547,12 @@ async fn upload_checks_run_in_javas_order() {
     );
     let no_store = router(&app, dev_mode(), None, FunctionLimits::defaults());
     let t = anchor(&app).await;
-    let f = create_function(&r, &t, "billing", "up", Some(&acme.id)).await;
+    let f = create_function(&r, &t, "billing", "up", Some(acme.id.as_str())).await;
     let fid = f["id"].as_str().unwrap();
     let bytes = b"artifact".to_vec();
     let digest = digest_of(&bytes);
     let viewer = token(&app, UserScope::Anchor, &[], &[FUNCTION_VIEW]).await;
-    let other_client = token(&app, UserScope::Client, &[&bravo.id], ALL).await;
+    let other_client = token(&app, UserScope::Client, &[bravo.id.as_str()], ALL).await;
 
     // No store: 503, even for a caller without the permission.
     let got = upload(
@@ -646,7 +646,7 @@ async fn publish_refuses_bad_refs_unreachable_disabled_and_bad_manifests() {
     );
     let no_store = router(&app, dev_mode(), None, FunctionLimits::defaults());
     let t = anchor(&app).await;
-    let f = create_function(&r, &t, "billing", "pub", Some(&acme.id)).await;
+    let f = create_function(&r, &t, "billing", "pub", Some(acme.id.as_str())).await;
     let fid = f["id"].as_str().unwrap().to_string();
     let other = create_function(&r, &t, "billing", "other", None).await;
     let path = "/api/functions/billing.svc.pub/versions";
@@ -733,7 +733,7 @@ async fn publish_refuses_bad_refs_unreachable_disabled_and_bad_manifests() {
     assert_error(&jvm, StatusCode::BAD_REQUEST, "RUNTIME_MISMATCH");
 
     // Out of reach: 404, never 403; without the permission: 403.
-    let other_client = token(&app, UserScope::Client, &[&bravo.id], ALL).await;
+    let other_client = token(&app, UserScope::Client, &[bravo.id.as_str()], ALL).await;
     assert_error(
         &post(&r, path, &other_client, publish_body("oci://r/c", &digest)).await,
         StatusCode::NOT_FOUND,

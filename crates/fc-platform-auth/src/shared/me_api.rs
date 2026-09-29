@@ -148,9 +148,9 @@ pub async fn list_my_clients(
 
     let accessible: Vec<_> = all_clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| MyClientResponse {
-            id: c.id,
+            id: c.id.to_string(),
             name: c.name,
             identifier: c.identifier,
             status: Some(c.status.as_str().to_string()),
@@ -193,12 +193,12 @@ pub async fn get_my_client(
         .await?
         .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
 
-    if !auth.0.is_anchor() && !auth.0.can_access_client(&client.id) {
+    if !auth.0.is_anchor() && !auth.0.can_access_client(client.id.as_str()) {
         return Err(PlatformError::forbidden("No access to this client"));
     }
 
     Ok(Json(MyClientResponse {
-        id: client.id,
+        id: client.id.to_string(),
         name: client.name,
         identifier: client.identifier,
         status: Some(client.status.as_str().to_string()),

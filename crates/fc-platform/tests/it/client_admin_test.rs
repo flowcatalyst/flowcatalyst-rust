@@ -48,7 +48,7 @@ async fn setup() -> Fixture {
     // Only hr is enabled for my client.
     app.repos
         .application_client_config_repo
-        .enable_for_client(&hr.id, &mine.id)
+        .enable_for_client(&hr.id, mine.id.as_str())
         .await
         .expect("enable hr");
     for (application, name) in [(&hr, "clerk"), (&other_app, "clerk")] {
@@ -73,8 +73,8 @@ async fn setup() -> Fixture {
 
     Fixture {
         admin,
-        mine: mine.id,
-        theirs: theirs.id,
+        mine: mine.id.to_string(),
+        theirs: theirs.id.to_string(),
         hr,
         other_app,
         app,

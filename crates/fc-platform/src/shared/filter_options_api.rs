@@ -97,9 +97,9 @@ pub async fn get_client_options(
     // Filter by access
     let options: Vec<FilterOption> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| FilterOption {
-            value: c.id,
+            value: c.id.to_string(),
             label: c.name,
         })
         .collect();
@@ -264,9 +264,9 @@ pub async fn get_all_options(
 
     let client_options: Vec<FilterOption> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| FilterOption {
-            value: c.id,
+            value: c.id.to_string(),
             label: c.name,
         })
         .collect();
@@ -370,9 +370,9 @@ pub async fn get_events_filter_options(
     let clients = state.client_repo.find_active().await?;
     let client_options: Vec<FilterOption> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| FilterOption {
-            value: c.id,
+            value: c.id.to_string(),
             label: c.name,
         })
         .collect();
@@ -452,9 +452,9 @@ pub async fn get_dispatch_jobs_filter_options(
     let clients = state.client_repo.find_active().await?;
     let client_options: Vec<FilterOption> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| FilterOption {
-            value: c.id,
+            value: c.id.to_string(),
             label: c.name,
         })
         .collect();

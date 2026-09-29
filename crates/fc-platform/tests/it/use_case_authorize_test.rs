@@ -59,7 +59,7 @@ fn refusal<T: fmt::Debug>(r: fc_platform::UseCaseResult<T>) -> UseCaseError {
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
     let client = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&client).await.unwrap();
-    client.id
+    client.id.to_string()
 }
 
 async fn insert_user(

@@ -1135,14 +1135,14 @@ pub(super) async fn resolve_client_ref(
     reference: &str,
 ) -> Result<String, PlatformError> {
     if let Some(client) = state.client_repo.find_by_id(reference).await? {
-        return Ok(client.id);
+        return Ok(client.id.to_string());
     }
     if let Some(client) = state
         .client_repo
         .find_by_identifier(&reference.to_lowercase())
         .await?
     {
-        return Ok(client.id);
+        return Ok(client.id.to_string());
     }
     Err(PlatformError::Coded {
         status: StatusCode::NOT_FOUND,

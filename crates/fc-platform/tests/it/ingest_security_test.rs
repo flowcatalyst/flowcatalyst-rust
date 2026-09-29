@@ -49,7 +49,7 @@ async fn create_client(app: &TestApp, identifier: &str) -> String {
         .insert(&client)
         .await
         .expect("insert client");
-    client.id
+    client.id.to_string()
 }
 
 async fn create_application(app: &TestApp, code: &str) -> String {

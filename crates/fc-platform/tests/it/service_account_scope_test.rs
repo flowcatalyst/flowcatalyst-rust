@@ -27,7 +27,7 @@ async fn create_client(app: &TestApp, identifier: &str) -> String {
         .insert(&client)
         .await
         .expect("insert client");
-    client.id
+    client.id.to_string()
 }
 
 async fn create_sa(app: &TestApp, body: Value) -> (StatusCode, Value) {

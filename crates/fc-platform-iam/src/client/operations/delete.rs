@@ -80,7 +80,10 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         // `iam_principals.client_id` is a code-enforced reference (no DB-level FK).
         // Silently orphaning a user's home client would change their scope
         // without explicit action — force the admin to migrate them first.
-        let home_principals = self.client_repo.count_home_principals(&client.id).await?;
+        let home_principals = self
+            .client_repo
+            .count_home_principals(client.id.as_str())
+            .await?;
         if home_principals > 0 {
             return Err(UseCaseError::business_rule(
                 "CLIENT_HAS_PRINCIPALS",
@@ -95,8 +98,14 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         // Business rules: refuse when any code-enforced reference still
         // points at this client. None of these have DB-level FKs — each
         // must be explicitly unwired before deletion.
-        let grants = self.client_repo.count_access_grants(&client.id).await?;
-        let configs = self.client_repo.count_client_configs(&client.id).await?;
+        let grants = self
+            .client_repo
+            .count_access_grants(client.id.as_str())
+            .await?;
+        let configs = self
+            .client_repo
+            .count_client_configs(client.id.as_str())
+            .await?;
 
         let refs = [("access grants", grants), ("application configs", configs)];
         let blockers: Vec<String> = refs
@@ -116,7 +125,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
             ));
         }
 
-        let event = ClientDeleted::new(&ctx, &client.id, &client.identifier);
+        let event = ClientDeleted::new(&ctx, client.id.as_str(), &client.identifier);
 
         self.unit_of_work
             .commit_delete(&client, &*self.client_repo, event, &command)

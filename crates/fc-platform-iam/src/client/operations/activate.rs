@@ -92,7 +92,7 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         client.activate();
 
         // Create domain event
-        let event = ClientActivated::new(&ctx, &client.id);
+        let event = ClientActivated::new(&ctx, client.id.as_str());
 
         // Atomic commit
         self.unit_of_work

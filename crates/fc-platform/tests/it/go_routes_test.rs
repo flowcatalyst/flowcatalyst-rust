@@ -1011,7 +1011,7 @@ async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
 async fn insert_client(app: &TestApp, identifier: &str) -> String {
     let c = Client::new(identifier.to_uppercase(), identifier);
     app.repos.client_repo.insert(&c).await.unwrap();
-    c.id
+    c.id.to_string()
 }
 
 #[tokio::test]

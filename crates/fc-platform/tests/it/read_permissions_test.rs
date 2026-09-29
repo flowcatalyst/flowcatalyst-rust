@@ -280,7 +280,12 @@ async fn every_read_answers_as_go_for_an_under_privileged_caller() {
         }
 
         // The permission without anchor reach.
-        let client_caller = caller(&app, UserScope::Client, Some(&client.id), &[permission]);
+        let client_caller = caller(
+            &app,
+            UserScope::Client,
+            Some(client.id.as_str()),
+            &[permission],
+        );
         let (status, body) = read_json(app.get(path, &client_caller).await).await;
         let refused = status == StatusCode::FORBIDDEN;
         if *anchor && !refused {
@@ -343,7 +348,7 @@ async fn principal_self_read_and_out_of_reach_rows_answer_as_go() {
     let reader = caller(
         &app,
         UserScope::Client,
-        Some(&mine.id),
+        Some(mine.id.as_str()),
         &[permissions::iam::USER_READ],
     );
     let (status, _) = read_json(

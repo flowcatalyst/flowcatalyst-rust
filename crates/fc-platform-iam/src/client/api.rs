@@ -110,7 +110,7 @@ pub struct ClientNoteResponse {
 impl From<Client> for ClientResponse {
     fn from(c: Client) -> Self {
         Self {
-            id: c.id,
+            id: c.id.to_string(),
             name: c.name,
             identifier: c.identifier,
             status: c.status.as_str().to_string(),
@@ -343,7 +343,7 @@ pub async fn list_clients(
     // Filter by access
     let filtered: Vec<ClientResponse> = clients
         .into_iter()
-        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(&c.id))
+        .filter(|c| auth.0.is_anchor() || auth.0.can_access_client(c.id.as_str()))
         .map(|c| c.into())
         .collect();
 
@@ -614,7 +614,7 @@ pub async fn search_clients(
     } else {
         clients
             .into_iter()
-            .filter(|c| auth.0.can_access_client(&c.id))
+            .filter(|c| auth.0.can_access_client(c.id.as_str()))
             .collect()
     };
 
@@ -656,7 +656,7 @@ pub async fn get_client_by_identifier(
         .ok_or_else(|| PlatformError::not_found("Client", &identifier))?;
 
     // Check access
-    access::ensure_visible(&auth.0, &client.id)?;
+    access::ensure_visible(&auth.0, client.id.as_str())?;
 
     Ok(Json(client.into()))
 }
@@ -941,11 +941,12 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use chrono::Utc;
+    use fc_platform_core::shared::id::ClientId;
 
     fn make_test_client() -> Client {
         let now = Utc::now();
         Client {
-            id: "clt_ABCDEFGHIJKLM".to_string(),
+            id: ClientId::parse("clt_ABCDEFGHIJKLM").unwrap(),
             name: "Acme Corporation".to_string(),
             identifier: "acme-corp".to_string(),
             status: ClientStatus::Active,

@@ -8,6 +8,7 @@ use crate::client::entity;
 use fc_platform_core::directory::{ClientDirectory, ClientRef};
 use fc_platform_core::shared::enum_str::decode;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::id::decode_id;
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
 use fc_platform_core::usecase::Persist;
@@ -37,7 +38,7 @@ impl TryFrom<ClientRow> for Client {
             .unwrap_or_default();
 
         Ok(Self {
-            id: r.id,
+            id: decode_id(&r.id, "tnt_clients", "id", &r.id)?,
             name: r.name,
             identifier: r.identifier,
             status,
@@ -269,7 +270,7 @@ impl ClientRepository {
 
 impl HasId for Client {
     fn id(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -342,7 +343,7 @@ impl ClientRepository {
 fn client_ref(c: Client) -> ClientRef {
     ClientRef {
         active: c.status == entity::ClientStatus::Active,
-        id: c.id,
+        id: c.id.to_string(),
         name: c.name,
         identifier: c.identifier,
     }

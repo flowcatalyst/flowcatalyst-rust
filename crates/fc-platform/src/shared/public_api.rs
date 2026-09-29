@@ -125,7 +125,7 @@ pub(super) async fn get_login_theme(
             .filter(|c| !c.is_empty())
         {
             match state.client_repo.find_by_identifier(ident).await {
-                Ok(found) => client_id = found.map(|c| c.id),
+                Ok(found) => client_id = found.map(|c| c.id.into_string()),
                 Err(e) => {
                     tracing::warn!(identifier = %ident, error = %e, "login theme: client lookup failed")
                 }
