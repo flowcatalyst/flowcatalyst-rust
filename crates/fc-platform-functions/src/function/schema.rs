@@ -184,4 +184,3 @@ mod drift_tests {
         assert_eq!(&mine - &theirs, set(["component", "js"]));
     }
 }
-
