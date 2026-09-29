@@ -68,6 +68,9 @@ pub enum EventKind {
     AckFailed,
     /// Nacked on the broker (terminal for this copy), with its delay.
     Nacked,
+    /// A nack the broker did not take (error or timeout); it redelivers at
+    /// its own visibility timeout.
+    NackFailed,
     /// The callback was dropped unresolved (a panic or cancel); the
     /// fallback nack ran.
     Abandoned,

@@ -19,6 +19,7 @@ use fc_queue::QueueConsumer;
 use crate::error::RouterError;
 use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
 use crate::Result;
+use std::result::Result as StdResult;
 
 use super::tracking::Tracked;
 use super::{ConsumerRegistry, QueueManager, RunningConsumer};
@@ -56,6 +57,55 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
 /// redelivery is deleted on sight); a nack that times out leaves the message
 /// to the broker's own visibility timeout. Go sets no such bound.
 const BROKER_OP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Nack `handle` under `BROKER_OP_TIMEOUT`; a hung broker call must not stall
+/// the poll loop. A failed nack is left to the broker's visibility timeout.
+async fn nack_bounded(
+    consumer: &dyn QueueConsumer,
+    handle: &str,
+    delay: Option<u32>,
+) -> StdResult<(), String> {
+    match time::timeout(BROKER_OP_TIMEOUT, consumer.nack(handle, delay)).await {
+        Ok(r) => r.map_err(|e| e.to_string()),
+        Err(_) => Err(format!(
+            "nack did not complete within {BROKER_OP_TIMEOUT:?}"
+        )),
+    }
+}
+
+/// Nack, then record `kind`/`fact` only if the nack happened; otherwise record
+/// `NackFailed` carrying the same reason, so the trail never claims a nack
+/// the broker didn't take.
+async fn nack_recorded(
+    consumer: &dyn QueueConsumer,
+    recorder: &FlightRecorder,
+    ctx: &EventContext,
+    handle: &str,
+    delay: Option<u32>,
+    kind: EventKind,
+    fact: String,
+) {
+    match nack_bounded(consumer, handle, delay).await {
+        Ok(()) => recorder.record(kind, ctx, Facts::text(fact)),
+        Err(e) => {
+            warn!(error = %e, "NACK failed; the broker redelivers at its own timeout");
+            recorder.record(
+                EventKind::NackFailed,
+                ctx,
+                Facts::text(format!("{fact}; nack failed: {e}")),
+            );
+        }
+    }
+}
+
+/// Ack `handle` under `BROKER_OP_TIMEOUT`, flattening a timeout and a broker
+/// error into one message so side paths can record what actually happened.
+async fn ack_bounded(consumer: &dyn QueueConsumer, handle: &str) -> StdResult<(), String> {
+    match time::timeout(BROKER_OP_TIMEOUT, consumer.ack(handle)).await {
+        Ok(r) => r.map_err(|e| e.to_string()),
+        Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
+    }
+}
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
@@ -290,29 +340,20 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
         if let Some(handle) = handle {
-            self.recorder.record(
-                EventKind::Nacked,
-                &self.event_ctx,
-                Facts {
-                    delay_secs: delay_seconds,
-                    ..Facts::default()
-                },
-            );
-            match time::timeout(
-                BROKER_OP_TIMEOUT,
-                self.consumer().nack(&handle, delay_seconds),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    debug!(app_message_id = %self.app_message_id, error = %e, "NACK failed; the broker redelivers at its own timeout")
-                }
-                Err(_) => warn!(
-                    app_message_id = %self.app_message_id,
-                    "NACK did not complete within {:?}; the broker redelivers at its own timeout",
-                    BROKER_OP_TIMEOUT
+            match nack_bounded(self.consumer().as_ref(), &handle, delay_seconds).await {
+                Ok(()) => self.recorder.record(
+                    EventKind::Nacked,
+                    &self.event_ctx,
+                    Facts {
+                        delay_secs: delay_seconds,
+                        ..Facts::default()
+                    },
                 ),
+                Err(e) => {
+                    warn!(app_message_id = %self.app_message_id, error = %e, "NACK failed; the broker redelivers at its own timeout");
+                    self.recorder
+                        .record(EventKind::NackFailed, &self.event_ctx, Facts::text(e));
+                }
             }
         }
 
@@ -362,7 +403,9 @@ impl Drop for QueueMessageCallback {
             if let Ok(rt) = Handle::try_current() {
                 let consumer = self.consumer();
                 rt.spawn(async move {
-                    let _ = consumer.nack(&handle, Some(10)).await;
+                    if let Err(e) = nack_bounded(consumer.as_ref(), &handle, Some(10)).await {
+                        warn!(error = %e, "fallback NACK failed; the broker redelivers at its own timeout");
+                    }
                 });
             }
         }
@@ -459,7 +502,9 @@ impl QueueManager {
                     let consumer = consumer.clone();
                     let handle = msg.receipt_handle.clone();
                     async move {
-                        let _ = consumer.nack(&handle, None).await;
+                        if let Err(e) = nack_bounded(consumer.as_ref(), &handle, None).await {
+                            warn!(error = %e, "shutdown NACK failed; the broker redelivers at its own timeout");
+                        }
                     }
                 })
                 .collect();
@@ -515,6 +560,10 @@ impl QueueManager {
                     let broker_id = msg.broker_message_id.clone();
                     let app_id = msg.message.id.clone();
                     let recorder = self.flight_recorder.clone();
+                    let pending_delete = self.pending_delete_broker_ids.clone();
+                    let scope_key = broker_id
+                        .as_ref()
+                        .map(|bid| broker_scope_key(&msg.queue_identifier, bid));
                     let ctx = EventContext::new(msg.message.id.as_str())
                         .queue(msg.queue_identifier.as_str());
                     async move {
@@ -523,8 +572,22 @@ impl QueueManager {
                             app_message_id = %app_id,
                             "Message was previously processed - deleting from queue now"
                         );
-                        let _ = consumer.ack(&handle).await;
-                        recorder.record(EventKind::Acked, &ctx, Facts::text("already processed; its earlier ack had failed, deleted on redelivery".to_string()));
+                        match ack_bounded(consumer.as_ref(), &handle).await {
+                            Ok(()) => recorder.record(EventKind::Acked, &ctx, Facts::text("already processed; its earlier ack had failed, deleted on redelivery".to_string())),
+                            Err(e) => {
+                                warn!(
+                                    app_message_id = %app_id,
+                                    error = %e,
+                                    "Delete of previously processed message failed - keeping it pending delete"
+                                );
+                                // The entry was consumed in Phase 0; put it back so the
+                                // next redelivery retries the delete.
+                                if let Some(key) = scope_key {
+                                    pending_delete.insert(key, Instant::now());
+                                }
+                                recorder.record(EventKind::AckFailed, &ctx, Facts::text(e));
+                            }
+                        }
                     }
                 })
                 .collect();
@@ -572,10 +635,15 @@ impl QueueManager {
                 let handle = req.message.receipt_handle.clone();
                 let msg_id = req.message.message.id.clone();
                 let key = req.existing_pipeline_key.clone();
-                self.flight_recorder.record(EventKind::DuplicateAcked, &EventContext::new(msg_id.as_str()).queue(req.message.queue_identifier.as_str()), Facts::text("a new copy of a message already in the pipeline; acked".to_string()));
+                let recorder = self.flight_recorder.clone();
+                let ctx = EventContext::new(msg_id.as_str()).queue(req.message.queue_identifier.as_str());
                 async move {
                     debug!(message_id = %msg_id, pipeline_key = %key, "Requeued duplicate, ACKing");
-                    let _ = consumer.ack(&handle).await;
+                    match ack_bounded(consumer.as_ref(), &handle).await {
+                        Ok(()) => recorder.record(EventKind::DuplicateAcked, &ctx, Facts::text("a new copy of a message already in the pipeline; acked".to_string())),
+                        // The broker redelivers this copy and it is filtered again.
+                        Err(e) => recorder.record(EventKind::AckFailed, &ctx, Facts::text(e)),
+                    }
                 }
             }).collect();
             future::join_all(requeue_futs).await;
@@ -660,16 +728,18 @@ impl QueueManager {
                     error!(pool_code = %pool_code, error = %e, "Failed to get/create pool");
                     // NACK all messages for this pool
                     for msg in pool_messages {
-                        self.flight_recorder.record(
-                            EventKind::Rejected,
+                        nack_recorded(
+                            consumer.as_ref(),
+                            &self.flight_recorder,
                             &EventContext::new(msg.message.id.as_str())
                                 .pool(pool_code.as_str())
                                 .queue(msg.queue_identifier.as_str()),
-                            Facts::text(format!(
-                                "pool could not be created ({e}); nacked, visible in 5s"
-                            )),
-                        );
-                        let _ = consumer.nack(&msg.receipt_handle, Some(5)).await;
+                            &msg.receipt_handle,
+                            Some(5),
+                            EventKind::Rejected,
+                            format!("pool could not be created ({e}); nacked, visible in 5s"),
+                        )
+                        .await;
                     }
                     continue;
                 }
@@ -754,11 +824,19 @@ impl QueueManager {
                             group_id = %group_id,
                             "NACKing message - previous message in group failed submission"
                         );
-                        self.flight_recorder.record(EventKind::Rejected, &EventContext::new(msg.message.id.as_str())
+                        nack_recorded(
+                            consumer.as_ref(),
+                            &self.flight_recorder,
+                            &EventContext::new(msg.message.id.as_str())
                                 .pool(pool_code.as_str())
                                 .group(msg.message.message_group_id.as_deref())
-                                .queue(msg.queue_identifier.as_str()), Facts::text("the message ahead of it in its group failed submission; nacked, visible in 5s".to_string()));
-                        let _ = consumer.nack(&msg.receipt_handle, Some(5)).await;
+                                .queue(msg.queue_identifier.as_str()),
+                            &msg.receipt_handle,
+                            Some(5),
+                            EventKind::Rejected,
+                            "the message ahead of it in its group failed submission; nacked, visible in 5s".to_string(),
+                        )
+                        .await;
                         continue;
                     }
 
@@ -863,18 +941,21 @@ impl QueueManager {
                             error = %e,
                             "Failed to submit to pool - NACKing this and remaining messages in group"
                         );
-                        self.flight_recorder.record(
-                            EventKind::Rejected,
-                            &event_ctx,
-                            Facts::text(format!("submit failed ({e}); nacked, visible in 5s")),
-                        );
-
                         // Remove from pipeline since we're NACKing
                         self.in_pipeline.remove(&pipeline_key);
                         self.app_message_to_pipeline_key.remove(&app_message_id);
 
                         // NACK this message
-                        let _ = consumer.nack(&receipt_handle, Some(5)).await;
+                        nack_recorded(
+                            consumer.as_ref(),
+                            &self.flight_recorder,
+                            &event_ctx,
+                            &receipt_handle,
+                            Some(5),
+                            EventKind::Rejected,
+                            format!("submit failed ({e}); nacked, visible in 5s"),
+                        )
+                        .await;
 
                         // Set flag to NACK all remaining messages in this group (FIFO enforcement)
                         nack_remaining = true;
@@ -1274,6 +1355,80 @@ mod callback_drop_tests {
             0,
             "no fallback nack after explicit ack"
         );
+    }
+
+    /// A broker whose ack and nack always fail.
+    struct FailingConsumer;
+
+    #[async_trait]
+    impl QueueConsumer for FailingConsumer {
+        fn identifier(&self) -> &str {
+            "failing"
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            Err(fc_queue::QueueError::NotFound("gone".to_string()))
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            Err(fc_queue::QueueError::NotFound("gone".to_string()))
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    #[tokio::test]
+    async fn failed_nack_is_recorded_as_nack_failed_not_as_the_decision() {
+        let recorder = FlightRecorder::new(64);
+        let ctx = EventContext::new("m1").queue("q");
+        nack_recorded(
+            &FailingConsumer,
+            &recorder,
+            &ctx,
+            "h",
+            Some(5),
+            EventKind::Rejected,
+            "submit failed; nacked, visible in 5s".to_string(),
+        )
+        .await;
+        let kinds: Vec<_> = recorder.for_message("m1").iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![EventKind::NackFailed]);
+
+        let ok = Arc::new(RecordingConsumer::default());
+        nack_recorded(
+            ok.as_ref(),
+            &recorder,
+            &EventContext::new("m2").queue("q"),
+            "h",
+            Some(5),
+            EventKind::Rejected,
+            "x".to_string(),
+        )
+        .await;
+        let kinds: Vec<_> = recorder.for_message("m2").iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![EventKind::Rejected]);
+    }
+
+    #[tokio::test]
+    async fn callback_nack_failure_records_nack_failed() {
+        let ok = Arc::new(RecordingConsumer::default());
+        let (mut cb, _p, _a) = build_callback(ok);
+        cb.origin = Arc::new(FailingConsumer);
+        let recorder = cb.recorder.clone();
+        cb.nack(Some(15)).await;
+        let kinds: Vec<_> = recorder
+            .for_message("app-msg-1")
+            .iter()
+            .map(|e| e.kind)
+            .collect();
+        assert!(kinds.contains(&EventKind::NackFailed));
+        assert!(!kinds.contains(&EventKind::Nacked));
     }
 
     #[tokio::test]
