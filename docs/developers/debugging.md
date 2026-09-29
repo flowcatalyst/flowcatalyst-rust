@@ -251,7 +251,7 @@ For platform bugs (something the platform itself is doing wrong), the audit log 
 ## Code references
 
 - API request handlers (BFF, used by the admin UI): `crates/fc-platform/src/shared/bff_*_api.rs`.
-- Audit log emission (every UoW write): `crates/fc-platform/src/usecase/unit_of_work.rs::persist_audit`.
+- Audit log emission (every UoW write): `crates/fc-platform-core/src/usecase/unit_of_work.rs::persist_audit`.
 - Combined health: `bin/fc-server/src/main.rs::combined_health_handler`.
 - Router monitoring API: `crates/fc-router/src/api/`.
 - Operations-side runbooks: [../operations/runbooks.md](../operations/runbooks.md).

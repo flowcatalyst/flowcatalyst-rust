@@ -18,7 +18,7 @@ label="$1"
 with_check="${2:-}"
 export BENCH_LABEL="$label"
 OUT="${BENCH_OUT:-${CARGO_TARGET_DIR:-$ROOT/target}/build-bench}"
-LEAF="crates/fc-platform/src/client/repository.rs"
+LEAF="crates/fc-platform-iam/src/client/repository.rs"
 TEST="it:scheduled_job_cron_golden_test::"
 
 (

@@ -65,7 +65,7 @@ audit relied on stale `MEMORY.md` notes for two items:
 
 1. **OAuth client routes**: `MEMORY.md` says `/api/oauth-clients/*` but
    no `oauth_client/api.rs` exists in `crates/fc-platform/src/`. **Verified
-   2026-05-15** — routes live in `crates/fc-platform/src/auth/oauth_clients_api.rs`.
+   2026-05-15** — routes live in `crates/fc-platform-iam/src/auth/oauth_clients_api.rs`.
    R7 should target that file.
 2. **Rust SDK `sync.rs::sync_processes`**: not present. **Verified
    2026-05-15** — and the audit's framing was partially wrong. The split is:
@@ -179,7 +179,7 @@ Recommend Path B unless you specifically want jane-generated DTOs for request va
 
 **Types:**
 
-- `DispatchJobResponse` — id, externalId, source, kind, code, subject, eventId, correlationId, targetUrl, protocol, serviceAccountId, clientId, subscriptionId, dispatchPoolId, mode, status, maxRetries, retryStrategy, scheduledFor, expiresAt, attemptCount, lastAttemptAt, completedAt, durationMillis, lastError, idempotencyKey, createdAt, updatedAt. Match exactly what `crates/fc-platform/src/dispatch_job/api.rs` returns.
+- `DispatchJobResponse` — id, externalId, source, kind, code, subject, eventId, correlationId, targetUrl, protocol, serviceAccountId, clientId, subscriptionId, dispatchPoolId, mode, status, maxRetries, retryStrategy, scheduledFor, expiresAt, attemptCount, lastAttemptAt, completedAt, durationMillis, lastError, idempotencyKey, createdAt, updatedAt. Match exactly what `crates/fc-platform-messaging/src/dispatch_job/api.rs` returns.
 - `DispatchJobAttemptResponse` — id, dispatchJobId, attemptNumber, status, responseCode, responseBody, errorMessage, errorStackTrace, errorType, durationMillis, attemptedAt, completedAt, createdAt.
 - `DispatchJobListResponse` — `{ items, totalItems, page, size }` per CLAUDE.md's documented contract for dispatch jobs.
 - `CreateDispatchJobRequest`, `BatchCreateDispatchJobsRequest` (Vec wrapper), filter options struct.
@@ -215,7 +215,7 @@ cargo test -p fc-sdk --features client
 
 **File:** `crates/fc-sdk/src/client/scheduled_jobs.rs`.
 
-**Types** (mirror `crates/fc-platform/src/scheduled_job/api.rs` responses): `ScheduledJobResponse`, `ScheduledJobInstanceResponse`, `ScheduledJobInstanceLogResponse`, `CreateScheduledJobRequest`, `UpdateScheduledJobRequest`, `FireScheduledJobRequest`, `LogInstanceRequest`, `CompleteInstanceRequest`. Enums: `ScheduledJobStatus`, `TriggerKind`, `InstanceStatus`, `CompletionStatus`, `LogLevel`.
+**Types** (mirror `crates/fc-platform-scheduled-jobs/src/scheduled_job/api.rs` responses): `ScheduledJobResponse`, `ScheduledJobInstanceResponse`, `ScheduledJobInstanceLogResponse`, `CreateScheduledJobRequest`, `UpdateScheduledJobRequest`, `FireScheduledJobRequest`, `LogInstanceRequest`, `CompleteInstanceRequest`. Enums: `ScheduledJobStatus`, `TriggerKind`, `InstanceStatus`, `CompletionStatus`, `LogLevel`.
 
 **Methods on `FlowCatalystClient`:** 15 total mirroring the platform routes:
 
@@ -235,7 +235,7 @@ cargo test -p fc-sdk --features client
 
 **File:** `crates/fc-sdk/src/client/events.rs`.
 
-**Types:** `EventResponse`, `EventListResponse`, `CreateEventRequest`, `BatchCreateEventsRequest`, `EventFilterOptions`. The `EventRequest` shape is the CloudEvents v1 envelope — match `crates/fc-platform/src/event/api.rs` exactly so the platform's validation accepts SDK-generated bodies.
+**Types:** `EventResponse`, `EventListResponse`, `CreateEventRequest`, `BatchCreateEventsRequest`, `EventFilterOptions`. The `EventRequest` shape is the CloudEvents v1 envelope — match `crates/fc-platform-messaging/src/event/api.rs` exactly so the platform's validation accepts SDK-generated bodies.
 
 **Methods:**
 

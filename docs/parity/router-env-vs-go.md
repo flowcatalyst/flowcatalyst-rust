@@ -131,7 +131,7 @@ Now as Go's `ConfigSource` and `Watch` (`crates/fc-router/src/config_sync.rs`):
 - **Credentials without a config URL** are ignored, as Go.
 - **Deviation.** Go's token request has no timeout of its own. Rust's shares the config client's 10s.
 
-**Role catalogue.** Rust's built-in `platform:router` (`crates/fc-platform/src/role/entity.rs`)
+**Role catalogue.** Rust's built-in `platform:router` (`crates/fc-platform-iam/src/role/entity.rs`)
 grants exactly `platform:messaging:dispatch-pool:view`, like Go's (`seed/roles.go`). That is what
 `GET /api/dispatch/router-config` checks, with anchor scope. The route itself is being added on
 `feat/go-routes`; the delivery harness serves a shim document until it lands.

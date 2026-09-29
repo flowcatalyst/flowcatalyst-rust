@@ -17,7 +17,7 @@ fi
 sed -n '/^\[profile.dev\]/,/^\[profile.release\]/p' "$cfg"
 export CARGO_HOME=/work/cargo CARGO_TARGET_DIR=/work/target BENCH_OUT=/work/bench BENCH_MIN_FREE_GB=5
 B=scripts/build-bench/bench.sh
-LEAF=crates/fc-platform/src/client/repository.rs
+LEAF=crates/fc-platform-iam/src/client/repository.rs
 T=it:scheduled_job_cron_golden_test::
 BENCH_LABEL="linux-$LABEL" $B cold-test "$T"
 for ld in bfd lld mold; do

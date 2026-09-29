@@ -21,7 +21,7 @@ collide.
   - `internal/router/pool.go` and `lifecycle.go` — channel-ownership + select
     wakeup comments worth porting to Rust task-spawn sites
   - `internal/platform/application/operations/delete.go` (58 lines) vs
-    `crates/fc-platform/src/application/operations/delete.rs` (166 lines)
+    `crates/fc-platform-iam/src/application/operations/delete.rs` (166 lines)
     — the Rust version is more thorough (business-rule checks), but the
     Go version's per-operation file layout is a useful comparison
 
@@ -32,7 +32,7 @@ collide.
 
 Measured by reading and comparing the three implementations:
 
-- `crates/fc-platform/src/application/api.rs` — **1671 lines**, one file.
+- `crates/fc-platform-iam/src/application/api.rs` — **1671 lines**, one file.
   Past ~800 lines, comprehension drops sharply.
 - `crates/fc-router/src/mediator.rs` — **623 lines**, mixes the HTTP
   delivery, webhook signing, response handling, retry, warning emission,
@@ -114,7 +114,7 @@ a golden test vector at `crates/fc-router/tests/golden/`).
 **Verify.** `cargo test -p fc-router` green, including the
 webhook-signing-parity test.
 
-### 3. Split `crates/fc-platform/src/application/api.rs` (1671 → split per route group)
+### 3. Split `crates/fc-platform-iam/src/application/api.rs` (1671 → split per route group)
 
 Tracking-issue first. Suggested splits (verify by reading the file):
 

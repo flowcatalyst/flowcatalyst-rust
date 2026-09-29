@@ -161,7 +161,7 @@ edit at runtime via UI is a role check on a new permission
 - Poller (background task on the platform or a dedicated scheduler crate):
   `SELECT … WHERE next_fire_at <= NOW() … FOR UPDATE SKIP LOCKED LIMIT N`
   — same pattern as the dispatch-jobs scheduler in
-  `crates/fc-platform/src/scheduler/`.
+  `crates/fc-platform-messaging/src/scheduler/`.
 - Cron parser at registration time, fail-loudly. Use `croner` (DST and
   timezone correctness baked in) over `cron`.
 

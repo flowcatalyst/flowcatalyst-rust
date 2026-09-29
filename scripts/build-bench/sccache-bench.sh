@@ -29,7 +29,7 @@ export RUSTC_WRAPPER="$SCCACHE"
 export SCCACHE_DIR="$ROOT/target/tools/sccache-cache"
 export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
 T=it:scheduled_job_cron_golden_test::
-LEAF=crates/fc-platform/src/client/repository.rs
+LEAF=crates/fc-platform-iam/src/client/repository.rs
 
 unset CARGO_TARGET_DIR
 worktree() { # worktree <dir>: a detached worktree at HEAD with this tree's config

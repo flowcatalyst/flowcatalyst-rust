@@ -207,7 +207,7 @@ See [secrets-and-rotation.md](secrets-and-rotation.md#jwt-signing-key-rotation).
 
 ## Permissions and roles
 
-Built-in roles are defined in code (`crates/fc-platform/src/role/entity.rs::roles`) and seeded at every startup. Default catalogue:
+Built-in roles are defined in code (`crates/fc-platform-iam/src/role/entity.rs::roles`) and seeded at every startup. Default catalogue:
 
 | Role | Scope | Typical use |
 |---|---|---|
@@ -276,15 +276,15 @@ To require manual approval for all new users, set `auto_create_principal = false
 
 ## Code references
 
-- Auth service: `crates/fc-platform/src/auth/auth_service.rs`.
-- OIDC login flow: `crates/fc-platform/src/auth/oidc_login_api.rs`.
-- OAuth (incl. client_credentials): `crates/fc-platform/src/auth/oauth_api.rs`.
-- JWKS cache: `crates/fc-platform/src/auth/jwks_cache.rs`.
+- Auth service: `crates/fc-platform-iam/src/auth/auth_service.rs`.
+- OIDC login flow: `crates/fc-platform-auth/src/auth/oidc_login_api.rs`.
+- OAuth (incl. client_credentials): `crates/fc-platform-auth/src/auth/oauth_api.rs`.
+- JWKS cache: `crates/fc-platform-auth/src/auth/jwks_cache.rs`.
 - Email-domain mapping: `crates/fc-platform/src/email_domain_mapping/`.
 - Identity provider: `crates/fc-platform/src/identity_provider/`.
 - Anchor domain: `crates/fc-platform/src/client/anchor_domain/`.
-- Password reset: `crates/fc-platform/src/auth/password_reset_api.rs`.
-- Login backoff: `crates/fc-platform/src/auth/login_backoff.rs`.
-- Role catalogue (built-ins): `crates/fc-platform/src/role/entity.rs::roles`.
-- Role sync service: `crates/fc-platform/src/shared/role_sync_service.rs`.
+- Password reset: `crates/fc-platform-auth/src/auth/password_reset_api.rs`.
+- Login backoff: `crates/fc-platform-auth/src/auth/login_backoff.rs`.
+- Role catalogue (built-ins): `crates/fc-platform-iam/src/role/entity.rs::roles`.
+- Role sync service: `crates/fc-platform-iam/src/shared/role_sync_service.rs`.
 - WebAuthn (data model for MFA, not yet active): `crates/fc-platform/src/webauthn/`.

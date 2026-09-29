@@ -1,6 +1,6 @@
 # Dispatch Scheduler
 
-The scheduler is the bridge between Postgres (`msg_dispatch_jobs` rows in status `PENDING`) and the queue (SQS or its dev equivalent). It polls for ready jobs, applies a paused-connection filter, orders within message groups, and publishes lightweight pointers for the message router to pick up. Source: `crates/fc-platform/src/scheduler/`, gated by `FC_SCHEDULER_ENABLED` inside `fc-server`.
+The scheduler is the bridge between Postgres (`msg_dispatch_jobs` rows in status `PENDING`) and the queue (SQS or its dev equivalent). It polls for ready jobs, applies a paused-connection filter, orders within message groups, and publishes lightweight pointers for the message router to pick up. Source: `crates/fc-platform-messaging/src/scheduler/`, gated by `FC_SCHEDULER_ENABLED` inside `fc-server`.
 
 Historically this was a separate `fc-scheduler` crate and a `fc-scheduler-server` binary. Both have been removed; the scheduler now ships inside `fc-platform` and runs as a subsystem of `fc-server`.
 
@@ -304,11 +304,11 @@ This pipeline does **not** flow through `msg_dispatch_jobs` — it's a separate 
 ## Code references
 
 - Entry point: `bin/fc-server/src/main.rs::spawn_scheduler` and `::load_scheduler_config`.
-- Orchestrator: `crates/fc-platform/src/scheduler/mod.rs::DispatchScheduler`.
-- Poller: `crates/fc-platform/src/scheduler/poller.rs`.
-- Per-group dispatch: `crates/fc-platform/src/scheduler/mod.rs::MessageGroupDispatcher`.
-- Pointer building: `crates/fc-platform/src/scheduler/dispatcher.rs::JobDispatcher::dispatch`.
-- Stale recovery: `crates/fc-platform/src/scheduler/stale_recovery.rs`.
-- HMAC auth: `crates/fc-platform/src/scheduler/auth.rs::DispatchAuthService`.
-- Receiver side: `crates/fc-platform/src/shared/dispatch_process_api.rs`.
-- Scheduled jobs (separate): `crates/fc-platform/src/scheduled_job/scheduler/`.
+- Orchestrator: `crates/fc-platform-messaging/src/scheduler/mod.rs::DispatchScheduler`.
+- Poller: `crates/fc-platform-messaging/src/scheduler/poller.rs`.
+- Per-group dispatch: `crates/fc-platform-messaging/src/scheduler/mod.rs::MessageGroupDispatcher`.
+- Pointer building: `crates/fc-platform-messaging/src/scheduler/dispatcher.rs::JobDispatcher::dispatch`.
+- Stale recovery: `crates/fc-platform-messaging/src/scheduler/stale_recovery.rs`.
+- HMAC auth: `crates/fc-platform-messaging/src/scheduler/auth.rs::DispatchAuthService`.
+- Receiver side: `crates/fc-platform-messaging/src/shared/dispatch_process_api.rs`.
+- Scheduled jobs (separate): `crates/fc-platform-scheduled-jobs/src/scheduled_job/scheduler/`.
