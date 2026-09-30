@@ -14,6 +14,7 @@ use fc_common::{
     BatchMessage, DispatchMode, MediationOutcome, MediationType, Message, MessageCallback,
     PoolConfig,
 };
+use fc_router::flight_recorder::{EventKind, FlightRecorder};
 use fc_router::{Mediator, ProcessPool, MAX_IN_PIPELINE_ATTEMPTS};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -425,6 +426,115 @@ async fn release_remainder_hands_back_a_group_waiting_to_retry() {
     assert!(events.iter().all(|(_, e)| matches!(e, Event::Nack(_))));
     assert_eq!(mediator.seen(), vec!["m1"]);
     assert_eq!(pool.queue_size(), 0);
+}
+
+/// `release_remainder` can run before the drainer waiting out a retry wakes,
+/// and take the re-fronted head with the rest of the buffer. The head still
+/// goes back with its own retry delay (as the drainer would release it), its
+/// siblings no sooner and at least the sibling delay, and the flight
+/// recorder says the head was retrying, not buffered behind a head.
+#[tokio::test(start_paused = true)]
+async fn release_remainder_keeps_a_retrying_heads_delay() {
+    let mediator = Scripted::new(vec![("m1", vec![rate_limited(240)])]);
+    let recorder = Arc::new(FlightRecorder::new(1024));
+    let pool = Arc::new(
+        ProcessPool::new(
+            PoolConfig {
+                code: "TEST".to_string(),
+                concurrency: 4,
+                rate_limit_per_minute: None,
+            },
+            mediator.clone(),
+        )
+        .with_flight_recorder(recorder.clone()),
+    );
+    pool.start().await;
+    let log: Log = Default::default();
+    pool.submit(ordered("m1", &log)).await.unwrap();
+    pool.submit(ordered("m2", &log)).await.unwrap();
+
+    // Let m1 fail once and start its 240 s backoff, re-fronted in its group.
+    while mediator.seen().is_empty() {
+        time::sleep(Duration::from_millis(10)).await;
+    }
+    time::sleep(Duration::from_millis(10)).await;
+
+    // No await between the drain and the release: the drainer has not
+    // woken from the cancel when the buffers are taken.
+    pool.drain().await;
+    assert_eq!(pool.release_remainder().await, 2);
+    time::timeout(Duration::from_secs(1), pool.wait_drained())
+        .await
+        .expect("no task waits out the 240s backoff");
+
+    assert_eq!(
+        log.lock().clone(),
+        vec![
+            ("m1".into(), Event::Nack(Some(240))),
+            ("m2".into(), Event::Nack(Some(240))),
+        ],
+        "the head keeps its retry delay; its sibling is never sooner"
+    );
+    assert_eq!(mediator.seen(), vec!["m1"]);
+    assert_eq!(pool.queue_size(), 0);
+
+    let released = |id: &str| {
+        recorder
+            .for_message(id)
+            .into_iter()
+            .filter(|e| e.kind == EventKind::ReleasedAtShutdown)
+            .map(|e| {
+                (
+                    e.facts.detail.unwrap_or_default().into_owned(),
+                    e.facts.delay_secs,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let head = released("m1");
+    assert_eq!(head.len(), 1, "{head:?}");
+    assert!(head[0].0.contains("retrying in place"), "{head:?}");
+    assert_eq!(head[0].1, Some(240));
+    let sibling = released("m2");
+    assert_eq!(sibling.len(), 1, "{sibling:?}");
+    assert!(
+        sibling[0].0.contains("buffered behind the group's head"),
+        "{sibling:?}"
+    );
+    assert_eq!(sibling[0].1, Some(240));
+}
+
+/// Siblings released behind a retrying head are held back at least the
+/// sibling delay (10 s) when the head's own retry delay is shorter.
+#[tokio::test(start_paused = true)]
+async fn release_remainder_holds_siblings_of_a_retrying_head_at_least_10s() {
+    // A 429 without Retry-After: the first in-place backoff is 100 ms, a 1 s
+    // nack delay.
+    let mediator = Scripted::new(vec![("m1", vec![rate_limited(0)])]);
+    let pool = pool(mediator.clone());
+    pool.start().await;
+    let log: Log = Default::default();
+    pool.submit(ordered("m1", &log)).await.unwrap();
+    pool.submit(ordered("m2", &log)).await.unwrap();
+
+    while mediator.seen().is_empty() {
+        time::sleep(Duration::from_millis(1)).await;
+    }
+    time::sleep(Duration::from_millis(1)).await;
+
+    pool.drain().await;
+    assert_eq!(pool.release_remainder().await, 2);
+    time::timeout(Duration::from_secs(1), pool.wait_drained())
+        .await
+        .expect("drained");
+
+    assert_eq!(
+        log.lock().clone(),
+        vec![
+            ("m1".into(), Event::Nack(Some(1))),
+            ("m2".into(), Event::Nack(Some(10))),
+        ]
+    );
 }
 
 /// A mediator that panics is caught: the head and everything buffered

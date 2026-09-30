@@ -872,8 +872,10 @@ impl Drainer {
     async fn run(mut self) {
         debug!(group_id = %self.group, pool_code = %self.deliverer.pool_code, "Group drain task started");
         self.running = true;
-        while let Some(task) = self.groups.poll_head(&self.group) {
+        while let Some(mut task) = self.groups.poll_head(&self.group) {
             self.slots.release();
+            // Out of the buffer: no longer a head waiting out a retry.
+            task.pending_retry = None;
             let span = dispatch_span(&self.deliverer.pool_code, &task);
             if !self.deliver(task).instrument(span).await {
                 // The semaphore closed: `Drop` hands back the rest.
@@ -1009,6 +1011,9 @@ impl Drainer {
         // leave a live retry alone.
         task.callback.mark_retrying();
         let head_delay = disposition.nack_delay_secs();
+        task.pending_retry = Some(PendingRetry {
+            nack_delay: head_delay,
+        });
         if let Some(task) = self.groups.re_front(&self.group, task, &self.slots) {
             // Unreachable while this drainer runs (only it removes its
             // group); hand the message back rather than lose it.
@@ -1249,6 +1254,22 @@ pub struct PoolTask {
     /// delivery/ack/nack path reads it (that resolves the source consumer
     /// via `QueueManager`'s own `in_pipeline` map, keyed independently).
     pub queue_identifier: String,
+    /// Set while this task sits re-fronted at the head of its group, waiting
+    /// out an in-place retry ([`BrokerAction::Retry`]); `None` otherwise.
+    /// [`ProcessPool::release_remainder`] can take the group's buffer before
+    /// the waiting drainer wakes, and uses it to release the head as the
+    /// drainer would: with its retry delay, not as a sibling.
+    pub pending_retry: Option<PendingRetry>,
+}
+
+/// A head waiting out an in-place retry (see [`PoolTask::pending_retry`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingRetry {
+    /// The nack delay the head goes back to the broker with if its group is
+    /// handed back before the retry: the retry's own delay
+    /// ([`Disposition::nack_delay_secs`]), as the drainer's own release
+    /// (`Drainer::release_group`) and Go's `releaseGroup` use.
+    pub nack_delay: Option<u32>,
 }
 
 /// One message currently inside a pool worker (awaiting a rate-limit token
@@ -1583,6 +1604,7 @@ impl ProcessPool {
             batch_id: batch_msg.batch_id,
             attempts: 0,
             queue_identifier: batch_msg.queue_identifier,
+            pending_retry: None,
         };
 
         // IMMEDIATE mode: no ordering needed — spawn a standalone task per message.
@@ -2015,7 +2037,10 @@ impl ProcessPool {
     /// manager lane's job; this method only guarantees every
     /// buffered-but-unstarted message gets a NACK (no fixed delay — the
     /// broker's own redelivery timing applies) rather than being drained
-    /// to completion or silently abandoned.
+    /// to completion or silently abandoned. The exception is a head
+    /// re-fronted to wait out an in-place retry ([`PoolTask::pending_retry`]):
+    /// it goes back with its retry delay and the rest of its group with the
+    /// sibling delay, as its drainer would have released them.
     ///
     /// Returns how many buffered messages were released. Safe to call more
     /// than once — later calls find every group buffer already empty and
@@ -2038,16 +2063,46 @@ impl ProcessPool {
         for group_id in group_ids {
             let drained = self.groups.take_buffered(&group_id);
             released += drained.len();
-            for task in &drained {
+            let mut drained = drained.into_iter().peekable();
+            // A head waiting out an in-place retry is taken with the rest
+            // when its drainer has not yet woken from the cancel above. It
+            // goes back as the drainer would hand it back
+            // (`Drainer::release_group`): with its own retry delay, and its
+            // siblings no sooner than it and at least the sibling delay.
+            let sibling_delay = match drained.next_if(|task| task.pending_retry.is_some()) {
+                Some(head) => {
+                    let head_delay = head.pending_retry.and_then(|retry| retry.nack_delay);
+                    self.recorder.record(
+                        EventKind::ReleasedAtShutdown,
+                        &event_context(&pool_code, &head),
+                        Facts {
+                            delay_secs: head_delay,
+                            ..Facts::text(format!(
+                                "the group's head, retrying in place (attempt {}); released to \
+                                 the broker with its retry delay",
+                                head.attempts + 1
+                            ))
+                        },
+                    );
+                    nack_all(vec![head], &queue_slot_releaser, head_delay).await;
+                    sibling_nack_delay(head_delay)
+                }
+                None => None,
+            };
+            let siblings: Vec<PoolTask> = drained.collect();
+            for task in &siblings {
                 self.recorder.record(
                     EventKind::ReleasedAtShutdown,
                     &event_context(&pool_code, task),
-                    Facts::text(
-                        "buffered behind the group's head; released to the broker".to_string(),
-                    ),
+                    Facts {
+                        delay_secs: sibling_delay,
+                        ..Facts::text(
+                            "buffered behind the group's head; released to the broker".to_string(),
+                        )
+                    },
                 );
             }
-            nack_all(drained, &queue_slot_releaser, None).await;
+            nack_all(siblings, &queue_slot_releaser, sibling_delay).await;
         }
 
         if released > 0 {
@@ -2616,6 +2671,7 @@ mod parked_group_tests {
             batch_id: None,
             attempts: 0,
             queue_identifier: "q".to_string(),
+            pending_retry: None,
         };
         // The state a missed wake-up would leave: buffered, no drainer, the
         // message's queue slot held.
