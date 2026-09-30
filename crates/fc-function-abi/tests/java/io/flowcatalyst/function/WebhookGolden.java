@@ -15,13 +15,20 @@ import java.util.Map;
 /// wire values) and `Result.fail`'s escaping, written as tables of Java's
 /// real answers under `tests/data/java-golden/`.
 ///
-/// Not part of any build. Regenerate (from the Java repo root, after
-/// `mvn -q -pl function-api -am package -DskipTests`):
+/// Not part of any build.
+///
+/// Provenance: first generated 2026-09-24 (the Java commit was not
+/// recorded); regenerated from Java `45fd3444` (2026-09-30) with
+/// byte-identical output. Build Java from a read-only export, never inside
+/// the Java repo (from the Rust repo root):
 ///
 /// ```
-/// CP=function-api/target/classes
-/// javac -d /tmp/golden -cp $CP <rust-repo>/crates/fc-function-abi/tests/java/io/flowcatalyst/**/*.java
-/// java -cp /tmp/golden:$CP io.flowcatalyst.function.WebhookGolden <rust-repo>/crates/fc-function-abi/tests/data/java-golden
+/// J=<scratch>/javalin; mkdir -p $J
+/// git -C ../flowcatalyst-javalin archive 45fd3444 | tar -x -C $J
+/// (cd $J && mvn -B -DskipTests -pl function-api -am compile)
+/// CP=$J/function-api/target/classes
+/// javac -d /tmp/golden -cp $CP crates/fc-function-abi/tests/java/io/flowcatalyst/**/*.java
+/// java -cp /tmp/golden:$CP io.flowcatalyst.function.WebhookGolden crates/fc-function-abi/tests/data/java-golden
 /// ```
 public final class WebhookGolden {
 

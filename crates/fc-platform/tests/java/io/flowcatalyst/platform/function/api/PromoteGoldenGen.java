@@ -30,19 +30,21 @@ import java.util.List;
 /// - `signatures`: `WebhookSigner.timestamp` and `WebhookSigner.sign`.
 ///
 /// Not part of any build. `FunctionTriggerSync` and `FunctionApi` reach
-/// most of the server, so this runs against the Java repo's own compiled
-/// classes rather than a `-sourcepath` compile. Every class it exercises
-/// (`FunctionTriggerSync`, `PromotePlan`, `FunctionApi`, `CronExpression`,
-/// `Json`, `WebhookSigner`) is byte-identical between the pin `0118cdca` and
-/// the checkout those classes were built from (`git diff --quiet 0118cdca
-/// HEAD -- <file>` for each):
+/// most of the server, so this runs against Java's compiled classes rather
+/// than a `-sourcepath` compile.
+///
+/// Provenance: generated from Java `0118cdca`; regenerated from `45fd3444`
+/// (2026-09-30) with byte-identical output. Build Java from a read-only
+/// export, never inside the Java repo:
 ///
 /// ```
-/// J=../flowcatalyst-javalin; M=~/.m2/repository
-/// CP=$J/server/target/classes:$M/tools/jackson/core/jackson-databind/3.1.5/jackson-databind-3.1.5.jar:$M/tools/jackson/core/jackson-core/3.1.5/jackson-core-3.1.5.jar:$M/com/fasterxml/jackson/core/jackson-annotations/2.22/jackson-annotations-2.22.jar:$M/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar
-/// javac -proc:none -d /tmp/golden -cp $CP \
+/// J=<scratch>/javalin; mkdir -p $J
+/// git -C ../flowcatalyst-javalin archive 45fd3444 | tar -x -C $J
+/// (cd $J && mvn -B -DskipTests -pl server -am compile dependency:build-classpath -Dmdep.outputFile=cp.txt)
+/// CP=$J/server/target/classes:$J/usecase/target/classes:$J/sdk/target/classes:$J/function-api/target/classes:$(cat $J/server/cp.txt)
+/// javac -proc:none -d /tmp/golden -cp "$CP" \
 ///     crates/fc-platform/tests/java/io/flowcatalyst/platform/function/api/PromoteGoldenGen.java
-/// java -cp /tmp/golden:$CP io.flowcatalyst.platform.function.api.PromoteGoldenGen \
+/// java -cp "/tmp/golden:$CP" io.flowcatalyst.platform.function.api.PromoteGoldenGen \
 ///     crates/fc-platform/tests/data/function/promote-golden.json
 /// ```
 public final class PromoteGoldenGen {
