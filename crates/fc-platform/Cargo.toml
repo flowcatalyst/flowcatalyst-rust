@@ -47,11 +47,11 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 time = "0.3"
+async-trait = { workspace = true }
 
 [dev-dependencies]
 # What the integration tests use directly (the platform's own crates use
 # them as normal dependencies).
-async-trait = { workspace = true }
 aws-config = { workspace = true }
 base64 = "0.22"
 bcrypt = "0.19"

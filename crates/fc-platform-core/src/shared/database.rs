@@ -14,7 +14,6 @@
 //! need to swap pool handles or refactor every repository.
 
 use aws_sdk_secretsmanager::error::DisplayErrorContext;
-use futures::future::BoxFuture;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use std::env;
 use std::mem;
@@ -711,7 +710,10 @@ pub(crate) const RETIRED_MIGRATIONS: &[(&str, &str)] = &[
 
 /// A migration written in Rust: it runs on every start and tracks itself
 /// (in `_schema_migrations`), as the SQL ones are tracked.
-pub type CodeMigration = for<'a> fn(&'a PgPool) -> BoxFuture<'a, Result<(), sqlx::Error>>;
+#[async_trait::async_trait]
+pub trait CodeMigration: Sync {
+    async fn run(&self, pool: &PgPool) -> Result<(), sqlx::Error>;
+}
 
 /// Run all SQL migrations from the migrations/ directory.
 ///
@@ -733,7 +735,7 @@ pub type CodeMigration = for<'a> fn(&'a PgPool) -> BoxFuture<'a, Result<(), sqlx
 pub async fn run_migrations_with(
     pool: &PgPool,
     profile: MigrationProfile,
-    code_migrations: &[CodeMigration],
+    code_migrations: &[&dyn CodeMigration],
 ) -> Result<(), sqlx::Error> {
     info!(?profile, "Running database migrations...");
 
@@ -1109,7 +1111,7 @@ pub async fn run_migrations_with(
     // tracks itself in `_schema_migrations`, and is not in the pre-tracker
     // backfill above on purpose (see its docs).
     for migration in code_migrations {
-        migration(pool).await?;
+        migration.run(pool).await?;
     }
 
     info!("All database migrations completed");

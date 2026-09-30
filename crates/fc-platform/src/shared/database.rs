@@ -12,8 +12,6 @@ use crate::event_type::repository::EventTypeRepository;
 use crate::scheduled_job::cron_migration;
 use crate::seed::platform_event_types;
 use crate::shared::error;
-use futures::future::BoxFuture;
-use futures::FutureExt;
 use sqlx::PgPool;
 use tracing::info;
 
@@ -21,7 +19,7 @@ use tracing::info;
 /// (the scheduled-job cron rewrite, 036). See
 /// [`run_migrations_with`](fc_platform_core::shared::database::run_migrations_with).
 pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<(), sqlx::Error> {
-    run_migrations_with(pool, profile, &[cron_migration]).await
+    run_migrations_with(pool, profile, &[&CronMigration]).await
 }
 
 /// 036: the one-off rewrite of crons the previous Rust poller read in the
@@ -30,8 +28,13 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
 /// database another platform has migrated: see the module docs). It is
 /// not in the pre-tracker backfill on purpose: a pre-tracker Rust
 /// database still needs it, and its own guard covers Go's.
-fn cron_migration(pool: &PgPool) -> BoxFuture<'_, Result<(), sqlx::Error>> {
-    cron_migration::run(pool).map(|r| r.map(|_| ())).boxed()
+struct CronMigration;
+
+#[async_trait::async_trait]
+impl CodeMigration for CronMigration {
+    async fn run(&self, pool: &PgPool) -> Result<(), sqlx::Error> {
+        cron_migration::run(pool).await.map(|_| ())
+    }
 }
 
 // ── Built-in role seeding ────────────────────────────────────────────────────
