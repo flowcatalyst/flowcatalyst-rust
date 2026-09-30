@@ -14,10 +14,10 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`feat/harness-delivery`)
 - [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
       `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
-- [ ] API parity converged: every diff fixed or ruled. Run 6: 1234 OK / 113 ACCEPTED / 16 DIFF / 0 ERROR
-      (`docs/parity/api-run-6.md`). Remaining: OpenAPI documents (5), webauthn library defaults (5), audit
-      by-principal/facets (3), 3 unnamed Go defects (mint-token name, sync-platform schema tally,
-      unmapped-domain OIDC login)
+- [ ] API parity converged: every diff fixed or ruled. Run 7, against Go `main` @ `5ffb009`: 1260 OK /
+      87 ACCEPTED / 16 DIFF / 0 ERROR, allow-list 117 entries with none stale (`docs/parity/api-run-7.md`).
+      Remaining: OpenAPI documents (5), webauthn library defaults (5), Go's `functions` platform docs page (3),
+      audit by-principal/facets (2), the sync-platform schema tally (Go defect, unnamed)
 - [x] **Service-account events use the account id:** every `platform:iam:serviceaccount:*` event (and
       `service-account-provisioned`) carries the account's `sac_` id as subject, group and
       `serviceAccountId`, so the audit `entityId` too, as Go (`feat/cutover-fixes`)
