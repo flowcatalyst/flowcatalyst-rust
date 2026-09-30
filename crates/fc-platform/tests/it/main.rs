@@ -64,6 +64,7 @@ mod route_auth_convention_test;
 mod route_wiring_convention_test;
 mod router_token_contract_test;
 mod scheduled_job_cron_golden_test;
+mod service_account_delete_test;
 mod service_account_scope_test;
 mod sync_atomicity_test;
 mod two_factor_admin_test;

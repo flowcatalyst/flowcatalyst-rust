@@ -965,6 +965,20 @@ impl Persist<ServiceAccount> for ServiceAccountRepository {
             .bind(&sa.id)
             .execute(&mut **tx.inner)
             .await?;
+        // The principal's application-access and client-access grants. Neither
+        // table has an FK on principal_id, so without these the rows outlive
+        // the principal, and the application delete guard (decision #34) then
+        // counts them and refuses with APPLICATION_HAS_REFERENCES. Go's
+        // `serviceaccount.Repository.Delete` removes both in the same
+        // transaction, in this order. Role rows cascade from iam_principals.
+        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
         // Clear any application pointer at this SA. Without this, the
         // application keeps `service_account_id` set to a dead principal
         // and the provision-service-account handler refuses to mint a
