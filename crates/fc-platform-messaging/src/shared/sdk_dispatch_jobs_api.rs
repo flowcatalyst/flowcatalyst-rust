@@ -2,7 +2,7 @@
 //!
 //! Exposes dispatch job batch creation at `/api/dispatch-jobs/batch`.
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{body::Bytes, extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -22,6 +22,7 @@ use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::check_target_url;
 
 #[derive(Clone)]
 pub struct SdkDispatchJobsState {
@@ -42,11 +43,12 @@ pub struct SdkBatchDispatchJobsRequest {
 pub async fn sdk_batch_create_dispatch_jobs(
     State(state): State<SdkDispatchJobsState>,
     auth: Authenticated,
-    Json(req): Json<SdkBatchDispatchJobsRequest>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<BatchResponse>), PlatformError> {
     // Go shared/sdk/dispatch_jobs_batch.go:174: the batch-write permission,
     // checked before anything is read.
     checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
+    let req: SdkBatchDispatchJobsRequest = api::parse_json_body(&body)?;
 
     // As Go: an empty batch is an empty answer, and more than 1000 is refused.
     if req.items.is_empty() {
@@ -76,6 +78,10 @@ pub async fn sdk_batch_create_dispatch_jobs(
 
         // Absent/empty means EVENT; anything else must be an exact kind (400).
         let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
+
+        // Go's `jobFromItem`: the target against the delivery policy, after
+        // the kind. One refused item refuses the whole batch (400).
+        check_target_url(&job_req.target_url)?;
 
         let mode = parse_dispatch_mode(job_req.mode.as_deref());
 

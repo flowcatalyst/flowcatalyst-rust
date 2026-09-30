@@ -51,6 +51,7 @@ pub mod audit_redaction;
 pub mod config;
 pub mod diagnostics;
 pub mod logging;
+pub mod netguard;
 pub mod tsid;
 
 pub use tsid::EntityType;

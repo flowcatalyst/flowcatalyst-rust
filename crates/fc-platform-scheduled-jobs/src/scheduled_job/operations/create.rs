@@ -11,6 +11,7 @@ use crate::scheduled_job::ScheduledJobRepository;
 use fc_platform_core::shared::authorization_service::Authority;
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::usecase::parse_client_id;
+use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 
@@ -118,6 +119,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         for c in &cmd.crons {
             validate_cron_shape(c)?;
         }
+        validate_target_url(cmd.target_url.as_deref())?;
         if cmd.delivery_max_attempts < 1 || cmd.delivery_max_attempts > 20 {
             return Err(UseCaseError::validation(
                 "INVALID_DELIVERY_ATTEMPTS",
@@ -204,6 +206,16 @@ pub(crate) fn is_valid_code(code: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Go `validateTargetURL`: the delivery policy on a job's target, which the
+/// scheduler POSTs to from inside the cluster. Absent or blank means "no
+/// target" and is left to the existing rules.
+pub(crate) fn validate_target_url(url: Option<&str>) -> Result<(), UseCaseError> {
+    match url.map(str::trim) {
+        None | Some("") => Ok(()),
+        Some(trimmed) => validate_delivery_url("INVALID_TARGET_URL", "targetUrl", trimmed),
+    }
+}
+
 /// Go's cron checks (`CreateScheduledJob.Validate` and
 /// `scheduledjob.ValidateCronShape`). Full parsing happens in the poller;
 /// this fails obviously broken input at the API boundary.
@@ -226,4 +238,27 @@ pub(crate) fn validate_cron_shape(expr: &str) -> Result<(), UseCaseError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod delivery_policy_tests {
+    use super::validate_target_url;
+
+    #[test]
+    fn the_target_url_is_checked_against_the_delivery_policy() {
+        // No target, or a blank one, is left to the existing rules.
+        assert!(validate_target_url(None).is_ok());
+        assert!(validate_target_url(Some("  ")).is_ok());
+        assert!(validate_target_url(Some("https://receiver.example.test/hook")).is_ok());
+
+        for forbidden in [
+            "http://127.0.0.1/hook",
+            "http://169.254.169.254/latest/meta-data",
+            "ftp://example.com/hook",
+        ] {
+            let err = validate_target_url(Some(forbidden)).unwrap_err();
+            assert_eq!(err.code(), "INVALID_TARGET_URL", "{forbidden}");
+            assert!(err.message().starts_with("targetUrl "), "{forbidden}");
+        }
+    }
 }

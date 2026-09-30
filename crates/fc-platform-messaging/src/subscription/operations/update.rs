@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::create::{is_http_url, parse_queue, EventTypeBindingInput};
+use super::create::{parse_queue, EventTypeBindingInput};
 use super::events::SubscriptionUpdated;
 use crate::service_account::signing_reach::require_usable_signers;
 use crate::subscription::entity::{ConfigEntry, DispatchMode};
@@ -15,6 +15,7 @@ use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::caller_reach::non_blank;
 use fc_platform_core::shared::id::OptionIdExt;
+use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError,
@@ -133,11 +134,8 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
                 "name cannot be empty",
             ));
         }
-        if command.endpoint.as_deref().is_some_and(|e| !is_http_url(e)) {
-            return Err(UseCaseError::validation(
-                "INVALID_ENDPOINT",
-                "endpoint must be a http(s) URL",
-            ));
+        if let Some(endpoint) = command.endpoint.as_deref() {
+            validate_delivery_url("INVALID_ENDPOINT", "endpoint", endpoint)?;
         }
         if let Some(ref queue) = command.queue {
             parse_queue(queue)?;

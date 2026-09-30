@@ -114,6 +114,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     ),
                 ));
             }
+            super::create::validate_target_url(j.target_url.as_deref())?;
         }
         Ok(())
     }

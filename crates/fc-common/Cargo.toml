@@ -15,6 +15,8 @@ tokio = { workspace = true }
 utoipa = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
 # The OTLP span exporter (feature `otel`, off by default): OTLP/HTTP
 # protobuf over the workspace's reqwest, not a second HTTP stack.
 opentelemetry = { workspace = true, optional = true }

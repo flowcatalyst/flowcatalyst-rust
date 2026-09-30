@@ -30,6 +30,7 @@ use fc_common::config;
 use fc_common::diagnostics;
 use fc_common::diagnostics::Exposition;
 use fc_common::logging;
+use fc_common::netguard;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig};
 use fc_platform::api::DispatchJobsState;
 use fc_platform::api::FilterOptionsState;
@@ -357,6 +358,18 @@ async fn main() -> Result<()> {
     // service account, which must not shadow the fn CLI's own credentials.
     if env::args_os().nth(1).is_none_or(|a| a != "fn") {
         let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+    }
+
+    // Developers run webhook receivers on their own machine and network, so
+    // the delivery policy allows loopback and private targets here unless the
+    // environment says otherwise. Cloud metadata and link-local addresses stay
+    // blocked (Go: cmd/fcdev/envcfg.go).
+    let delivery_policy = netguard::default_policy();
+    if env::var_os("FC_DELIVERY_ALLOW_LOOPBACK").is_none() {
+        delivery_policy.set_allow_loopback(true);
+    }
+    if env::var_os("FC_DELIVERY_ALLOW_PRIVATE").is_none() {
+        delivery_policy.set_allow_private(true);
     }
 
     // Subcommand fast path — handle the ones that don't need a database,

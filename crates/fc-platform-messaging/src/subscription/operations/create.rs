@@ -15,6 +15,7 @@ use crate::{
 use fc_platform_core::directory::ServiceAccountDirectory;
 use fc_platform_core::shared::caller_reach::check_scope_access;
 use fc_platform_core::usecase::parse_client_id_opt;
+use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError};
 use std::sync::OnceLock;
@@ -24,15 +25,6 @@ use std::sync::OnceLock;
 fn code_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| Regex::new(r"^[a-z][a-z0-9-]*$").unwrap())
-}
-
-/// Go's delivery-target rule (`subscription/operations/create.go`):
-/// `^https?://.+`, on the endpoint as sent.
-pub(crate) fn is_http_url(endpoint: &str) -> bool {
-    static PATTERN: OnceLock<Regex> = OnceLock::new();
-    PATTERN
-        .get_or_init(|| Regex::new(r"^https?://.+").unwrap())
-        .is_match(endpoint)
 }
 
 /// Go `dispatchqueue.Parse`: the dispatch priority in its canonical form,
@@ -209,12 +201,7 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
                 "name is required",
             ));
         }
-        if !is_http_url(&command.endpoint) {
-            return Err(UseCaseError::validation(
-                "INVALID_ENDPOINT",
-                "endpoint must be a http(s) URL",
-            ));
-        }
+        validate_delivery_url("INVALID_ENDPOINT", "endpoint", &command.endpoint)?;
         if command.event_types.is_empty() {
             return Err(UseCaseError::validation(
                 "EVENT_TYPES_REQUIRED",
@@ -392,8 +379,5 @@ mod tests {
             parse_queue("workers-high").unwrap_err().code(),
             "INVALID_QUEUE"
         );
-        assert!(is_http_url("https://x"));
-        assert!(!is_http_url("not-a-url"));
-        assert!(!is_http_url("https://"));
     }
 }

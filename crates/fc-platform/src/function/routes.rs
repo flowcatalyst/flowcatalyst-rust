@@ -80,6 +80,11 @@ pub fn functions_state(ctx: &PlatformContext) -> FunctionsState {
     // in Java (Env.java, PoolUrlTemplate).
     let pool_url = super::PoolUrlTemplate::from_env()
         .unwrap_or_else(|e| panic!("invalid function pool URL: {e}"));
+    // The function hosts are the platform's own endpoints: a function's
+    // subscriptions and schedules point at them, usually on a private or
+    // loopback address that the delivery policy refuses for customer
+    // webhooks (Go: `ApplyDeliveryPolicy` exempts `FunctionsRunnerURL`).
+    fc_common::netguard::default_policy().allow_url(pool_url.as_str());
     let trigger_sync =
         super::operations::TriggerSync::from_repositories(repos, settings.clone(), pool_url);
     FunctionsState {

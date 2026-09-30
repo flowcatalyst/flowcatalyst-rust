@@ -3,9 +3,11 @@
 //! REST endpoints for managing dispatch jobs.
 
 use axum::{
+    body::Bytes,
     extract::{Path, Query, State},
     Json,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -30,6 +32,7 @@ use fc_platform_core::shared::caller_reach;
 use fc_platform_core::shared::enum_str::{non_empty, parse_opt};
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::middleware::Authenticated;
+use fc_platform_core::usecase::check_target_url;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::slice;
@@ -375,6 +378,14 @@ pub struct DispatchJobsState {
 // ============================================================================
 // Create Dispatch Job Request & Response
 // ============================================================================
+
+/// Parse a JSON request body the handler read itself, after its permission
+/// gate (Go's chi-style ingest handlers decode with `json.NewDecoder` only
+/// once the permission is checked): a 400 `INVALID_JSON` when it is not.
+pub(crate) fn parse_json_body<T: DeserializeOwned>(body: &Bytes) -> Result<T, PlatformError> {
+    serde_json::from_slice(body)
+        .map_err(|e| PlatformError::bad_request_code("INVALID_JSON", e.to_string()))
+}
 
 /// Request to create a new dispatch job
 #[derive(Debug, Deserialize, ToSchema)]
@@ -815,11 +826,29 @@ pub async fn get_jobs_for_event(
 pub async fn create_dispatch_job(
     State(state): State<DispatchJobsState>,
     auth: Authenticated,
-    Json(req): Json<CreateDispatchJobRequest>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
-    // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, with
-    // Go's body.
+    // Go shared/sdk/dispatch_job_create.go:72: the ingest permission, checked
+    // before the body is read (Go decodes it only afterwards, so a caller
+    // without the permission gets 403 whatever it sent).
     checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
+    let req: CreateDispatchJobRequest = parse_json_body(&body)?;
+
+    // Go's single create requires these (dispatch_job_create.go:84-95), in
+    // this order, the target also against the delivery policy.
+    if req.code.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "VALIDATION",
+            "code is required",
+        ));
+    }
+    if req.target_url.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "VALIDATION",
+            "targetUrl is required",
+        ));
+    }
+    check_target_url(&req.target_url)?;
 
     // Go's single create requires the account (dispatch_job_create.go:92-94).
     let Some(service_account_id) = caller_reach::non_blank(req.service_account_id) else {
@@ -970,6 +999,7 @@ pub async fn batch_create_dispatch_jobs(
         // Determine kind
         // Absent/empty means EVENT; anything else must be an exact kind (400).
         let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
+        check_target_url(&job_req.target_url)?;
 
         // Determine mode
         let mode = parse_dispatch_mode(job_req.mode.as_deref());

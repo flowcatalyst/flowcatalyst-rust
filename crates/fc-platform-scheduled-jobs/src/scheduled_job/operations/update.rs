@@ -85,6 +85,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
                 super::create::validate_cron_shape(c)?;
             }
         }
+        super::create::validate_target_url(cmd.target_url.as_deref())?;
         if let Some(d) = cmd.delivery_max_attempts {
             if !(1..=20).contains(&d) {
                 return Err(UseCaseError::validation(

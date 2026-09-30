@@ -24,6 +24,7 @@ use crate::{
 use fc_platform_core::shared::error::PlatformError;
 use fc_platform_core::shared::id::OptionIdExt;
 use fc_platform_core::usecase::parse_client_id_opt;
+use fc_platform_core::usecase::validate_delivery_url;
 use fc_platform_core::usecase::AuditMasked;
 use fc_platform_core::usecase::{
     Committed, ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError,
@@ -133,6 +134,11 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                     "Target endpoint URL is required",
                 ));
             }
+            validate_delivery_url(
+                "INVALID_ENDPOINT",
+                &format!("Target for '{}'", input.code),
+                &input.target,
+            )?;
             if input.event_types.is_empty() {
                 return Err(UseCaseError::validation(
                     "EVENT_TYPES_REQUIRED",

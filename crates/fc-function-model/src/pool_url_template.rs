@@ -32,6 +32,11 @@ pub struct InvalidPoolUrl {
 const PLACEHOLDER: &str = "{pool}";
 
 impl PoolUrlTemplate {
+    /// The template as written, with its `{pool}` placeholder.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// The template when `FC_FN_POOL_URL` is unset.
     pub const DEFAULT: &'static str = "http://fn-{pool}:8080";
 

@@ -18,6 +18,7 @@ mod auth_purger_test;
 mod auth_security_test;
 mod bff_sync_platform_test;
 mod client_admin_test;
+mod delivery_policy_test;
 mod developer_credential_test;
 mod developer_portal_scope_test;
 mod dispatch_descriptor_test;

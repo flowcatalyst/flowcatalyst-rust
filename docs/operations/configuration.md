@@ -129,6 +129,33 @@ See [identity-and-auth.md](identity-and-auth.md) for IDP setup, rotation procedu
 
 ---
 
+## Delivery policy (every binary)
+
+A URL the platform will POST to (a subscription's endpoint, a scheduled job's
+or dispatch job's target) is customer input, and the platform POSTs to it from
+inside your network with its own credentials. So it is checked when it is
+written (`fc_common::netguard`, Go's `internal/netguard`): it must be an
+absolute http(s) URL with no embedded credentials, and its host, when it is an
+address or the name `localhost`, must not be loopback, link-local, cloud
+metadata (169.254.169.254, `fd00:ec2::254`), multicast, unspecified, or (unless
+allowed) private or carrier-grade NAT. A refused write is a 400
+(`INVALID_ENDPOINT` for subscriptions, `INVALID_TARGET_URL` for scheduled and
+dispatch jobs) whose message says why.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `FC_DELIVERY_ALLOW_LOOPBACK` | `false` (`true` in `fc-dev`) | Permit loopback targets and the name `localhost`. For development |
+| `FC_DELIVERY_ALLOW_PRIVATE` | `false` (`true` in `fc-dev`) | Permit private-network targets: RFC 1918, unique-local IPv6, 100.64.0.0/10. A cluster's own pods and services are in these ranges |
+| `FC_DELIVERY_ALLOW_HOSTS` | empty | Comma-separated `host:port` patterns exempt from the checks, `*` as a wildcard: `runner.internal:8095,*.fn.svc:8095` |
+
+Cloud metadata and link-local addresses stay blocked whatever is allowed. The
+function hosts (`FC_FN_POOL_URL`) are exempted automatically.
+
+Only the literal host is checked. A host **name** that resolves to a private
+address passes, and so does an existing row written before the check. The
+check on the address actually dialled, after DNS resolution, is not wired into
+the HTTP clients yet.
+
 ## Router (`fc-server` with `FC_ROUTER_ENABLED=true`)
 
 The complete contract, Go vs Rust, is [../parity/router-env-vs-go.md](../parity/router-env-vs-go.md); the main ones:
