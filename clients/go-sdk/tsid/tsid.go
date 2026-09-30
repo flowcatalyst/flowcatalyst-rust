@@ -39,7 +39,7 @@ func raw() string {
 	r := uint64(randomU16()) & 0x3FF
 	c := uint64(counter.Add(1)) & 0xFFF
 	// Layout: 42 bits timestamp | 10 bits random | 12 bits counter.
-	// Matches crates/fc-common/src/tsid.rs exactly.
+	// Matches crates/fc-common-types/src/tsid.rs exactly.
 	v := (now << 22) | (r << 12) | c
 	return encodeCrockford(v)
 }

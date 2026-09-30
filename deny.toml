@@ -94,8 +94,11 @@ allow = [
     # The embedded PostgreSQL fc-dev bundles (postgresql_embedded).
     "PostgreSQL",
 ]
-# Our own crates. Each is listed so a third-party AGPL/GPL crate still
-# fails the check until someone decides it is acceptable.
+# Our own AGPL crates. Each is listed so a third-party AGPL/GPL crate still
+# fails the check until someone decides it is acceptable. The crates
+# applications link (fc-sdk and fc-common-types, Apache-2.0; the function
+# guest crates, MPL-2.0) are permissive and must stay off this list
+# (deny-sdk.toml).
 exceptions = [
     { crate = "fc-common", allow = ["AGPL-3.0-or-later"] },
     { crate = "fc-delivery-harness", allow = ["AGPL-3.0-or-later"] },

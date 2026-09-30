@@ -27,7 +27,7 @@ this SDK — TSID, JWT, webhook signature, CloudEvent envelope, outbox row
 Specifically:
 
 - **TSID format**: 13-character Crockford Base32, layout `42-bit ms |
-  10-bit random | 12-bit counter`. See `crates/fc-common/src/tsid.rs`.
+  10-bit random | 12-bit counter`. See `crates/fc-common-types/src/tsid.rs`.
 - **CloudEvent envelope**: `{ eventId, specVersion, source, type, subject,
   time, correlationId, causationId, principalId, executionId,
   messageGroup, data: { ... } }`. See `crates/fc-common/src/cloud_event.rs`.

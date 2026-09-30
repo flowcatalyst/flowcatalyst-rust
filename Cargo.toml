@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/fc-common",
+    "crates/fc-common-types",
     "crates/fc-queue",
     "crates/fc-router",
     "crates/fc-standby",

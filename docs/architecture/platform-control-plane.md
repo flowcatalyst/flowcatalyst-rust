@@ -420,4 +420,4 @@ This is one of the few infrastructure-write paths exempt from UoW — it runs at
 - Authz service: `crates/fc-platform-iam/src/shared/authorization_service.rs` (the context and the checks: `crates/fc-platform-core/src/shared/authorization_service.rs`).
 - Auth middleware: `crates/fc-platform-core/src/shared/middleware.rs` (`AuthLayer`; the platform's `AppState` is fc-platform-iam's).
 - DB pool + migrations + secret refresh + role seeding: `crates/fc-platform/src/shared/database.rs`.
-- TSID generation: `crates/fc-common/src/tsid.rs` (`tsid::generate`/`generate_with_prefix`/`generate_untyped`), re-exported via `crates/fc-platform-core/src/shared/tsid.rs`.
+- TSID generation: `crates/fc-common-types/src/tsid.rs` (`tsid::generate`/`generate_with_prefix`/`generate_untyped`), re-exported as `fc_common::tsid` and via `crates/fc-platform-core/src/shared/tsid.rs`.
