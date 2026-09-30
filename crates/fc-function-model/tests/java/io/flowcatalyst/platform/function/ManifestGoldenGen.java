@@ -20,16 +20,20 @@ import java.util.function.Function;
 /// feed the same inputs to the Rust port and require the same answers, and
 /// the same normalised bytes.
 ///
-/// Not part of any build. Regenerate from the pinned Java sources, compiled
-/// outside the Java repo (javac compiles only the classes this reaches):
+/// Not part of any build.
+///
+/// Provenance: generated from Java `0118cdca`; regenerated from `45fd3444`
+/// (2026-09-30) with byte-identical output. Build Java from a read-only
+/// export, never inside the Java repo:
 ///
 /// ```
-/// git -C <javalin> archive 0118cdca | tar -x -C /tmp/pin
-/// SP=/tmp/pin/server/src/main/java:/tmp/pin/usecase/src/main/java:/tmp/pin/sdk/src/main/java:/tmp/pin/function-api/src/main/java
-/// CP=<jackson-databind-3.1.5>:<jackson-core-3.1.5>:<jackson-annotations-2.22>:<slf4j-api>
-/// javac -proc:none -d /tmp/golden -cp $CP -sourcepath $SP \
+/// J=<scratch>/javalin; mkdir -p $J
+/// git -C ../flowcatalyst-javalin archive 45fd3444 | tar -x -C $J
+/// (cd $J && mvn -B -DskipTests -pl server -am compile dependency:build-classpath -Dmdep.outputFile=cp.txt)
+/// CP=$J/server/target/classes:$J/usecase/target/classes:$J/sdk/target/classes:$J/function-api/target/classes:$(cat $J/server/cp.txt)
+/// javac -proc:none -d /tmp/golden -cp "$CP" \
 ///     crates/fc-function-model/tests/java/io/flowcatalyst/platform/function/ManifestGoldenGen.java
-/// java -cp /tmp/golden:$CP io.flowcatalyst.platform.function.ManifestGoldenGen \
+/// java -cp "/tmp/golden:$CP" io.flowcatalyst.platform.function.ManifestGoldenGen \
 ///     crates/fc-function-model/tests/data/manifest-cases.json \
 ///     crates/fc-function-model/tests/data/manifest-golden.json
 /// ```
