@@ -78,7 +78,7 @@ External systems the router touches:
 │                                                                    │
 │  semaphore (concurrency)                                           │
 │  rate_limiter (governor, optional)                                 │
-│  group_handlers (DashMap<group, Mutex<MessageGroupHandler>>)       │
+│  groups: GroupQueues (DashMap<group, Mutex<Group>>)                │
 │  circuit_breaker_registry (shared per-endpoint)                    │
 │  failed_batch_groups (DashSet<(batch_id, group)>)                  │
 │  metrics_collector (HdrHistogram + rolling windows)                │
@@ -161,7 +161,7 @@ match message.dispatch_mode {
 
 **`spawn_immediate_task()`** — one independent tokio task per message. Each task acquires a semaphore permit, waits for a rate-limit permit, checks the per-endpoint circuit breaker, calls the mediator, records metrics, then ACKs or NACKs. No coordination between tasks. Throughput is bounded by `concurrency` × `rate_limit_per_minute`.
 
-**`spawn_drain_task()`** — one task per active message group. The task pulls from the group's `MessageGroupHandler` queue in order: high-priority first, then regular. For each message it does the same semaphore/rate-limit/CB/mediate cycle, then loops. Exits when the queue is empty. If another message arrives for the same group before the drain task exits, it's appended; the running task picks it up on the next iteration. If the drain task has already exited, a fresh one is spawned.
+**`spawn_drain_task()`** — one `Drainer` per active message group. It pulls from the group's queue in `GroupQueues` (`pool/groups.rs`) in strict FIFO order, `while let Some(task) = groups.poll_head(..)`. For each message it does the same semaphore/rate-limit/CB/mediate cycle, then loops. Exits when the queue is empty. If another message arrives for the same group before the drain task exits, it's appended; the running task picks it up on the next iteration. If the drain task has already exited, a fresh one is spawned.
 
 Why "one task per group" rather than "one task always polling all groups"? Per-task spawn cost is negligible compared to the cost of contention on a shared queue across many groups. Also: per-group panic isolation — if a group's drain task panics, only that group is affected.
 
@@ -375,8 +375,8 @@ Adaptive concurrency (TCP Vegas) is designed but not yet shipped — see [adapti
 
 | Primitive | Where | Why |
 |---|---|---|
-| `DashMap` | in_pipeline, pools, group_handlers | Lock-free reads/writes from multiple poll tasks |
-| `parking_lot::Mutex` | pending_delete, MessageGroupHandler, BreakerInner | Short critical sections, never held across `.await` |
+| `DashMap` | in_pipeline, pools, GroupQueues | Lock-free reads/writes from multiple poll tasks |
+| `parking_lot::Mutex` | pending_delete, GroupQueues' groups, BreakerInner | Short critical sections, never held across `.await` |
 | `parking_lot::RwLock` | rate_limiter, health counters | Read-heavy |
 | `tokio::sync::RwLock` | consumers, pool_configs | Held across `.await` in config sync |
 | `tokio::sync::Semaphore` | per-pool concurrency | Async permit, resizable at runtime |

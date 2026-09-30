@@ -102,13 +102,13 @@ ProcessPool.submit()
     └─ dispatch_mode == BLOCK_ON_ERROR / NEXT_ON_ERROR
          │
          ▼
-    MessageGroupHandler.enqueue()
+    GroupQueues.offer()
          │
-         └─ if idle: spawn_drain_task()
+         └─ if idle: spawn_drain_task() → Drainer::run()
               │
               ▼
          Sequential loop (one message at a time per group):
-              ├─ dequeue next (high_priority first, then regular)
+              ├─ GroupQueues.poll_head() (strict FIFO; None releases the group)
               ├─ rate_limiter.until_ready()
               ├─ semaphore.acquire()
               ├─ cb_registry.allow_request()
@@ -219,16 +219,16 @@ Worker pool per processing pool code.
 | Field | Type | Purpose |
 |-------|------|---------|
 | `semaphore` | `Arc<Semaphore>` | Concurrency limit (number of permits = concurrency level) |
-| `group_handlers` | `DashMap<Arc<str>, Mutex<MessageGroupHandler>>` | Per-group FIFO queues (~200 bytes idle) |
+| `groups` | `Arc<GroupQueues>` (`pool/groups.rs`: `DashMap<Arc<str>, Mutex<Group>>`) | Per-group FIFO queues + drainer flag (~200 bytes idle): `offer`, `poll_head`, `re_front`, `take_buffered`, `abandon`, `claim_parked` |
 | `rate_limiter` | `RwLock<Option<Arc<RateLimiter>>>` | Governor token bucket (updatable at runtime) |
 | `circuit_breaker_registry` | `Arc<CircuitBreakerRegistry>` | Shared per-endpoint circuit breakers |
 | `metrics_collector` | `Arc<PoolMetricsCollector>` | HdrHistogram + windowed counters |
 
 **Two task types:**
 - `spawn_immediate_task()` — one independent task per IMMEDIATE message, fully concurrent
-- `spawn_drain_task()` — one sequential task per message group (ordered modes), exits when empty
+- `spawn_drain_task()` — one `Drainer` per message group (ordered modes): a `while let Some(task) = groups.poll_head(..)` loop that exits when the group is empty
 
-**Panic safety:** `WorkerGuard` (both task types) gives back the task's queue slot, active-worker count and `mediating` entry on any exit, panic included. `DrainGuard` also empties an abandoned group's buffer (the callbacks' Drop nacks each message), gives back a queue slot per message, and resets `processing`.
+**Panic safety:** `WorkerGuard` (both task types) gives back the task's queue slot, active-worker count and `mediating` entry on any exit, panic included. A `Drainer` that exits abnormally (its `Drop`, the drain guard) also empties its group's buffer (the callbacks' Drop nacks each message), gives back a queue slot per message, and lets go of the group (`GroupQueues::abandon`).
 
 ### HttpMediator
 
@@ -306,8 +306,8 @@ Per-pool metrics using HdrHistogram for O(1) percentile queries.
 
 | Primitive | Where | Why |
 |-----------|-------|-----|
-| `DashMap` | in_pipeline, pools, group_handlers | Lock-free concurrent access from multiple poll tasks |
-| `parking_lot::Mutex` | pending_delete, MessageGroupHandler, BreakerInner | Brief sync locks, never held across .await |
+| `DashMap` | in_pipeline, pools, GroupQueues | Lock-free concurrent access from multiple poll tasks |
+| `parking_lot::Mutex` | pending_delete, GroupQueues' groups, BreakerInner | Brief sync locks, never held across .await |
 | `parking_lot::RwLock` | rate_limiter, health counters | Read-heavy access patterns |
 | `tokio::sync::RwLock` | consumers, pool_configs | Async-safe, held across .await in config sync |
 | `tokio::sync::Semaphore` | pool concurrency | Async permit acquisition, dynamically resizable |

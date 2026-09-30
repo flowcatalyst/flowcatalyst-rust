@@ -237,6 +237,10 @@ impl Side {
             "AWS_ENDPOINT_URL_SQS",
             "AWS_EC2_METADATA_DISABLED",
             "FC_DRAIN_TIMEOUT_SECONDS",
+            // The router dials the platform's /api/dispatch/process on
+            // loopback, which both routers' delivery policy refuses unless
+            // allowed.
+            "FC_DELIVERY_ALLOW_LOOPBACK",
             "RUST_LOG",
         ] {
             env.insert(k.to_string(), common[k].clone());
