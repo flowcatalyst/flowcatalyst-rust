@@ -32,15 +32,15 @@ use super::error::OutboxError;
 
 /// Message types supported by the outbox: the row's `type` column.
 ///
-/// This is [`fc_common::OutboxItemType`]; the `as_str()` / serde strings
+/// This is [`fc_common_types::OutboxItemType`]; the `as_str()` / serde strings
 /// (`EVENT`, `DISPATCH_JOB`, `AUDIT_LOG`) are what every SDK stores.
-pub use fc_common::OutboxItemType as MessageType;
+pub use fc_common_types::OutboxItemType as MessageType;
 
 /// Outbox status codes, stored as integers in the `status` column.
 ///
 /// Only [`OutboxStatus::Pending`] (0) is written by the SDK; all others are
 /// managed by the processor.
-pub use fc_common::OutboxStatus;
+pub use fc_common_types::OutboxStatus;
 
 /// An outbox message record to be persisted by the driver.
 #[derive(Debug, Clone, Serialize, Deserialize)]

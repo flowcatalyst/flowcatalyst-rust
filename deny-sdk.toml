@@ -1,8 +1,9 @@
 # Licence policy for the crates an application links into its own code: the
-# Rust SDK (fc-sdk, Apache-2.0) and the function guest crates
-# (fc-function-abi, fc-function-model; MPL-2.0). An application that uses
-# them must not be pulled under a strong copyleft licence, so the AGPL the
-# platform carries, and GPL/LGPL, are not allowed here.
+# Rust SDK (fc-sdk and its fc-common-types, Apache-2.0) and the function
+# guest crates (fc-function-abi, fc-function-model, fc-function-pdk;
+# MPL-2.0). An application that uses them must not be pulled under a strong
+# copyleft licence, so the AGPL the platform carries, and GPL/LGPL, are not
+# allowed here.
 #
 # Run per crate, normal dependencies only (CI's `supply-chain` job does):
 #   cargo deny --manifest-path crates/fc-sdk/Cargo.toml --all-features \
@@ -40,14 +41,11 @@ allow = [
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
 ]
-exceptions = [
-    # KNOWN ISSUE, open for the owner (2026-09-28): fc-sdk (Apache-2.0)
-    # depends on fc-common (the workspace's AGPL-3.0-or-later) for
-    # OutboxStatus, OutboxItemType, tsid and audit_redaction. An application
-    # linking fc-sdk links AGPL code. The fix is to move those types into an
-    # Apache/MPL crate (or relicense them), not to widen this list.
-    { crate = "fc-common", allow = ["AGPL-3.0-or-later"] },
-]
+# No exceptions. fc-sdk's shared types (outbox status and item types, TSIDs,
+# audit redaction) live in the Apache-2.0 fc-common-types, not the AGPL
+# fc-common (owner decision #51). Do not add an AGPL exception here: move the
+# code to a permissively licensed crate instead.
+exceptions = []
 
 [licenses.private]
 ignore = false

@@ -3073,6 +3073,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "fc-common-types",
  "libc",
  "opentelemetry",
  "opentelemetry-http",
@@ -3089,6 +3090,14 @@ dependencies = [
  "url",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "fc-common-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3771,7 +3780,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "fc-common",
+ "fc-common-types",
  "getrandom 0.3.4",
  "hex",
  "hmac 0.12.1",

@@ -162,7 +162,7 @@ fn next_ms_seq() -> (u64, u64) {
 /// Generate a typed ID with a platform entity prefix: `{prefix}_{tsid}`.
 ///
 /// ```
-/// use fc_common::tsid::{self, EntityType};
+/// use fc_common_types::tsid::{self, EntityType};
 ///
 /// let client_id = tsid::generate(EntityType::Client);
 /// assert!(client_id.starts_with("clt_"));
@@ -176,7 +176,7 @@ pub fn generate(entity_type: EntityType) -> String {
 /// Use this for application-specific entity types not covered by [`EntityType`].
 ///
 /// ```
-/// let order_id = fc_common::tsid::generate_with_prefix("ord");
+/// let order_id = fc_common_types::tsid::generate_with_prefix("ord");
 /// assert!(order_id.starts_with("ord_"));
 /// ```
 pub fn generate_with_prefix(prefix: &str) -> String {
@@ -186,7 +186,7 @@ pub fn generate_with_prefix(prefix: &str) -> String {
 /// Generate an untyped ID for non-entity contexts (execution IDs, trace IDs, etc.)
 ///
 /// ```
-/// assert_eq!(fc_common::tsid::generate_untyped().len(), 13);
+/// assert_eq!(fc_common_types::tsid::generate_untyped().len(), 13);
 /// ```
 pub fn generate_untyped() -> String {
     generate_raw()

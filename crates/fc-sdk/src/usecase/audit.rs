@@ -5,7 +5,7 @@
 //! [`CreateAuditLogDto`](crate::outbox::CreateAuditLogDto) — has its command
 //! document redacted first by the platform's one rule (owner spec
 //! `docs/spec/audit-redaction.md` in the Java repo; implementation in
-//! [`fc_common::audit_redaction`]): a key that, lower-cased with `_` and `-`
+//! [`fc_common_types::audit_redaction`]): a key that, lower-cased with `_` and `-`
 //! removed, ends with `password`, `passwordhash`, `secret`, `secretref`,
 //! `passphrase` or `token`, or equals `apikey`, `privatekey`,
 //! `authorization` or `cookie`, has its value replaced by `"***"` (null and
@@ -32,7 +32,7 @@
 
 use serde::{Serialize, Serializer};
 
-pub use fc_common::audit_redaction::{
+pub use fc_common_types::audit_redaction::{
     is_secret_key, redact, redact_document, redacted_command_json, AuditMasked, MASK,
 };
 use serde::ser;

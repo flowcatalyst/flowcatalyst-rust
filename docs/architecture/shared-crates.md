@@ -26,7 +26,9 @@ FlowCatalyst is a workspace of focused crates. This document maps what each one 
        │fc-common │   │fc-queue  │   │fc-standby│
        └──────────┘   └──────────┘   └──────────┘
 
-       fc-sdk: standalone — for consumer apps, depends on fc-common only.
+       fc-sdk: standalone — for consumer apps, depends on fc-common-types only.
+       fc-common-types (Apache-2.0): outbox status/item types, tsid,
+       audit_redaction; fc-common re-exports them (owner decision #51).
 ```
 
 No internal crate depends "upward" — `fc-common` never imports `fc-platform`. Workspace-wide rule.
@@ -76,7 +78,7 @@ Other essentials:
 - `InFlightMessage` — internal router bookkeeping.
 - `PoolConfig`, `QueueConfig`, `RouterConfig` — what the platform's config endpoint returns to the router.
 - `LeaderElectionConfig` — leader election parameters.
-- `EntityType` enum + `tsid::generate`/`generate_with_prefix`/`generate_untyped` free functions — 30 entity types, prefixed Crockford-Base32 IDs (`clt_0HZXEQ5Y8JY5Z`, `usr_…`, `evt_…`, `sub_…`, etc.).
+- `EntityType` enum + `tsid::generate`/`generate_with_prefix`/`generate_untyped` free functions — 30 entity types, prefixed Crockford-Base32 IDs (`clt_0HZXEQ5Y8JY5Z`, `usr_…`, `evt_…`, `sub_…`, etc.). Defined in `fc-common-types` (Apache-2.0, so fc-sdk links no AGPL code) with `OutboxStatus`, `OutboxItemType` and `audit_redaction`; re-exported here at the same paths.
 - `config::env_or`, `env_bool`, `env_or_alias`, `env_or_parse` — the env-var helpers every binary uses. `_alias` variants accept a legacy TS name for ECS-task-def compatibility.
 
 ---

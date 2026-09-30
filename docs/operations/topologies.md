@@ -27,7 +27,7 @@ There is no separate router, stream-processor, MCP or function-host binary any m
 | `FC_SCHEDULER_ENABLED` (`DISPATCH_SCHEDULER_ENABLED`) | `false` | Dispatch scheduler | yes | yes |
 | `FC_SCHEDULED_JOB_ENABLED` (`SCHEDULED_JOB_SCHEDULER_ENABLED`) | `false` | Scheduled-job cron engine | yes | yes |
 | `FC_STREAM_PROCESSOR_ENABLED` (`STREAM_PROCESSOR_ENABLED`) | `false` | Projections, fan-out, partition manager (own 4-connection pool) | yes | yes |
-| `FC_OUTBOX_ENABLED` (`OUTBOX_PROCESSOR_ENABLED`) | `false` | Embedded outbox processor | yes | yes |
+| `FC_OUTBOX_ENABLED` (`OUTBOX_PROCESSOR_ENABLED`) | `false` | Embedded outbox processor (Postgres and MySQL outboxes; SQLite and MongoDB need `fc-outbox-processor`) | yes | yes |
 | `FC_MCP_ENABLED` | `false` | Read-only MCP server on `FC_MCP_PORT` (8090) | no | no |
 | `FC_FUNCTION_HOST_ENABLED` | `false` | Function host (WASI components, JS bundles) | no | no |
 | `FC_STANDBY_ENABLED` (`STANDBY_ENABLED`) | `false` | Redis leader election for the leader-gated roles | — | — |

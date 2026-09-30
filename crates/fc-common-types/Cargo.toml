@@ -1,0 +1,19 @@
+[package]
+name = "fc-common-types"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+# Linked by fc-sdk, which applications build into their own code (owner
+# decision #51), so it takes fc-sdk's licence, not the platform's AGPL.
+# Keep it that way: nothing here may depend on an AGPL crate (deny-sdk.toml).
+license = "Apache-2.0"
+description = "FlowCatalyst types shared by the platform and the Rust SDK: outbox status and item types, TSIDs, audit redaction"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints.clippy]
+# Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
+# and `Arc`, not `std::sync::Arc`. Limits in clippy.toml.
+absolute_paths = "warn"

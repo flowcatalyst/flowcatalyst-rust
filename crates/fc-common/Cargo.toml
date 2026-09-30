@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Apache-2.0: the types fc-sdk shares with the platform (re-exported).
+fc-common-types = { path = "../fc-common-types" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

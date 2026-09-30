@@ -339,6 +339,7 @@ mod tests {
             batch_id: None,
             attempts: 0,
             queue_identifier: "q".to_string(),
+            pending_retry: None,
         }
     }
 

@@ -24,8 +24,15 @@ itself.
    applications link into their own code — the Rust SDK `fc-sdk`
    (Apache-2.0) and the function guest crates `fc-function-abi`,
    `fc-function-model`, `fc-function-pdk` (MPL-2.0) — may not depend on
-   AGPL, GPL or LGPL code at all (`deny-sdk.toml`, normal dependencies only).
-   Any other copyleft licence needs review before it is allowed.
+   AGPL, GPL or LGPL code at all (`deny-sdk.toml`, normal dependencies only),
+   and `deny-sdk.toml` has no exceptions. What fc-sdk shares with the
+   platform (the outbox status and item types, TSIDs, audit redaction) lives
+   in `fc-common-types` (Apache-2.0, owner decision #51), which the AGPL
+   `fc-common` re-exports at the old paths. Code an SDK needs goes there (or
+   in another permissively licensed crate), never an AGPL exception. The
+   guest crates depend on no first-party crate but `fc-function-abi` and the
+   PDK's own macros. Any other copyleft licence needs review before it is
+   allowed.
 5. **One version per crate.** Two versions of one crate fail the check unless
    `deny.toml`'s `[bans] skip` lists the older one with the reason (usually:
    which dependency still needs it). Remove the entry when that dependency
@@ -48,7 +55,7 @@ itself.
 | Check | Where | Command |
 |---|---|---|
 | Advisories, licences, bans, sources | CI `supply-chain` job, every push and PR | `cargo deny check` |
-| SDK and guest-crate licences | CI `supply-chain` job | `cargo deny --manifest-path crates/fc-sdk/Cargo.toml --all-features --exclude-dev --config deny-sdk.toml check licenses` (and the three guest crates) |
+| SDK and guest-crate licences | CI `supply-chain` job | `cargo deny --manifest-path crates/fc-sdk/Cargo.toml --all-features --exclude-dev --config deny-sdk.toml check licenses` (and the three guest crates; fc-common-types is covered as fc-sdk's dependency) |
 | Audits | CI `supply-chain` job | `cargo vet --locked` |
 | Embedded dependency list | Dockerfile (`fc-server`), `publish-docker.yml` `release-binaries` (fc-server, fc-outbox-processor), `release-fc-dev.yml` (fc-dev) | `cargo auditable build --release --locked` |
 | SBOM | the same release jobs | `cargo cyclonedx --format json --spec-version 1.5 --describe binaries --no-build-deps --target <triple>` |

@@ -43,7 +43,8 @@ scheduled-jobs-runner = ["client", "lock"]
 
 [dependencies]
 # Core (always included)
-fc-common = { path = "../fc-common" }
+# Apache-2.0, like this crate (owner decision #51); never fc-common (AGPL).
+fc-common-types = { path = "../fc-common-types" }
 serde = { workspace = true }
 serde_json = "1.0"
 chrono = { workspace = true }
