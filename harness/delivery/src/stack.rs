@@ -243,6 +243,10 @@ impl SideEnv {
         set("FC_SCHEDULER_PROCESSING_ENDPOINT", &process);
         // Fan-out picks up new subscriptions within a second.
         set("FC_STREAM_FAN_OUT_SUBS_REFRESH_SECS", "1");
+        // The recording receivers listen on loopback, which both sides'
+        // delivery policy (netguard) refuses as a subscription endpoint or
+        // job target unless allowed (the same name on both sides).
+        set("FC_DELIVERY_ALLOW_LOOPBACK", "true");
         set("FC_DRAIN_TIMEOUT_SECONDS", "10");
         set("RUST_LOG", "info");
         e
