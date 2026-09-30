@@ -37,9 +37,20 @@ async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     }
 }
 
+/// How a wait for capacity ended. Not a bool: Go's `awaitCapacity` returns
+/// `true` for "capacity is back", where this crate used `true` for "cancelled",
+/// and a mechanical port between them would silently flip the meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapacityWait {
+    /// Consumer `rc` has capacity again (or a deferral came due and freed
+    /// budget): go back to polling.
+    Ready,
+    /// The token was cancelled first: stop the loop.
+    Cancelled,
+}
+
 /// Park untimed on the manager's capacity-freed gate (G12) until consumer
 /// `rc` has capacity again (Go: `awaitCapacity`) or `token` is cancelled.
-/// Returns `true` if cancelled first.
 ///
 /// Wakes on the gate (a pool crossing back under capacity, a reconfigure, a
 /// new pool) and on the earliest of this consumer's deferrals coming due —
@@ -54,11 +65,11 @@ async fn wait_for_capacity_or_cancel(
     manager: &QueueManager,
     rc: &RunningConsumer,
     token: &CancellationToken,
-) -> bool {
+) -> CapacityWait {
     loop {
         let notified = manager.capacity_notify().notified();
         if manager.has_capacity_for(rc) {
-            return false;
+            return CapacityWait::Ready;
         }
         let due = rc.earliest_deferral();
         tokio::select! {
@@ -69,8 +80,57 @@ async fn wait_for_capacity_or_cancel(
                     None => future::pending::<()>().await,
                 }
             } => {}
-            _ = token.cancelled() => return true,
+            _ = token.cancelled() => return CapacityWait::Cancelled,
         }
+    }
+}
+
+/// How often a consumer paused on backpressure says so again, louder (Go:
+/// `capacityStuckWarnInterval`): a pool full this long is stuck, not busy.
+const CAPACITY_STUCK_WARN_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// What the operator should hear when a consumer finds its pools full.
+#[derive(Debug, PartialEq, Eq)]
+enum PauseNotice {
+    /// Intake has just paused: raise the warning that names the remedy.
+    First,
+    /// Still paused after [`CAPACITY_STUCK_WARN_INTERVAL`]: say so again, louder.
+    Stuck { full_for: Duration },
+    /// Nothing new to say.
+    Quiet,
+}
+
+/// One consumer's backpressure pause (Go: `wasFull`, `fullSince`,
+/// `nextFullWarn`). Time is passed in so the escalation can be tested.
+#[derive(Debug, Default)]
+struct CapacityPause {
+    since: Option<Instant>,
+    next_stuck_warn: Option<Instant>,
+}
+
+impl CapacityPause {
+    /// The consumer's pools are full at `now`.
+    fn full(&mut self, now: Instant) -> PauseNotice {
+        match (self.since, self.next_stuck_warn) {
+            (None, _) => {
+                self.since = Some(now);
+                self.next_stuck_warn = Some(now + CAPACITY_STUCK_WARN_INTERVAL);
+                PauseNotice::First
+            }
+            (Some(since), Some(next)) if now >= next => {
+                self.next_stuck_warn = Some(now + CAPACITY_STUCK_WARN_INTERVAL);
+                PauseNotice::Stuck {
+                    full_for: now.duration_since(since),
+                }
+            }
+            _ => PauseNotice::Quiet,
+        }
+    }
+
+    /// Capacity is back. Returns whether a pause was in progress.
+    fn ready(&mut self) -> bool {
+        self.next_stuck_warn = None;
+        self.since.take().is_some()
     }
 }
 
@@ -212,7 +272,7 @@ impl QueueManager {
             let _exited = rc.poll_exited.clone().drop_guard();
             let token = rc.stop_poll.clone();
             let id = rc.identifier().to_string();
-            let mut capacity_paused = false;
+            let mut capacity_pause = CapacityPause::default();
 
             loop {
                 if token.is_cancelled() {
@@ -237,28 +297,51 @@ impl QueueManager {
                 // it — a rebuild used to strand the very buffers it waited
                 // on).
                 if !manager.has_capacity_for(&rc) {
-                    if !capacity_paused {
-                        capacity_paused = true;
-                        warn!(consumer = %id, "Destination pools at capacity and deferral budget spent — pausing poll");
-                        manager.warning_service.add_warning(
-                            WarningCategory::PoolHealth,
-                            WarningSeverity::Warn,
-                            format!(
-                                "Consumer [{}] paused — its destination pools are at capacity and {} deferrals are outstanding (budget {})",
-                                id,
-                                rc.deferrals_outstanding(Instant::now()),
-                                manager.deferral_budget
-                            ),
-                            "ConsumerLoop".to_string(),
-                        );
+                    let now = Instant::now();
+                    match capacity_pause.full(now) {
+                        PauseNotice::First => {
+                            warn!(consumer = %id, "Destination pools at capacity and deferral budget spent — pausing poll");
+                            manager.warning_service.add_warning(
+                                WarningCategory::PoolCapacity,
+                                WarningSeverity::Warn,
+                                format!(
+                                    "destination pools at capacity and {} deferrals outstanding (budget {}); pausing {} — \
+                                     a slow pool's backlog larger than the budget blocks the rest of this queue: raise \
+                                     FC_ROUTER_DEFERRAL_BUDGET (SQS FIFO allows 20k in flight) or give that job its own queue",
+                                    rc.deferrals_outstanding(now),
+                                    manager.deferral_budget,
+                                    id
+                                ),
+                                "ConsumerLoop".to_string(),
+                            );
+                        }
+                        PauseNotice::Stuck { full_for } => {
+                            // A pool full this long is not absorbing a burst,
+                            // it is stuck. The pause keeps the consumer out of
+                            // the restart watchdog, so this is the only thing
+                            // left that reports it.
+                            warn!(consumer = %id, full_for_secs = full_for.as_secs(), "Destination pools still at capacity; intake stalled");
+                            manager.warning_service.add_warning(
+                                WarningCategory::PoolCapacity,
+                                WarningSeverity::Error,
+                                format!(
+                                    "destination pools for {} have been at capacity for {}s; intake is stalled",
+                                    id,
+                                    full_for.as_secs()
+                                ),
+                                "ConsumerLoop".to_string(),
+                            );
+                        }
+                        PauseNotice::Quiet => {}
                     }
                     rc.beat();
-                    if wait_for_capacity_or_cancel(&manager, &rc, &token).await {
+                    if wait_for_capacity_or_cancel(&manager, &rc, &token).await
+                        == CapacityWait::Cancelled
+                    {
                         break;
                     }
                     continue;
-                } else if capacity_paused {
-                    capacity_paused = false;
+                } else if capacity_pause.ready() {
                     info!(consumer = %id, "Capacity returned; resuming poll");
                 }
 
@@ -1383,7 +1466,10 @@ mod g12_capacity_gate_tests {
         // The deferral coming due frees budget and wakes the wait.
         let token = CancellationToken::new();
         let start = Instant::now();
-        assert!(!wait_for_capacity_or_cancel(&manager, &rc, &token).await);
+        assert_eq!(
+            wait_for_capacity_or_cancel(&manager, &rc, &token).await,
+            CapacityWait::Ready
+        );
         assert!(start.elapsed() < Duration::from_secs(2));
     }
 
@@ -1412,11 +1498,12 @@ mod g12_capacity_gate_tests {
 
         let rc = parked_consumer(&manager);
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
+        let outcome = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
-        assert!(
-            !cancelled,
+        assert_eq!(
+            outcome,
+            CapacityWait::Ready,
             "must not report cancelled — the token was never cancelled"
         );
         assert!(
@@ -1425,6 +1512,51 @@ mod g12_capacity_gate_tests {
              of the pool's capacity-freed signal",
             elapsed
         );
+    }
+
+    /// The pause warns once, stays quiet while it lasts, escalates once per
+    /// interval, and starts over after capacity returns.
+    #[test]
+    fn a_capacity_pause_warns_once_then_escalates_every_interval() {
+        let t0 = Instant::now();
+        let mut p = CapacityPause::default();
+
+        assert_eq!(p.full(t0), PauseNotice::First);
+        assert_eq!(p.full(t0 + Duration::from_secs(1)), PauseNotice::Quiet);
+        assert_eq!(p.full(t0 + Duration::from_secs(299)), PauseNotice::Quiet);
+
+        let at_interval = t0 + CAPACITY_STUCK_WARN_INTERVAL;
+        assert_eq!(
+            p.full(at_interval),
+            PauseNotice::Stuck {
+                full_for: CAPACITY_STUCK_WARN_INTERVAL
+            }
+        );
+        // The next escalation is a full interval after that one.
+        assert_eq!(
+            p.full(at_interval + Duration::from_secs(60)),
+            PauseNotice::Quiet
+        );
+        assert_eq!(
+            p.full(at_interval + CAPACITY_STUCK_WARN_INTERVAL),
+            PauseNotice::Stuck {
+                full_for: CAPACITY_STUCK_WARN_INTERVAL * 2
+            }
+        );
+    }
+
+    #[test]
+    fn capacity_returning_ends_the_pause_and_the_next_one_starts_fresh() {
+        let t0 = Instant::now();
+        let mut p = CapacityPause::default();
+        assert!(!p.ready(), "no pause in progress");
+
+        assert_eq!(p.full(t0), PauseNotice::First);
+        assert!(p.ready(), "a pause was in progress");
+        assert!(!p.ready(), "and is over");
+
+        let later = t0 + Duration::from_secs(3600);
+        assert_eq!(p.full(later), PauseNotice::First, "a new pause warns again");
     }
 
     /// G12: an already-cancelled token must win immediately over an
@@ -1439,11 +1571,12 @@ mod g12_capacity_gate_tests {
         let rc = parked_consumer(&manager);
 
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
+        let outcome = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
-        assert!(
-            cancelled,
+        assert_eq!(
+            outcome,
+            CapacityWait::Cancelled,
             "a pre-cancelled token must be reported as cancelled"
         );
         assert!(
