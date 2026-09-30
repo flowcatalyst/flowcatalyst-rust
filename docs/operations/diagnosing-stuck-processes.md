@@ -298,13 +298,15 @@ Its cost is under "Overhead".
 turn needs `--cfg tokio_unstable`, on Linux x86/x86_64/aarch64. A cfg flag
 cannot be set per Cargo profile on stable, so it is a build choice:
 
-- **The production image has them.** `Dockerfile` builds with
-  `RUSTFLAGS="-C link-arg=-fuse-ld=lld --cfg tokio_unstable"` and
-  `--features taskdump` unless `--build-arg FC_TASKDUMP=0` (then only the
-  lld flag, and `/diagnostics/task-dump` answers 501). The cook and the
-  build use the same flags, so the dependency layer caches.
-- **Every other build is stable tokio**: local builds, CI, `fc-dev`. They
-  answer 501. To build one by hand on Linux:
+- **The production image does not have them (owner decision 2026-09-30:
+  no `tokio_unstable` in the shipped build).** `Dockerfile` defaults to
+  `FC_TASKDUMP=0`: only the lld flag, and `/diagnostics/task-dump` answers
+  501. For a debugging image, build with `--build-arg FC_TASKDUMP=1`
+  (`RUSTFLAGS="-C link-arg=-fuse-ld=lld --cfg tokio_unstable"` and
+  `--features taskdump`); the cook and the build use the same flags, so
+  the dependency layer caches.
+- **Every other build is stable tokio** too: local builds, CI, `fc-dev`.
+  They answer 501. To build one by hand on Linux:
   `RUSTFLAGS="--cfg tokio_unstable" cargo build --release -p fc-server --features taskdump`
   (`RUSTFLAGS` replaces `.cargo/config.toml`'s linker flags; add
   `-C link-arg=-fuse-ld=lld` if you rely on them).
@@ -373,7 +375,7 @@ noise.
 | Build (Linux aarch64 container, 4 CPUs, this branch) | No subscriber | JSON at INFO |
 |---|---|---|
 | stable tokio | 88k msg/s, 18.3 µs CPU/msg | 73k msg/s, 24.3 µs CPU/msg |
-| `--cfg tokio_unstable` + `taskdump` (the image) | 90k msg/s, 18.8 µs CPU/msg | 59k msg/s, 25.1 µs CPU/msg |
+| `--cfg tokio_unstable` + `taskdump` (opt-in build) | 90k msg/s, 18.8 µs CPU/msg | 59k msg/s, 25.1 µs CPU/msg |
 
 Reading them:
 

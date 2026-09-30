@@ -56,13 +56,13 @@ FROM chef AS builder
 
 # Tokio task dumps (GET /diagnostics/task-dump; see
 # docs/operations/diagnosing-stuck-processes.md): tokio's `taskdump` feature
-# needs `--cfg tokio_unstable`, so the image is built with both. It costs
-# nothing measurable until a dump is asked for (tokio's own docs, and
-# crates/fc-router/tests/throughput_bench.rs on Linux). Build with
-# --build-arg FC_TASKDUMP=0 for an image on stable tokio only; its
-# /diagnostics/task-dump then answers 501. The flags must be the same for
-# the cook and the build, or the cooked dependencies are thrown away.
-ARG FC_TASKDUMP=1
+# needs `--cfg tokio_unstable`. The image is built on STABLE tokio by
+# default (owner decision 2026-09-30: no tokio_unstable in the shipped
+# build), so /diagnostics/task-dump answers 501. Pass --build-arg
+# FC_TASKDUMP=1 to build an image with both for a debugging session. The
+# flags must be the same for the cook and the build, or the cooked
+# dependencies are thrown away.
+ARG FC_TASKDUMP=0
 ENV FC_TASKDUMP=${FC_TASKDUMP}
 
 COPY --from=planner /app/recipe.json recipe.json
