@@ -34,6 +34,39 @@
 //! queue for a permit, so the permit queue only ever holds guests that can
 //! run the moment they get one, and a permit never sits assigned to a
 //! thread that is busy.
+//!
+//! **Invariants.** What must always hold, and why:
+//! - *A permit is held only inside `poll`.* [`Metered::poll`] and
+//!   [`Until::poll`] get an `Executing` before they poll the guest and drop
+//!   it before they return, whatever the guest returned. Between polls a
+//!   guest holds no permit, so a guest parked on I/O can never starve the
+//!   host, and `executing()` counts guests on a CPU, not guests in flight.
+//! - *`executing() <= limit` at every instant.* `Executing` adds to the
+//!   count only after its permit is granted and takes it off before the
+//!   permit goes back (its `Drop` body runs before its fields drop), so the
+//!   count never exceeds the permits handed out. `peak()` is taken from the
+//!   same count, so it is bounded too.
+//! - *A queue position survives a `Pending`.* A guest that finds no free
+//!   permit keeps its `acquire_owned` future in `Admission` across polls,
+//!   and tokio's semaphore is FIFO, so waking up and being polled again does
+//!   not send it to the back. Dropping and re-creating that future on every
+//!   poll would lose the place and let later arrivals overtake it.
+//! - *The lane comes before the permit.* A lane-bound guest takes its lane
+//!   first and holds it while it queues for a permit, and gives both back
+//!   together at the end of the poll. So a permit is never granted to a
+//!   guest whose thread is busy, and a lane never holds a permit between
+//!   polls.
+//! - *Dropping a [`Metered`] or an [`Until`] releases everything.* Every
+//!   resource is owned by a value with a `Drop`: a granted permit by
+//!   `Executing` (which never outlives the poll), a lane held while queued
+//!   by `Admission`, a queued acquisition (and its `waiting` count, the
+//!   `Queued` inside it) by its boxed future. So a guest dropped at any
+//!   point (cancelled, timed out, stopped by [`Until`]) leaves no permit,
+//!   lane or `waiting` count behind, and a permit tokio had already assigned
+//!   to a dropped acquisition goes back to the semaphore.
+//!
+//! The stress test at the bottom of this file checks these under random
+//! mixes of compute, I/O, cancellation and deadlines.
 
 use std::fmt;
 use std::future::Future;
@@ -363,9 +396,15 @@ impl<F: Future> Future for Until<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hint;
+    use std::sync::atomic::AtomicBool;
     use std::thread;
     use std::time::{Duration, Instant};
-    use tokio::time;
+    use tokio::runtime::Builder;
+    use tokio::{task, time};
+
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     /// Blocks its thread for `busy` inside one poll, then waits `idle`
     /// without holding anything, then blocks for `busy` again.
@@ -448,5 +487,324 @@ mod tests {
         first.await.unwrap();
         second.await.unwrap();
         assert_eq!(budget.peak(), 1);
+    }
+
+    /// What a stress guest does between two awaits, or awaits.
+    #[derive(Clone, Copy)]
+    enum Step {
+        /// Compute: keep the thread busy inside the poll.
+        Spin(Duration),
+        /// Give the thread up without waiting on anything.
+        Yield,
+        /// Simulated I/O: wait on a timer, holding nothing.
+        Sleep(Duration),
+    }
+
+    /// How a stress guest ends.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum Fate {
+        /// Runs to the end: must complete.
+        Completes,
+        /// Behind [`Metered::until`] with a stop that never fires: must
+        /// complete.
+        UntilNever,
+        /// Behind [`Metered::until`] with a stop fired after a deadline:
+        /// completes, or is stopped while it waits.
+        UntilDeadline(Duration),
+        /// Its task is aborted after a while, wherever it is.
+        Aborted(Duration),
+        /// Dropped in place by a timeout, wherever it is.
+        TimedOut(Duration),
+    }
+
+    impl Fate {
+        fn must_complete(self) -> bool {
+            matches!(self, Fate::Completes | Fate::UntilNever)
+        }
+    }
+
+    /// The real concurrency, counted independently of the budget: how many
+    /// guests are inside a poll now, overall and per lane.
+    struct Probes {
+        limit: usize,
+        polling: AtomicUsize,
+        lanes: Vec<AtomicUsize>,
+        violations: AtomicUsize,
+    }
+
+    /// Polls `inner` counting itself in [`Probes`], and records a violation
+    /// if more than `limit` guests, or more than one guest on its lane, are
+    /// inside a poll at once, or if the budget does not count this guest.
+    struct Probe<F> {
+        inner: Pin<Box<F>>,
+        probes: Arc<Probes>,
+        lane: Option<usize>,
+        budget: ExecBudget,
+    }
+
+    impl<F: Future> Future for Probe<F> {
+        type Output = F::Output;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+            let this = self.get_mut();
+            let probes = &this.probes;
+            let polling = probes.polling.fetch_add(1, Ordering::SeqCst) + 1;
+            let executing = this.budget.executing();
+            if polling > probes.limit || executing == 0 || executing > probes.limit {
+                probes.violations.fetch_add(1, Ordering::SeqCst);
+            }
+            if let Some(lane) = this.lane {
+                if probes.lanes[lane].fetch_add(1, Ordering::SeqCst) != 0 {
+                    probes.violations.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            let polled = this.inner.as_mut().poll(cx);
+            if let Some(lane) = this.lane {
+                probes.lanes[lane].fetch_sub(1, Ordering::SeqCst);
+            }
+            probes.polling.fetch_sub(1, Ordering::SeqCst);
+            polled
+        }
+    }
+
+    async fn guest(steps: Vec<Step>, completed: Arc<AtomicUsize>) {
+        for step in steps {
+            match step {
+                Step::Spin(busy) => {
+                    let until = Instant::now() + busy;
+                    while Instant::now() < until {
+                        hint::spin_loop();
+                    }
+                }
+                Step::Yield => task::yield_now().await,
+                Step::Sleep(idle) => time::sleep(idle).await,
+            }
+        }
+        completed.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn micros(rng: &mut StdRng, max: u64) -> Duration {
+        Duration::from_micros(rng.random_range(0..=max))
+    }
+
+    fn plan(rng: &mut StdRng) -> (Vec<Step>, Fate) {
+        let steps = (0..rng.random_range(1..=12))
+            .map(|_| match rng.random_range(0..10) {
+                0..=3 => Step::Spin(micros(rng, 300)),
+                4..=5 => Step::Yield,
+                _ => Step::Sleep(micros(rng, 3_000)),
+            })
+            .collect();
+        let fate = match rng.random_range(0..10) {
+            0..=3 => Fate::Completes,
+            4..=5 => Fate::UntilNever,
+            6..=7 => Fate::UntilDeadline(micros(rng, 20_000)),
+            8 => Fate::Aborted(micros(rng, 20_000)),
+            _ => Fate::TimedOut(micros(rng, 20_000)),
+        };
+        (steps, fate)
+    }
+
+    /// What one seed's run saw.
+    #[derive(Default, Debug)]
+    struct Seen {
+        completed: usize,
+        must_complete: usize,
+        stopped: usize,
+        cancelled: usize,
+        max_waiting: usize,
+        samples: usize,
+    }
+
+    /// One seed: `limit`, lanes and every guest's steps and fate come from
+    /// the seed. Timing still varies from run to run, so the assertions are
+    /// only the invariants, which hold under any interleaving.
+    fn stress(seed: u64) -> Seen {
+        const GUESTS: usize = 200;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let limit = rng.random_range(1..=4);
+        let lanes: Vec<Lane> = (0..rng.random_range(0..=3)).map(|_| Lane::new()).collect();
+        let budget = ExecBudget::new(limit);
+        let probes = Arc::new(Probes {
+            limit,
+            polling: AtomicUsize::new(0),
+            lanes: lanes.iter().map(|_| AtomicUsize::new(0)).collect(),
+            violations: AtomicUsize::new(0),
+        });
+        let completed = Arc::new(AtomicUsize::new(0));
+        let plans: Vec<_> = (0..GUESTS)
+            .map(|_| {
+                let (steps, fate) = plan(&mut rng);
+                let lane = (!lanes.is_empty() && rng.random_range(0..3) == 0)
+                    .then(|| rng.random_range(0..lanes.len()));
+                (steps, fate, lane)
+            })
+            .collect();
+
+        // Samples the budget's counters from another thread for the whole
+        // run: `executing() <= limit` must hold at every observation.
+        let sampling = Arc::new(AtomicBool::new(true));
+        let sampler = {
+            let (budget, sampling) = (budget.clone(), sampling.clone());
+            thread::spawn(move || {
+                let (mut over, mut max_waiting, mut samples) = (0, 0, 0);
+                while sampling.load(Ordering::SeqCst) {
+                    if budget.executing() > budget.limit() {
+                        over += 1;
+                    }
+                    max_waiting = max_waiting.max(budget.waiting());
+                    samples += 1;
+                    thread::yield_now();
+                }
+                (over, max_waiting, samples)
+            })
+        };
+
+        // More threads than permits, so guests really do queue for them.
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(6)
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut seen = runtime.block_on(async {
+            let handles: Vec<_> = plans
+                .into_iter()
+                .map(|(steps, fate, lane)| {
+                    let probe = Probe {
+                        inner: Box::pin(guest(steps, completed.clone())),
+                        probes: probes.clone(),
+                        lane,
+                        budget: budget.clone(),
+                    };
+                    let metered = match lane {
+                        Some(lane) => budget.run_on(&lanes[lane], probe),
+                        None => budget.run(probe),
+                    };
+                    // `Some(stopped)` when an `Until` was stopped while it
+                    // waited; `None` when it ended any other way.
+                    let handle = match fate {
+                        Fate::Completes | Fate::Aborted(_) => tokio::spawn(async move {
+                            metered.await;
+                            Some(false)
+                        }),
+                        Fate::UntilNever => tokio::spawn(async move {
+                            Some(metered.until(CancellationToken::new()).await.is_err())
+                        }),
+                        Fate::UntilDeadline(deadline) => {
+                            let stop = CancellationToken::new();
+                            let timer = stop.clone();
+                            tokio::spawn(async move {
+                                time::sleep(deadline).await;
+                                timer.cancel();
+                            });
+                            tokio::spawn(async move { Some(metered.until(stop).await.is_err()) })
+                        }
+                        Fate::TimedOut(after) => tokio::spawn(async move {
+                            time::timeout(after, metered).await.ok().map(|()| false)
+                        }),
+                    };
+                    if let Fate::Aborted(after) = fate {
+                        let abort = handle.abort_handle();
+                        tokio::spawn(async move {
+                            time::sleep(after).await;
+                            abort.abort();
+                        });
+                    }
+                    (fate, handle)
+                })
+                .collect();
+
+            let mut seen = Seen {
+                must_complete: handles.iter().filter(|(f, _)| f.must_complete()).count(),
+                ..Seen::default()
+            };
+            let joined = time::timeout(Duration::from_secs(60), async {
+                for (fate, handle) in handles {
+                    match handle.await {
+                        Ok(Some(true)) => {
+                            assert!(!fate.must_complete(), "seed {seed}: a {fate:?} was stopped");
+                            seen.stopped += 1;
+                        }
+                        Ok(Some(false)) => seen.completed += 1,
+                        Ok(None) | Err(_) => {
+                            assert!(
+                                !fate.must_complete(),
+                                "seed {seed}: a {fate:?} was cancelled"
+                            );
+                            seen.cancelled += 1;
+                        }
+                    }
+                }
+            })
+            .await;
+            assert!(
+                joined.is_ok(),
+                "seed {seed}: guests still running after 60 s"
+            );
+            seen
+        });
+        drop(runtime);
+        sampling.store(false, Ordering::SeqCst);
+        let (over, max_waiting, samples) = sampler.join().unwrap();
+
+        // Every guest whose task reported it finished ran to its end, and no
+        // other did; every guest that had to complete did.
+        assert_eq!(
+            completed.load(Ordering::SeqCst),
+            seen.completed,
+            "seed {seed}"
+        );
+        assert!(
+            seen.completed >= seen.must_complete,
+            "seed {seed}: {seen:?}"
+        );
+        seen.max_waiting = max_waiting;
+        seen.samples = samples;
+        assert_eq!(
+            over, 0,
+            "seed {seed}: executing() above the limit {over} times"
+        );
+        assert_eq!(
+            probes.violations.load(Ordering::SeqCst),
+            0,
+            "seed {seed}: concurrency"
+        );
+        assert!(
+            budget.peak() <= limit,
+            "seed {seed}: peak {}",
+            budget.peak()
+        );
+        // Nothing leaked: every count back to 0, every permit and lane free.
+        assert_eq!(budget.executing(), 0, "seed {seed}: executing leaked");
+        assert_eq!(budget.waiting(), 0, "seed {seed}: waiting leaked");
+        assert_eq!(
+            budget.inner.permits.available_permits(),
+            limit,
+            "seed {seed}: permit leaked"
+        );
+        for lane in &lanes {
+            assert_eq!(lane.0.available_permits(), 1, "seed {seed}: lane leaked");
+        }
+        seen
+    }
+
+    /// Many guests with random mixes of compute and I/O, random
+    /// cancellations and [`Until`] deadlines, on several seeds (see the
+    /// module's invariants). Every guest that is neither cancelled nor
+    /// stopped must complete.
+    #[test]
+    fn random_guests_never_exceed_the_limit_or_leak_a_permit() {
+        let mut stopped_or_cancelled = 0;
+        let mut waited = 0;
+        for seed in 0..12 {
+            let seen = stress(seed);
+            eprintln!("seed {seed}: {seen:?}");
+            stopped_or_cancelled += seen.stopped + seen.cancelled;
+            waited = waited.max(seen.max_waiting);
+        }
+        // Not invariants, but a run that never queued or cancelled anything
+        // would not have tested much.
+        assert!(waited > 0, "no guest ever queued for a permit");
+        assert!(stopped_or_cancelled > 0, "no guest was ever cut short");
     }
 }
