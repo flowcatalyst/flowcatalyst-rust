@@ -3,10 +3,9 @@
 //!
 //! `Handle::dump` exists only in a build compiled with `--cfg
 //! tokio_unstable` and tokio's `taskdump` feature, on Linux x86/x86_64/
-//! aarch64. Nothing builds that way by default: the production image is on
-//! stable tokio (`Dockerfile`, `FC_TASKDUMP=0`; pass `FC_TASKDUMP=1` for a
-//! debugging image), and every other build (local, CI, fc-dev) answers
-//! [`TaskDumpError::NotAvailable`]. See
+//! aarch64. The production image is built that way (`Dockerfile`,
+//! `FC_TASKDUMP=1`, the default); every other build (local, CI, fc-dev)
+//! answers [`TaskDumpError::NotAvailable`]. See
 //! `docs/operations/diagnosing-stuck-processes.md` for why it is a build
 //! choice rather than a runtime one.
 

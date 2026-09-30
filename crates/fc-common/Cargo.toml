@@ -33,9 +33,8 @@ libc = { workspace = true }
 
 [features]
 default = []
-# Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable".
-# Off by default everywhere; the Dockerfile builds both only with
-# --build-arg FC_TASKDUMP=1.
+# Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable";
+# the production image builds with both (Dockerfile, FC_TASKDUMP).
 taskdump = ["tokio/taskdump"]
 # OTLP span export, started by FC_OTEL_ENABLED=true.
 otel = [

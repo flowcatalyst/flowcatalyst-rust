@@ -83,9 +83,8 @@ alb = ["fc-router/alb"]
 email = ["fc-router/email"]
 oidc-flow = ["fc-router/oidc-flow"]
 # Diagnostics (docs/operations/diagnosing-stuck-processes.md). `taskdump`
-# also needs RUSTFLAGS="--cfg tokio_unstable" and builds on Linux only: it is
-# off by default; the Dockerfile turns both on only with
-# --build-arg FC_TASKDUMP=1. `otel` needs
+# also needs RUSTFLAGS="--cfg tokio_unstable" and builds on Linux only: the
+# production image turns both on (Dockerfile, FC_TASKDUMP). `otel` needs
 # FC_OTEL_ENABLED=true.
 taskdump = ["fc-common/taskdump"]
 otel = ["fc-common/otel"]
