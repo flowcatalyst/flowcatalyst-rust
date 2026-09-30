@@ -239,7 +239,7 @@ pub mod repository {
     /// Holds all Arc-wrapped repository instances. Replaces the ~30 lines of
     /// `Arc::new(XRepository::new(&pool))` duplicated across binaries.
     ///
-    /// ```rust,ignore
+    /// ```text
     /// let repos = Repositories::new(&pool);
     /// // then use repos.event_repo, repos.client_repo, etc.
     /// ```
