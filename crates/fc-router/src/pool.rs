@@ -1,12 +1,13 @@
 //! ProcessPool - Worker pool with FIFO ordering, rate limiting, and concurrency control
 //!
-//! Uses lightweight per-message-group handlers (VecDeque + processing flag) instead of
-//! dedicated tokio tasks with channels. A task is spawned only when there's work to do
-//! and exits when the group's queue is empty. This matches the TS MessageGroupHandler
-//! pattern and uses ~200 bytes per idle group vs ~100KB with the old design.
+//! Ordered message groups are lightweight buffers (a FIFO and a draining flag per
+//! group, [`groups::GroupQueues`]) instead of dedicated tokio tasks with channels. A
+//! [`Drainer`] is spawned only when there's work to do and exits when the group's queue
+//! is empty (Java `OrderedGroups` + `runDrainer`), using ~200 bytes per idle group vs
+//! ~100KB with the old design.
 //!
 //! Every task spawned by the pool (`spawn_immediate_task`'s standalone workers and
-//! `spawn_drain_task`'s per-group drain loops) is spawned via `self.tracker`, a
+//! `spawn_drain_task`'s per-group drainers) is spawned via `self.tracker`, a
 //! `tokio_util::task::TaskTracker`, instead of bare `tokio::spawn`. Nothing explicitly
 //! joins these tasks — they're self-terminating — but the tracker gives the pool a
 //! tokio-native answer to "has everything finished?": `is_fully_drained()` is a
@@ -15,6 +16,8 @@
 //! `queue_size == 0 && active_workers == 0` on Relaxed counters, which could read
 //! "drained" momentarily between a counter decrement and the task's actual exit.
 
+mod groups;
+
 use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use governor::{
@@ -22,7 +25,6 @@ use governor::{
     state::{InMemoryState, NotKeyed},
     Quota, RateLimiter,
 };
-use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -32,6 +34,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn, Instrument};
 
+use self::groups::GroupQueues;
 use crate::event_counters::{PoolEventSnapshot, RejectReason};
 use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
 use crate::group_flush::GroupFlushRegistry;
@@ -599,68 +602,6 @@ impl Drop for WorkerGuard {
     }
 }
 
-/// A drain task's guard: its [`WorkerGuard`] for the message in hand, plus
-/// the group it owns. If the task exits abnormally (panic, or a closed
-/// semaphore) it empties the group's buffer — dropping each task fires its
-/// callback's fallback nack — gives back one queue slot per abandoned
-/// message, and clears `processing` so a later submit can start a fresh
-/// drainer.
-struct DrainGuard {
-    group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
-    group_id: Arc<str>,
-    /// The drainer's message in hand. Its slot is given back at dequeue, so
-    /// it starts with none held.
-    worker: WorkerGuard,
-    active: bool,
-}
-
-impl Drop for DrainGuard {
-    fn drop(&mut self) {
-        self.worker.slot_held = false;
-        if !self.active {
-            return;
-        }
-        let abandoned = match self.group_handlers.get(&self.group_id) {
-            Some(entry) => {
-                let mut handler = entry.lock();
-                let abandoned = handler.take_all();
-                if handler.processing {
-                    handler.set_processing(false);
-                }
-                abandoned
-            }
-            None => Vec::new(),
-        };
-        // Leave no emptied, idle handler behind: the blocked-groups view
-        // would show it as parked until the group's next message.
-        self.group_handlers.remove_if(&self.group_id, |_, handler| {
-            let handler = handler.lock();
-            handler.is_empty() && !handler.processing
-        });
-        for _ in &abandoned {
-            self.worker.queue_size.release();
-        }
-        error!(
-            group_id = %self.group_id,
-            abandoned = abandoned.len(),
-            "Drain task exited abnormally — released its queue slots; the abandoned messages' callbacks nack them as they drop"
-        );
-        drop(abandoned);
-    }
-}
-
-/// Empty `group`'s buffer, returning what was in it in FIFO order (Go
-/// `takeBuffered`). The caller owns the queue slots those messages held.
-fn take_buffered(
-    group_handlers: &DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>,
-    group_id: &Arc<str>,
-) -> Vec<PoolTask> {
-    match group_handlers.get(group_id) {
-        Some(entry) => entry.lock().take_all(),
-        None => Vec::new(),
-    }
-}
-
 /// Nack every message in `tasks`, giving back the queue slot each held.
 async fn nack_all(tasks: Vec<PoolTask>, queue_size: &QueueSlotReleaser, delay: Option<u32>) {
     for task in tasks {
@@ -708,28 +649,6 @@ async fn ack_and_report_siblings(
             jobs,
         },
     );
-}
-
-/// Hand a whole group back to the broker: the head (first in the buffer)
-/// with `head_delay`, everything behind it with the sibling delay. Returns
-/// how many messages went back.
-async fn release_group(
-    group_handlers: &DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>,
-    group_id: &Arc<str>,
-    queue_size: &QueueSlotReleaser,
-    head_delay: Option<u32>,
-) -> usize {
-    let mut buffered = take_buffered(group_handlers, group_id).into_iter();
-    let mut released = 0;
-    if let Some(head) = buffered.next() {
-        released += 1;
-        queue_size.release();
-        head.callback.nack(head_delay).await;
-    }
-    let siblings: Vec<PoolTask> = buffered.collect();
-    released += siblings.len();
-    nack_all(siblings, queue_size, sibling_nack_delay(head_delay)).await;
-    released
 }
 
 /// The two dispositions worth a log line of their own: a deferral (a 2xx
@@ -903,14 +822,249 @@ impl Deliverer {
     }
 }
 
-/// What the drain loop does after one message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Flow {
-    /// Take the group's next message.
-    Next,
-    /// Stop draining (the semaphore closed); [`DrainGuard`] hands back the
-    /// rest.
-    Stop,
+/// One ordered group's drainer (Go `drainGroup`, Java `runDrainer`): takes
+/// the group's messages one at a time, delivers each, and applies its
+/// [`Disposition`] to the broker and the group, until the group is empty.
+///
+/// Per message, the [`Disposition`] decides:
+/// - `Ack`: ack it and move on, unless BLOCK_ON_ERROR blocked the group,
+///   in which case every message buffered behind it leaves too
+///   ([`Self::block_group`]).
+/// - `Retry`: put it back at the FRONT of the group, wait out the backoff,
+///   and attempt it again. Nothing behind it is delivered in the meantime
+///   (H3).
+/// - `Release`: nack it AND take and nack the group's whole buffer, so the
+///   group comes back from the broker in order (H3, Go
+///   `releaseGroup`/`takeBuffered`).
+///
+/// **Owns:** its group while it runs (see [`GroupQueues`]), plus clones of
+/// the pool's shared state, taken once when the pool spawns it.
+/// **Exits:** when the group is empty ([`GroupQueues::poll_head`] has
+/// released it), or when the semaphore closes.
+/// **Tracked by:** the pool's `tracker`, so `wait_drained()` includes it.
+/// **Panic safety:** a panic inside the mediator is caught and the message
+/// released like any other unavailable target ([`mediate_guarded`]). If
+/// anything else unwinds the drainer, or it stops on a closed semaphore,
+/// its `Drop` (the drain guard) abandons the group: it empties the buffer
+/// (the callbacks' Drop fires their fallback nacks), gives back one queue
+/// slot per abandoned message, and lets go of the group, removing it once
+/// empty. Its [`WorkerGuard`] releases the `mediating` entry held for the
+/// message in hand.
+///
+/// Each message is processed inside its own `router.dispatch` span, so
+/// every line logged for it carries its id, pool, group and queue.
+struct Drainer {
+    deliverer: Deliverer,
+    groups: Arc<GroupQueues>,
+    slots: QueueSlotReleaser,
+    stop: CancellationToken,
+    settled_reporter: Option<Arc<dyn SettledReporter>>,
+    group: Arc<str>,
+    /// The message in hand. Its queue slot is given back when it is taken
+    /// from the group, so this guard holds none.
+    worker: WorkerGuard,
+    /// Set while the drainer runs; still set when it is dropped, `Drop`
+    /// abandons the group.
+    running: bool,
+}
+
+impl Drainer {
+    async fn run(mut self) {
+        debug!(group_id = %self.group, pool_code = %self.deliverer.pool_code, "Group drain task started");
+        self.running = true;
+        while let Some(task) = self.groups.poll_head(&self.group) {
+            self.slots.release();
+            let span = dispatch_span(&self.deliverer.pool_code, &task);
+            if !self.deliver(task).instrument(span).await {
+                // The semaphore closed: `Drop` hands back the rest.
+                return;
+            }
+        }
+        self.running = false;
+        debug!(group_id = %self.group, pool_code = %self.deliverer.pool_code, "Group drain task exited");
+    }
+
+    /// Deliver `task` and settle it. `false` means stop draining.
+    async fn deliver(&mut self, task: PoolTask) -> bool {
+        let ctx = event_context(&self.deliverer.pool_code, &task);
+        match self.deliverer.attempt(&mut self.worker, &task, &ctx).await {
+            Attempt::Settled => true,
+            Attempt::Closed => false,
+            Attempt::Delivered {
+                outcome,
+                disposition,
+            } => {
+                match disposition.action {
+                    BrokerAction::Ack => self.ack(task, &outcome, &disposition, &ctx).await,
+                    BrokerAction::Release => self.release(task, &disposition, &ctx).await,
+                    BrokerAction::Retry => self.retry(task, &disposition, &ctx).await,
+                }
+                true
+            }
+        }
+    }
+
+    async fn ack(
+        &self,
+        task: PoolTask,
+        outcome: &MediationOutcome,
+        disposition: &Disposition,
+        ctx: &EventContext,
+    ) {
+        maybe_flush_group(&self.deliverer.flush_registry, &task.message, outcome);
+        task.callback.ack().await;
+        if disposition.group == GroupEffect::Block {
+            self.block_group(ctx).await;
+        }
+    }
+
+    /// BLOCK_ON_ERROR: the head failed terminally, so nothing behind it may
+    /// be delivered past it. ACKed and reported when the platform can be
+    /// told (Go `ackBuffered`), otherwise handed back; see the Disposition
+    /// section's module doc.
+    async fn block_group(&self, ctx: &EventContext) {
+        let pool_code = &self.deliverer.pool_code;
+        let events = self.deliverer.metrics_collector.events();
+        let siblings = self.groups.take_buffered(&self.group);
+        let reported = self.settled_reporter.is_some() && !siblings.is_empty();
+        self.deliverer.recorder.record(
+            EventKind::GroupDecision,
+            ctx,
+            Facts::text(format!(
+                "BLOCK_GROUP: head failed under BLOCK_ON_ERROR; {} buffered sibling(s) {}",
+                siblings.len(),
+                if reported {
+                    "acked and reported to the platform"
+                } else {
+                    "handed back to the broker"
+                }
+            )),
+        );
+        match self.settled_reporter.as_ref() {
+            Some(reporter) if !siblings.is_empty() => {
+                events.reject(RejectReason::Blocked, siblings.len());
+                ack_and_report_siblings(siblings, &self.slots, reporter, pool_code, &self.group)
+                    .await;
+            }
+            _ => {
+                if !siblings.is_empty() {
+                    warn!(
+                        group_id = %self.group,
+                        pool_code = %pool_code,
+                        released = siblings.len(),
+                        "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
+                    );
+                }
+                events.reject(RejectReason::Released, siblings.len());
+                nack_all(siblings, &self.slots, Some(SIBLING_NACK_DELAY_SECS)).await;
+            }
+        }
+    }
+
+    /// The whole group goes back, head first, so it returns in order.
+    async fn release(&self, task: PoolTask, disposition: &Disposition, ctx: &EventContext) {
+        let delay = disposition.nack_delay_secs();
+        task.callback.nack(delay).await;
+        let siblings = self.groups.take_buffered(&self.group);
+        self.deliverer
+            .metrics_collector
+            .events()
+            .reject(RejectReason::Released, 1 + siblings.len());
+        self.deliverer.recorder.record(
+            EventKind::GroupDecision,
+            ctx,
+            Facts::text(format!(
+                "RETURN_GROUP: head released with delay {:?}s; {} buffered sibling(s) released behind it",
+                delay,
+                siblings.len()
+            )),
+        );
+        info!(
+            group_id = %self.group,
+            pool_code = %self.deliverer.pool_code,
+            message_id = %task.message.id,
+            buffered_released = siblings.len(),
+            delay_seconds = ?delay,
+            "Released message group to broker"
+        );
+        nack_all(siblings, &self.slots, sibling_nack_delay(delay)).await;
+    }
+
+    /// Re-front the head so it is the next message attempted, then wait out
+    /// the backoff holding no concurrency slot. Later arrivals queue behind
+    /// it. Shutdown and `release_remainder` cut the wait short and hand the
+    /// group back instead.
+    async fn retry(&self, mut task: PoolTask, disposition: &Disposition, ctx: &EventContext) {
+        task.attempts += 1;
+        self.deliverer.recorder.record(
+            EventKind::GroupDecision,
+            ctx,
+            Facts::text(format!(
+                "RETRY_HEAD: attempt {} in {}ms; the group waits behind it",
+                task.attempts + 1,
+                disposition.retry_after.as_millis()
+            )),
+        );
+        // Go `InFlightTracker.MarkRetrying`: the reaper and stall detector
+        // leave a live retry alone.
+        task.callback.mark_retrying();
+        let head_delay = disposition.nack_delay_secs();
+        if let Some(task) = self.groups.re_front(&self.group, task, &self.slots) {
+            // Unreachable while this drainer runs (only it removes its
+            // group); hand the message back rather than lose it.
+            task.callback.nack(head_delay).await;
+            return;
+        }
+        tokio::select! {
+            biased;
+            _ = self.stop.cancelled() => {
+                // Hand the group back (whatever release_remainder has not
+                // already taken) instead of holding it.
+                let released = self.release_group(head_delay).await;
+                self.deliverer
+                    .metrics_collector
+                    .events()
+                    .reject(RejectReason::Released, released);
+            }
+            _ = time::sleep(disposition.retry_after) => {}
+        }
+    }
+
+    /// Hand the whole group back to the broker: the head (first in the
+    /// buffer) with `head_delay`, everything behind it with the sibling
+    /// delay. Returns how many messages went back.
+    async fn release_group(&self, head_delay: Option<u32>) -> usize {
+        let mut buffered = self.groups.take_buffered(&self.group).into_iter();
+        let mut released = 0;
+        if let Some(head) = buffered.next() {
+            released += 1;
+            self.slots.release();
+            head.callback.nack(head_delay).await;
+        }
+        let siblings: Vec<PoolTask> = buffered.collect();
+        released += siblings.len();
+        nack_all(siblings, &self.slots, sibling_nack_delay(head_delay)).await;
+        released
+    }
+}
+
+impl Drop for Drainer {
+    fn drop(&mut self) {
+        self.worker.slot_held = false;
+        if !self.running {
+            return;
+        }
+        let abandoned = self.groups.abandon(&self.group);
+        for _ in &abandoned {
+            self.slots.release();
+        }
+        error!(
+            group_id = %self.group,
+            abandoned = abandoned.len(),
+            "Drain task exited abnormally — released its queue slots; the abandoned messages' callbacks nack them as they drop"
+        );
+        drop(abandoned);
+    }
 }
 
 /// The span one message is processed in: every line logged while it is in
@@ -1097,78 +1251,6 @@ pub struct PoolTask {
     pub queue_identifier: String,
 }
 
-/// Lightweight per-message-group handler: the group's buffer and a flag —
-/// no tokio task, no channels. A drain task is spawned only when work
-/// arrives for an idle group.
-///
-/// The buffer is a single strict FIFO, as in Go's `groupQueue`. A message
-/// group is an ordering contract, so there is no priority lane inside it:
-/// letting a "high priority" message jump an earlier one in the same group
-/// would defeat in-order delivery. A retried head is put back at the FRONT
-/// (`push_front`), so it is the next message attempted.
-struct MessageGroupHandler {
-    msgs: VecDeque<PoolTask>,
-    processing: bool,
-    /// When this group was last left with no drainer running (mirrors Go's
-    /// `groupQueue.parkedAt`) — `None` while `processing` is `true`, or if
-    /// the group has never been idle since creation. Set by
-    /// `set_processing(false)`/cleared by `set_processing(true)`, the two
-    /// call sites that flip `processing`. A `parked_at` that keeps ageing
-    /// while `processing` stays `false` is the operator "blocked groups"
-    /// signature: nothing has come back to resume the group.
-    parked_at: Option<Instant>,
-}
-
-impl MessageGroupHandler {
-    fn new() -> Self {
-        Self {
-            msgs: VecDeque::new(),
-            processing: false,
-            parked_at: None,
-        }
-    }
-
-    fn enqueue(&mut self, task: PoolTask) {
-        self.msgs.push_back(task);
-    }
-
-    /// Put a retried message back at the head of the group.
-    fn enqueue_front(&mut self, task: PoolTask) {
-        self.msgs.push_front(task);
-    }
-
-    fn dequeue(&mut self) -> Option<PoolTask> {
-        self.msgs.pop_front()
-    }
-
-    /// Empty the buffer, returning what was in it in FIFO order (Go
-    /// `takeBuffered`).
-    fn take_all(&mut self) -> Vec<PoolTask> {
-        self.msgs.drain(..).collect()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.msgs.is_empty()
-    }
-
-    fn len(&self) -> usize {
-        self.msgs.len()
-    }
-
-    /// The single mutator of `processing` — every call site that used to
-    /// write the field directly goes through this instead, so `parked_at`
-    /// can never drift out of sync with it (ledger: the R-04 "blocked
-    /// groups" view's `parkedAt`/`working` pair).
-    fn set_processing(&mut self, processing: bool) {
-        self.processing = processing;
-        self.parked_at = if processing {
-            None
-        } else {
-            Some(Instant::now())
-        };
-    }
-}
-
 /// One message currently inside a pool worker (awaiting a rate-limit token
 /// or actively being delivered, inside `mediator.mediate`) — mirrors Go's
 /// `MediatingEntry`. Snapshotted for the operator "Mediating" dashboard
@@ -1202,7 +1284,7 @@ pub struct MediatingEntry {
 /// "blocked groups" view (ledger R-04). Mirrors Go's `GroupInfo`; see its
 /// doc comment for what "live" means (buffered awaiting a drainer, being
 /// drained, or parked with none running — a fully-drained group is deleted
-/// from `group_handlers`, so it never shows up here).
+/// from the pool's [`GroupQueues`], so it never shows up here).
 #[derive(Debug, Clone)]
 pub struct GroupInfo {
     pub group: String,
@@ -1258,8 +1340,9 @@ pub struct ProcessPool {
     /// Pool-level concurrency semaphore
     semaphore: Arc<Semaphore>,
 
-    /// Per-message-group handlers (lightweight: VecDeque + processing flag)
-    group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
+    /// The ordered groups' buffers and drainer bookkeeping (lightweight:
+    /// a FIFO and a flag per group).
+    groups: Arc<GroupQueues>,
 
     /// Rate limiter + configured rpm bundled together. `ArcSwapOption`
     /// allows lock-free reads on the hot path (every dispatched message)
@@ -1384,7 +1467,7 @@ impl ProcessPool {
             mediator,
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
-            group_handlers: Arc::new(DashMap::new()),
+            groups: Arc::new(GroupQueues::new()),
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
@@ -1527,24 +1610,7 @@ impl ProcessPool {
 
         // Ordered mode: enqueue at the back of the group's FIFO and spawn a
         // drain task if the group is idle.
-        let should_spawn = {
-            let entry = self
-                .group_handlers
-                .entry(Arc::clone(&group_id))
-                .or_insert_with(|| parking_lot::Mutex::new(MessageGroupHandler::new()));
-            let mut handler = entry.lock();
-
-            handler.enqueue(task);
-
-            if !handler.processing {
-                handler.set_processing(true);
-                true
-            } else {
-                false
-            }
-        };
-
-        if should_spawn {
+        if self.groups.offer(Arc::clone(&group_id), task) {
             self.spawn_drain_task(group_id);
         }
 
@@ -1633,254 +1699,28 @@ impl ProcessPool {
         );
     }
 
-    /// Spawn a task that drains a group's buffer one message at a time,
-    /// then exits (Go `drainGroup`).
-    ///
-    /// Per message, the [`Disposition`] decides:
-    /// - `Ack`: ack it and move on — unless BLOCK_ON_ERROR blocked the
-    ///   group, in which case every message buffered behind it is handed
-    ///   back to the broker first.
-    /// - `Retry`: put it back at the FRONT of the group, wait out the
-    ///   backoff, and attempt it again. Nothing behind it is delivered in
-    ///   the meantime (H3).
-    /// - `Release`: nack it AND take and nack the group's whole buffer, so
-    ///   the group comes back from the broker in order (H3, Go
-    ///   `releaseGroup`/`takeBuffered`).
-    ///
-    /// **Owns:** the group's `MessageGroupHandler` (via `group_handlers`)
-    /// while `processing` is set, plus Arc clones of the pool's shared state.
-    /// **Exits:** when the group's buffer is empty (the handler is removed
-    /// from the map), or when the semaphore closes.
-    /// **Tracked by:** `self.tracker`, so `wait_drained()` includes it.
-    /// **Panic safety:** a panic inside the mediator is caught and the
-    /// message released like any other unavailable target
-    /// ([`mediate_guarded`]). Anything else that unwinds the task hits
-    /// [`DrainGuard`], which empties the buffer (the callbacks' Drop fires
-    /// their fallback nacks), gives back one queue slot per abandoned
-    /// message, clears `processing` (removing the emptied handler), and
-    /// releases the `mediating` entry held for the
-    /// message in hand.
-    ///
-    /// Each message is processed inside its own `router.dispatch` span, so
-    /// every line logged for it carries its id, pool, group and queue.
-    fn spawn_drain_task(&self, group_id: Arc<str>) {
-        let deliverer = self.deliverer();
-        let pool_code = deliverer.pool_code.clone();
-        let queue_size = self.queue_slot_releaser();
-        let mediating = self.mediating.clone();
-        let group_handlers = self.group_handlers.clone();
-        let stop = self.stop.clone();
-        let settled_reporter = self.settled_reporter.clone();
-        let recorder = deliverer.recorder.clone();
+    /// Start `group`'s [`Drainer`]. The caller has claimed the group
+    /// ([`GroupQueues::offer`] or [`GroupQueues::claim_parked`] said so).
+    fn spawn_drain_task(&self, group: Arc<str>) {
+        self.tracker.spawn(self.drainer(group).run());
+    }
 
-        self.tracker.spawn(async move {
-            debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
-
-            let mut guard = DrainGuard {
-                group_handlers: group_handlers.clone(),
-                group_id: group_id.clone(),
-                worker: WorkerGuard::new(queue_size.clone(), mediating),
-                active: true,
-            };
-            // The drainer gives back each message's slot at dequeue itself.
-            guard.worker.slot_held = false;
-
-            loop {
-                // Dequeue the head (lock held only for the dequeue).
-                let next = match group_handlers.get(&group_id) {
-                    Some(entry) => {
-                        let mut handler = entry.lock();
-                        let next = handler.dequeue();
-                        if next.is_none() {
-                            handler.set_processing(false);
-                        }
-                        next
-                    }
-                    None => None,
-                };
-
-                let Some(task) = next else {
-                    // Remove the empty handler — the "still empty and idle?"
-                    // check and the removal must be one atomic map
-                    // operation. A separate get() + remove() would let a
-                    // concurrent submit() enqueue into the handler and spawn
-                    // a new drainer in between, only for this remove() to
-                    // yank the handler (and the new task) out from under it.
-                    group_handlers.remove_if(&group_id, |_, handler_mutex| {
-                        let handler = handler_mutex.lock();
-                        handler.is_empty() && !handler.processing
-                    });
-                    guard.active = false; // Normal exit
-                    debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task exited");
-                    break;
-                };
-
-                queue_size.release();
-
-                let span = dispatch_span(&pool_code, &task);
-                let flow = async {
-                    let mut task = task;
-                    let ctx = event_context(&pool_code, &task);
-
-                    let (outcome, disposition) =
-                        match deliverer.attempt(&mut guard.worker, &task, &ctx).await {
-                            Attempt::Delivered {
-                                outcome,
-                                disposition,
-                            } => (outcome, disposition),
-                            Attempt::Settled => return Flow::Next,
-                            // Leave the guard active: it empties the rest of the
-                            // buffer (fallback nacks) and resets `processing`.
-                            Attempt::Closed => return Flow::Stop,
-                        };
-
-                    match disposition.action {
-                        BrokerAction::Ack => {
-                            if outcome.result == MediationResult::Success {
-                                maybe_flush_group(
-                                    &deliverer.flush_registry,
-                                    &task.message,
-                                    &outcome,
-                                );
-                            }
-                            task.callback.ack().await;
-
-                            if disposition.group == GroupEffect::Block {
-                                // BLOCK_ON_ERROR: the head failed terminally, so
-                                // nothing behind it may be delivered past it.
-                                // ACKed and reported when the platform can be
-                                // told (Go `ackBuffered`), otherwise handed back
-                                // — see the Disposition section's module doc.
-                                let siblings = take_buffered(&group_handlers, &group_id);
-                                let reported = settled_reporter.is_some() && !siblings.is_empty();
-                                recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
-                                        "BLOCK_GROUP: head failed under BLOCK_ON_ERROR; {} buffered sibling(s) {}",
-                                        siblings.len(),
-                                        if reported { "acked and reported to the platform" } else { "handed back to the broker" }
-                                    )));
-                                match settled_reporter.as_ref() {
-                                    Some(reporter) if !siblings.is_empty() => {
-                                        deliverer
-                                            .metrics_collector
-                                            .events()
-                                            .reject(RejectReason::Blocked, siblings.len());
-                                        ack_and_report_siblings(
-                                            siblings,
-                                            &queue_size,
-                                            reporter,
-                                            &pool_code,
-                                            &group_id,
-                                        )
-                                        .await;
-                                    }
-                                    _ => {
-                                        if !siblings.is_empty() {
-                                            warn!(
-                                                group_id = %group_id,
-                                                pool_code = %pool_code,
-                                                released = siblings.len(),
-                                                "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
-                                            );
-                                        }
-                                        deliverer
-                                            .metrics_collector
-                                            .events()
-                                            .reject(RejectReason::Released, siblings.len());
-                                        nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS))
-                                            .await;
-                                    }
-                                }
-                            }
-                        }
-                        BrokerAction::Release => {
-                            // The whole group goes back, head first, so it
-                            // returns in order.
-                            task.callback.nack(disposition.nack_delay_secs()).await;
-                            let siblings = take_buffered(&group_handlers, &group_id);
-                            deliverer
-                                .metrics_collector
-                                .events()
-                                .reject(RejectReason::Released, 1 + siblings.len());
-                            recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
-                                    "RETURN_GROUP: head released with delay {:?}s; {} buffered sibling(s) released behind it",
-                                    disposition.nack_delay_secs(),
-                                    siblings.len()
-                                )));
-                            info!(
-                                group_id = %group_id,
-                                pool_code = %pool_code,
-                                message_id = %task.message.id,
-                                buffered_released = siblings.len(),
-                                delay_seconds = ?disposition.nack_delay_secs(),
-                                "Released message group to broker"
-                            );
-                            nack_all(
-                                siblings,
-                                &queue_size,
-                                sibling_nack_delay(disposition.nack_delay_secs()),
-                            )
-                            .await;
-                        }
-                        BrokerAction::Retry => {
-                            // Re-front the head so it is the next message
-                            // attempted, then wait out the backoff holding no
-                            // concurrency slot. Later arrivals queue behind it.
-                            task.attempts += 1;
-                            recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
-                                    "RETRY_HEAD: attempt {} in {}ms; the group waits behind it",
-                                    task.attempts + 1,
-                                    disposition.retry_after.as_millis()
-                                )));
-                            // Go `InFlightTracker.MarkRetrying`: the reaper and
-                            // stall detector leave a live retry alone.
-                            task.callback.mark_retrying();
-                            let head_delay = disposition.nack_delay_secs();
-                            let homeless = match group_handlers.get(&group_id) {
-                                Some(entry) => {
-                                    queue_size.reserve();
-                                    entry.lock().enqueue_front(task);
-                                    None
-                                }
-                                None => Some(task),
-                            };
-                            if let Some(task) = homeless {
-                                // Unreachable while `processing` is set (the
-                                // handler is only removed when idle); hand the
-                                // message back rather than lose it.
-                                task.callback.nack(head_delay).await;
-                                return Flow::Next;
-                            }
-                            tokio::select! {
-                                biased;
-                                _ = stop.cancelled() => {
-                                    // Shutdown / release_remainder: hand the group
-                                    // back (whatever release_remainder has not
-                                    // already taken) instead of holding it.
-                                    let released = release_group(
-                                        &group_handlers,
-                                        &group_id,
-                                        &queue_size,
-                                        head_delay,
-                                    )
-                                    .await;
-                                    deliverer
-                                        .metrics_collector
-                                        .events()
-                                        .reject(RejectReason::Released, released);
-                                }
-                                _ = time::sleep(disposition.retry_after) => {}
-                            }
-                        }
-                    }
-                    Flow::Next
-                }
-                .instrument(span)
-                .await;
-                if flow == Flow::Stop {
-                    break;
-                }
-            }
-        });
+    /// A drainer for `group`, owning clones of the state it needs.
+    fn drainer(&self, group: Arc<str>) -> Drainer {
+        let slots = self.queue_slot_releaser();
+        let mut worker = WorkerGuard::new(slots.clone(), self.mediating.clone());
+        // The drainer gives back each message's slot when it takes it.
+        worker.slot_held = false;
+        Drainer {
+            deliverer: self.deliverer(),
+            groups: self.groups.clone(),
+            slots,
+            stop: self.stop.clone(),
+            settled_reporter: self.settled_reporter.clone(),
+            group,
+            worker,
+            running: false,
+        }
     }
 
     /// The state one delivery attempt reads, for a spawned task to own.
@@ -1940,9 +1780,9 @@ impl ProcessPool {
     /// A point-in-time view of every live message group this pool is
     /// holding, for the operator "blocked groups" view (ledger R-04).
     /// Thread-safe and allocation-light, same shape as Go's
-    /// `Pool.GroupSnapshot`: `group_handlers`' lock is held only long
-    /// enough to copy each `MessageGroupHandler`'s group/working/
-    /// parked_at/buffered-length; the `GroupFlushRegistry` lookup (which
+    /// `Pool.GroupSnapshot`: each group's lock is held only long enough to
+    /// copy its group/working/parked_at/buffered-length
+    /// ([`GroupQueues::snapshot`]); the `GroupFlushRegistry` lookup (which
     /// takes its OWN lock) happens after that lock is released, so the two
     /// locks are never nested.
     pub fn group_snapshot(&self) -> Vec<GroupInfo> {
@@ -1968,21 +1808,19 @@ impl ProcessPool {
         let concurrency = self.concurrency.load(Ordering::Relaxed);
         let rate_limit_per_minute = self.rate_limit_per_minute();
         let mut rows: Vec<GroupInfo> = self
-            .group_handlers
-            .iter()
-            .map(|entry| {
-                let handler = entry.value().lock();
-                GroupInfo {
-                    group: entry.key().to_string(),
-                    pool_code: self.config.code.clone(),
-                    buffered: handler.len(),
-                    working: handler.processing,
-                    parked_at: handler.parked_at.map(to_wall_clock),
-                    suppressed: false,
-                    suppressed_until: None,
-                    concurrency,
-                    rate_limit_per_minute,
-                }
+            .groups
+            .snapshot()
+            .into_iter()
+            .map(|state| GroupInfo {
+                group: state.group.to_string(),
+                pool_code: self.config.code.clone(),
+                buffered: state.buffered,
+                working: state.draining,
+                parked_at: state.parked_at.map(to_wall_clock),
+                suppressed: false,
+                suppressed_until: None,
+                concurrency,
+                rate_limit_per_minute,
             })
             .collect();
 
@@ -1999,35 +1837,14 @@ impl ProcessPool {
     /// buffered behind its group's head (not yet in a worker). Scans every
     /// group briefly: an operator lookup, not a hot path.
     pub fn find_buffered(&self, message_id: &str) -> Option<BufferedMessage> {
-        for entry in self.group_handlers.iter() {
-            let handler = entry.value().lock();
-            if let Some(position) = handler.msgs.iter().position(|t| t.message.id == message_id) {
-                return Some(BufferedMessage {
-                    pool_code: self.config.code.clone(),
-                    group: entry.key().to_string(),
-                    position,
-                    depth: handler.len(),
-                    attempts: handler.msgs[position].attempts,
-                    drainer_running: handler.processing,
-                });
-            }
-        }
-        None
+        self.groups.find(&self.config.code, message_id)
     }
 
     /// The messages buffered in `group` on this pool, head first, with
     /// their in-place attempt counts; `None` when the pool holds no such
     /// group.
     pub fn group_buffer(&self, group: &str) -> Option<Vec<(String, u32)>> {
-        let entry = self.group_handlers.get(group)?;
-        let handler = entry.value().lock();
-        Some(
-            handler
-                .msgs
-                .iter()
-                .map(|t| (t.message.id.clone(), t.attempts))
-                .collect(),
-        )
+        self.groups.buffer(group)
     }
 
     /// Check available capacity
@@ -2213,17 +2030,13 @@ impl ProcessPool {
         // so a head re-fronted after this sweep is seen by its own task.
         self.stop.cancel();
 
-        let group_ids: Vec<Arc<str>> = self
-            .group_handlers
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
+        let group_ids = self.groups.ids();
 
         let mut released = 0usize;
         let queue_slot_releaser = self.queue_slot_releaser();
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         for group_id in group_ids {
-            let drained = take_buffered(&self.group_handlers, &group_id);
+            let drained = self.groups.take_buffered(&group_id);
             released += drained.len();
             for task in &drained {
                 self.recorder.record(
@@ -2252,8 +2065,8 @@ impl ProcessPool {
 
     /// Restart the drainer of every group left with buffered messages and
     /// no drainer (Go's missing parked-group sweep). By construction a
-    /// drainer only stops with its buffer empty, and [`DrainGuard`] empties
-    /// the buffer when a drainer dies abnormally, so this finds nothing in
+    /// drainer only stops with its buffer empty, and a [`Drainer`] that dies
+    /// abnormally empties its buffer, so this finds nothing in
     /// a healthy pool; it is the backstop that keeps one missed wake-up
     /// from stranding a group for good. Returns how many groups it
     /// restarted. Run by the lifecycle reaper.
@@ -2261,19 +2074,7 @@ impl ProcessPool {
         if !self.running.load(Ordering::SeqCst) {
             return 0;
         }
-        let parked: Vec<Arc<str>> = self
-            .group_handlers
-            .iter()
-            .filter_map(|entry| {
-                let mut handler = entry.value().lock();
-                if !handler.processing && !handler.is_empty() {
-                    handler.set_processing(true);
-                    Some(entry.key().clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let parked = self.groups.claim_parked();
         for group_id in &parked {
             warn!(
                 pool_code = %self.config.code,
@@ -2294,7 +2095,7 @@ impl ProcessPool {
             active_workers: self.mediating.len() as u32,
             queue_size: self.queue_size.load(Ordering::Relaxed),
             queue_capacity: self.capacity(),
-            message_group_count: self.group_handlers.len() as u32,
+            message_group_count: self.groups.len() as u32,
             rate_limit_per_minute: self.rate_limit_per_minute(),
             is_rate_limited: self.is_rate_limited(),
             metrics: Some(self.metrics_collector.get_metrics()),
@@ -2819,11 +2620,8 @@ mod parked_group_tests {
         // The state a missed wake-up would leave: buffered, no drainer, the
         // message's queue slot held.
         pool.queue_size.fetch_add(1, Ordering::Relaxed);
-        let mut handler = MessageGroupHandler::new();
-        handler.enqueue(task);
-        handler.set_processing(false);
-        pool.group_handlers
-            .insert(Arc::from("g"), parking_lot::Mutex::new(handler));
+        assert!(pool.groups.offer(Arc::from("g"), task));
+        assert!(pool.groups.release_drainer("g"));
         assert!(!pool.group_snapshot()[0].working);
 
         assert_eq!(pool.resume_parked_groups(), 1);
