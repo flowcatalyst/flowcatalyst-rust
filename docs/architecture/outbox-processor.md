@@ -173,6 +173,13 @@ its own table.
 | MySQL | `mysql` | `SELECT … FOR UPDATE SKIP LOCKED` + `UPDATE` in one transaction (`FC_OUTBOX_BACKEND=mysql`, a `mysql://` URL; Go's processor has no MySQL backend) |
 | MongoDB | `mongo` | `findOneAndUpdate` per document (Go's document shape) |
 
+`fc-outbox-processor` (and fc-dev) carries every backend. `fc-server`'s
+outbox role carries PostgreSQL and MySQL only (owner decision #52: no SQLite
+C build in the production binary): an `FC_OUTBOX_BACKEND` of `sqlite` or
+`mongo` stops it at startup, before it connects to anything, with "The
+sqlite outbox backend is not supported by fc-server; run fc-outbox-processor
+instead".
+
 ---
 
 ## Configuration
@@ -183,7 +190,7 @@ come first; the earlier names still work.
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql`, `mongo` (`mongo`: the standalone binary only) |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql`, `mongo` (`sqlite` and `mongo`: the standalone binary only) |
 | `FC_OUTBOX_DB_URL` (mongo also `FC_OUTBOX_MONGO_URI`) | — | Application database URL. Required by the standalone binary; `fc-server` reads a `postgres` outbox from the platform database when unset, as Go |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` / `…_DISPATCH_JOBS_TABLE` / `…_AUDIT_LOGS_TABLE` | `outbox_messages` | Per-type table |

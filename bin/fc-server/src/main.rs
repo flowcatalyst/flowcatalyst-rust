@@ -93,6 +93,8 @@ use fc_common::config::{
 use fc_common::diagnostics::init;
 use fc_common::logging;
 use fc_common::netguard;
+use fc_outbox::setup;
+use fc_outbox::OutboxBackend;
 use fc_platform::dispatch_job::reaper;
 use fc_platform::function::PoolUrlTemplate;
 use fc_platform::repository::RoleRepository;
@@ -355,6 +357,13 @@ async fn main() -> Result<()> {
     } else {
         None
     };
+    // And the outbox role's backend: fc-server reads Postgres and MySQL
+    // outboxes only (owner decision #52).
+    let outbox_backend = if outbox_enabled {
+        Some(fc_server_outbox_backend(setup::backend_from_env()?)?)
+    } else {
+        None
+    };
     // And the function host's environment, on ports of its own.
     let shared_fn_host = if function_host_enabled {
         let mut taken = vec![("FC_API_PORT", api_port), ("FC_METRICS_PORT", metrics_port)];
@@ -515,14 +524,20 @@ async fn main() -> Result<()> {
     };
 
     // Outbox processor
-    if outbox_enabled {
+    if let Some(backend) = outbox_backend {
         let db = db
             .as_ref()
             .expect("the outbox processor needs the database");
         info!("Starting outbox processor subsystem...");
         processor_tasks.push((
             "outbox processor",
-            spawn_outbox_processor(active_rx.clone(), &db.pool, processors_stop.clone()).await?,
+            spawn_outbox_processor(
+                backend,
+                active_rx.clone(),
+                &db.pool,
+                processors_stop.clone(),
+            )
+            .await?,
         ));
     }
 
@@ -1426,27 +1441,35 @@ impl StreamProcessorShutdown {
     }
 }
 
+/// The outbox backends fc-server's outbox role reads: `postgres` and `mysql`
+/// (owner decision #52). SQLite and MongoDB outboxes are
+/// `fc-outbox-processor`'s (fc-server is built with neither driver), so
+/// either one is a startup error that names it, before anything connects.
+fn fc_server_outbox_backend(backend: OutboxBackend) -> Result<OutboxBackend> {
+    match backend {
+        OutboxBackend::Postgres | OutboxBackend::Mysql => Ok(backend),
+        OutboxBackend::Sqlite | OutboxBackend::Mongo => Err(anyhow::anyhow!(
+            "The {backend} outbox backend is not supported by fc-server; run fc-outbox-processor instead"
+        )),
+    }
+}
+
 /// Spawn the outbox processor, gated on leadership: the same start-up as
-/// `fc-outbox-processor` (`fc_outbox::setup`). With `FC_OUTBOX_DB_URL`
-/// unset, a `postgres` outbox is read from the platform's own database, as
-/// Go's fc-server does. `FC_OUTBOX_ADMIN_PORT` serves Go's group admin API
-/// on localhost. The `mongo` backend is `fc-outbox-processor`'s only.
+/// `fc-outbox-processor` (`fc_outbox::setup`), for a `backend` that
+/// [`fc_server_outbox_backend`] accepted. With `FC_OUTBOX_DB_URL` unset, a
+/// `postgres` outbox is read from the platform's own database, as Go's
+/// fc-server does. `FC_OUTBOX_ADMIN_PORT` serves Go's group admin API on
+/// localhost.
 async fn spawn_outbox_processor(
+    backend: OutboxBackend,
     mut active_rx: watch::Receiver<bool>,
     platform_pool: &sqlx::PgPool,
     stop: CancellationToken,
 ) -> Result<JoinHandle<()>> {
-    use fc_outbox::setup;
-    use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
+    use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
 
-    let backend = setup::backend_from_env()?;
     let table_config = setup::table_config_from_env();
     let outbox_repo = match (backend, setup::database_url_from_env(backend)) {
-        (OutboxBackend::Mongo, _) => {
-            return Err(anyhow::anyhow!(
-                "The mongo outbox backend is not supported by fc-server; run fc-outbox-processor instead"
-            ))
-        }
         (_, Some(url)) => setup::connect(backend, &url, table_config).await?,
         (OutboxBackend::Postgres, None) => {
             info!("FC_OUTBOX_DB_URL unset: reading the outbox from the platform database");
@@ -1574,6 +1597,35 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
         "mcp": state.mcp_enabled,
         "function_host": state.function_host_enabled,
     }))
+}
+
+#[cfg(test)]
+mod outbox_backend_tests {
+    use super::*;
+
+    /// Owner decision #52: fc-server's outbox role reads Postgres and MySQL.
+    #[test]
+    fn postgres_and_mysql_outboxes_are_accepted() {
+        for backend in [OutboxBackend::Postgres, OutboxBackend::Mysql] {
+            assert_eq!(fc_server_outbox_backend(backend).unwrap(), backend);
+        }
+    }
+
+    /// SQLite and MongoDB outboxes are refused with an error that says where
+    /// they are read instead.
+    #[test]
+    fn sqlite_and_mongo_outboxes_are_refused_naming_fc_outbox_processor() {
+        for backend in [OutboxBackend::Sqlite, OutboxBackend::Mongo] {
+            let err = fc_server_outbox_backend(backend).unwrap_err().to_string();
+            assert_eq!(
+                err,
+                format!(
+                    "The {backend} outbox backend is not supported by fc-server; run \
+                     fc-outbox-processor instead"
+                )
+            );
+        }
+    }
 }
 
 #[cfg(test)]
