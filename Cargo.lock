@@ -3653,6 +3653,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "cron",
+ "fc-common",
  "fc-function-abi",
  "fc-platform-core",
  "reqwest",

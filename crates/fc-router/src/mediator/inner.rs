@@ -8,6 +8,7 @@
 
 use std::sync::{Arc, Weak};
 
+use fc_common::netguard;
 use reqwest::Client;
 use tracing::debug;
 
@@ -66,8 +67,11 @@ pub(super) fn make_client_builder(
     let timeout = config.timeout;
     let connect_timeout = config.connect_timeout;
     let http_version = config.http_version;
+    let delivery_policy = config.delivery_policy;
     Arc::new(move |host_key: &HostKey| {
-        let mut builder = Client::builder()
+        // Names resolve through the delivery policy: an address it forbids is
+        // dropped before any connection (see `HttpMediatorConfig`).
+        let mut builder = netguard::http::guard(Client::builder(), delivery_policy)
             .timeout(timeout)
             .connect_timeout(connect_timeout)
             .pool_max_idle_per_host(10)

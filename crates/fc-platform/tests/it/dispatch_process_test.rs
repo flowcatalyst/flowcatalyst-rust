@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Router;
 use chrono::{DateTime, Utc};
+use fc_common::netguard;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -109,6 +110,10 @@ struct Fixture {
 }
 
 async fn fixture() -> Fixture {
+    fixture_with_policy(netguard::dev_policy()).await
+}
+
+async fn fixture_with_policy(policy: &'static netguard::Policy) -> Fixture {
     let container = Postgres::default()
         .with_db_name("fc")
         .with_user("test")
@@ -127,7 +132,8 @@ async fn fixture() -> Fixture {
     let auth = DispatchAuthService::from_app_key(APP_KEY).unwrap();
     let state = DispatchProcessState {
         dispatch_job_repo: Arc::new(DispatchJobRepository::new(&pool)),
-        http_client: delivery_http_client(),
+        http_client: delivery_http_client(policy),
+        delivery_policy: policy,
         credentials: None,
         auth: auth.clone(),
         client_codes: Some(Arc::new(ClientCodeResolver::new(Arc::new(
@@ -794,4 +800,41 @@ async fn the_reaper_resets_stranded_siblings() {
     assert_eq!(ids, vec![queued.id.clone(), stale.id.clone()]);
     assert_eq!(f.row(&live.id).await.status, "PROCESSING");
     assert_eq!(f.row(&noe.id).await.status, "QUEUED");
+}
+
+/// A webhook target the delivery policy forbids is never sent to. The
+/// subscriber here listens on 127.0.0.1, which the strict policy refuses, so
+/// the delivery fails as a connection error and the job is retried under its
+/// budget (an operator who mis-set the policy loses nothing).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_target_the_delivery_policy_forbids_is_not_sent_to() {
+    let strict: &'static netguard::Policy = Box::leak(Box::new(netguard::Policy::strict()));
+    let f = fixture_with_policy(strict).await;
+    let j = job(1);
+    f.insert(&j).await;
+    f.respond(Canned::status(200));
+
+    f.process(&j.id).await;
+
+    assert_eq!(
+        f.subscriber.calls.load(Ordering::SeqCst),
+        0,
+        "nothing reached the target"
+    );
+    let row = f.row(&j.id).await;
+    assert_eq!(
+        (row.status.as_str(), row.attempt_count),
+        ("PENDING", 1),
+        "retried under its budget"
+    );
+    let attempt = &f.attempts(&j.id).await[0];
+    assert_eq!(attempt.error_type.as_deref(), Some("CONNECTION"));
+    assert!(
+        attempt
+            .error_message
+            .as_deref()
+            .is_some_and(|m| m.contains("destination not allowed")),
+        "{attempt:?}"
+    );
 }

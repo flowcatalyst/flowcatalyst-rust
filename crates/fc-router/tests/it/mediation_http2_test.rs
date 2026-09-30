@@ -10,6 +10,7 @@
 //! (`hyper::server::conn::http1` directly — an h2c connection preface
 //! sent at it is nonsense, not something it can downgrade its way out of).
 
+use fc_common::netguard;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -125,7 +126,7 @@ async fn start_http1_only_server() -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
-/// Deployed mode (`HttpMediator::production()`, `HttpVersion::Http2`)
+/// Deployed mode (`HttpMediator::with_config(HttpMediatorConfig::production().with_delivery_policy(netguard::dev_policy()))`, `HttpVersion::Http2`)
 /// against a plain `http://` target that DOES speak h2c: the request must
 /// negotiate HTTP/2, and the wire body must be exactly
 /// `{"messageId":"<id>"}` — item 3 changes the protocol, not the payload.
@@ -142,7 +143,9 @@ async fn start_http1_only_server() -> String {
 #[tokio::test]
 async fn deployed_mode_negotiates_h2c_against_a_cleartext_target() {
     let (target, rx) = start_h2c_server().await;
-    let mediator = HttpMediator::production();
+    let mediator = HttpMediator::with_config(
+        HttpMediatorConfig::production().with_delivery_policy(netguard::dev_policy()),
+    );
 
     let message = healthy_message(&format!("{target}/hook"));
     let outcome = time::timeout(Duration::from_secs(5), mediator.mediate(&message))
@@ -186,6 +189,7 @@ async fn deployed_mode_negotiates_h2c_against_a_cleartext_target() {
 async fn deployed_mode_fails_against_an_http1_only_target() {
     let target = start_http1_only_server().await;
     let mediator = HttpMediator::with_config(HttpMediatorConfig {
+        delivery_policy: netguard::dev_policy(),
         max_retries: 0,
         ..HttpMediatorConfig::production()
     });

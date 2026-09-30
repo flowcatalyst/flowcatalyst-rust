@@ -9,6 +9,8 @@ description = "FlowCatalyst Platform - scheduled jobs: definitions, the cron sch
 # The kernel. IAM lookups go through `fc_platform_core::directory`
 # (the assembly injects fc-platform-iam's implementations).
 fc-platform-core = { path = "../fc-platform-core" }
+# The delivery policy and the guarded HTTP client a firing is sent with.
+fc-common = { path = "../fc-common", features = ["guarded-http"] }
 
 # Async runtime
 tokio = { workspace = true }

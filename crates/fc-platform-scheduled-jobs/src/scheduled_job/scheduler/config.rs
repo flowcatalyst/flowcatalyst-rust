@@ -3,6 +3,8 @@
 use std::env;
 use std::time::Duration;
 
+use fc_common::netguard::{self, Policy};
+
 #[derive(Debug, Clone)]
 pub struct ScheduledJobSchedulerConfig {
     /// How often the poller wakes up to scan ACTIVE jobs and create instances
@@ -15,6 +17,11 @@ pub struct ScheduledJobSchedulerConfig {
     pub dispatch_batch_size: i64,
     /// HTTP request timeout for webhook delivery. Default 10s.
     pub http_timeout: Duration,
+    /// Which targets a firing may reach: a job's target is customer input,
+    /// POSTed to from inside the cluster. The default is the environment's
+    /// policy; the client's resolver and the redirect policy apply it, and the
+    /// dispatcher checks a target that names an IP address before it sends.
+    pub delivery_policy: &'static Policy,
 }
 
 impl Default for ScheduledJobSchedulerConfig {
@@ -24,6 +31,7 @@ impl Default for ScheduledJobSchedulerConfig {
             dispatch_interval: Duration::from_secs(5),
             dispatch_batch_size: 32,
             http_timeout: Duration::from_secs(10),
+            delivery_policy: netguard::default_policy(),
         }
     }
 }

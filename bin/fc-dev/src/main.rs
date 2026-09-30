@@ -862,6 +862,9 @@ async fn main() -> Result<()> {
             processing_endpoint: format!("http://localhost:{}/api/dispatch/process", args.api_port),
             ..SchedulerConfig::default()
         };
+        // The platform's own callback is exempt from the delivery policy, for a
+        // developer who has turned loopback delivery off.
+        netguard::default_policy().allow_url(&config.processing_endpoint);
         // FLOWCATALYST_APP_KEY is always set by this point (see above).
         let auth = DispatchAuthService::from_env().ok_or_else(|| {
             anyhow::anyhow!("FLOWCATALYST_APP_KEY is required to sign dispatch tokens")

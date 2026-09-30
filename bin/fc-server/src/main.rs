@@ -92,7 +92,9 @@ use fc_common::config::{
 };
 use fc_common::diagnostics::init;
 use fc_common::logging;
+use fc_common::netguard;
 use fc_platform::dispatch_job::reaper;
+use fc_platform::function::PoolUrlTemplate;
 use fc_platform::repository::RoleRepository;
 use fc_platform::router;
 use fc_platform::scheduler::SchedulerConfig;
@@ -249,6 +251,9 @@ async fn main() -> Result<()> {
     // value is Go's default anyway.)
     let api_port: u16 = env_first_parse(&["FC_API_PORT", "PORT"], 8080);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
+    // The platform's own endpoints are exempt from the delivery policy, on
+    // every node whichever subsystems it runs (Go: `ApplyDeliveryPolicy`).
+    apply_delivery_policy(api_port);
     // JWT issuer should be the external base URL per OIDC spec
     let jwt_issuer = env_first(
         &["FC_JWT_ISSUER", "FC_EXTERNAL_BASE_URL", "EXTERNAL_BASE_URL"],
@@ -1232,6 +1237,34 @@ async fn spawn_scheduled_job_scheduler(
     Ok(())
 }
 
+/// The URL the router POSTs each dispatch job to: the platform's
+/// `/api/dispatch/process`. Go's names first, then the ECS task definitions',
+/// then the older `FC_SCHEDULER_PROCESSING_ENDPOINT`, defaulting to this
+/// server's own listener.
+fn dispatch_processing_endpoint(api_port: u16) -> String {
+    [
+        "FC_DISPATCH_PROCESSING_ENDPOINT",
+        "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
+        "FC_SCHEDULER_PROCESSING_ENDPOINT",
+    ]
+    .iter()
+    .find_map(|k| env::var(k).ok().filter(|v| !v.trim().is_empty()))
+    .unwrap_or_else(|| format!("http://localhost:{api_port}/api/dispatch/process"))
+}
+
+/// Exempt the platform's own endpoints from the delivery policy
+/// (`fc_common::netguard`), which refuses loopback and private targets for
+/// customer webhooks. The router POSTs every dispatch job to the processing
+/// endpoint, and function subscriptions and schedules point at the function
+/// pools (`FC_FN_POOL_URL`); both are normally on such addresses.
+fn apply_delivery_policy(api_port: u16) {
+    let policy = netguard::default_policy();
+    policy.allow_url(&dispatch_processing_endpoint(api_port));
+    if let Ok(template) = PoolUrlTemplate::from_env() {
+        policy.allow_url(template.as_str());
+    }
+}
+
 /// Dispatch scheduler tuning, read from the environment. The defaults are
 /// Go's; the processing endpoint takes Go's names
 /// (`FC_DISPATCH_PROCESSING_ENDPOINT`, then
@@ -1240,14 +1273,7 @@ async fn spawn_scheduled_job_scheduler(
 /// this server's own listener.
 fn load_scheduler_config(api_port: u16) -> SchedulerConfig {
     let defaults = SchedulerConfig::default();
-    let processing_endpoint = [
-        "FC_DISPATCH_PROCESSING_ENDPOINT",
-        "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
-        "FC_SCHEDULER_PROCESSING_ENDPOINT",
-    ]
-    .iter()
-    .find_map(|k| env::var(k).ok().filter(|v| !v.trim().is_empty()))
-    .unwrap_or_else(|| format!("http://localhost:{api_port}/api/dispatch/process"));
+    let processing_endpoint = dispatch_processing_endpoint(api_port);
     SchedulerConfig {
         poll_interval: Duration::from_millis(env_or_parse(
             "FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS",

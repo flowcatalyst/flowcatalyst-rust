@@ -38,6 +38,10 @@ default = []
 # Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable";
 # the production image builds with both (Dockerfile, FC_TASKDUMP).
 taskdump = ["tokio/taskdump"]
+# Name resolution and redirects for a reqwest client that refuses the
+# addresses the delivery policy forbids (`netguard::http`). On for the crates
+# that POST to customer URLs.
+guarded-http = ["dep:reqwest"]
 # OTLP span export, started by FC_OTEL_ENABLED=true.
 otel = [
     "dep:opentelemetry",

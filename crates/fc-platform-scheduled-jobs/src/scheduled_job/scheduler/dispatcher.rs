@@ -224,6 +224,19 @@ impl ScheduledJobDispatcher {
             return DispatchOutcome::Failed;
         }
 
+        // A target that names an IP address never reaches the client's
+        // resolver, so the delivery policy is applied to it here. Written
+        // targets are checked too, but a row can predate that, and the policy
+        // can change. Failed like a network error, under the job's retries.
+        if let Err(e) = self.config.delivery_policy.validate_url(target_url) {
+            warn!(job_id = %job.id, instance_id = %inst.id, target = %target_url, error = %e,
+                "Scheduled job target refused by the delivery policy");
+            let err = format!("Network/HTTP error: {e}");
+            return self
+                .handle_failure(job, inst, inst.delivery_attempts + 1, &err)
+                .await;
+        }
+
         let envelope = WebhookEnvelope::new(job, inst);
 
         let body = match serde_json::to_vec(&envelope) {

@@ -68,13 +68,14 @@ use crate::dispatch_job::repository::{
 };
 use crate::scheduler::DispatchAuthService;
 use axum::http::header;
+use fc_common::netguard::{self, Policy};
 use fc_common::DispatchMode;
 use fc_platform_core::directory::ClientDirectory;
 use fc_platform_core::shared::capped_body::{read_capped, DELIVERY_RESPONSE_CAP};
 use fc_platform_core::shared::webhook_signer;
 use reqwest::header::AUTHORIZATION;
 use reqwest::header::RETRY_AFTER;
-use reqwest::redirect::Policy;
+use reqwest::redirect::Policy as RedirectPolicy;
 use serde_json::value::RawValue;
 
 /// `X-FlowCatalyst-Client: {clientId}:{clientCode}` (Go
@@ -219,6 +220,10 @@ pub struct DispatchProcessState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     /// See [`delivery_http_client`].
     pub http_client: reqwest::Client,
+    /// Which webhook targets a delivery may reach. The client's resolver
+    /// applies it to names; a target that names an IP address is checked
+    /// against it before the request is sent.
+    pub delivery_policy: &'static Policy,
     /// Whose credentials a delivery carries; `None` delivers bare.
     pub credentials: Option<Arc<DeliveryCredentials>>,
     /// Verifies the router's bearer. Required: without the application key
@@ -229,10 +234,12 @@ pub struct DispatchProcessState {
 }
 
 /// The subscriber client: no redirects (a 3xx is not a success) and Go's
-/// two-minute outer ceiling; each delivery sets its own per-job timeout.
-pub fn delivery_http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .redirect(Policy::none())
+/// two-minute outer ceiling; each delivery sets its own per-job timeout. Names
+/// resolve through `policy`, so a webhook host that resolves to an address it
+/// forbids is never connected to (Go's `guardedTransport`).
+pub fn delivery_http_client(policy: &'static Policy) -> reqwest::Client {
+    netguard::http::guard(reqwest::Client::builder(), policy)
+        .redirect(RedirectPolicy::none())
         .timeout(DELIVERY_CLIENT_CEILING)
         .build()
         .expect("the delivery HTTP client builds")
@@ -716,6 +723,21 @@ async fn deliver(state: &DispatchProcessState, job: &DispatchJob) -> DeliveryRes
         target: job.target_url.clone(),
         ..RequestSummary::default()
     };
+    // A URL that names an IP address never reaches the client's resolver, so
+    // the delivery policy is applied to it here. The target was checked when
+    // it was written, but a row can predate the check, and the policy can
+    // change. Refused as a connection failure, which the job's retry budget
+    // governs like any other.
+    if let Err(e) = state.delivery_policy.validate_url(&job.target_url) {
+        warn!(job_id = %job.id, target = %job.target_url, error = %e,
+            "dispatch process: target refused by the delivery policy");
+        return DeliveryResult {
+            err_message: format!("Connection error: {e}"),
+            err_type: Some(ErrorType::Connection),
+            request: summary,
+            ..DeliveryResult::default()
+        };
+    }
     let mut header_names: Vec<&'static str> =
         vec!["Content-Type", "X-Dispatch-Job-Id", "X-Event-Type"];
     let timeout = if job.timeout_seconds > 0 {

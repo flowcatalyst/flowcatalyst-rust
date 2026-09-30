@@ -13,10 +13,15 @@
 //! This module is the **write-time** check, [`Policy::validate_url`]: it
 //! rejects a bad URL when it is written, so the operator gets an immediate,
 //! readable error instead of a delivery that fails for ever. It looks at the
-//! URL's literal host only. A host *name* that resolves to a private address
-//! passes; the authoritative check is one on the address actually dialled,
-//! after DNS resolution ([`Policy::check_ip`] is its building block), which is
-//! not wired into the HTTP clients yet.
+//! URL's literal host only: a host *name* that resolves to a private address
+//! passes it, and so does a row written before the check existed.
+//!
+//! The check on the address actually dialled is the authoritative one, and
+//! lives in [`http`] (feature `guarded-http`): a resolver that drops every
+//! address the policy forbids, and a redirect policy that checks each hop. A
+//! client that delivers to customer URLs uses both, and also calls
+//! [`Policy::validate_url`] on the target before it sends, because a URL that
+//! names an IP address never reaches the resolver.
 //!
 //! The policy comes from the environment, so every binary is strict unless
 //! told otherwise:
@@ -198,6 +203,23 @@ impl Policy {
         }
     }
 
+    /// Whether `host` alone is exempt: some allowed pattern's host part
+    /// matches it. Name resolution knows the name but not the port, so the
+    /// port cannot be compared there (the URL check, which knows it, does).
+    pub fn host_name_allowed(&self, host: &str) -> bool {
+        let host = host.to_lowercase();
+        self.allow_hosts
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|pattern| {
+                let pattern_host = pattern
+                    .rsplit_once(':')
+                    .map_or(pattern.as_str(), |(h, _)| h);
+                glob_match(pattern_host, &host)
+            })
+    }
+
     fn host_allowed(&self, host_port: &str) -> bool {
         let host_port = host_port.to_lowercase();
         self.allow_hosts
@@ -216,6 +238,19 @@ impl Policy {
 pub fn default_policy() -> &'static Policy {
     static DEFAULT: OnceLock<Policy> = OnceLock::new();
     DEFAULT.get_or_init(Policy::from_env)
+}
+
+/// A policy for development and tests: loopback and private targets allowed,
+/// so webhook receivers on the developer's own machine work. Cloud metadata
+/// and link-local addresses stay blocked. Independent of the environment.
+pub fn dev_policy() -> &'static Policy {
+    static DEV: OnceLock<Policy> = OnceLock::new();
+    DEV.get_or_init(|| {
+        let policy = Policy::strict();
+        policy.set_allow_loopback(true);
+        policy.set_allow_private(true);
+        policy
+    })
 }
 
 /// Go's `strconv.ParseBool` for an env var: true for `1`, `t`, `T`, `TRUE`,
@@ -296,6 +331,177 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         }
     }
     true
+}
+
+/// The dial-time half of the policy for `reqwest` clients.
+#[cfg(feature = "guarded-http")]
+pub mod http {
+    use std::io;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+    use reqwest::redirect;
+    use reqwest::ClientBuilder;
+    use tokio::net::lookup_host;
+
+    use super::Policy;
+
+    /// Resolves names through the system resolver, then drops every address
+    /// the policy forbids: a name that resolves to a private address, or is
+    /// changed to one after the URL was validated, never gets a connection.
+    /// Only the address actually connected to is seen here, so this is the
+    /// authoritative check for names. If nothing is left, the lookup fails
+    /// with the policy's reason.
+    pub struct GuardedResolver {
+        policy: &'static Policy,
+    }
+
+    impl GuardedResolver {
+        pub fn new(policy: &'static Policy) -> Self {
+            Self { policy }
+        }
+    }
+
+    impl Resolve for GuardedResolver {
+        fn resolve(&self, name: Name) -> Resolving {
+            let policy = self.policy;
+            Box::pin(async move {
+                let host = name.as_str().to_string();
+                let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), 0)).await?.collect();
+                if policy.host_name_allowed(&host) {
+                    return Ok(Box::new(resolved.into_iter()) as Addrs);
+                }
+                let mut refusal = None;
+                let allowed: Vec<SocketAddr> = resolved
+                    .into_iter()
+                    .filter(|addr| match policy.check_ip(addr.ip()) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            refusal.get_or_insert(e);
+                            false
+                        }
+                    })
+                    .collect();
+                if allowed.is_empty() {
+                    return Err(match refusal {
+                        Some(e) => e.into(),
+                        None => io::Error::new(io::ErrorKind::NotFound, "no addresses").into(),
+                    });
+                }
+                Ok(Box::new(allowed.into_iter()) as Addrs)
+            })
+        }
+    }
+
+    /// Send `builder`'s name lookups through `policy`.
+    pub fn guard(builder: ClientBuilder, policy: &'static Policy) -> ClientBuilder {
+        builder.dns_resolver(Arc::new(GuardedResolver::new(policy)))
+    }
+
+    /// Follow up to `max` redirects, refusing any hop `policy` forbids. A
+    /// redirect to an IP address skips the resolver, so each hop's URL is
+    /// checked as a written one is.
+    pub fn guarded_redirects(policy: &'static Policy, max: usize) -> redirect::Policy {
+        redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= max {
+                return attempt.error("too many redirects");
+            }
+            match policy.validate_url(attempt.url().as_str()) {
+                Ok(()) => attempt.follow(),
+                Err(e) => attempt.error(e),
+            }
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        fn policy(loopback: bool) -> &'static Policy {
+            let policy = Box::leak(Box::new(Policy::strict()));
+            policy.set_allow_loopback(loopback);
+            policy
+        }
+
+        /// A listener on 127.0.0.1 that answers one request with 204.
+        fn serve_once() -> u16 {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                }
+            });
+            port
+        }
+
+        fn client(policy: &'static Policy) -> reqwest::Client {
+            reqwest::Client::builder()
+                .dns_resolver(Arc::new(GuardedResolver::new(policy)))
+                .build()
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_name_that_resolves_to_loopback_is_refused_by_a_strict_policy() {
+            let port = serve_once();
+            let err = client(policy(false))
+                .get(format!("http://localhost:{port}/"))
+                .send()
+                .await
+                .unwrap_err();
+            assert!(
+                format!("{err:?}").contains("is a loopback address"),
+                "{err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn the_same_name_connects_when_loopback_is_allowed() {
+            let port = serve_once();
+            let response = client(policy(true))
+                .get(format!("http://localhost:{port}/"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 204);
+        }
+
+        #[tokio::test]
+        async fn an_exempted_host_name_connects_under_a_strict_policy() {
+            let port = serve_once();
+            let exempt = policy(false);
+            exempt.allow_host(&format!("localhost:{port}"));
+            let response = client(exempt)
+                .get(format!("http://localhost:{port}/"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 204);
+        }
+
+        /// The resolver never sees an IP address, which is why a client also
+        /// checks the URL before it sends.
+        #[tokio::test]
+        async fn a_literal_ip_skips_the_resolver_and_needs_the_url_check() {
+            let port = serve_once();
+            let strict = policy(false);
+            let url = format!("http://127.0.0.1:{port}/");
+            assert!(
+                strict.validate_url(&url).is_err(),
+                "the URL check refuses it"
+            );
+            let response = client(strict).get(&url).send().await.unwrap();
+            assert_eq!(response.status(), 204, "the resolver alone does not");
+        }
+    }
 }
 
 #[cfg(test)]

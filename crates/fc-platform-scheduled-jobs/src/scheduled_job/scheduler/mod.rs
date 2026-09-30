@@ -24,6 +24,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
+use fc_common::netguard;
 use fc_platform_core::directory::OutboundCredentialSource;
 use tokio::task::JoinHandle;
 
@@ -43,7 +44,13 @@ impl ScheduledJobSchedulerService {
         repo: Arc<ScheduledJobRepository>,
         instance_repo: Arc<ScheduledJobInstanceRepository>,
     ) -> Self {
-        let http_client = reqwest::Client::builder()
+        // Names resolve through the delivery policy, and every redirect hop is
+        // checked against it (a redirect to an IP address skips the resolver).
+        let http_client = netguard::http::guard(reqwest::Client::builder(), config.delivery_policy)
+            .redirect(netguard::http::guarded_redirects(
+                config.delivery_policy,
+                10,
+            ))
             .timeout(config.http_timeout)
             .build()
             .expect("Failed to build scheduled-job HTTP client");

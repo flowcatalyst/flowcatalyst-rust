@@ -284,7 +284,10 @@ fn dispatch_process_state(ctx: &PlatformContext) -> Option<DispatchProcessState>
     match crate::scheduler::DispatchAuthService::from_env() {
         Some(auth) => Some(DispatchProcessState {
             dispatch_job_repo: repos.dispatch_job_repo.clone(),
-            http_client: super::dispatch_process_api::delivery_http_client(),
+            http_client: super::dispatch_process_api::delivery_http_client(
+                fc_common::netguard::default_policy(),
+            ),
+            delivery_policy: fc_common::netguard::default_policy(),
             credentials: Some(Arc::new(
                 crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
                     repos.subscription_repo.clone(),
