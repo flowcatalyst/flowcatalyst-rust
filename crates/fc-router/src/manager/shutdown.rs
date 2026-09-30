@@ -255,19 +255,18 @@ impl QueueManager {
         // 1. Stop polling; consumers stay alive for the drain's acks.
         self.stop_polling();
 
-        // Collect every pool — active, already-draining, AND any
-        // predecessor orphaned into `orphaned_draining` by a later Active
-        // insert under the same code — before awaiting anything. DashMap
+        // Collect every pool, active and draining, before awaiting
+        // anything. DashMap
         // `Ref`s must never be held across an `.await`; collecting the
         // `Arc<ProcessPool>` clones into a `Vec` first and dropping the
-        // iterator does that. Including `orphaned_draining` here is what
+        // iterator does that. Including `draining_pools` here is what
         // makes the router specification's shutdown MUST (release every
         // pool's buffered remainder — `docs/router-specification.md` §5.3)
         // hold for a displaced predecessor too, not just the pools still
         // reachable through `pools`.
         let mut pools: Vec<Arc<ProcessPool>> =
-            self.pools.iter().map(|e| e.value().pool.clone()).collect();
-        pools.extend(self.orphaned_draining.lock().iter().cloned());
+            self.pools.iter().map(|e| e.value().clone()).collect();
+        pools.extend(self.draining_pools.lock().iter().cloned());
 
         // 2. Drain all pools (non-blocking: flips `running`, closes the
         //    tracker).
@@ -360,10 +359,9 @@ impl QueueManager {
         // themselves — every entry it could point to is now gone.
         self.synth_pools.clear();
 
-        // Every orphaned predecessor was just drained/released/shut down
-        // above along with everything else in `pools` — nothing left to
-        // track.
-        self.orphaned_draining.lock().clear();
+        // Every draining pool was just drained/released/shut down above
+        // along with everything else — nothing left to track.
+        self.draining_pools.lock().clear();
 
         info!("QueueManager shutdown complete");
     }

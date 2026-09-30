@@ -18,6 +18,7 @@ pub mod bootstrap;
 pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
+pub mod event_counters;
 pub mod flight_recorder;
 pub mod group_flush;
 pub mod health;
@@ -44,9 +45,7 @@ pub use circuit_breaker_registry::{
     breaker_key, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState,
     CircuitBreakerStats,
 };
-pub use config_sync::{
-    spawn_config_sync_task, ConfigSyncConfig, ConfigSyncError, ConfigSyncResult, ConfigSyncService,
-};
+pub use config_sync::{ConfigSyncConfig, ConfigSyncError, ConfigSyncService};
 pub use error::RouterError;
 pub use group_flush::{
     GroupFlushRegistry, GroupFlushStats, GroupSuppression, DEFAULT_FLUSH_TTL, MAX_FLUSH_TTL,

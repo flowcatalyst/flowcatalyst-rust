@@ -15,7 +15,6 @@ use crate::platform_token::{origin_of, PlatformTokenSource};
 use crate::warning::WarningService;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningCategory, WarningSeverity};
 use futures::future;
-use tokio::task::JoinHandle;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
@@ -279,16 +278,6 @@ fn retryable_status(status: reqwest::StatusCode, authenticated: bool) -> bool {
 struct PlatformCredentials {
     token: Arc<PlatformTokenSource>,
     origin: String,
-}
-
-/// Configuration sync result
-#[derive(Debug, Clone)]
-pub struct ConfigSyncResult {
-    pub success: bool,
-    pub pools_updated: usize,
-    pub pools_created: usize,
-    pub pools_removed: usize,
-    pub error: Option<String>,
 }
 
 /// Service that periodically syncs configuration from a central service
@@ -706,36 +695,6 @@ impl ConfigSyncService {
         }
     }
 
-    /// Sync configuration - fetch and apply if changed. On failure the
-    /// existing configuration keeps running and one CONFIGURATION warning
-    /// is raised per failure streak (Go: `raiseWatchWarning`), resolved on
-    /// the next successful sync — not one warning per tick.
-    pub async fn sync(&self) -> ConfigSyncResult {
-        match self.apply_latest().await {
-            Ok(_) => {
-                self.clear_watch_warning();
-                ConfigSyncResult {
-                    success: true,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    error: None,
-                }
-            }
-            Err(e) => {
-                error!(error = %e, "Configuration sync failed; the current configuration keeps running");
-                self.raise_watch_warning(format!("Config sync failed: {}", e));
-                ConfigSyncResult {
-                    success: false,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    error: Some(e.to_string()),
-                }
-            }
-        }
-    }
-
     fn raise_watch_warning(&self, message: String) {
         let mut id = self.watch_warning.lock();
         if id.is_none() {
@@ -818,9 +777,15 @@ impl ConfigSyncService {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let result = self.sync().await;
-                    if !result.success {
-                        warn!(error = ?result.error, "Scheduled config sync failed - continuing with existing config");
+                    // On failure the existing configuration keeps running and
+                    // one CONFIGURATION warning is raised per failure streak
+                    // (Go: `raiseWatchWarning`), resolved on the next success.
+                    match self.apply_latest().await {
+                        Ok(_) => self.clear_watch_warning(),
+                        Err(e) => {
+                            error!(error = %e, "Configuration sync failed; the current configuration keeps running");
+                            self.raise_watch_warning(format!("Config sync failed: {}", e));
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => {
@@ -917,49 +882,6 @@ pub fn merge_configs(sources: &[(String, RouterConfig)]) -> RouterConfig {
         processing_pools: pools,
         queues,
     }
-}
-
-/// Spawn the config sync background task.
-///
-/// **Owns:** the supplied `Arc<ConfigSyncService>` and a [`CancellationToken`]
-/// (typically a child of the lifecycle manager's shutdown token).
-/// **Exits:** when `shutdown.cancelled()` resolves — level-triggered, so this
-/// still exits immediately even if the token was already cancelled before
-/// this task started.
-/// **Joined by:** the caller via the returned `JoinHandle` (lifecycle
-/// manager awaits it on graceful shutdown).
-pub fn spawn_config_sync_task(
-    config_sync: Arc<ConfigSyncService>,
-    shutdown: CancellationToken,
-) -> JoinHandle<()> {
-    let interval = config_sync.sync_interval();
-
-    tokio::spawn(async move {
-        let mut ticker = time::interval(interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-        // Skip the first tick (initial sync already done)
-        ticker.tick().await;
-
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    debug!("Running scheduled configuration sync");
-                    let result = config_sync.sync().await;
-                    if !result.success {
-                        warn!(
-                            error = ?result.error,
-                            "Scheduled config sync failed - continuing with existing config"
-                        );
-                    }
-                }
-                _ = shutdown.cancelled() => {
-                    info!("Config sync task shutting down");
-                    break;
-                }
-            }
-        }
-    })
 }
 
 #[cfg(test)]

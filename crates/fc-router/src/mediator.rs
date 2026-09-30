@@ -215,34 +215,24 @@ impl HttpMediator {
         Self { inner }
     }
 
-    /// Attach the warning service. Rebuilds the inner state so the
-    /// per-host pools created later report saturation to *this* service
-    /// rather than the noop default. Preserves whatever circuit breaker
-    /// registry was already wired in (a private default unless
-    /// `with_circuit_breakers` ran first).
-    pub fn with_warning_service(self, warning_service: Arc<WarningService>) -> Self {
-        Self::build(
-            self.inner.config.clone(),
-            warning_service,
-            self.inner.breakers.clone(),
-        )
-    }
-
-    /// Attach the shared circuit breaker registry every pool's mediator
-    /// must record into (ledger: breaker admission/recording centralised
-    /// here rather than at the pool call site — see [`Mediator::mediate`]'s
-    /// impl on this type). Rebuilds the inner state the same way
-    /// `with_warning_service` does; preserves whatever warning service was
-    /// already wired in. Production wiring is `QueueManager`'s
-    /// `MediatorFactory`, which calls this with the manager's single
-    /// registry for every pool's mediator so a breaker tripped by one pool
-    /// protects every other pool targeting the same endpoint.
-    pub fn with_circuit_breakers(self, breakers: Arc<CircuitBreakerRegistry>) -> Self {
-        Self::build(
-            self.inner.config.clone(),
-            self.inner.warning_service.clone(),
-            breakers,
-        )
+    /// Build with the warning service the per-host pools report saturation
+    /// to, and the circuit breaker registry every pool's mediator records
+    /// into (breaker admission/recording is centralised here rather than at
+    /// the pool call site; see [`Mediator::mediate`]'s impl on this type).
+    /// Production wiring is `QueueManager`'s `MediatorFactory`, which passes
+    /// the manager's single registry for every pool's mediator, so a
+    /// breaker tripped by one pool protects every other pool targeting the
+    /// same endpoint.
+    ///
+    /// Build once with everything: each build makes a host-pool registry,
+    /// warms a TLS client and starts a sweep task, which chaining setters
+    /// used to repeat per setter.
+    pub fn wired(
+        config: HttpMediatorConfig,
+        warning_service: Arc<WarningService>,
+        breakers: Arc<CircuitBreakerRegistry>,
+    ) -> Self {
+        Self::build(config, warning_service, breakers)
     }
 
     async fn mediate_once(&self, message: &Message) -> MediationOutcome {

@@ -173,6 +173,16 @@ impl QueueManager {
     /// were delivered by the replacement router (delivery run 3,
     /// `router-restart`: g3 `[…,5,7,8,9,6]`).
     async fn bounded_poll(&self, rc: &RunningConsumer) -> PollOutcome {
+        let outcome = self.poll_once(rc).await;
+        let events = self.consumer_events_for(&rc.name);
+        events.polled();
+        if matches!(outcome, PollOutcome::Error(_)) {
+            events.poll_failed();
+        }
+        outcome
+    }
+
+    async fn poll_once(&self, rc: &RunningConsumer) -> PollOutcome {
         rc.polls_started.fetch_add(1, Ordering::SeqCst);
         let res = time::timeout(self.poll_timeout, rc.consumer.poll(10)).await;
         if rc.stop_poll.is_cancelled() {
@@ -601,7 +611,6 @@ impl QueueManager {
         if threshold.is_zero() || self.polling_stopped.load(Ordering::SeqCst) {
             return 0;
         }
-        let _reload_guard = self.pool_configs.read().await;
 
         let stalled: Vec<Arc<RunningConsumer>> = self
             .consumers
@@ -657,6 +666,13 @@ impl QueueManager {
             if i > 0 && sleep_or_cancel(cancel, restart_delay).await {
                 return restarted;
             }
+
+            // One rebuild at a time against a reload. The lock is taken per
+            // rebuild, not for the whole sweep: held across `restart_delay`
+            // sleeps and several build timeouts it would keep a reload out
+            // for as long as the sweep ran (a queued reload also holds back
+            // later rebuilds, so the two take turns).
+            let _reload_guard = self.pool_configs.read().await;
 
             let new = match self.build_replacement(old).await {
                 Ok(new) => new,

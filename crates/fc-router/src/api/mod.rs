@@ -64,6 +64,7 @@ pub(crate) mod mutations;
 #[cfg(feature = "oidc-flow")]
 pub mod oidc_flow;
 pub mod platform_auth;
+pub(crate) mod prometheus;
 pub(crate) mod test_endpoints;
 pub(crate) mod warnings;
 
@@ -206,14 +207,18 @@ impl CachedBrokerStats {
         };
 
         let history = self.counter_history.read().await;
-        let now = Instant::now();
-        let target = now.checked_sub(window).unwrap_or(now);
-
-        let baseline = history
-            .iter()
-            .rev()
-            .find(|e| e.ts <= target)
-            .or_else(|| history.front());
+        // A window longer than this process has been up cannot be reached:
+        // `Instant` counts from boot, so `now - window` may not exist. All the
+        // history then sits inside the window, and the baseline is its oldest
+        // entry (as it is whenever history is shorter than the window).
+        let baseline = match Instant::now().checked_sub(window) {
+            Some(target) => history
+                .iter()
+                .rev()
+                .find(|e| e.ts <= target)
+                .or_else(|| history.front()),
+            None => history.front(),
+        };
 
         for m in &mut live {
             let base = baseline.and_then(|e| e.per_queue.get(&m.queue_identifier).copied());

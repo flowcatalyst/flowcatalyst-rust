@@ -72,26 +72,45 @@ All binaries expose Prometheus metrics at `:9090/metrics`. Scrape with Prometheu
 
 ### Router metrics
 
-```
-# Counters
-fc_router_messages_processed_total{pool}
-fc_router_messages_failed_total{pool, reason}
-fc_router_messages_rate_limited_total{pool}
-fc_router_messages_circuit_open_total{endpoint}
+The names and labels are the same as the Go router's, so dashboards and
+alerts work against either. They are rendered from snapshots at each scrape
+(`crates/fc-router/src/api/prometheus.rs`), so a removed pool or queue drops
+out of the next scrape rather than keeping its last value.
 
-# Histograms (HdrHistogram-backed)
-fc_router_dispatch_duration_seconds{pool, status}     # bucketed
-                                                       # p50/p95/p99 also exposed
-                                                       # as separate gauges
-
-# Gauges
-fc_router_pool_queue_depth{pool}
-fc_router_pool_active_workers{pool}
-fc_router_pool_concurrency{pool}
-fc_router_circuit_breaker_state{endpoint}   # 0=closed, 1=open, 2=half-open
-fc_router_in_pipeline_count                  # in_pipeline DashMap size
-fc_router_consumer_lag_seconds{queue}        # time since last successful poll
 ```
+# Per pool (label: pool)
+fc_pool_queue_size                       # gauge   messages buffered awaiting dispatch
+fc_pool_active_workers                   # gauge   deliveries in flight
+fc_pool_message_groups                   # gauge   groups holding buffered work
+fc_messages_submitted_total              # counter routed to the pool
+fc_messages_processed_total{success,result}      # counter, result = SUCCESS, ERROR_CONFIG, ...
+fc_messages_rejected_total{reason}       # counter capacity | stopped | released | blocked | suppressed
+fc_rate_limit_exceeded_total             # counter
+fc_mediation_duration_seconds            # histogram, buckets 5ms .. 10s
+
+# Per queue (label: queue, or consumer)
+fc_queue_pending_messages                # gauge   approximate, from the broker
+fc_queue_in_flight_messages              # gauge
+fc_consumer_messages_received_total{consumer}    # counter
+fc_queue_messages_total{outcome}         # counter acked | nacked | deferred
+fc_consumer_polls_total                  # counter
+fc_consumer_errors_total{type}           # counter poll
+
+# Circuit breakers (label: target)
+fc_circuit_breaker_open                  # gauge   1 when OPEN
+fc_circuit_breaker_calls_total{outcome}  # counter success | failure
+
+# Global
+fc_in_pipeline_messages                  # gauge
+fc_router_panics_recovered_total         # counter every panic in the process
+fc_mediation_http_version_total{version} # counter negotiated HTTP version
+```
+
+`fc_messages_processed_total` counts only outcomes the pool counts as a
+success or a failure. A transient error the broker will redeliver is not
+counted, so the series sums to the pool's success and failure totals.
+`fc_consumer_errors_total` has no `panic` type: a poll that panics is not
+caught separately here (Go's is).
 
 ### Scheduler metrics
 

@@ -146,62 +146,6 @@ pub(super) async fn classify(
         );
     }
 
-    if status_code == 400 {
-        warn!(
-            message_id = %message.id,
-            status_code = status_code,
-            "Bad request - configuration error"
-        );
-        emit_config_warning(
-            warning_service,
-            &message.id,
-            &message.mediation_target,
-            status_code,
-            "Bad Request",
-        );
-        return MediationOutcome::error_config(status_code, "HTTP 400: Bad request".to_string());
-    }
-
-    if status_code == 401 || status_code == 403 {
-        let desc = if status_code == 401 {
-            "Unauthorized"
-        } else {
-            "Forbidden"
-        };
-        warn!(
-            message_id = %message.id,
-            status_code = status_code,
-            "Authentication/authorization error"
-        );
-        emit_config_warning(
-            warning_service,
-            &message.id,
-            &message.mediation_target,
-            status_code,
-            desc,
-        );
-        return MediationOutcome::error_config(
-            status_code,
-            format!("HTTP {}: Auth error", status_code),
-        );
-    }
-
-    if status_code == 404 {
-        warn!(
-            message_id = %message.id,
-            status_code = status_code,
-            "Endpoint not found"
-        );
-        emit_config_warning(
-            warning_service,
-            &message.id,
-            &message.mediation_target,
-            status_code,
-            "Not Found",
-        );
-        return MediationOutcome::error_config(status_code, "HTTP 404: Not found".to_string());
-    }
-
     if status_code == 429 {
         // Healthy destination throttling us. Return RateLimited so the
         // pool retries in place with Retry-After as the floor, without
@@ -221,90 +165,39 @@ pub(super) async fn classify(
         return MediationOutcome::rate_limited(retry_after);
     }
 
-    if status_code == 501 {
-        warn!(
-            message_id = %message.id,
-            status_code = status_code,
-            "Not implemented"
-        );
+    if let Some(fault) = config_fault(status_code) {
+        warn!(message_id = %message.id, status_code = status_code, "{}", fault.log);
         emit_config_warning(
             warning_service,
             &message.id,
             &message.mediation_target,
             status_code,
-            "Not Implemented",
+            fault.warning,
         );
         return MediationOutcome::error_config(
             status_code,
-            "HTTP 501: Not implemented".to_string(),
+            format!("HTTP {}: {}", status_code, fault.detail),
         );
     }
 
-    if status.is_client_error() {
-        // Generic 4xx fallback (no named branch above claimed this status).
-        // Same permanence and the same deletion as a 400/404, so the same
-        // notice: an operator told about a 404 and not a 422 is a gap, not
-        // a decision (conformance corpus `config-error-other-4xx`).
+    if (502..=504).contains(&status_code) {
+        // "Target unavailable": never reached a working app — a dead
+        // gateway, an overloaded backend, an upstream timeout. Nothing
+        // about the message is wrong, so hold at the broker with
+        // backoff rather than dropping it.
         warn!(
             message_id = %message.id,
             status_code = status_code,
-            "Client error"
+            "Server error - target unavailable, will retry"
         );
-        emit_config_warning(
-            warning_service,
-            &message.id,
-            &message.mediation_target,
-            status_code,
-            "Client error",
-        );
-        return MediationOutcome::error_config(
-            status_code,
-            format!("HTTP {}: Client error", status_code),
-        );
-    }
-
-    if status.is_server_error() {
-        if status_code == 502 || status_code == 503 || status_code == 504 {
-            // "Target unavailable": never reached a working app — a dead
-            // gateway, an overloaded backend, an upstream timeout. Nothing
-            // about the message is wrong, so hold at the broker with
-            // backoff rather than dropping it.
-            warn!(
-                message_id = %message.id,
-                status_code = status_code,
-                "Server error - target unavailable, will retry"
-            );
-            return MediationOutcome {
-                result: MediationResult::ErrorProcess,
-                delay_seconds: Some(30),
-                status_code: Some(status_code),
-                error_message: Some(format!("HTTP {}: Server error", status_code)),
-                flush_group: false,
-                pre_flight: false,
-            };
-        }
-
-        // Ledger R-57: every other 5xx (500, 505, 506, …) — the app was
-        // reached and answered, with a fault, but it ran. Retrying the
-        // identical request cannot help, so this is permanent like a 4xx,
-        // with the same warning treatment: the warning is the deleted
-        // message's only trace.
-        warn!(
-            message_id = %message.id,
-            status_code = status_code,
-            "Server error - permanent, configuration error"
-        );
-        emit_config_warning(
-            warning_service,
-            &message.id,
-            &message.mediation_target,
-            status_code,
-            "Server error",
-        );
-        return MediationOutcome::error_config(
-            status_code,
-            format!("HTTP {}: Server error", status_code),
-        );
+        return MediationOutcome {
+            result: MediationResult::ErrorProcess,
+            delay_seconds: Some(30),
+            status_code: Some(status_code),
+            error_message: Some(format!("HTTP {}: Server error", status_code)),
+            flush_group: false,
+            pre_flight: false,
+        };
     }
 
     warn!(
@@ -313,6 +206,59 @@ pub(super) async fn classify(
         "Unexpected status code"
     );
     MediationOutcome::error_process(Some(30), format!("HTTP {}: Unexpected status", status_code))
+}
+
+/// How a status the target answered with, and no retry can fix, is logged,
+/// warned about and described in the outcome.
+struct ConfigFault {
+    /// The log line for the delivery.
+    log: &'static str,
+    /// The description in the operator warning.
+    warning: &'static str,
+    /// The tail of the outcome's `HTTP {code}: {detail}` message.
+    detail: &'static str,
+}
+
+/// The permanent-failure statuses: 400, 401, 403, 404, 501, any other 4xx
+/// (conformance corpus `config-error-other-4xx`: an operator told about a
+/// 404 and not a 422 is a gap, not a decision) and every other 5xx
+/// (ledger R-57: the app was reached and answered with a fault, but it ran,
+/// so retrying the identical request cannot help; the warning is the
+/// deleted message's only trace). 429 and 502/503/504 are handled by the
+/// caller, since they are retried.
+fn config_fault(status_code: u16) -> Option<ConfigFault> {
+    let (log, warning, detail) = match status_code {
+        400 => (
+            "Bad request - configuration error",
+            "Bad Request",
+            "Bad request",
+        ),
+        401 => (
+            "Authentication/authorization error",
+            "Unauthorized",
+            "Auth error",
+        ),
+        403 => (
+            "Authentication/authorization error",
+            "Forbidden",
+            "Auth error",
+        ),
+        404 => ("Endpoint not found", "Not Found", "Not found"),
+        501 => ("Not implemented", "Not Implemented", "Not implemented"),
+        429 | 502..=504 => return None,
+        code if (400..500).contains(&code) => ("Client error", "Client error", "Client error"),
+        code if (500..600).contains(&code) => (
+            "Server error - permanent, configuration error",
+            "Server error",
+            "Server error",
+        ),
+        _ => return None,
+    };
+    Some(ConfigFault {
+        log,
+        warning,
+        detail,
+    })
 }
 
 /// Push a configuration warning to the `WarningService`. 501 is upgraded

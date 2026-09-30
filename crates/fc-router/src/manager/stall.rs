@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use fc_common::{StallConfig, StalledMessageInfo, WarningCategory, WarningSeverity};
 
+use super::routing::nack_bounded;
 use super::QueueManager;
 use crate::flight_recorder::EventContext;
 use crate::flight_recorder::EventKind;
@@ -360,7 +361,11 @@ impl QueueManager {
                             "Force-NACKing stalled message"
                         );
 
-                        if let Err(e) = consumer.nack(&receipt_handle, Some(nack_delay)).await {
+                        // Bounded like every other nack: a hung broker must not
+                        // stall the whole stall sweep.
+                        if let Err(e) =
+                            nack_bounded(&*consumer, &receipt_handle, Some(nack_delay)).await
+                        {
                             error!(
                                 message_id = %msg.message_id,
                                 error = %e,

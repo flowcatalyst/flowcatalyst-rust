@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
@@ -639,7 +640,15 @@ async fn basic_auth(config: &AuthConfig, request: Request, next: Next) -> Respon
                             let expected_username = config.basic_username.as_deref().unwrap_or("");
                             let expected_password = config.basic_password.as_deref().unwrap_or("");
 
-                            if username == expected_username && password == expected_password {
+                            // Constant time, as Go's `subtle.ConstantTimeCompare`:
+                            // a plain `==` answers sooner the earlier the
+                            // guess diverges. Both are compared, so a wrong
+                            // username costs the same as a wrong password.
+                            let username_ok =
+                                username.as_bytes().ct_eq(expected_username.as_bytes());
+                            let password_ok =
+                                password.as_bytes().ct_eq(expected_password.as_bytes());
+                            if bool::from(username_ok & password_ok) {
                                 debug!(username = %username, "BasicAuth successful");
                                 return next.run(request).await;
                             }

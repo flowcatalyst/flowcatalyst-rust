@@ -1,6 +1,7 @@
 //! Health/liveness/readiness probes, Prometheus metrics, consumer health,
 //! and stream-processor health.
 
+use super::prometheus::{self, RouterSnapshot};
 use super::AppState;
 use crate::router_metrics;
 use axum::{
@@ -176,6 +177,20 @@ pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
             "# No Prometheus recorder configured\n".to_string()
         }
     };
+    // The router's own pool, queue and breaker series, from snapshots taken
+    // now, so a removed pool or queue drops out of the scrape.
+    prometheus::render(
+        &mut output,
+        &RouterSnapshot {
+            pools: state.queue_manager.get_pool_stats(),
+            pool_events: state.queue_manager.pool_event_snapshots(),
+            queues: state.cached_broker_stats.get_windowed(None).await,
+            consumers: state.queue_manager.consumer_event_snapshots(),
+            breakers: state.circuit_breaker_registry.get_all_stats(),
+            in_pipeline: state.queue_manager.in_flight_count(),
+            panics: diagnostics::panic_count(),
+        },
+    );
     // The tokio runtime and the process (CPU, RSS, fds, threads, panics).
     diagnostics::render_prometheus(&mut output, None, Exposition::Prometheus);
     (

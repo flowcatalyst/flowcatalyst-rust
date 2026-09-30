@@ -171,9 +171,13 @@ impl StandbyAwareProcessor {
 /// drives the [`QueueManager`](crate::manager::QueueManager)'s leadership
 /// flag (R-26/R-34).
 ///
-/// Every tick this pushes the election's current `is_leader()` value into
-/// `manager.set_leader(..)` — not just on transitions — so the manager
-/// always converges to the true status even if a tick were ever missed.
+/// It pushes the election's current `is_leader()` value into
+/// `manager.set_leader(..)` as soon as the election publishes a status change
+/// (so a lost lock pauses intake at once, not at the next tick), and every 5s
+/// regardless. The tick is a backstop for the one change nothing announces:
+/// `is_leader()` also turns false when the lease ages out with the election
+/// loop unable to say so (a hung Redis call), and the manager converges to
+/// the true status even if a change were ever missed.
 /// `QueueManager::set_leader` does the edge-detected logging and is the
 /// single source of truth the consumer poll loop (pause/resume new intake)
 /// and the config-reload handler (R-33, refuse on a non-leader instance)
@@ -203,7 +207,9 @@ pub fn spawn_leadership_monitor(
     diagnostics::spawn_supervised("router.leadership_monitor", OnPanic::Restart, move || {
         let processor = processor.clone();
         let manager = manager.clone();
+        let changes = processor.subscribe();
         ticker_loop(
+            changes,
             move || {
                 processor.check_and_log_transition();
                 manager.set_leader(processor.is_leader());
@@ -219,15 +225,26 @@ pub fn spawn_leadership_monitor(
     })
 }
 
-/// The leadership monitor's loop: run `on_tick` every 5s until `shutdown`
-/// is cancelled.
-async fn ticker_loop(mut on_tick: impl FnMut() + Send + 'static, shutdown: CancellationToken) {
+/// The leadership monitor's loop: run `on_check` when `changes` reports a new
+/// status, and every 5s, until `shutdown` is cancelled.
+async fn ticker_loop(
+    mut changes: watch::Receiver<LeadershipStatus>,
+    mut on_check: impl FnMut() + Send + 'static,
+    shutdown: CancellationToken,
+) {
     let mut ticker = time::interval(Duration::from_secs(5));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    // Once the election is gone its channel closes; `changed()` would then
+    // return at once forever, so stop listening and keep the tick.
+    let mut listening = true;
 
     loop {
         tokio::select! {
-            _ = ticker.tick() => on_tick(),
+            _ = ticker.tick() => on_check(),
+            changed = changes.changed(), if listening => match changed {
+                Ok(()) => on_check(),
+                Err(_) => listening = false,
+            },
             _ = shutdown.cancelled() => {
                 info!("Leadership monitor shutting down");
                 break;
@@ -238,15 +255,17 @@ async fn ticker_loop(mut on_tick: impl FnMut() + Send + 'static, shutdown: Cance
 
 #[cfg(test)]
 fn spawn_ticker(
-    on_tick: impl FnMut() + Send + 'static,
+    changes: watch::Receiver<LeadershipStatus>,
+    on_check: impl FnMut() + Send + 'static,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
-    tokio::spawn(ticker_loop(on_tick, shutdown))
+    tokio::spawn(ticker_loop(changes, on_check, shutdown))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU32;
     use tokio::time;
 
     #[test]
@@ -266,11 +285,69 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
 
-        let handle = spawn_ticker(|| {}, token);
+        let (_tx, rx) = watch::channel(LeadershipStatus::Unknown);
+        let handle = spawn_ticker(rx, || {}, token);
 
         time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("leadership monitor should exit within 1s of an already-cancelled token")
             .expect("task should not panic");
+    }
+
+    /// A status change reaches the manager at once, not at the next 5s tick.
+    #[tokio::test]
+    async fn a_published_status_change_is_acted_on_without_waiting_for_the_tick() {
+        let (tx, rx) = watch::channel(LeadershipStatus::Follower);
+        let checks = Arc::new(AtomicU32::new(0));
+        let token = CancellationToken::new();
+        let counted = checks.clone();
+        let handle = spawn_ticker(
+            rx,
+            move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            },
+            token.clone(),
+        );
+
+        // The interval's first tick fires at once; let it pass.
+        time::sleep(Duration::from_millis(100)).await;
+        let before = checks.load(Ordering::SeqCst);
+
+        tx.send(LeadershipStatus::Leader).unwrap();
+        time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            checks.load(Ordering::SeqCst),
+            before + 1,
+            "the change ran one check, far inside the 5s tick"
+        );
+
+        token.cancel();
+        handle.await.unwrap();
+    }
+
+    /// With the election gone (channel closed) the monitor must not spin on
+    /// `changed()`, which would return an error at once for ever.
+    #[tokio::test]
+    async fn a_closed_status_channel_does_not_spin_the_monitor() {
+        let (tx, rx) = watch::channel(LeadershipStatus::Follower);
+        let checks = Arc::new(AtomicU32::new(0));
+        let token = CancellationToken::new();
+        let counted = checks.clone();
+        let handle = spawn_ticker(
+            rx,
+            move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+            },
+            token.clone(),
+        );
+        drop(tx);
+        time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            checks.load(Ordering::SeqCst) <= 2,
+            "only the initial tick, not a busy loop: {}",
+            checks.load(Ordering::SeqCst)
+        );
+        token.cancel();
+        handle.await.unwrap();
     }
 }

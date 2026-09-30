@@ -686,3 +686,82 @@ async fn put_unknown_pool_is_404_and_creates_nothing() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(manager.get_pool("NOPE").is_none());
 }
+
+// ---------------------------------------------------------------------
+// /metrics: the pool series Go's contract defines
+// ---------------------------------------------------------------------
+
+async fn get_text(app: &axum::Router, path: &str) -> (StatusCode, String) {
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+#[tokio::test]
+async fn metrics_exposes_the_pool_series_for_delivered_traffic() {
+    let mediator = Arc::new(DelayMediator::new(Duration::from_millis(5)));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone() as Arc<dyn Mediator>,
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "MET".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let app = build_app(manager.clone()).await;
+
+    // Gauges exist before any traffic; the delivery counters are zero.
+    let (status, text) = get_text(&app, "/metrics").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        text.contains("fc_pool_queue_size{pool=\"MET\"} 0"),
+        "{text}"
+    );
+    assert!(text.contains("fc_messages_submitted_total{pool=\"MET\"} 0"));
+    assert!(!text.contains("fc_messages_processed_total"));
+
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "met-queue",
+        vec![
+            queued(test_message("met-1", "MET", Some("g1")), "met-queue"),
+            queued(test_message("met-2", "MET", None), "met-queue"),
+        ],
+    ));
+    manager.add_consumer(consumer.clone()).await;
+    let polled = consumer.poll(10).await.unwrap();
+    manager.route_batch(polled, consumer).await.unwrap();
+
+    // Both deliveries settle.
+    for _ in 0..100 {
+        if manager.in_flight_count() == 0 && mediator.call_count.load(Ordering::SeqCst) == 2 {
+            break;
+        }
+        time::sleep(Duration::from_millis(10)).await;
+    }
+    time::sleep(Duration::from_millis(50)).await;
+
+    let (_, text) = get_text(&app, "/metrics").await;
+    assert!(
+        text.contains("fc_messages_submitted_total{pool=\"MET\"} 2"),
+        "{text}"
+    );
+    assert!(text.contains(
+        "fc_messages_processed_total{pool=\"MET\",success=\"true\",result=\"SUCCESS\"} 2"
+    ));
+    assert!(text.contains("fc_mediation_duration_seconds_count{pool=\"MET\"} 2"));
+    assert!(text.contains("fc_mediation_duration_seconds_bucket{pool=\"MET\",le=\"+Inf\"} 2"));
+    assert!(text.contains("fc_pool_active_workers{pool=\"MET\"} 0"));
+    assert!(text.contains("fc_in_pipeline_messages 0"));
+    assert!(text.contains("fc_rate_limit_exceeded_total{pool=\"MET\"} 0"));
+}

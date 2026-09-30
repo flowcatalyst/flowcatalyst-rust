@@ -12,7 +12,7 @@
 //! tokio-native answer to "has everything finished?": `is_fully_drained()` is a
 //! non-blocking `tracker.is_empty()` check, and `wait_drained()` closes the tracker
 //! and awaits `tracker.wait()`. This replaces the older design of polling
-//! `queue_size == 0 && active_workers == 0` on Relaxed atomics, which could read
+//! `queue_size == 0 && active_workers == 0` on Relaxed counters, which could read
 //! "drained" momentarily between a counter decrement and the task's actual exit.
 
 use arc_swap::ArcSwapOption;
@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn, Instrument};
 
+use crate::event_counters::{PoolEventSnapshot, RejectReason};
 use crate::flight_recorder::{EventContext, EventKind, Facts, FlightRecorder};
 use crate::group_flush::GroupFlushRegistry;
 use crate::mediator::Mediator;
@@ -58,6 +59,11 @@ use tokio::time;
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 
+/// Queue capacity for a pool running `concurrency` workers.
+fn queue_capacity_for(concurrency: u32) -> u32 {
+    cmp::max(concurrency * QUEUE_CAPACITY_MULTIPLIER, MIN_QUEUE_CAPACITY)
+}
+
 /// Releases one queue slot and signals a capacity-freed [`tokio::sync::Notify`]
 /// exactly on the full→not-full crossing (G12,
 /// `docs/go-mirror/2026-09-06-go-fix-list.md`).
@@ -80,7 +86,9 @@ const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 #[derive(Clone)]
 pub(crate) struct QueueSlotReleaser {
     queue_size: Arc<AtomicU32>,
-    capacity: u32,
+    /// The pool's live capacity, shared so a concurrency change is seen by
+    /// releasers already cloned into running workers.
+    capacity: Arc<AtomicU32>,
     notify: Arc<Notify>,
 }
 
@@ -93,7 +101,7 @@ impl QueueSlotReleaser {
 
     fn release(&self) {
         let prev = self.queue_size.fetch_sub(1, Ordering::Relaxed);
-        if prev == self.capacity {
+        if prev == self.capacity.load(Ordering::Relaxed) {
             self.notify.notify_waiters();
         }
     }
@@ -437,7 +445,15 @@ pub(crate) fn breaker_effect(outcome: &MediationOutcome) -> Option<bool> {
 /// Apply a [`DispositionMetric`] to a [`PoolMetricsCollector`] — the single
 /// place a `Disposition`'s metric turns into an actual `record_*` call, so
 /// `disposition_of` itself never touches the collector.
-fn apply_metric(collector: &PoolMetricsCollector, metric: DispositionMetric, duration_ms: u64) {
+fn apply_metric(
+    collector: &PoolMetricsCollector,
+    metric: DispositionMetric,
+    result: MediationResult,
+    duration_ms: u64,
+) {
+    if metric != DispositionMetric::None {
+        collector.events().processed(result);
+    }
     match metric {
         DispositionMetric::None => {}
         DispositionMetric::Success => collector.record_success(duration_ms),
@@ -527,30 +543,23 @@ fn maybe_flush_group(
 /// What one worker task holds against the pool's shared counters, given
 /// back on every exit path — including a panic, where the Drop impl runs
 /// during unwinding. Without it a panicking task leaked its queue slot (the
-/// pool slowly filled until it NACKed everything), its active-worker count,
-/// and a phantom entry in the never-reaped "Mediating" view.
+/// pool slowly filled until it NACKed everything) and left a phantom entry in
+/// the never-reaped "Mediating" view, which is also the active-worker count.
 struct WorkerGuard {
     queue_size: QueueSlotReleaser,
-    active_workers: Arc<AtomicU32>,
     mediating: Arc<DashMap<u64, MediatingEntry>>,
     /// A queue slot is held for the message (queued, or waiting out a retry).
     slot_held: bool,
-    /// The `mediating` key while a delivery is in flight; also means an
-    /// active-worker count is held.
+    /// The `mediating` key while a delivery is in flight.
     in_flight: Option<u64>,
 }
 
 impl WorkerGuard {
     /// A guard for a message that already holds a queue slot, when
     /// `slot_held` is set by the caller.
-    fn new(
-        queue_size: QueueSlotReleaser,
-        active_workers: Arc<AtomicU32>,
-        mediating: Arc<DashMap<u64, MediatingEntry>>,
-    ) -> Self {
+    fn new(queue_size: QueueSlotReleaser, mediating: Arc<DashMap<u64, MediatingEntry>>) -> Self {
         Self {
             queue_size,
-            active_workers,
             mediating,
             slot_held: true,
             in_flight: None,
@@ -570,9 +579,8 @@ impl WorkerGuard {
         }
     }
 
-    /// A delivery starts: count the worker and remember its `mediating` key.
+    /// A delivery starts: remember its `mediating` key.
     fn begin(&mut self, mediating_key: u64) {
-        self.active_workers.fetch_add(1, Ordering::Relaxed);
         self.in_flight = Some(mediating_key);
     }
 
@@ -580,7 +588,6 @@ impl WorkerGuard {
     fn end(&mut self) {
         if let Some(key) = self.in_flight.take() {
             ProcessPool::end_mediating(&self.mediating, key);
-            self.active_workers.fetch_sub(1, Ordering::Relaxed);
         }
     }
 }
@@ -704,24 +711,25 @@ async fn ack_and_report_siblings(
 }
 
 /// Hand a whole group back to the broker: the head (first in the buffer)
-/// with `head_delay`, everything behind it with the sibling delay.
+/// with `head_delay`, everything behind it with the sibling delay. Returns
+/// how many messages went back.
 async fn release_group(
     group_handlers: &DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>,
     group_id: &Arc<str>,
     queue_size: &QueueSlotReleaser,
     head_delay: Option<u32>,
-) {
+) -> usize {
     let mut buffered = take_buffered(group_handlers, group_id).into_iter();
+    let mut released = 0;
     if let Some(head) = buffered.next() {
+        released += 1;
         queue_size.release();
         head.callback.nack(head_delay).await;
     }
-    nack_all(
-        buffered.collect(),
-        queue_size,
-        sibling_nack_delay(head_delay),
-    )
-    .await;
+    let siblings: Vec<PoolTask> = buffered.collect();
+    released += siblings.len();
+    nack_all(siblings, queue_size, sibling_nack_delay(head_delay)).await;
+    released
 }
 
 /// The two dispositions worth a log line of their own: a deferral (a 2xx
@@ -753,6 +761,145 @@ fn log_disposition(
             redelivery_delay_ms = disposition.retry_after.as_millis() as u64,
             "In-pipeline retry budget exhausted; releasing to broker"
         );
+    }
+}
+
+/// What one delivery attempt decided.
+enum Attempt {
+    /// Nothing left to decide: the message was suppressed, or a duplicate of
+    /// one already in the pipeline, and has been acked.
+    Settled,
+    /// The concurrency semaphore closed; the message has been nacked and the
+    /// pool is stopping.
+    Closed,
+    /// Mediated. The caller applies `disposition` to the broker and, in an
+    /// ordered group, to the group.
+    Delivered {
+        outcome: MediationOutcome,
+        disposition: Disposition,
+    },
+}
+
+/// The pool state one delivery attempt reads, cloned into each spawned task.
+///
+/// Both delivery paths (`spawn_immediate_task`, `spawn_drain_task`) run the
+/// same [`attempt`](Self::attempt) and differ only in what they then do with
+/// the [`Disposition`], as Go's single `processOne` does. Having one copy
+/// stops the two from drifting apart.
+#[derive(Clone)]
+struct Deliverer {
+    pool_code: Arc<str>,
+    semaphore: Arc<Semaphore>,
+    mediator: Arc<dyn Mediator>,
+    rate_limiter: SharedRateLimiter,
+    metrics_collector: Arc<PoolMetricsCollector>,
+    flush_registry: Arc<GroupFlushRegistry>,
+    recorder: Arc<FlightRecorder>,
+    mediating_seq: Arc<AtomicU64>,
+}
+
+impl Deliverer {
+    /// Take `task` through suppression, duplicate detection, the concurrency
+    /// slot and the rate limiter, mediate it, and record the result.
+    ///
+    /// `guard` holds the queue slot for the immediate path and none for a
+    /// drain task (which gives its slot back at dequeue), so
+    /// `guard.release_slot()` is the right call on both.
+    async fn attempt(
+        &self,
+        guard: &mut WorkerGuard,
+        task: &PoolTask,
+        ctx: &EventContext,
+    ) -> Attempt {
+        // Group-flush suppression (ledger A-05/R-52/R-53), checked BEFORE the
+        // semaphore/rate limiter so a suppressed group spends neither a
+        // concurrency slot nor a rate-limit token: that saving is the whole
+        // point of suppression.
+        if ack_if_suppressed(&self.flush_registry, &self.metrics_collector, task).await {
+            self.recorder
+                .record(EventKind::Suppressed, ctx, Facts::default());
+            guard.release_slot();
+            return Attempt::Settled;
+        }
+
+        // Go `InFlightTracker.EnsureTracked`: a different copy of this
+        // message now owns the pipeline, so this one is acked, not delivered
+        // twice.
+        if !task.callback.ensure_tracked() {
+            self.recorder
+                .record(EventKind::DuplicateAcked, ctx, Facts::default());
+            guard.release_slot();
+            task.callback.ack().await;
+            return Attempt::Settled;
+        }
+
+        // Acquire a concurrency slot FIRST, then pace on the rate limiter
+        // while holding it; see `wait_for_rate_limit_permit` for why this
+        // order matters.
+        let permit = match self.semaphore.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                error!("Semaphore closed");
+                guard.release_slot();
+                task.callback.nack(Some(10)).await;
+                return Attempt::Closed;
+            }
+        };
+
+        // Wait for rate limit permit (no timeout — see fn doc).
+        ProcessPool::wait_for_rate_limit_permit(&self.rate_limiter, &self.metrics_collector).await;
+
+        let key = ProcessPool::begin_mediating(
+            &guard.mediating,
+            &self.mediating_seq,
+            &self.pool_code,
+            task,
+        );
+        guard.begin(key);
+        guard.release_slot();
+
+        // Circuit breaker admission/recording lives entirely inside
+        // `mediator.mediate` (see `mediator.rs`); an open breaker comes back
+        // as `MediationResult::CircuitOpen`.
+        let start = Instant::now();
+        let outcome = mediate_guarded(&self.mediator, task, &self.recorder, ctx).await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let disposition = disposition_of(
+            &outcome,
+            task.attempts,
+            task.message.dispatch_mode,
+            task.callback.honours_delayed_return(),
+        );
+        apply_metric(
+            &self.metrics_collector,
+            disposition.metric,
+            outcome.result,
+            duration_ms,
+        );
+        log_disposition(&self.pool_code, task, &outcome, &disposition);
+        record_dispatch(
+            &self.recorder,
+            ctx,
+            task,
+            &outcome,
+            &disposition,
+            duration_ms,
+        );
+        if disposition.action == BrokerAction::Ack && outcome.result != MediationResult::Success {
+            warn!(
+                message_id = %task.message.id,
+                error = ?outcome.error_message,
+                "Permanent error, ACKing to prevent retry"
+            );
+        }
+        guard.end();
+        drop(permit);
+
+        Attempt::Delivered {
+            outcome,
+            disposition,
+        }
     }
 }
 
@@ -1137,19 +1284,20 @@ pub struct ProcessPool {
     /// same consumer poll loops.
     capacity_notify: Arc<Notify>,
 
-    /// Active workers counter (Arc for sharing across tasks)
-    active_workers: Arc<AtomicU32>,
+    /// Live queue capacity, `queue_capacity_for(concurrency)`. Refreshed by
+    /// `update_concurrency`, so admission, stats and every already-spawned
+    /// [`QueueSlotReleaser`] agree after a resize.
+    capacity: Arc<AtomicU32>,
 
     /// Every message currently inside a worker — mirrors Go's
     /// `Pool.mediating map[uint64]MediatingEntry`. Keyed per WORKER (via
     /// `mediating_seq`), not per message id, for the same reason as Go: the
     /// process-time dedup backstop means two copies of one message id can
     /// briefly sit in two workers, and keying by id would under-report the
-    /// count and let the loser's exit delete the owner's entry. Inserted/
-    /// removed in the exact same critical section as `active_workers`'
-    /// increment/decrement, so `mediating.len() == active_workers.load()`
-    /// always holds — the operator "Mediating" dashboard view's count is
-    /// meant to match the pool stats' active-workers figure. Never reaped
+    /// count and let the loser's exit delete the owner's entry. Its size is
+    /// the pool's active-worker count (Go: "ActiveWorkers is its size, so
+    /// there is no second counter"), so the operator "Mediating" view and
+    /// the pool stats' active-workers figure cannot disagree. Never reaped
     /// (unlike the manager's `in_pipeline` tracker), so a long-running
     /// delivery stays listed for its whole duration.
     mediating: Arc<DashMap<u64, MediatingEntry>>,
@@ -1211,7 +1359,7 @@ pub struct ProcessPool {
 impl ProcessPool {
     /// Construct a pool. `mediator` is expected to already carry the
     /// manager's shared circuit breaker registry (via
-    /// `HttpMediator::with_circuit_breakers`, wired by `QueueManager`'s
+    /// `HttpMediator::wired`, built by `QueueManager`'s
     /// `MediatorFactory`): breaker admission/recording lives entirely in the
     /// mediator (see `mediator.rs`'s `Mediator::mediate` impl on
     /// `HttpMediator`), so the pool itself neither checks nor records
@@ -1240,8 +1388,8 @@ impl ProcessPool {
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
+            capacity: Arc::new(AtomicU32::new(queue_capacity_for(concurrency_val))),
             capacity_notify: Arc::new(Notify::new()),
-            active_workers: Arc::new(AtomicU32::new(0)),
             mediating: Arc::new(DashMap::new()),
             mediating_seq: Arc::new(AtomicU64::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
@@ -1286,10 +1434,7 @@ impl ProcessPool {
     /// with the same value those two already use, without a third
     /// inline copy of the formula.
     fn capacity(&self) -> u32 {
-        cmp::max(
-            self.config.concurrency * QUEUE_CAPACITY_MULTIPLIER,
-            MIN_QUEUE_CAPACITY,
-        )
+        self.capacity.load(Ordering::Relaxed)
     }
 
     /// Build a [`QueueSlotReleaser`] bound to this pool's queue-size counter,
@@ -1299,7 +1444,7 @@ impl ProcessPool {
     fn queue_slot_releaser(&self) -> QueueSlotReleaser {
         QueueSlotReleaser {
             queue_size: self.queue_size.clone(),
-            capacity: self.capacity(),
+            capacity: self.capacity.clone(),
             notify: self.capacity_notify.clone(),
         }
     }
@@ -1320,28 +1465,33 @@ impl ProcessPool {
 
     /// Submit a message to the pool
     pub async fn submit(&self, batch_msg: BatchMessage) -> Result<()> {
+        let events = self.metrics_collector.events();
+        events.submitted();
         if !self.running.load(Ordering::SeqCst) {
+            events.reject(RejectReason::Stopped, 1);
             batch_msg.callback.nack(Some(10)).await;
             return Ok(());
         }
 
-        // Check capacity
-        let current_size = self.queue_size.load(Ordering::Relaxed);
+        // Reserve a queue slot atomically: a separate load-then-add let
+        // concurrent consumers overshoot the capacity.
         let capacity = self.capacity();
-
-        if current_size >= capacity {
+        let reserved = self
+            .queue_size
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                (n < capacity).then_some(n + 1)
+            });
+        if let Err(current_size) = reserved {
             debug!(
                 pool_code = %self.config.code,
                 current = current_size,
                 capacity = capacity,
                 "Pool at capacity, rejecting"
             );
+            events.reject(RejectReason::Capacity, 1);
             batch_msg.callback.nack(Some(10)).await;
             return Ok(());
         }
-
-        // Increment queue size
-        self.queue_size.fetch_add(1, Ordering::Relaxed);
 
         let task = PoolTask {
             message: batch_msg.message,
@@ -1414,100 +1564,46 @@ impl ProcessPool {
     /// backoff, which nacks it.
     /// **Tracked by:** `self.tracker`, so `wait_drained()` includes it.
     /// **Panic safety:** [`WorkerGuard`] gives back the queue slot, the
-    /// active-worker count and the `mediating` entry this task held; the
+    /// `mediating` entry and the queue slot this task held; the
     /// message's callback fires its fallback nack as it drops.
     fn spawn_immediate_task(&self, task: PoolTask) {
-        let semaphore = self.semaphore.clone();
-        let mediator = self.mediator.clone();
+        let deliverer = self.deliverer();
         let queue_size = self.queue_slot_releaser();
-        let active_workers = self.active_workers.clone();
         let mediating = self.mediating.clone();
-        let mediating_seq = self.mediating_seq.clone();
-        let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
-        let rate_limiter = self.rate_limiter.clone();
-        let metrics_collector = self.metrics_collector.clone();
-        let flush_registry = self.flush_registry.clone();
         let stop = self.stop.clone();
-        let recorder = self.recorder.clone();
         // Every line logged while this message is in the worker (the
         // mediator's, the callback's, a panic's) carries its id.
-        let span = dispatch_span(&pool_code, &task);
+        let span = dispatch_span(&deliverer.pool_code, &task);
 
         self.tracker.spawn(
             async move {
                 let mut task = task;
-                let mut guard = WorkerGuard::new(queue_size, active_workers, mediating);
-                let ctx = event_context(&pool_code, &task);
+                let mut guard = WorkerGuard::new(queue_size, mediating);
+                let ctx = event_context(&deliverer.pool_code, &task);
 
                 loop {
-                    // Group-flush suppression (ledger A-05/R-52/R-53), checked
-                    // BEFORE the semaphore/rate limiter so a suppressed group
-                    // spends neither a concurrency slot nor a rate-limit token —
-                    // that saving is the whole point of suppression.
-                    if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                        recorder.record(EventKind::Suppressed, &ctx, Facts::default());
-                        guard.release_slot();
-                        return;
-                    }
-
-                    // Go `InFlightTracker.EnsureTracked`: a different copy of this
-                    // message now owns the pipeline, so this one is acked, not
-                    // delivered twice.
-                    if !task.callback.ensure_tracked() {
-                        recorder.record(EventKind::DuplicateAcked, &ctx, Facts::default());
-                        guard.release_slot();
-                        task.callback.ack().await;
-                        return;
-                    }
-
-                    // Acquire a concurrency slot FIRST, then pace on the rate
-                    // limiter while holding it — see `wait_for_rate_limit_permit`
-                    // for why this order matters.
-                    let permit = match semaphore.acquire().await {
-                        Ok(p) => p,
-                        Err(_) => {
-                            guard.release_slot();
-                            task.callback.nack(Some(10)).await;
-                            return;
-                        }
-                    };
-
-                    // Wait for rate limit permit (no timeout — see fn doc).
-                    Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-
-                    let key =
-                        Self::begin_mediating(&guard.mediating, &mediating_seq, &pool_code, &task);
-                    guard.begin(key);
-                    guard.release_slot();
-
-                    // Circuit breaker admission/recording lives entirely inside
-                    // `mediator.mediate` (see `mediator.rs`); an open breaker
-                    // comes back as `MediationResult::CircuitOpen`.
-                    let start = Instant::now();
-                    let outcome = mediate_guarded(&mediator, &task, &recorder, &ctx).await;
-                    let duration_ms = start.elapsed().as_millis() as u64;
-
-                    let disposition = disposition_of(
-                        &outcome,
-                        task.attempts,
-                        task.message.dispatch_mode,
-                        task.callback.honours_delayed_return(),
-                    );
-                    apply_metric(&metrics_collector, disposition.metric, duration_ms);
-                    log_disposition(&pool_code, &task, &outcome, &disposition);
-                    record_dispatch(&recorder, &ctx, &task, &outcome, &disposition, duration_ms);
-                    guard.end();
-                    drop(permit);
+                    let (outcome, disposition) =
+                        match deliverer.attempt(&mut guard, &task, &ctx).await {
+                            Attempt::Delivered {
+                                outcome,
+                                disposition,
+                            } => (outcome, disposition),
+                            Attempt::Settled | Attempt::Closed => return,
+                        };
 
                     // IMMEDIATE has no group buffer: `disposition.group` has
                     // nothing to act on here.
                     match disposition.action {
                         BrokerAction::Ack => {
-                            maybe_flush_group(&flush_registry, &task.message, &outcome);
+                            maybe_flush_group(&deliverer.flush_registry, &task.message, &outcome);
                             task.callback.ack().await;
                             return;
                         }
                         BrokerAction::Release => {
+                            deliverer
+                                .metrics_collector
+                                .events()
+                                .reject(RejectReason::Released, 1);
                             task.callback.nack(disposition.nack_delay_secs()).await;
                             return;
                         }
@@ -1562,26 +1658,20 @@ impl ProcessPool {
     /// [`DrainGuard`], which empties the buffer (the callbacks' Drop fires
     /// their fallback nacks), gives back one queue slot per abandoned
     /// message, clears `processing` (removing the emptied handler), and
-    /// releases the active-worker count and `mediating` entry held for the
+    /// releases the `mediating` entry held for the
     /// message in hand.
     ///
     /// Each message is processed inside its own `router.dispatch` span, so
     /// every line logged for it carries its id, pool, group and queue.
     fn spawn_drain_task(&self, group_id: Arc<str>) {
-        let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
-        let semaphore = self.semaphore.clone();
-        let mediator = self.mediator.clone();
+        let deliverer = self.deliverer();
+        let pool_code = deliverer.pool_code.clone();
         let queue_size = self.queue_slot_releaser();
-        let active_workers = self.active_workers.clone();
         let mediating = self.mediating.clone();
-        let mediating_seq = self.mediating_seq.clone();
-        let rate_limiter = self.rate_limiter.clone();
         let group_handlers = self.group_handlers.clone();
-        let metrics_collector = self.metrics_collector.clone();
-        let flush_registry = self.flush_registry.clone();
         let stop = self.stop.clone();
         let settled_reporter = self.settled_reporter.clone();
-        let recorder = self.recorder.clone();
+        let recorder = deliverer.recorder.clone();
 
         self.tracker.spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
@@ -1589,7 +1679,7 @@ impl ProcessPool {
             let mut guard = DrainGuard {
                 group_handlers: group_handlers.clone(),
                 group_id: group_id.clone(),
-                worker: WorkerGuard::new(queue_size.clone(), active_workers, mediating),
+                worker: WorkerGuard::new(queue_size.clone(), mediating),
                 active: true,
             };
             // The drainer gives back each message's slot at dequeue itself.
@@ -1632,71 +1722,25 @@ impl ProcessPool {
                     let mut task = task;
                     let ctx = event_context(&pool_code, &task);
 
-                    // Group-flush suppression (ledger A-05/R-52/R-53), checked
-                    // BEFORE the semaphore/rate limiter so a suppressed group
-                    // spends neither a concurrency slot nor a rate-limit token.
-                    if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                        recorder.record(EventKind::Suppressed, &ctx, Facts::default());
-                        return Flow::Next;
-                    }
-
-                    // Go `InFlightTracker.EnsureTracked` (see the immediate path).
-                    if !task.callback.ensure_tracked() {
-                        recorder.record(EventKind::DuplicateAcked, &ctx, Facts::default());
-                        task.callback.ack().await;
-                        return Flow::Next;
-                    }
-
-                    // Acquire a concurrency slot FIRST, then pace on the rate
-                    // limiter while holding it — see `wait_for_rate_limit_permit`
-                    // for why this order matters.
-                    let permit = match semaphore.acquire().await {
-                        Ok(p) => p,
-                        Err(_) => {
-                            error!("Semaphore closed");
-                            task.callback.nack(Some(10)).await;
+                    let (outcome, disposition) =
+                        match deliverer.attempt(&mut guard.worker, &task, &ctx).await {
+                            Attempt::Delivered {
+                                outcome,
+                                disposition,
+                            } => (outcome, disposition),
+                            Attempt::Settled => return Flow::Next,
                             // Leave the guard active: it empties the rest of the
                             // buffer (fallback nacks) and resets `processing`.
-                            return Flow::Stop;
-                        }
-                    };
-
-                    // Wait for rate limit permit (no timeout — see fn doc).
-                    Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-
-                    let key = Self::begin_mediating(
-                        &guard.worker.mediating,
-                        &mediating_seq,
-                        &pool_code,
-                        &task,
-                    );
-                    guard.worker.begin(key);
-
-                    let start = Instant::now();
-                    let outcome = mediate_guarded(&mediator, &task, &recorder, &ctx).await;
-                    let duration_ms = start.elapsed().as_millis() as u64;
-
-                    let disposition = disposition_of(
-                        &outcome,
-                        task.attempts,
-                        task.message.dispatch_mode,
-                        task.callback.honours_delayed_return(),
-                    );
-                    apply_metric(&metrics_collector, disposition.metric, duration_ms);
-                    log_disposition(&pool_code, &task, &outcome, &disposition);
-                    record_dispatch(&recorder, &ctx, &task, &outcome, &disposition, duration_ms);
-                    guard.worker.end();
-                    drop(permit);
+                            Attempt::Closed => return Flow::Stop,
+                        };
 
                     match disposition.action {
                         BrokerAction::Ack => {
                             if outcome.result == MediationResult::Success {
-                                maybe_flush_group(&flush_registry, &task.message, &outcome);
-                            } else {
-                                warn!(
-                                    message_id = %task.message.id,
-                                    error = ?outcome.error_message,
-                                    "Permanent error, ACKing to prevent retry"
+                                maybe_flush_group(
+                                    &deliverer.flush_registry,
+                                    &task.message,
+                                    &outcome,
                                 );
                             }
                             task.callback.ack().await;
@@ -1716,6 +1760,10 @@ impl ProcessPool {
                                     )));
                                 match settled_reporter.as_ref() {
                                     Some(reporter) if !siblings.is_empty() => {
+                                        deliverer
+                                            .metrics_collector
+                                            .events()
+                                            .reject(RejectReason::Blocked, siblings.len());
                                         ack_and_report_siblings(
                                             siblings,
                                             &queue_size,
@@ -1734,6 +1782,10 @@ impl ProcessPool {
                                                 "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
                                             );
                                         }
+                                        deliverer
+                                            .metrics_collector
+                                            .events()
+                                            .reject(RejectReason::Released, siblings.len());
                                         nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS))
                                             .await;
                                     }
@@ -1745,6 +1797,10 @@ impl ProcessPool {
                             // returns in order.
                             task.callback.nack(disposition.nack_delay_secs()).await;
                             let siblings = take_buffered(&group_handlers, &group_id);
+                            deliverer
+                                .metrics_collector
+                                .events()
+                                .reject(RejectReason::Released, 1 + siblings.len());
                             recorder.record(EventKind::GroupDecision, &ctx, Facts::text(format!(
                                     "RETURN_GROUP: head released with delay {:?}s; {} buffered sibling(s) released behind it",
                                     disposition.nack_delay_secs(),
@@ -1800,7 +1856,17 @@ impl ProcessPool {
                                     // Shutdown / release_remainder: hand the group
                                     // back (whatever release_remainder has not
                                     // already taken) instead of holding it.
-                                    release_group(&group_handlers, &group_id, &queue_size, head_delay).await;
+                                    let released = release_group(
+                                        &group_handlers,
+                                        &group_id,
+                                        &queue_size,
+                                        head_delay,
+                                    )
+                                    .await;
+                                    deliverer
+                                        .metrics_collector
+                                        .events()
+                                        .reject(RejectReason::Released, released);
                                 }
                                 _ = time::sleep(disposition.retry_after) => {}
                             }
@@ -1817,11 +1883,24 @@ impl ProcessPool {
         });
     }
 
+    /// The state one delivery attempt reads, for a spawned task to own.
+    fn deliverer(&self) -> Deliverer {
+        Deliverer {
+            pool_code: Arc::from(self.config.code.as_str()),
+            semaphore: self.semaphore.clone(),
+            mediator: self.mediator.clone(),
+            rate_limiter: self.rate_limiter.clone(),
+            metrics_collector: self.metrics_collector.clone(),
+            flush_registry: self.flush_registry.clone(),
+            recorder: self.recorder.clone(),
+            mediating_seq: self.mediating_seq.clone(),
+        }
+    }
+
     /// Record `task` as entering a worker — the operator "Mediating" view's
     /// single write path (both `spawn_immediate_task` and the group-drain
-    /// path call this, in the same critical section as their
-    /// `active_workers.fetch_add`). Returns the key `end_mediating` needs
-    /// to remove it again. Static (takes the Arc clones directly) so it
+    /// path call this via [`Deliverer::attempt`]). Returns the key
+    /// `end_mediating` needs to remove it again. Static (takes the Arc clones directly) so it
     /// can run inside a spawned task that only owns clones, not `&self`.
     fn begin_mediating(
         mediating: &DashMap<u64, MediatingEntry>,
@@ -1845,9 +1924,7 @@ impl ProcessPool {
         key
     }
 
-    /// Remove the entry `begin_mediating` returned the key for. Call this
-    /// in the same critical section as `active_workers.fetch_sub` — see
-    /// `mediating`'s own doc comment for why the two must stay in lockstep.
+    /// Remove the entry `begin_mediating` returned the key for.
     fn end_mediating(mediating: &DashMap<u64, MediatingEntry>, key: u64) {
         mediating.remove(&key);
     }
@@ -2053,11 +2130,10 @@ impl ProcessPool {
 
     /// Non-blocking snapshot of whether every tracked worker/drain task has
     /// exited. Backed by `TaskTracker::is_empty()` rather than the
-    /// `queue_size`/`active_workers` counters — those stay as-is for stats,
-    /// but the tracker is the source of truth for "has every spawned task
-    /// actually returned", since it also accounts for tasks that are
-    /// mid-teardown (e.g. running their final callback) after decrementing
-    /// those counters.
+    /// `queue_size` counter and the `mediating` set — those stay as-is for
+    /// stats, but the tracker is the source of truth for "has every spawned
+    /// task actually returned", since it also accounts for tasks that are
+    /// mid-teardown (e.g. running their final callback) after releasing them.
     pub fn is_fully_drained(&self) -> bool {
         self.tracker.is_empty()
     }
@@ -2162,6 +2238,9 @@ impl ProcessPool {
         }
 
         if released > 0 {
+            self.metrics_collector
+                .events()
+                .reject(RejectReason::Stopped, released);
             info!(
                 pool_code = %self.config.code,
                 released,
@@ -2212,17 +2291,19 @@ impl ProcessPool {
         PoolStats {
             pool_code: self.config.code.clone(),
             concurrency: current_concurrency,
-            active_workers: self.active_workers.load(Ordering::Relaxed),
+            active_workers: self.mediating.len() as u32,
             queue_size: self.queue_size.load(Ordering::Relaxed),
-            queue_capacity: cmp::max(
-                current_concurrency * QUEUE_CAPACITY_MULTIPLIER,
-                MIN_QUEUE_CAPACITY,
-            ),
+            queue_capacity: self.capacity(),
             message_group_count: self.group_handlers.len() as u32,
             rate_limit_per_minute: self.rate_limit_per_minute(),
             is_rate_limited: self.is_rate_limited(),
             metrics: Some(self.metrics_collector.get_metrics()),
         }
+    }
+
+    /// This pool's event-time counters, for the Prometheus surface.
+    pub fn event_snapshot(&self) -> PoolEventSnapshot {
+        self.metrics_collector.events().snapshot()
     }
 
     /// Get enhanced metrics for this pool
@@ -2265,7 +2346,7 @@ impl ProcessPool {
 
     /// Get current active worker count
     pub fn active_workers(&self) -> u32 {
-        self.active_workers.load(Ordering::Relaxed)
+        self.mediating.len() as u32
     }
 
     /// Update concurrency at runtime
@@ -2285,6 +2366,10 @@ impl ProcessPool {
         if diff > 0 {
             self.semaphore.add_permits(diff as usize);
             self.concurrency.store(new_concurrency, Ordering::SeqCst);
+            self.capacity
+                .store(queue_capacity_for(new_concurrency), Ordering::Relaxed);
+            // The larger queue may have room a full-queue wait is parked on.
+            self.capacity_notify.notify_waiters();
             info!(
                 pool_code = %self.config.code,
                 old = old_concurrency,
@@ -2301,6 +2386,8 @@ impl ProcessPool {
                 Ok(permits) => {
                     mem::forget(permits);
                     self.concurrency.store(new_concurrency, Ordering::SeqCst);
+                    self.capacity
+                        .store(queue_capacity_for(new_concurrency), Ordering::Relaxed);
                     info!(
                         pool_code = %self.config.code,
                         old = old_concurrency,
@@ -2316,7 +2403,7 @@ impl ProcessPool {
                         old = old_concurrency,
                         new = new_concurrency,
                         timeout_secs = 60,
-                        active_workers = self.active_workers.load(Ordering::Relaxed),
+                        active_workers = self.mediating.len(),
                         "Concurrency decrease timed out waiting for idle slots - retaining current limit"
                     );
                     false
@@ -2754,5 +2841,64 @@ mod parked_group_tests {
         assert!(pool.group_snapshot().is_empty());
         assert_eq!(pool.queue_size(), 0);
         assert_eq!(pool.resume_parked_groups(), 0, "nothing left parked");
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    //! Queue capacity follows the pool's live concurrency, so a resize
+    //! changes what admission, stats and released slots agree on.
+    use super::*;
+
+    struct Succeeds;
+
+    #[async_trait::async_trait]
+    impl Mediator for Succeeds {
+        async fn mediate(&self, _: &Message) -> MediationOutcome {
+            MediationOutcome::success(200)
+        }
+    }
+
+    fn pool(concurrency: u32) -> ProcessPool {
+        ProcessPool::new(
+            PoolConfig {
+                code: "P".to_string(),
+                concurrency,
+                rate_limit_per_minute: None,
+            },
+            Arc::new(Succeeds),
+        )
+    }
+
+    #[tokio::test]
+    async fn capacity_follows_a_concurrency_increase() {
+        let pool = pool(10);
+        assert_eq!(pool.capacity(), 200);
+        assert_eq!(pool.get_stats().queue_capacity, 200);
+
+        assert!(pool.update_concurrency(100).await);
+        assert_eq!(pool.capacity(), 2000, "admission uses the new size");
+        assert_eq!(pool.get_stats().queue_capacity, 2000);
+        assert_eq!(
+            pool.queue_slot_releaser().capacity.load(Ordering::Relaxed),
+            2000
+        );
+    }
+
+    #[tokio::test]
+    async fn capacity_follows_a_concurrency_decrease() {
+        let pool = pool(100);
+        assert!(pool.update_concurrency(10).await);
+        assert_eq!(pool.capacity(), 200);
+        assert_eq!(pool.get_stats().queue_capacity, 200);
+    }
+
+    #[tokio::test]
+    async fn a_pool_configured_with_zero_concurrency_uses_the_effective_value() {
+        // Effective concurrency is 1, so capacity is the floor, and stats
+        // and admission agree.
+        let pool = pool(0);
+        assert_eq!(pool.capacity(), MIN_QUEUE_CAPACITY);
+        assert_eq!(pool.get_stats().queue_capacity, MIN_QUEUE_CAPACITY);
     }
 }

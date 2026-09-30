@@ -855,11 +855,9 @@ impl NotificationService for BatchingNotificationService {
     }
 }
 
-/// Create notification service based on configuration. `None` when no
-/// notification channel is configured.
-pub fn create_notification_service(
-    config: &NotificationConfig,
-) -> Option<Arc<dyn NotificationService>> {
+/// The channels `config` enables, each skipped with a warning when it is
+/// enabled but not usable.
+fn build_delegates(config: &NotificationConfig) -> Vec<Arc<dyn NotificationService>> {
     let mut delegates: Vec<Arc<dyn NotificationService>> = Vec::new();
 
     if config.teams_enabled {
@@ -890,6 +888,16 @@ pub fn create_notification_service(
             }
         }
     }
+
+    delegates
+}
+
+/// Create notification service based on configuration. `None` when no
+/// notification channel is configured.
+pub fn create_notification_service(
+    config: &NotificationConfig,
+) -> Option<Arc<dyn NotificationService>> {
+    let mut delegates = build_delegates(config);
 
     if delegates.is_empty() {
         info!("No notification channels configured");
@@ -919,36 +927,7 @@ pub struct NotificationServiceWithScheduler {
 pub fn create_notification_service_with_scheduler(
     config: &NotificationConfig,
 ) -> Option<NotificationServiceWithScheduler> {
-    let mut delegates: Vec<Arc<dyn NotificationService>> = Vec::new();
-
-    if config.teams_enabled {
-        if let Some(ref webhook_url) = config.teams_webhook_url {
-            if !webhook_url.is_empty() {
-                let teams_service = TeamsWebhookNotificationService::new(webhook_url.clone(), true);
-                delegates.push(Arc::new(teams_service));
-                info!("Teams webhook notifications enabled");
-            } else {
-                warn!("Teams notifications enabled but webhook URL is empty - skipping");
-            }
-        } else {
-            warn!("Teams notifications enabled but webhook URL not configured - skipping");
-        }
-    }
-
-    #[cfg(feature = "email")]
-    if let Some(ref email_config) = config.email_config {
-        if email_config.enabled {
-            match EmailNotificationService::new(email_config.clone()) {
-                Ok(email_service) => {
-                    delegates.push(Arc::new(email_service));
-                    info!("Email notifications enabled");
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to initialize email notifications");
-                }
-            }
-        }
-    }
+    let delegates = build_delegates(config);
 
     if delegates.is_empty() {
         info!("No notification channels configured");

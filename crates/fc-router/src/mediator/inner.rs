@@ -29,7 +29,7 @@ pub(super) struct MediatorInner {
     /// Per-endpoint circuit breaker registry this mediator consults before
     /// every delivery and records into after — see `HttpMediator::mediate`.
     /// Defaults to a private registry (mirrors `warning_service`'s noop
-    /// default) unless `HttpMediator::with_circuit_breakers` wires in a
+    /// default) unless `HttpMediator::wired` supplies a
     /// shared one, which is what every production pool does via
     /// `QueueManager`'s `MediatorFactory`.
     pub(super) breakers: Arc<CircuitBreakerRegistry>,

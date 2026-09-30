@@ -2,6 +2,7 @@
 //! (mediating entries, blocked groups, group-flush suppressions), the
 //! force-ack override, and in-flight message lookups.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tracing::warn;
@@ -9,9 +10,11 @@ use utoipa::ToSchema;
 
 use fc_common::PoolStats;
 
+use crate::event_counters::{ConsumerEventCounters, ConsumerEventSnapshot, PoolEventSnapshot};
 use crate::pool::ProcessPool;
 
-use super::{PoolState, QueueManager};
+use super::routing::ack_bounded;
+use super::QueueManager;
 use crate::flight_recorder::EventContext;
 use crate::flight_recorder::EventKind;
 use crate::flight_recorder::Facts;
@@ -30,11 +33,8 @@ impl QueueManager {
     pub(super) fn has_pool_capacity(&self) -> bool {
         let mut saw_active = false;
         for entry in self.pools.iter() {
-            if entry.value().state != PoolState::Active {
-                continue;
-            }
             saw_active = true;
-            if entry.value().pool.available_capacity() > 0 {
+            if entry.value().available_capacity() > 0 {
                 return true;
             }
         }
@@ -81,26 +81,49 @@ impl QueueManager {
     pub fn get_pool_stats(&self) -> Vec<PoolStats> {
         self.pools
             .iter()
-            .filter(|e| e.value().state == PoolState::Active)
-            .map(|entry| entry.value().pool.get_stats())
+            .map(|entry| entry.value().get_stats())
             .collect()
     }
 
-    /// Every pool this manager is tracking — active, still draining after
-    /// removal, AND any draining predecessor displaced from `pools` by a
-    /// later Active insert under the same code (`orphaned_draining` — see
-    /// that field's doc comment). Mirrors Go's `Manager.AllPools`: a pool
+    /// Event-time counters of every active pool, by pool code, for the
+    /// Prometheus surface.
+    pub fn pool_event_snapshots(&self) -> HashMap<String, PoolEventSnapshot> {
+        self.pools
+            .iter()
+            .map(|e| (e.key().clone(), e.value().event_snapshot()))
+            .collect()
+    }
+
+    /// Poll counters of every queue that has been polled, by queue name.
+    pub fn consumer_event_snapshots(&self) -> Vec<(String, ConsumerEventSnapshot)> {
+        self.consumer_events
+            .iter()
+            .map(|e| (e.key().clone(), e.value().snapshot()))
+            .collect()
+    }
+
+    /// The counters for `queue`, created on first use.
+    pub(super) fn consumer_events_for(&self, queue: &str) -> Arc<ConsumerEventCounters> {
+        if let Some(events) = self.consumer_events.get(queue) {
+            return events.clone();
+        }
+        self.consumer_events
+            .entry(queue.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// Every pool this manager is tracking, active or still draining after
+    /// removal. Mirrors Go's `Manager.AllPools`: a pool
     /// still finishing an asynchronous removal-drain (X-11) can still be
     /// holding buffered groups, live group-flush suppressions, or
     /// in-worker deliveries worth showing on the operator dashboard, so the
-    /// "Mediating"/"blocked groups"/"group flushes" views traverse every
-    /// entry regardless of state — including an orphan, so a displaced
-    /// predecessor's still-buffered/in-flight work never silently drops off
-    /// the dashboard.
+    /// "Mediating"/"blocked groups"/"group flushes" views traverse both, so a
+    /// draining predecessor's still-buffered/in-flight work never silently
+    /// drops off the dashboard.
     fn all_pools(&self) -> Vec<Arc<ProcessPool>> {
-        let mut all: Vec<Arc<ProcessPool>> =
-            self.pools.iter().map(|e| e.value().pool.clone()).collect();
-        all.extend(self.orphaned_draining.lock().iter().cloned());
+        let mut all: Vec<Arc<ProcessPool>> = self.pools.iter().map(|e| e.value().clone()).collect();
+        all.extend(self.draining_pools.lock().iter().cloned());
         all
     }
 
@@ -135,8 +158,7 @@ impl QueueManager {
     pub fn resume_parked_groups(&self) -> usize {
         self.pools
             .iter()
-            .filter(|e| e.value().state == PoolState::Active)
-            .map(|e| e.value().pool.clone())
+            .map(|e| e.value().clone())
             .collect::<Vec<_>>()
             .iter()
             .map(|p| p.resume_parked_groups())
@@ -216,9 +238,9 @@ impl QueueManager {
         // NATS differs from the operator-chosen queue name.
         let consumer = self.consumers.resolve(&entry.queue_identifier, 0);
         let (broker_acked, broker_ack_error) = match consumer {
-            Some(c) => match c.ack(&entry.receipt_handle).await {
+            Some(c) => match ack_bounded(&*c, &entry.receipt_handle).await {
                 Ok(()) => (true, None),
-                Err(e) => (false, Some(e.to_string())),
+                Err(e) => (false, Some(e)),
             },
             None => (
                 false,

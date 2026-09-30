@@ -54,8 +54,8 @@ disappears in TS.
 |---|-------|------|-----|-------|
 | 1 | `in_pipeline` | `Arc<DashMap<String, InFlightMessage>>` | essential | Dedup on SQS redelivery. Without it `filter_duplicates` can't swap in a fresh receipt handle when the same broker message reappears. |
 | 2 | `app_message_to_pipeline_key` | `Arc<DashMap<String, String>>` | essential | Secondary index — app message id → pipeline key — used by callback drop to clean both maps in one shot. Could be derived but lookup is hot-path. |
-| 3 | `pools` | `DashMap<String, PoolEntry>` | essential | **DONE (consolidation #2).** Replaces the old `pools`/`draining_pools` pair — one map, `PoolEntry { pool: Arc<ProcessPool>, state: PoolState::{Active,Draining} }`. Routing (`route_batch`/`group_by_pool`/`has_pool_capacity`/`get_pool`/`ensure_fallback_pool`/`get_or_create_pool`) matches `Active` only; `all_pools`/`cleanup_draining_pools`/`shutdown` traverse every entry. A `DashMap` can only hold one entry per key, so a code removed and re-added before its predecessor finishes draining — the coexistence case the old two-map design allowed for free — can't have both under one key: the new `Active` insert would displace the map's only reference to the still-draining predecessor. Resolved via row 3b (`orphaned_draining`), not left as a narrowing: every insert site that can displace an entry (`insert_active_pool`, `insert_draining_pool`) checks `DashMap::insert`'s returned previous value and routes a displaced `Draining` entry there instead of dropping it. Removal from `pools` itself is identity-checked (`remove_if` on state + `Arc::ptr_eq`) so a predecessor finishing late can never delete the new occupant. |
-| 3b | `orphaned_draining` | `parking_lot::Mutex<Vec<Arc<ProcessPool>>>` | essential | Added during this pass to close the gap row 3 would otherwise have left open. Holds pools displaced from `pools` while still `Draining` (see row 3) — both directions are handled: an `Active` insert landing on a `Draining` slot orphans the predecessor (`insert_active_pool`), and the symmetric race — `begin_pool_drain`'s `Draining` insert landing after a concurrent creator already claimed the slot with a fresh `Active` entry (realistic case: `ensure_fallback_pool` racing `evict_idle_synth_pools`'s drain of the same synth code) — orphans itself instead of clobbering the newer pool (`insert_draining_pool`). `all_pools()` chains this in, so the operator dashboard (`mediating_snapshot`/`blocked_groups`/`group_flush_snapshots`) keeps showing a displaced predecessor's buffered/in-flight work; `shutdown()` chains it into the pool list it explicitly drains/releases/waits/shuts down, so the router specification's shutdown MUST (release every pool's buffered remainder, never abandon it — `docs/router-specification.md` §5.3) holds for an orphan too, not just for `pools`' own entries. `cleanup_draining_pools` sweeps it the same way it sweeps `Draining` map entries, as a belt-and-braces backstop alongside each orphan's own watcher task (spawned back when it first started draining), which independently calls `pool.shutdown()` regardless of which list references it — a double `shutdown()` call is an expected, idempotent race, not a bug. Plain `Mutex<Vec<_>>` rather than `DashMap`: identified by `Arc` identity, not a key, and this path is rare (only the coexistence edge case) next to the hot-path maps elsewhere in this struct. Pinned by `manager_tests.rs::displaced_draining_predecessor_stays_visible_and_gets_released_at_shutdown`. |
+| 3 | `pools` | `DashMap<String, Arc<ProcessPool>>` | essential | The active pools, by code. Routing (`route_batch`/`group_by_pool`/`has_pool_capacity`/`get_pool`/`ensure_fallback_pool`/`get_or_create_pool`) looks only here. A pool leaves this map the moment it starts draining, so its code is free at once and a concurrent creator simply inserts: nothing is ever displaced. (An earlier consolidation kept active and draining pools in one map with a state tag, which forced a second list for a draining pool whose code was re-claimed, plus identity-checked removals at every site.) |
+| 3b | `draining_pools` | `parking_lot::Mutex<Vec<Arc<ProcessPool>>>` | essential | Pools removed from config (or evicted as idle synth pools) that are still finishing work, identified by `Arc`, not by code. `all_pools()` includes them, so the operator dashboard keeps showing their buffered/in-flight work; `shutdown()` drains, releases and shuts them down with every other pool (`docs/router-specification.md` §5.3). Each pool's watcher (spawned by `begin_pool_drain`) shuts it down and removes it when `wait_drained()` resolves; `cleanup_draining_pools` is the backstop sweep, and a double `shutdown()` is an idempotent no-op. Pinned by `manager_tests.rs::displaced_draining_predecessor_stays_visible_and_gets_released_at_shutdown`. |
 | 4 | `synth_pools` | `DashMap<String, SynthPoolState>` | essential | R-59 idle tracker for synthesised per-client fallback pools — added since this audit was first written; wasn't in the original table. |
 | 5 | `consumers` | `RwLock<HashMap<String, Arc<dyn QueueConsumer>>>` | essential | Active queue consumers. No `draining_consumers` equivalent exists or is needed — verified (see `sync_queue_consumers`'s "X-11" comment): a phased-out consumer's still-buffered messages hold their own `Arc<dyn QueueConsumer>` clone from route time, independent of this map. |
 | 6 | `pool_configs` | `RwLock<HashMap<String, PoolConfig>>` | essential | Last-applied pool configs, for diff during `sync_pools`; also the reload-serialisation lock. |
@@ -142,10 +142,7 @@ disappears in TS.
 - **QueueManager**: 19 primitive-bearing fields (post-consolidation; see
   the table above — this count now also includes five fields the original
   audit predates: `synth_pools`, `stall_warned`, `strict_routing`,
-  `is_leader`, and `orphaned_draining` — the last one added by this pass
-  itself, to close a visibility/shutdown gap the map unification would
-  otherwise have opened, not a pre-existing field the original table
-  missed).
+  `is_leader`, and `draining_pools`).
   - Essential: 18
   - Defensive: 1 (`pending_delete_broker_ids`, now a `DashMap`)
   - Defensive/optimization (removable): 0 — the two candidates this audit
@@ -176,6 +173,12 @@ below, which still stands as the target once (1), (5), (6) are done. Field
 isn't a contradiction — `orphaned_draining` trades one field for a
 correctly-modelled edge case instead of a silently-dropped one; that's the
 kind of primitive this audit tags essential, not optimization.
+
+*Later update:* the tagged-value map and `orphaned_draining` were replaced by
+an active-only `pools` map plus a `draining_pools` list (same field count,
+rows 3 and 3b above). Removing a pool from `pools` when it starts draining
+frees its code at once, so the displaced-entry handling this paragraph
+describes no longer exists.
 
 ### Three concrete simplifications worth doing regardless of port-vs-keep
 

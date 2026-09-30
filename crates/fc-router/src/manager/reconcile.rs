@@ -15,7 +15,7 @@ use crate::pool::ProcessPool;
 use crate::Result;
 use futures::future;
 
-use super::{PoolState, QueueManager};
+use super::QueueManager;
 use std::sync::atomic::Ordering;
 
 /// Every field of a queue's config matters: a changed URI points at a
@@ -116,12 +116,7 @@ impl QueueManager {
         let mut concurrency_updates: Vec<(String, Arc<ProcessPool>, PoolConfig)> = Vec::new();
 
         // Step 1: Handle existing pools - update or remove
-        let existing_codes: Vec<String> = self
-            .pools
-            .iter()
-            .filter(|e| e.value().state == PoolState::Active)
-            .map(|e| e.key().clone())
-            .collect();
+        let existing_codes: Vec<String> = self.pools.iter().map(|e| e.key().clone()).collect();
         for pool_code in existing_codes {
             if let Some(new_config) = new_pool_configs.get(&pool_code) {
                 // R-59: config always wins — a code config now defines is
@@ -193,11 +188,7 @@ impl QueueManager {
                 // eviction (`evict_idle_synth_pools`) is the mechanism R-59
                 // actually targets, this is just the pre-existing "any real
                 // config change resets pools it doesn't mention" behaviour.
-                if let Some((code, entry)) = self
-                    .pools
-                    .remove_if(&pool_code, |_, e| e.state == PoolState::Active)
-                {
-                    let pool = entry.pool;
+                if let Some((code, pool)) = self.pools.remove(&pool_code) {
                     info!(
                         pool_code = %code,
                         queue_size = pool.queue_size(),
@@ -208,17 +199,11 @@ impl QueueManager {
                     pool_configs.remove(&code);
                     pools_removed += 1;
 
-                    // begin_pool_drain: drains, marks the entry `Draining`
-                    // (or orphans it — see `insert_draining_pool`), and
-                    // spawns the watcher that calls `pool.shutdown()` the
-                    // moment its
-                    // in-flight work finishes — instead of waiting for the
-                    // next `cleanup_draining_pools` sweep (only run
-                    // periodically by the lifecycle manager's reaper — see
-                    // that fn's doc comment, which is now the backstop
-                    // rather than the primary path). Shared with
-                    // `evict_idle_synth_pools` — see that method's doc
-                    // comment for the full ownership/lifecycle writeup.
+                    // begin_pool_drain: drains, tracks the pool as draining,
+                    // and spawns the watcher that calls `pool.shutdown()`
+                    // the moment its in-flight work finishes, instead of
+                    // waiting for the next `cleanup_draining_pools` sweep
+                    // (the backstop). Shared with `evict_idle_synth_pools`.
                     self.begin_pool_drain(code, pool).await;
                 }
             }
@@ -254,10 +239,7 @@ impl QueueManager {
 
         // Step 2: Create new pools
         for pool_config in &config.processing_pools {
-            let already_active = self
-                .pools
-                .get(&pool_config.code)
-                .is_some_and(|e| e.state == PoolState::Active);
+            let already_active = self.pools.contains_key(&pool_config.code);
             if !already_active {
                 // Check pool count limits
                 let current_count = self.active_pool_count();
@@ -474,9 +456,7 @@ impl QueueManager {
         Ok((queues_created, queues_removed))
     }
 
-    /// Cleanup draining pools that have finished — both `Draining` entries
-    /// still in `pools` and any predecessor that landed in
-    /// `orphaned_draining` (see that field's doc comment).
+    /// Cleanup draining pools that have finished (see `draining_pools`).
     ///
     /// The primary path is now the per-pool watcher task spawned in
     /// `begin_pool_drain` when a pool starts draining — it removes/shuts
@@ -488,41 +468,15 @@ impl QueueManager {
     /// harmless no-op, so calling this periodically alongside the watcher
     /// is safe.
     pub async fn cleanup_draining_pools(&self) {
-        let mut cleaned = Vec::new();
-
-        for entry in self.pools.iter() {
-            if entry.value().state != PoolState::Draining {
-                continue;
-            }
-            let pool = entry.value().pool.clone();
-            if pool.is_fully_drained() {
-                info!(pool_code = %entry.key(), "Draining pool finished - cleaning up");
-                pool.shutdown().await;
-                cleaned.push((entry.key().clone(), pool));
-            }
-        }
-
-        for (code, pool) in cleaned {
-            // Identity-checked: only remove this exact still-Draining
-            // instance, never a newer Active entry that has since taken
-            // over the same code (see the `pools` field's doc comment).
-            self.pools.remove_if(&code, |_, e| {
-                e.state == PoolState::Draining && Arc::ptr_eq(&e.pool, &pool)
-            });
-        }
-
-        // Orphaned predecessors — displaced from `pools` by a later Active
-        // insert (or, more rarely, by a second Draining insert) under the
-        // same code. Swept by identity rather than by map key.
         let finished: Vec<Arc<ProcessPool>> = {
-            let mut guard = self.orphaned_draining.lock();
+            let mut draining = self.draining_pools.lock();
             let (done, remaining): (Vec<_>, Vec<_>) =
-                guard.drain(..).partition(|p| p.is_fully_drained());
-            *guard = remaining;
+                draining.drain(..).partition(|p| p.is_fully_drained());
+            *draining = remaining;
             done
         };
         for pool in finished {
-            info!(pool_code = %pool.code(), "Orphaned draining pool finished - cleaning up");
+            info!(pool_code = %pool.code(), "Draining pool finished - cleaning up");
             pool.shutdown().await;
         }
     }
@@ -582,36 +536,31 @@ impl QueueManager {
         self.active_pool(code)
     }
 
-    /// Move `pool` (already removed from `self.pools`) into `Draining`
-    /// state (via [`Self::insert_draining_pool`], which also resolves the
-    /// rare race against a concurrent creator claiming the same code — see
-    /// that method's doc) and spawn a watcher that calls `pool.shutdown()`
-    /// the moment its buffered work finishes (`wait_drained()`), or backs
-    /// off if the manager's own shutdown fires first (`shutdown()` already
-    /// drains every tracked pool itself, including `orphaned_draining`, so
-    /// this task would otherwise double-act). Shared by `reload_config`'s
-    /// removed-pool branch and `evict_idle_synth_pools` (R-59) — both are
-    /// "this code no longer routes to this pool" events and must drain
-    /// identically (R-26/R-49: a removal drains, it never flushes).
+    /// Start draining `pool` (already removed from `self.pools`, so its code
+    /// is free), track it in [`Self::draining_pools`], and spawn a watcher
+    /// that calls `pool.shutdown()` and drops it from the list the moment
+    /// its buffered work finishes (`wait_drained()`), or backs off if the
+    /// manager's own shutdown fires first (`shutdown()` already drains every
+    /// tracked pool itself, so this task would otherwise double-act). Shared
+    /// by `reload_config`'s removed-pool branch and `evict_idle_synth_pools`
+    /// (R-59): both are "this code no longer routes to this pool" events and
+    /// must drain identically (R-26/R-49: a removal drains, it never
+    /// flushes).
     pub(super) async fn begin_pool_drain(self: &Arc<Self>, code: String, pool: Arc<ProcessPool>) {
         pool.drain().await;
-        self.insert_draining_pool(code.clone(), pool.clone());
+        self.draining_pools.lock().push(pool.clone());
 
         let manager = self.clone();
-        let watched_pool = pool;
-        let watched_code = code;
         let token = self.shutdown.child_token();
         tokio::spawn(async move {
             tokio::select! {
-                _ = watched_pool.wait_drained() => {
-                    watched_pool.shutdown().await;
-                    // Identity-checked: never remove a newer Active entry
-                    // that has since taken over this code (see the `pools`
-                    // field's doc comment).
-                    manager.pools.remove_if(&watched_code, |_, e| {
-                        e.state == PoolState::Draining && Arc::ptr_eq(&e.pool, &watched_pool)
-                    });
-                    info!(pool_code = %watched_code, "Draining pool finished - removed");
+                _ = pool.wait_drained() => {
+                    pool.shutdown().await;
+                    manager
+                        .draining_pools
+                        .lock()
+                        .retain(|p| !Arc::ptr_eq(p, &pool));
+                    info!(pool_code = %code, "Draining pool finished - removed");
                 }
                 _ = token.cancelled() => {}
             }
@@ -681,20 +630,13 @@ impl QueueManager {
     /// Get list of all pool codes (active only — see the `pools` field's
     /// doc comment).
     pub fn pool_codes(&self) -> Vec<String> {
-        self.pools
-            .iter()
-            .filter(|e| e.value().state == PoolState::Active)
-            .map(|entry| entry.key().clone())
-            .collect()
+        self.pools.iter().map(|entry| entry.key().clone()).collect()
     }
 
     /// Number of pools currently draining (removed from config, still
     /// finishing in-flight work). Useful for stats/tests.
     pub fn draining_pool_count(&self) -> usize {
-        self.pools
-            .iter()
-            .filter(|e| e.value().state == PoolState::Draining)
-            .count()
+        self.draining_pools.lock().len()
     }
 
     /// Non-blocking check of whether a specific pool (active or draining)
@@ -702,7 +644,15 @@ impl QueueManager {
     /// exited (see [`ProcessPool::is_fully_drained`]). Returns `None` if no
     /// pool with this code exists.
     pub fn is_pool_fully_drained(&self, code: &str) -> Option<bool> {
-        self.pools.get(code).map(|e| e.pool.is_fully_drained())
+        self.active_pool(code)
+            .or_else(|| {
+                self.draining_pools
+                    .lock()
+                    .iter()
+                    .find(|p| p.code() == code)
+                    .cloned()
+            })
+            .map(|p| p.is_fully_drained())
     }
 }
 
@@ -729,6 +679,6 @@ mod pool_creation_tests {
             pools.push(h.await.unwrap());
         }
         assert!(pools.iter().all(|p| Arc::ptr_eq(p, &pools[0])));
-        assert!(manager.orphaned_draining.lock().is_empty());
+        assert!(manager.draining_pools.lock().is_empty());
     }
 }

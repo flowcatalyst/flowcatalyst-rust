@@ -60,7 +60,7 @@ const BROKER_OP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Nack `handle` under `BROKER_OP_TIMEOUT`; a hung broker call must not stall
 /// the poll loop. A failed nack is left to the broker's visibility timeout.
-async fn nack_bounded(
+pub(super) async fn nack_bounded(
     consumer: &dyn QueueConsumer,
     handle: &str,
     delay: Option<u32>,
@@ -100,7 +100,10 @@ async fn nack_recorded(
 
 /// Ack `handle` under `BROKER_OP_TIMEOUT`, flattening a timeout and a broker
 /// error into one message so side paths can record what actually happened.
-async fn ack_bounded(consumer: &dyn QueueConsumer, handle: &str) -> StdResult<(), String> {
+pub(super) async fn ack_bounded(
+    consumer: &dyn QueueConsumer,
+    handle: &str,
+) -> StdResult<(), String> {
     match time::timeout(BROKER_OP_TIMEOUT, consumer.ack(handle)).await {
         Ok(r) => r.map_err(|e| e.to_string()),
         Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),

@@ -613,9 +613,11 @@ async fn observe(given: &Given, honours_delayed_return: bool) -> Observation {
     }
 
     let mediator = Arc::new(RecordingMediator {
-        inner: HttpMediator::with_config(HttpMediatorConfig::dev())
-            .with_warning_service(warnings.clone())
-            .with_circuit_breakers(breakers.clone()),
+        inner: HttpMediator::wired(
+            HttpMediatorConfig::dev(),
+            warnings.clone(),
+            breakers.clone(),
+        ),
         breakers,
         warnings,
         deliveries: parking_lot::Mutex::new(Vec::new()),

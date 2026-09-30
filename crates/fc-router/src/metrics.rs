@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::event_counters::{PoolEventCounters, RejectReason};
 use fc_common::{EnhancedPoolMetrics, ProcessingTimeMetrics, WindowedMetrics};
 
 /// A single metric sample (kept for windowed success/failure counting)
@@ -74,6 +75,9 @@ pub struct PoolMetricsCollector {
 
     /// Rate-limited event timestamps for windowed counting
     rate_limited_events: RwLock<VecDeque<Instant>>,
+
+    /// Event-time counters for the Prometheus surface.
+    events: PoolEventCounters,
 }
 
 impl PoolMetricsCollector {
@@ -94,7 +98,15 @@ impl PoolMetricsCollector {
             histogram: RwLock::new(histogram),
             samples: RwLock::new(VecDeque::with_capacity(10000)),
             rate_limited_events: RwLock::new(VecDeque::with_capacity(1000)),
+            events: PoolEventCounters::default(),
         }
+    }
+
+    /// Whether `t` is still inside `window` as of `now`. Compares ages rather
+    /// than computing `now - window`: `Instant` counts from boot, so that
+    /// subtraction panics on a host that has been up for less than the window.
+    fn within(now: Instant, t: Instant, window: Duration) -> bool {
+        now.saturating_duration_since(t) <= window
     }
 
     /// Record a successful message processing
@@ -126,8 +138,12 @@ impl PoolMetricsCollector {
         let now = Instant::now();
 
         // Remove old events beyond long window
-        let cutoff = now - self.config.long_window;
-        while events.front().map(|t| *t < cutoff).unwrap_or(false) {
+        let long_window = self.config.long_window;
+        while events
+            .front()
+            .map(|t| !Self::within(now, *t, long_window))
+            .unwrap_or(false)
+        {
             events.pop_front();
         }
 
@@ -145,6 +161,12 @@ impl PoolMetricsCollector {
     /// bumps the counter.
     pub fn record_suppressed(&self) {
         self.total_suppressed.fetch_add(1, Ordering::Relaxed);
+        self.events.reject(RejectReason::Suppressed, 1);
+    }
+
+    /// The event-time counters behind the Prometheus series.
+    pub fn events(&self) -> &PoolEventCounters {
+        &self.events
     }
 
     /// Get all-time suppressed-ACK count.
@@ -157,6 +179,7 @@ impl PoolMetricsCollector {
         // Record in HdrHistogram (clamp to histogram bounds)
         let clamped = duration_ms.clamp(1, 900_000);
         self.histogram.write().record(clamped).ok();
+        self.events.observe_duration_ms(duration_ms);
 
         let sample = MetricSample {
             timestamp: Instant::now(),
@@ -167,10 +190,11 @@ impl PoolMetricsCollector {
         let mut samples = self.samples.write();
 
         // Remove old samples beyond long window
-        let cutoff = Instant::now() - self.config.long_window;
+        let now = Instant::now();
+        let long_window = self.config.long_window;
         while samples
             .front()
-            .map(|s| s.timestamp < cutoff)
+            .map(|s| !Self::within(now, s.timestamp, long_window))
             .unwrap_or(false)
         {
             samples.pop_front();
@@ -249,28 +273,28 @@ impl PoolMetricsCollector {
         let processing_time = Self::metrics_from_histogram(&self.histogram.read());
 
         // Calculate windowed metrics
-        let short_cutoff = now - self.config.short_window;
-        let long_cutoff = now - self.config.long_window;
+        let short_window = self.config.short_window;
+        let long_window = self.config.long_window;
 
         let short_samples: Vec<&MetricSample> = samples
             .iter()
-            .filter(|s| s.timestamp >= short_cutoff)
+            .filter(|s| Self::within(now, s.timestamp, short_window))
             .collect();
 
         let long_samples: Vec<&MetricSample> = samples
             .iter()
-            .filter(|s| s.timestamp >= long_cutoff)
+            .filter(|s| Self::within(now, s.timestamp, long_window))
             .collect();
 
         // Count rate limited events in windows
         let rate_limited_5min = rate_limited_events
             .iter()
-            .filter(|t| **t >= short_cutoff)
+            .filter(|t| Self::within(now, **t, short_window))
             .count() as u64;
 
         let rate_limited_30min = rate_limited_events
             .iter()
-            .filter(|t| **t >= long_cutoff)
+            .filter(|t| Self::within(now, **t, long_window))
             .count() as u64;
 
         let mut last_5_min =
@@ -340,6 +364,7 @@ impl PoolMetricsCollector {
         self.histogram.write().reset();
         self.samples.write().clear();
         self.rate_limited_events.write().clear();
+        self.events.reset();
     }
 }
 
@@ -352,6 +377,30 @@ impl Default for PoolMetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn within_compares_ages_and_never_subtracts_from_now() {
+        let now = Instant::now();
+        let window = Duration::from_secs(30 * 60);
+        assert!(PoolMetricsCollector::within(now, now, window));
+        assert!(PoolMetricsCollector::within(
+            now,
+            now + Duration::from_secs(1),
+            window
+        ));
+        // A window far longer than this process has been up must not panic
+        // (`now - window` would) and must keep everything.
+        assert!(PoolMetricsCollector::within(
+            now,
+            now,
+            Duration::from_secs(u64::MAX / 4)
+        ));
+        assert!(!PoolMetricsCollector::within(
+            now + Duration::from_secs(3600),
+            now,
+            window
+        ));
+    }
 
     #[test]
     fn test_empty_metrics() {

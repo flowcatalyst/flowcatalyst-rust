@@ -16,7 +16,7 @@ use fc_common::PoolConfig;
 use crate::pool::ProcessPool;
 use crate::Result;
 
-use super::{PoolState, QueueManager};
+use super::QueueManager;
 
 /// R-59: idle tracker for one synthesised per-client fallback pool. Only
 /// `last_routed` is mutated after creation — bumped on every route to the
@@ -200,11 +200,7 @@ impl QueueManager {
             // to be discarded anyway.
             self.synth_pools.remove(&code);
 
-            if let Some((removed_code, entry)) = self
-                .pools
-                .remove_if(&code, |_, e| e.state == PoolState::Active)
-            {
-                let pool = entry.pool;
+            if let Some((removed_code, pool)) = self.pools.remove(&code) {
                 info!(
                     pool_code = %removed_code,
                     queue_size = pool.queue_size(),

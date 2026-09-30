@@ -38,6 +38,7 @@ use fc_common::{PoolConfig, StallConfig};
 use fc_queue::QueueConsumer;
 
 use crate::circuit_breaker_registry::CircuitBreakerRegistry;
+use crate::event_counters::ConsumerEventCounters;
 use crate::flight_recorder::FlightRecorder;
 use crate::health::HealthService;
 use crate::mediator::{HttpMediator, HttpMediatorConfig, Mediator};
@@ -83,7 +84,7 @@ pub(crate) use registry::{ConsumerRegistry, RunningConsumer};
 /// breaker admission/recording is centralised inside the mediator now, not
 /// at the pool call site — see `mediator.rs`'s `Mediator::mediate` impl),
 /// so the production factory can wire it into every pool's fresh
-/// `HttpMediator` via `with_circuit_breakers`.
+/// `HttpMediator` via `HttpMediator::wired`.
 type MediatorFactory = Arc<
     dyn Fn(&Arc<WarningService>, &Arc<CircuitBreakerRegistry>) -> Arc<dyn Mediator + 'static>
         + Send
@@ -99,29 +100,6 @@ pub trait ConsumerFactory: Send + Sync {
         &self,
         config: &fc_common::QueueConfig,
     ) -> Result<Arc<dyn QueueConsumer>>;
-}
-
-/// Which lifecycle phase a tracked pool is in — see [`PoolEntry`] and the
-/// `pools` field's doc comment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PoolState {
-    /// Serving routed traffic. The hot routing path, capacity checks, and
-    /// stats/code listings only ever consider `Active` entries.
-    Active,
-    /// Removed from config (or evicted as an idle synth pool) but still
-    /// finishing buffered/in-flight work. Never routed to; never counted
-    /// as "the" pool for its code by `get_pool`/`pool_codes`/routing.
-    Draining,
-}
-
-/// One tracked pool plus its lifecycle state — the value half of the
-/// `pools` map (concurrency-audit consolidation #2; replaces the old
-/// `pools`/`draining_pools` DashMap pair with one map + a tagged value, so
-/// "is this pool draining?" is a value check instead of an
-/// implicit-via-which-map check).
-pub(super) struct PoolEntry {
-    pub(super) pool: Arc<ProcessPool>,
-    pub(super) state: PoolState,
 }
 
 /// One queue's restart history (Go: `restartRecord`).
@@ -145,62 +123,36 @@ pub struct QueueManager {
     /// Wrapped in Arc so spawned tasks can share the same map
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
 
-    /// Every pool this manager is tracking, keyed by code, tagged with its
-    /// lifecycle state (concurrency-audit consolidation #2: replaces the
-    /// old `pools`/`draining_pools` DashMap pair — see
-    /// `docs/developers/router-concurrency-audit.md`). Routing
+    /// The pools serving traffic, by code. Routing
     /// (`route_batch`/`group_by_pool`/`has_pool_capacity`/`get_pool`/
-    /// `ensure_fallback_pool`/`get_or_create_pool`) only ever matches an
-    /// [`PoolState::Active`] entry — that half of the state machine used to
-    /// be "which map is it in", now it's a value check. `all_pools`,
-    /// `cleanup_draining_pools`, and `shutdown` traverse every entry
-    /// regardless of state (they used to `.chain()` two maps; now it's one
-    /// iteration).
+    /// `ensure_fallback_pool`/`get_or_create_pool`) looks only here, so a
+    /// pool that is finishing its work is never a routing candidate.
     ///
-    /// **One entry per code.** A pool code being removed from config and
-    /// re-added *before its predecessor finishes draining* can't be
-    /// represented as two coexisting entries under one key the way the old
-    /// two-map design allowed (draining under the old code in
-    /// `draining_pools`, active under the same code in `pools`). Inserting
-    /// the new [`PoolState::Active`] entry displaces the map's reference to
-    /// the still-draining predecessor — handled, not dropped: every insert
-    /// site that can displace a `Draining` entry (`get_or_create_pool`,
-    /// `ensure_fallback_pool`) checks `DashMap::insert`'s returned previous
-    /// value and, if it was `Draining`, appends the displaced pool to
-    /// [`Self::orphaned_draining`] instead of losing the map's only
-    /// reference to it. Removal from `pools` itself is identity-checked
-    /// (`remove_if` matching both `Draining` state and pool identity) so a
-    /// predecessor finishing after its slot was overwritten can never
-    /// remove the new occupant.
-    pools: DashMap<String, PoolEntry>,
+    /// A pool leaves this map the moment it starts draining
+    /// ([`Self::begin_pool_drain`]) and moves to [`Self::draining_pools`], so
+    /// its code is free at once: a creator that claims the code in the
+    /// meantime just inserts, and nothing has to be displaced.
+    pools: DashMap<String, Arc<ProcessPool>>,
 
-    /// Pools displaced from `pools` while still [`PoolState::Draining`] —
-    /// see the `pools` field's "One entry per code" note. A `DashMap` keyed
-    /// by code can only ever hold one entry per code, so an `Active` insert
-    /// that lands on top of a still-`Draining` predecessor has nowhere to
-    /// put both; this list is where the displaced instance goes instead of
-    /// being silently dropped from every manager-level view of "what pools
-    /// exist". [`Self::all_pools`] chains this in alongside `pools` (so the
-    /// dashboard "Mediating"/"blocked groups"/"group flushes" views, which
-    /// are built on `all_pools`, keep showing a displaced predecessor's
-    /// buffered/in-flight work), and [`Self::shutdown`] chains it into the
-    /// pool list it explicitly drains, releases the buffered remainder of
-    /// (R-49), waits on, and shuts down — the router specification's
-    /// shutdown MUST (release every pool's buffered remainder, never
-    /// abandon it — `docs/router-specification.md` §5.3) would otherwise
-    /// not hold for an orphaned predecessor. [`Self::cleanup_draining_pools`]
-    /// sweeps this the same way it sweeps `Draining` map entries
-    /// (`is_fully_drained()` → `shutdown()` → drop), as a belt-and-braces
-    /// backstop alongside the predecessor's own watcher task (spawned back
-    /// when it first started draining), which independently calls
-    /// `pool.shutdown()` the moment `wait_drained()` resolves regardless of
-    /// which list currently references it — so a double `shutdown()` call
-    /// here is an expected, idempotent, harmless race, not a bug.
-    /// `parking_lot::Mutex<Vec<_>>` rather than a `DashMap`: entries are
-    /// identified by `Arc` identity, not a key, and appends/sweeps are rare
-    /// (only on the coexistence edge case) compared to the hot-path maps
-    /// elsewhere in this struct.
-    orphaned_draining: Mutex<Vec<Arc<ProcessPool>>>,
+    /// Pools removed from config (or evicted as idle synth pools) that are
+    /// still finishing buffered and in-flight work. Kept apart from `pools`
+    /// and identified by `Arc`, not by code, so a code can be drained and
+    /// re-created at the same time. [`Self::all_pools`] includes them (the
+    /// dashboard's "Mediating", "blocked groups" and "group flushes" views
+    /// keep showing their work), and [`Self::shutdown`] drains and releases
+    /// them along with everything else (the router specification's shutdown
+    /// MUST, `docs/router-specification.md` §5.3).
+    ///
+    /// Each pool's own watcher (spawned by `begin_pool_drain`) shuts it down
+    /// and takes it out of this list the moment `wait_drained()` resolves;
+    /// [`Self::cleanup_draining_pools`] is the backstop sweep. Either can
+    /// run first: `shutdown()` on a pool is idempotent.
+    draining_pools: Mutex<Vec<Arc<ProcessPool>>>,
+
+    /// Per-queue poll counters for the Prometheus surface, keyed by queue
+    /// name so a rebuilt consumer keeps counting instead of resetting the
+    /// series.
+    consumer_events: DashMap<String, Arc<ConsumerEventCounters>>,
 
     /// G12 (`docs/go-mirror/2026-09-06-go-fix-list.md`): the capacity-freed
     /// gate every consumer poll loop parks on, untimed, when
@@ -580,7 +532,8 @@ impl QueueManagerBuilder {
             next_tracker_generation: AtomicU64::new(0),
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
-            orphaned_draining: Mutex::new(Vec::new()),
+            draining_pools: Mutex::new(Vec::new()),
+            consumer_events: DashMap::new(),
             capacity_notify: Arc::new(Notify::new()),
             synth_pools: DashMap::new(),
             consumers: Arc::new(ConsumerRegistry::default()),
@@ -635,11 +588,11 @@ impl QueueManager {
     pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
         let factory: MediatorFactory = Arc::new(
             move |ws: &Arc<WarningService>, breakers: &Arc<CircuitBreakerRegistry>| {
-                Arc::new(
-                    HttpMediator::with_config(mediator_config.clone())
-                        .with_warning_service(ws.clone())
-                        .with_circuit_breakers(breakers.clone()),
-                ) as Arc<dyn Mediator + 'static>
+                Arc::new(HttpMediator::wired(
+                    mediator_config.clone(),
+                    ws.clone(),
+                    breakers.clone(),
+                )) as Arc<dyn Mediator + 'static>
             },
         );
         QueueManagerBuilder::from_factory(factory)
@@ -801,81 +754,25 @@ impl QueueManager {
         ))
     }
 
-    /// The currently *active* pool for `code` — `None` if absent, or if
-    /// only a [`PoolState::Draining`] entry exists under this code. The
-    /// post-consolidation equivalent of "look it up in the (formerly
-    /// separate) active-only `pools` map."
+    /// The active pool for `code`, if there is one.
     pub(super) fn active_pool(&self, code: &str) -> Option<Arc<ProcessPool>> {
-        self.pools
-            .get(code)
-            .and_then(|e| (e.state == PoolState::Active).then(|| e.pool.clone()))
+        self.pools.get(code).map(|p| p.clone())
     }
 
-    /// Count of [`PoolState::Active`] entries — the post-consolidation
-    /// equivalent of the old active-only `pools.len()`.
+    /// Number of active pools.
     pub(super) fn active_pool_count(&self) -> usize {
-        self.pools
-            .iter()
-            .filter(|e| e.value().state == PoolState::Active)
-            .count()
+        self.pools.len()
     }
 
-    /// Insert `pool` as the `Active` entry for `code`. A displaced entry is
-    /// never simply dropped: a still-`Draining` predecessor goes to
-    /// [`Self::orphaned_draining`], and a displaced `Active` pool — which
-    /// the creation lock should make impossible — is drained there too
-    /// rather than left running unseen by shutdown.
+    /// Insert `pool` as the active pool for `code`. A pool already active
+    /// under `code`, which the creation lock should make impossible, is
+    /// drained and tracked as draining rather than left running unseen by
+    /// shutdown.
     pub(super) async fn insert_active_pool(&self, code: String, pool: Arc<ProcessPool>) {
-        let displaced = self.pools.insert(
-            code,
-            PoolEntry {
-                pool,
-                state: PoolState::Active,
-            },
-        );
-        if let Some(entry) = displaced {
-            if entry.state == PoolState::Active {
-                warn!(pool_code = %entry.pool.code(), "Active pool displaced; draining it");
-                entry.pool.drain().await;
-            }
-            self.orphaned_draining.lock().push(entry.pool);
-        }
-    }
-
-    /// Insert `pool` as the `Draining` entry for `code` (called once,
-    /// right after `pool.drain()`, by `begin_pool_drain`). Symmetric with
-    /// [`Self::insert_active_pool`], because the reverse race is possible
-    /// too: `begin_pool_drain` awaits `pool.drain()` before this insert, so
-    /// a concurrent creator (`ensure_fallback_pool` racing
-    /// `evict_idle_synth_pools`'s drain of the same synth code is the
-    /// realistic case — `update_pool_config` racing `reload_config`'s
-    /// removal of the same configured code is the other) can claim the code
-    /// slot with a fresh `Active` entry in the gap. A bare insert here
-    /// would silently clobber that newer pool. If the displaced entry is
-    /// `Active`, it wins the slot back — reinserted immediately — and this
-    /// (older, now-draining) pool becomes the orphan instead of the other
-    /// way around. If the displaced entry is itself `Draining` (a second
-    /// drain landing before the first's watcher/cleanup removed it — same
-    /// pattern the old `draining_pools` map already tolerated on a
-    /// same-key double-insert), it's handed to `orphaned_draining` rather
-    /// than lost.
-    pub(super) fn insert_draining_pool(&self, code: String, pool: Arc<ProcessPool>) {
-        let entry = PoolEntry {
-            pool: pool.clone(),
-            state: PoolState::Draining,
-        };
-        match self.pools.insert(code.clone(), entry) {
-            None => {}
-            Some(displaced) if displaced.state == PoolState::Draining => {
-                self.orphaned_draining.lock().push(displaced.pool);
-            }
-            Some(active_entry) => {
-                // active_entry.state == Active: a concurrent creation won
-                // the slot while we were draining — put it back, and treat
-                // ourselves as the orphan instead of clobbering it.
-                self.pools.insert(code, active_entry);
-                self.orphaned_draining.lock().push(pool);
-            }
+        if let Some(displaced) = self.pools.insert(code, pool) {
+            warn!(pool_code = %displaced.code(), "Active pool displaced; draining it");
+            displaced.drain().await;
+            self.draining_pools.lock().push(displaced);
         }
     }
 }

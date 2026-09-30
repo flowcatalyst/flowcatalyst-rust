@@ -2,13 +2,13 @@
 //!
 //! Provides:
 //! - Overall health status determination
-//! - 30-minute rolling window for success rates
+//! - Pool success rates, read from the pool metrics' 30-minute window
 //! - Pool and consumer health tracking
 //! - Integration with warning service
 
 use parking_lot::RwLock;
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
@@ -36,8 +36,6 @@ pub struct HealthServiceConfig {
     pub healthy_threshold: f64,
     /// Success rate threshold for warning status (0.0 - 1.0)
     pub warning_threshold: f64,
-    /// Rolling window duration for rate calculations
-    pub rolling_window: Duration,
     /// Maximum age of warnings to consider (minutes)
     pub warning_age_minutes: i64,
     /// Consumer stall threshold (seconds since last poll)
@@ -51,9 +49,8 @@ pub struct HealthServiceConfig {
 impl Default for HealthServiceConfig {
     fn default() -> Self {
         Self {
-            healthy_threshold: 0.90,                      // 90% success rate
-            warning_threshold: 0.70,                      // 70% success rate
-            rolling_window: Duration::from_secs(30 * 60), // 30 minutes
+            healthy_threshold: 0.90, // 90% success rate
+            warning_threshold: 0.70, // 70% success rate
             warning_age_minutes: 30,
             consumer_stall_threshold_secs: 60,
             max_warnings_healthy: 5,  // Java: maxWarningsForHealthy = 5
@@ -62,76 +59,10 @@ impl Default for HealthServiceConfig {
     }
 }
 
-/// Rolling window counter for success/failure rates.
-/// Uses a VecDeque so expired events can be popped from the front in O(1)
-/// instead of a full O(n) retain() scan on every record.
-#[derive(Debug)]
-struct RollingCounter {
-    window: Duration,
-    events: RwLock<VecDeque<(Instant, bool)>>,
-}
-
-impl RollingCounter {
-    fn new(window: Duration) -> Self {
-        Self {
-            window,
-            events: RwLock::new(VecDeque::new()),
-        }
-    }
-
-    fn record(&self, success: bool) {
-        let mut events = self.events.write();
-        let cutoff = Instant::now() - self.window;
-
-        // Pop expired events from front (they're ordered by time)
-        while let Some(&(t, _)) = events.front() {
-            if t <= cutoff {
-                events.pop_front();
-            } else {
-                break;
-            }
-        }
-
-        events.push_back((Instant::now(), success));
-    }
-
-    fn success_rate(&self) -> Option<f64> {
-        let events = self.events.read();
-        let cutoff = Instant::now() - self.window;
-
-        let mut total = 0usize;
-        let mut successes = 0usize;
-        for &(t, s) in events.iter() {
-            if t > cutoff {
-                total += 1;
-                if s {
-                    successes += 1;
-                }
-            }
-        }
-
-        if total == 0 {
-            None
-        } else {
-            Some(successes as f64 / total as f64)
-        }
-    }
-
-    #[allow(dead_code)]
-    fn total_count(&self) -> usize {
-        let events = self.events.read();
-        let cutoff = Instant::now() - self.window;
-        events.iter().filter(|(t, _)| *t > cutoff).count()
-    }
-}
-
 /// Health service with rolling window calculations
 pub struct HealthService {
     config: HealthServiceConfig,
     warning_service: Arc<WarningService>,
-
-    /// Pool success rate counters
-    pool_counters: RwLock<HashMap<String, RollingCounter>>,
 
     /// Consumer health tracking
     consumer_last_poll: RwLock<HashMap<String, Instant>>,
@@ -151,7 +82,10 @@ pub struct HealthService {
     /// When set (and still alive), the source of every consumer answer —
     /// see [`ConsumerStatsProvider`]. The push-fed maps above are only
     /// consulted when no provider is wired (standalone use and tests).
-    consumer_stats_provider: RwLock<Option<Weak<dyn ConsumerStatsProvider>>>,
+    /// Wired once and never cleared, so a `OnceLock`: reads take no lock
+    /// (the report used to deadlock on the old `RwLock` when a poll task's
+    /// wiring queued a writer between two reads).
+    consumer_stats_provider: OnceLock<Weak<dyn ConsumerStatsProvider>>,
 }
 
 impl HealthService {
@@ -159,23 +93,33 @@ impl HealthService {
         Self {
             config,
             warning_service,
-            pool_counters: RwLock::new(HashMap::new()),
             consumer_last_poll: RwLock::new(HashMap::new()),
             consumer_running: RwLock::new(HashMap::new()),
             consumer_broker: RwLock::new(HashMap::new()),
-            consumer_stats_provider: RwLock::new(None),
+            consumer_stats_provider: OnceLock::new(),
         }
     }
 
     /// Wire the source of consumer liveness (Go: `SetConsumerStats`). Held
     /// weakly: the manager owns the health service, not the reverse.
+    /// Idempotent: the manager wires itself each time a poll task starts, and
+    /// the first call wins. A later call naming a different provider would
+    /// leave the stored one dead and blind stall detection, so it trips a
+    /// debug assertion.
     pub fn set_consumer_stats_provider(&self, provider: Weak<dyn ConsumerStatsProvider>) {
-        *self.consumer_stats_provider.write() = Some(provider);
+        if let Err(new) = self.consumer_stats_provider.set(provider) {
+            debug_assert!(
+                self.consumer_stats_provider
+                    .get()
+                    .is_some_and(|old| old.ptr_eq(&new)),
+                "a different ConsumerStatsProvider was wired into a live HealthService"
+            );
+        }
     }
 
     /// The provider's snapshot, or `None` when no live provider is wired.
     fn provided_stats(&self) -> Option<Vec<ConsumerStat>> {
-        let provider = self.consumer_stats_provider.read().as_ref()?.upgrade()?;
+        let provider = self.consumer_stats_provider.get()?.upgrade()?;
         Some(provider.consumer_stats())
     }
 
@@ -192,21 +136,13 @@ impl HealthService {
             .or_else(|| stats.iter().find(|s| s.identifier == consumer_id))
     }
 
-    /// Record a pool processing result
-    pub fn record_pool_result(&self, pool_code: &str, success: bool) {
-        let mut counters = self.pool_counters.write();
-        let counter = counters
-            .entry(pool_code.to_string())
-            .or_insert_with(|| RollingCounter::new(self.config.rolling_window));
-        counter.record(success);
-    }
-
-    /// Get success rate for a pool
-    pub fn get_pool_success_rate(&self, pool_code: &str) -> Option<f64> {
-        self.pool_counters
-            .read()
-            .get(pool_code)
-            .and_then(|c| c.success_rate())
+    /// A pool's success rate over the metrics collector's long window (30
+    /// minutes by default), or `None` while the window holds no samples.
+    /// Read from the pool's own metrics, which the pool feeds on every
+    /// message, so health and `/monitoring` cannot disagree about a pool.
+    fn pool_success_rate(stat: &PoolStats) -> Option<f64> {
+        let window = &stat.metrics.as_ref()?.last_30_min;
+        (window.success_count + window.failure_count > 0).then_some(window.success_rate)
     }
 
     /// Record consumer poll
@@ -421,7 +357,7 @@ impl HealthService {
         let mut pools_unhealthy = 0u32;
 
         for stat in pool_stats {
-            if let Some(rate) = self.get_pool_success_rate(&stat.pool_code) {
+            if let Some(rate) = Self::pool_success_rate(stat) {
                 if rate >= self.config.healthy_threshold {
                     pools_healthy += 1;
                 } else {
@@ -528,32 +464,9 @@ impl HealthService {
         }
     }
 
-    /// Remove tracking entries for pools and consumers that no longer exist.
+    /// Remove tracking entries for consumers that no longer exist.
     /// Call this after config reload to prevent stale entries from accumulating.
-    pub fn remove_stale_entries(
-        &self,
-        active_pool_codes: &[String],
-        active_consumer_ids: &[String],
-    ) {
-        // Remove pool counters for pools that no longer exist
-        {
-            let counters = self.pool_counters.read();
-            // Only take write lock if there's something to remove
-            if counters
-                .keys()
-                .any(|code| !active_pool_codes.contains(code))
-            {
-                drop(counters);
-                let mut counters = self.pool_counters.write();
-                let before = counters.len();
-                counters.retain(|code, _| active_pool_codes.contains(code));
-                let removed = before - counters.len();
-                if removed > 0 {
-                    debug!(removed = removed, "Removed stale pool counter entries");
-                }
-            }
-        }
-
+    pub fn remove_stale_entries(&self, active_consumer_ids: &[String]) {
         // Remove consumer tracking for consumers that no longer exist
         {
             let last_poll = self.consumer_last_poll.read();
@@ -588,23 +501,54 @@ impl HealthService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::PoolMetricsCollector;
 
     fn create_test_service() -> HealthService {
         let warning_service = Arc::new(WarningService::default());
         HealthService::new(HealthServiceConfig::default(), warning_service)
     }
 
-    #[test]
-    fn test_record_pool_result() {
-        let service = create_test_service();
-
-        // Record some successes
-        for _ in 0..10 {
-            service.record_pool_result("TEST", true);
+    /// A `PoolStats` whose metrics window holds `ok` successes and `failed`
+    /// failures, built through the same collector the pools feed.
+    fn pool_with(code: &str, ok: u32, failed: u32) -> PoolStats {
+        let collector = PoolMetricsCollector::new();
+        for _ in 0..ok {
+            collector.record_success(5);
         }
+        for _ in 0..failed {
+            collector.record_failure(5);
+        }
+        PoolStats {
+            pool_code: code.to_string(),
+            concurrency: 10,
+            active_workers: 0,
+            queue_size: 0,
+            queue_capacity: 100,
+            message_group_count: 0,
+            rate_limit_per_minute: None,
+            is_rate_limited: false,
+            metrics: Some(collector.get_metrics()),
+        }
+    }
 
-        let rate = service.get_pool_success_rate("TEST");
-        assert_eq!(rate, Some(1.0));
+    #[test]
+    fn pool_success_rate_reads_the_metrics_window() {
+        assert_eq!(
+            HealthService::pool_success_rate(&pool_with("P", 10, 0)),
+            Some(1.0)
+        );
+        assert_eq!(
+            HealthService::pool_success_rate(&pool_with("P", 1, 1)),
+            Some(0.5)
+        );
+        // No samples, or no metrics at all: no data, not a rate of zero.
+        assert_eq!(
+            HealthService::pool_success_rate(&pool_with("P", 0, 0)),
+            None
+        );
+        let mut bare = pool_with("P", 0, 0);
+        bare.metrics = None;
+        assert_eq!(HealthService::pool_success_rate(&bare), None);
     }
 
     /// The health report must not re-take a read lock it already holds: with
@@ -641,10 +585,12 @@ mod tests {
         };
         let deadline = Instant::now() + Duration::from_secs(20);
         while !reporter.is_finished() {
-            assert!(
-                Instant::now() < deadline,
-                "get_health_report deadlocked against concurrent writers"
-            );
+            if Instant::now() >= deadline {
+                // Stop the writers first: they would otherwise spin for the
+                // rest of the test run after the failure.
+                stop.store(true, Ordering::Relaxed);
+                panic!("get_health_report deadlocked against concurrent writers");
+            }
             thread::sleep(Duration::from_millis(10));
         }
         stop.store(true, Ordering::Relaxed);
@@ -671,19 +617,8 @@ mod tests {
         // Setup healthy state
         service.set_consumer_running("consumer-1", true);
         service.record_consumer_poll("consumer-1");
-        service.record_pool_result("DEFAULT", true);
 
-        let stats = vec![PoolStats {
-            pool_code: "DEFAULT".to_string(),
-            concurrency: 10,
-            active_workers: 5,
-            queue_size: 0,
-            queue_capacity: 100,
-            message_group_count: 0,
-            rate_limit_per_minute: None,
-            is_rate_limited: false,
-            metrics: None,
-        }];
+        let stats = vec![pool_with("DEFAULT", 10, 0)];
 
         let report = service.get_health_report(&stats);
         assert_eq!(report.status, HealthStatus::Healthy);
@@ -740,36 +675,8 @@ mod tests {
         service.set_consumer_running("consumer-1", true);
         service.record_consumer_poll("consumer-1");
 
-        // 100% failure on every recorded pool.
-        for _ in 0..10 {
-            service.record_pool_result("POOL-A", false);
-            service.record_pool_result("POOL-B", false);
-        }
-
-        let stats = vec![
-            PoolStats {
-                pool_code: "POOL-A".to_string(),
-                concurrency: 10,
-                active_workers: 0,
-                queue_size: 0,
-                queue_capacity: 100,
-                message_group_count: 0,
-                rate_limit_per_minute: None,
-                is_rate_limited: false,
-                metrics: None,
-            },
-            PoolStats {
-                pool_code: "POOL-B".to_string(),
-                concurrency: 10,
-                active_workers: 0,
-                queue_size: 0,
-                queue_capacity: 100,
-                message_group_count: 0,
-                rate_limit_per_minute: None,
-                is_rate_limited: false,
-                metrics: None,
-            },
-        ];
+        // 100% failure on every pool.
+        let stats = vec![pool_with("POOL-A", 0, 10), pool_with("POOL-B", 0, 10)];
 
         let report = service.get_health_report(&stats);
         assert_eq!(
