@@ -154,10 +154,9 @@ function hosts (`FC_FN_POOL_URL`) are exempted automatically.
 The write-time check sees only the URL's literal host, so the policy is also
 applied where the platform actually connects:
 
-- **The router** (mediation), **the dispatch process endpoint** (the hop that
-  POSTs to a subscription's webhook) and **the scheduled-job scheduler** send
-  through a client that resolves names itself and drops every address the
-  policy forbids, so a host name that resolves to a private address, or is
+- **The dispatch process endpoint** (the hop that POSTs to a subscription's
+  webhook) and **the scheduled-job scheduler** send through a client that
+  resolves names itself and drops every address the policy forbids, so a host name that resolves to a private address, or is
   re-pointed at one after it was written, is never connected to. A target that
   names an IP address is checked against the policy just before it is sent.
   The scheduled-job client follows redirects and checks every hop.
@@ -171,17 +170,19 @@ The platform's own endpoints are exempt, on every `fc-server` node whatever
 subsystems it runs: the dispatch processing endpoint the router POSTs to
 (`FC_DISPATCH_PROCESSING_ENDPOINT`, `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT`,
 or this server's own listener) and the function pools (`FC_FN_POOL_URL`).
-Set these on **every** task that runs the router or the scheduler, not just
-the one that hosts the platform; a router task that does not know the
-platform's callback URL refuses it. `FC_DELIVERY_ALLOW_HOSTS` covers anything
-else. The name-resolution check cannot see a port, so a host exempted as
+Set these on **every** task that runs the scheduler or the platform.
+`FC_DELIVERY_ALLOW_HOSTS` covers anything else. The name-resolution check cannot see a port, so a host exempted as
 `host:port` is exempt on any port there; the URL check still compares ports.
 
 Two things to know. A client behind an HTTP proxy connects to the proxy, not
 the target, so a proxy on a private address needs
-`FC_DELIVERY_ALLOW_HOSTS` (or `FC_DELIVERY_ALLOW_PRIVATE`). And `fc-dev` runs
-its router under a fixed lenient policy (loopback and private allowed, cloud
-metadata still blocked) whatever the environment says.
+`FC_DELIVERY_ALLOW_HOSTS` (or `FC_DELIVERY_ALLOW_PRIVATE`).
+
+**The router applies no policy** (owner decision #56). Its targets are
+first-party, from the queue config and our own apps' message pointers, so a
+router task delivers to internal service names and private addresses without
+any `FC_DELIVERY_ALLOW_*` setting. The endpoint that receives a pointer checks
+its own target.
 
 ## Router (`fc-server` with `FC_ROUTER_ENABLED=true`)
 

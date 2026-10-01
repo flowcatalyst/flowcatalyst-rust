@@ -8,20 +8,16 @@
 //! - Custom delay parsing from response
 //! - Auth token handling
 
-use fc_common::netguard;
 use std::time::Duration;
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use fc_common::{MediationResult, MediationType, Message};
-use fc_router::{HttpMediator, HttpMediatorConfig, Mediator};
+use fc_router::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator};
 
-/// A mediator with the default config that may reach the loopback servers
-/// these tests run (the default policy is the environment's, strict).
+/// A mediator with the default config, for the loopback servers these tests run.
 fn local_mediator() -> HttpMediator {
-    HttpMediator::with_config(
-        HttpMediatorConfig::default().with_delivery_policy(netguard::dev_policy()),
-    )
+    HttpMediator::with_config(HttpMediatorConfig::default())
 }
 
 fn create_test_message(target: &str) -> Message {
@@ -131,7 +127,6 @@ async fn test_ack_false_with_custom_delay() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1, // Don't retry for this test
         ..Default::default()
     };
@@ -163,7 +158,6 @@ async fn test_ack_false_without_delay_seconds_has_no_floor() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1,
         ..Default::default()
     };
@@ -295,7 +289,6 @@ async fn test_3xx_is_permanent_not_retried() {
             .await;
 
         let config = HttpMediatorConfig {
-            delivery_policy: netguard::dev_policy(),
             max_retries: 3, // retries are available; the 3xx branch must not use them
             retry_delays: vec![Duration::from_millis(10); 3],
             ..Default::default()
@@ -524,7 +517,6 @@ async fn test_5xx_boundary_r57() {
         // One attempt per case: this test pins classification, not the
         // retry loop (that's `retry.rs`'s own unit tests).
         let config = HttpMediatorConfig {
-            delivery_policy: netguard::dev_policy(),
             max_retries: 1,
             ..Default::default()
         };
@@ -598,7 +590,6 @@ async fn test_timeout_handling() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         timeout: Duration::from_millis(100), // Short timeout
         max_retries: 1,
         ..Default::default()
@@ -668,85 +659,28 @@ async fn test_mediator_default_config() {
 }
 
 // ---------------------------------------------------------------------
-// The delivery policy: a target the policy forbids is never sent to.
+// No delivery policy in the router (owner decision #56): its targets are
+// first-party, and the endpoint that receives a pointer checks its own
+// target. A loopback or private target is delivered to, not refused.
 // ---------------------------------------------------------------------
 
-/// A mediator under the strict policy (the default outside dev), with short
-/// timeouts and no retries so a target that does not answer fails at once.
-fn strict_mediator() -> HttpMediator {
-    let strict: &'static netguard::Policy = Box::leak(Box::new(netguard::Policy::strict()));
-    HttpMediator::with_config(HttpMediatorConfig {
-        timeout: Duration::from_secs(1),
-        connect_timeout: Duration::from_millis(300),
-        max_retries: 1,
-        ..HttpMediatorConfig::default().with_delivery_policy(strict)
-    })
-}
-
-/// A URL that names the loopback address is refused before anything is sent,
-/// as a connection failure (retried, so a mis-set policy holds the message at
-/// the broker instead of dropping it).
 #[tokio::test]
-async fn a_literal_loopback_target_is_refused_as_a_connection_failure() {
+async fn the_production_config_delivers_to_a_loopback_target() {
     let mock_server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
-    // wiremock listens on 127.0.0.1.
+    // wiremock listens on 127.0.0.1 and speaks HTTP/1.1, so only the version
+    // differs from the production config.
+    let mediator = HttpMediator::with_config(HttpMediatorConfig {
+        http_version: HttpVersion::Http1,
+        ..HttpMediatorConfig::production()
+    });
     let message = create_test_message(&format!("{}/webhook", mock_server.uri()));
-    let outcome = strict_mediator().mediate(&message).await;
+    let outcome = mediator.mediate(&message).await;
 
-    assert_eq!(outcome.result, MediationResult::ErrorConnection);
-    assert!(
-        outcome
-            .error_message
-            .as_deref()
-            .is_some_and(|m| m.contains("destination not allowed") && m.contains("loopback")),
-        "{outcome:?}"
-    );
-    assert!(!outcome.pre_flight, "it is retried, not dropped");
-}
-
-/// A host name that resolves to a loopback address is refused when it
-/// resolves, which no amount of URL checking could catch.
-#[tokio::test]
-async fn a_name_that_resolves_to_loopback_is_refused_at_dial_time() {
-    let mock_server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&mock_server)
-        .await;
-
-    let port = mock_server.address().port();
-    // `localhost.` (with the root dot) is not a name the URL check knows, so
-    // it gets past it; the OS still resolves it to loopback.
-    let message = create_test_message(&format!("http://localhost.:{port}/webhook"));
-    let outcome = strict_mediator().mediate(&message).await;
-
-    assert_eq!(
-        outcome.result,
-        MediationResult::ErrorConnection,
-        "{outcome:?}"
-    );
-}
-
-#[tokio::test]
-async fn a_public_looking_target_is_not_refused_by_the_policy() {
-    // Nothing listens here, so the delivery fails, but as an ordinary
-    // connection error and not as a policy refusal.
-    let outcome = strict_mediator()
-        .mediate(&create_test_message("http://192.0.2.1:9/webhook"))
-        .await;
-    assert!(
-        !outcome
-            .error_message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("destination not allowed"),
-        "{outcome:?}"
-    );
+    assert_eq!(outcome.result, MediationResult::Success, "{outcome:?}");
 }

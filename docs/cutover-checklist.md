@@ -122,11 +122,6 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       connection error and its groups loop back to the broker. FrankenPHP/Caddy serve plain HTTP as
       HTTP/1.1 unless the global options say `servers { protocols h1 h2 h2c }`. Check each target:
       `curl -sv --http2-prior-knowledge http://<target>/ -o /dev/null` shows `HTTP/2`.
-- [ ] **Internal targets are on the delivery allow-list** (found in staging, 2026-10-01): a service
-      name such as `staging-processor` resolves to a private address, which the router refuses by
-      default. Set `FC_DELIVERY_ALLOW_HOSTS` (e.g. `staging-processor:8000`) or
-      `FC_DELIVERY_ALLOW_PRIVATE=true` on every router and scheduler task. Go `main` needs the same
-      since its netguard (2026-09-29).
 - [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
       move it to SSM
 

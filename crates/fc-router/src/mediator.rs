@@ -28,7 +28,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use fc_common::error_chain::ErrorChain;
-use fc_common::netguard::{self, Policy};
 use fc_common::{MediationOutcome, MediationType, Message, WarningCategory, WarningSeverity};
 use tracing::{debug, error, info, warn};
 
@@ -88,12 +87,6 @@ pub struct HttpMediatorConfig {
     /// connections to a host are opened to stay under AWS ALB's
     /// 128-stream cap, and when idle connections are reaped.
     pub host_pool_sizing: HostPoolSizing,
-    /// Which destinations a delivery may reach. A target is customer input,
-    /// delivered from inside the cluster, so the default is the environment's
-    /// policy (strict unless `FC_DELIVERY_ALLOW_*` says otherwise); the dev
-    /// preset and tests use a lenient one. The mediator checks a target URL
-    /// before it sends, and the client refuses addresses a name resolves to.
-    pub delivery_policy: &'static Policy,
 }
 
 impl Default for HttpMediatorConfig {
@@ -109,7 +102,6 @@ impl Default for HttpMediatorConfig {
             ],
             connect_timeout: Duration::from_secs(30),
             host_pool_sizing: HostPoolSizing::default(),
-            delivery_policy: netguard::default_policy(),
         }
     }
 }
@@ -131,14 +123,7 @@ impl HttpMediatorConfig {
             // a single reqwest::Client whose own connection pool handles
             // concurrent TCP connections.
             host_pool_sizing: HostPoolSizing::http1(),
-            delivery_policy: netguard::dev_policy(),
         }
-    }
-
-    /// The same config delivering under `policy`.
-    pub fn with_delivery_policy(mut self, policy: &'static Policy) -> Self {
-        self.delivery_policy = policy;
-        self
     }
 
     /// Config for production: HTTP/2, long timeout.
@@ -295,25 +280,6 @@ impl HttpMediator {
                 return MediationOutcome::pre_flight_rejected(detail);
             }
         };
-        // The delivery policy (Go: a guarded dialer). A URL that names an IP
-        // address never reaches the client's resolver, so it is checked here;
-        // a host name is checked as it resolves. A refusal is a connection
-        // failure, retried like one, so a target that is only blocked by a
-        // mis-set policy is held at the broker, not dropped.
-        if let Err(e) = self
-            .inner
-            .config
-            .delivery_policy
-            .validate_url(&message.mediation_target)
-        {
-            warn!(
-                message_id = %message.id,
-                target = %message.mediation_target,
-                error = %e,
-                "Delivery target refused by the delivery policy"
-            );
-            return MediationOutcome::error_connection(format!("Connection error: {e}"));
-        }
         let slot = self.inner.host_pools.acquire(host_key);
 
         let payload = MediationPayload {

@@ -1269,9 +1269,10 @@ fn dispatch_processing_endpoint(api_port: u16) -> String {
 
 /// Exempt the platform's own endpoints from the delivery policy
 /// (`fc_common::netguard`), which refuses loopback and private targets for
-/// customer webhooks. The router POSTs every dispatch job to the processing
-/// endpoint, and function subscriptions and schedules point at the function
-/// pools (`FC_FN_POOL_URL`); both are normally on such addresses.
+/// customer webhooks: the dispatch processing endpoint, and the function
+/// pools (`FC_FN_POOL_URL`) that function subscriptions and schedules point
+/// at. Both are normally on such addresses. The router applies no policy at
+/// all (owner decision #56).
 fn apply_delivery_policy(api_port: u16) {
     let policy = netguard::default_policy();
     policy.allow_url(&dispatch_processing_endpoint(api_port));

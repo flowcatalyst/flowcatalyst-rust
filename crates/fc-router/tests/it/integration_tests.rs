@@ -6,7 +6,6 @@
 //! These tests use wiremock for HTTP target simulation.
 
 use async_trait::async_trait;
-use fc_common::netguard;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,12 +21,9 @@ use tokio::time;
 use tokio::time::Instant;
 use wiremock::matchers;
 
-/// A mediator with the default config that may reach the loopback servers
-/// these tests run (the default policy is the environment's, strict).
+/// A mediator with the default config, for the loopback servers these tests run.
 fn local_mediator() -> HttpMediator {
-    HttpMediator::with_config(
-        HttpMediatorConfig::default().with_delivery_policy(netguard::dev_policy()),
-    )
+    HttpMediator::with_config(HttpMediatorConfig::default())
 }
 
 /// Mock queue consumer that provides test messages
@@ -159,7 +155,6 @@ async fn test_end_to_end_successful_delivery() {
 
     // Create mediator pointing to mock server
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1,
         ..Default::default()
     };
@@ -224,7 +219,6 @@ async fn test_end_to_end_failed_delivery() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1,
         retry_delays: vec![Duration::from_millis(10)],
         ..Default::default()
@@ -283,7 +277,6 @@ async fn test_end_to_end_config_error_no_retry() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 3,
         ..Default::default()
     };
@@ -419,7 +412,6 @@ async fn test_end_to_end_custom_delay_response() {
         .await;
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1,
         ..Default::default()
     };
@@ -531,7 +523,6 @@ async fn test_end_to_end_connection_error() {
     let target = &format!("http://127.0.0.1:{port}/webhook");
 
     let config = HttpMediatorConfig {
-        delivery_policy: netguard::dev_policy(),
         max_retries: 1,
         retry_delays: vec![Duration::from_millis(10)],
         timeout: Duration::from_millis(100),

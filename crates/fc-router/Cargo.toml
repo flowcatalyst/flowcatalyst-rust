@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-fc-common = { path = "../fc-common", features = ["guarded-http"] }
+fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue" }
 fc-standby = { path = "../fc-standby" }
 fc-stream = { path = "../fc-stream" }
