@@ -1,3 +1,5 @@
+#[cfg(feature = "sqs")]
+use aws_sdk_sqs::error::DisplayErrorContext;
 use std::error;
 use thiserror::Error;
 
@@ -41,9 +43,17 @@ pub enum QueueError {
         source: lapin::Error,
     },
 
+    /// `message` is the SDK error with its whole cause chain
+    /// ([`DisplayErrorContext`]): the SDK's own `Display` says only
+    /// "service error", hiding the SQS error code (AccessDenied,
+    /// NonExistentQueue, KMS.AccessDeniedException, …).
     #[cfg(feature = "sqs")]
-    #[error("AWS SQS error: {0}")]
-    Sqs(#[source] BoxError),
+    #[error("AWS SQS error: {message}")]
+    Sqs {
+        message: String,
+        #[source]
+        source: BoxError,
+    },
 
     #[cfg(feature = "nats")]
     #[error("NATS error: {context}: {source}")]
@@ -65,7 +75,9 @@ impl QueueError {
 
     #[cfg(feature = "sqs")]
     pub fn sqs(source: impl Into<BoxError>) -> Self {
-        QueueError::Sqs(source.into())
+        let source = source.into();
+        let message = DisplayErrorContext(&*source).to_string();
+        QueueError::Sqs { message, source }
     }
 
     #[cfg(feature = "nats")]

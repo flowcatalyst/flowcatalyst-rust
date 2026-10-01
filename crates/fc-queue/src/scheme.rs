@@ -35,9 +35,8 @@ pub fn resolve_scheme(uri: &str) -> Result<QueueScheme> {
 
     if scheme_lower == "http" || scheme_lower == "https" {
         let host = uri
-            .splitn(2, "://")
-            .nth(1)
-            .unwrap_or("")
+            .split_once("://")
+            .map_or("", |(_, rest)| rest)
             .split(['/', '?', '#'])
             .next()
             .unwrap_or("")

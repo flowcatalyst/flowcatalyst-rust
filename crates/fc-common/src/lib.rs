@@ -50,6 +50,7 @@ use utoipa::ToSchema;
 
 pub mod config;
 pub mod diagnostics;
+pub mod error_chain;
 pub mod logging;
 pub mod netguard;
 

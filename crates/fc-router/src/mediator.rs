@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use fc_common::error_chain::ErrorChain;
 use fc_common::netguard::{self, Policy};
 use fc_common::{MediationOutcome, MediationType, Message, WarningCategory, WarningSeverity};
 use tracing::{debug, error, info, warn};
@@ -361,22 +362,25 @@ impl HttpMediator {
                 if e.is_timeout() {
                     warn!(
                         message_id = %message.id,
-                        error = %e,
+                        error = %ErrorChain(&e),
                         "Request timeout"
                     );
                     MediationOutcome::error_connection("Request timeout".to_string())
                 } else if e.is_connect() {
                     warn!(
                         message_id = %message.id,
-                        error = %e,
+                        error = %ErrorChain(&e),
                         "Connection error"
                     );
-                    MediationOutcome::error_connection(format!("Connection error: {}", e))
+                    MediationOutcome::error_connection(format!(
+                        "Connection error: {}",
+                        ErrorChain(&e)
+                    ))
                 } else {
                     error!(
                         message_id = %message.id,
                         target = %message.mediation_target,
-                        error = %e,
+                        error = %ErrorChain(&e),
                         error_debug = ?e,
                         is_request = e.is_request(),
                         is_redirect = e.is_redirect(),
@@ -385,7 +389,10 @@ impl HttpMediator {
                         is_decode = e.is_decode(),
                         "Request failed"
                     );
-                    MediationOutcome::error_connection(format!("Request failed: {}", e))
+                    MediationOutcome::error_connection(format!(
+                        "Request failed: {}",
+                        ErrorChain(&e)
+                    ))
                 }
             }
         }
