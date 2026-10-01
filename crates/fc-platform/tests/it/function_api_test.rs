@@ -11,6 +11,7 @@
 use crate::support;
 use fc_platform_core::shared::id::ClientId;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -23,15 +24,20 @@ use tower::ServiceExt;
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::function::api::FunctionsState;
+use fc_platform::function::desired_state::DesiredStateBuilder;
 use fc_platform::function::operations::{FunctionOperations, PublishChecks, TriggerSync};
 use fc_platform::function::routes::functions_router;
 use fc_platform::function::settings_repository::FunctionSettingsRepository;
-use fc_platform::function::{ClientCeilings, FunctionLimits, JsonNode, Manifest, Runtime};
+use fc_platform::function::{
+    ClientCeilings, DnsLabel, FunctionLimits, JsonNode, Manifest, Runtime,
+};
 use fc_platform::role::entity::{permissions, AuthRole};
 use fc_platform::service_account::entity::RoleAssignment;
+use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
 use fc_platform::shared::authorization_service::{ApplicationAccessService, AuthorizationService};
 use fc_platform::shared::encryption_service::EncryptionService;
 use fc_platform::shared::middleware::{AppState, AuthLayer};
+use fc_platform::shared::secret_ref::{SecretRefError, SecretResolver, SecretStore};
 use fc_platform::Client;
 use support::{read_json, TestApp};
 
@@ -1204,6 +1210,220 @@ async fn config_and_secrets() {
         get(&app, &format!("{path}/config"), &anchor).await.0,
         StatusCode::OK
     );
+}
+
+/// A secret manager for the test: answers from a map, counts nothing,
+/// never touches AWS.
+struct TestSecretStore(HashMap<String, String>);
+
+#[async_trait::async_trait]
+impl SecretStore for TestSecretStore {
+    async fn get(&self, key: &str) -> Result<String, SecretRefError> {
+        self.0
+            .get(key)
+            .cloned()
+            .ok_or_else(|| SecretRefError::NotFound {
+                scheme: "aws-sm".into(),
+                key: key.into(),
+            })
+    }
+}
+
+/// Owner decision #54 over HTTP and into desired state: an `aws-sm://`
+/// reference is stored as sent and resolved through the platform's
+/// resolver when the secret is delivered; everything else (a `postgres://`
+/// DSN, a URL-shaped secret behind `encrypt:`) is encrypted; an
+/// `encrypted:` value of this platform is kept; a malformed reference or
+/// ciphertext is `400 INVALID_SECRET_REF` with Java's message.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn secret_references_are_kept_and_resolved_on_delivery() {
+    let key = EncryptionService::generate_key();
+    let encryption = Arc::new(EncryptionService::new(&key).unwrap());
+    let mut app = TestApp::setup().await;
+    app.router = function_router(&app, Some(encryption.clone()));
+    application(&app, "refs").await;
+    let anchor = token(&app, As::anchor(ALL)).await;
+    let f = create_function(&app, &anchor, "refs", "secrets", "deliver", None).await;
+    let fid = f["id"].as_str().unwrap().to_string();
+    let path = "/api/functions/refs.secrets.deliver/secrets";
+    let stored = |k: &'static str| {
+        let pool = app.pool.clone();
+        let fid = fid.clone();
+        async move {
+            let (value_ref,): (String,) = sqlx::query_as(
+                "SELECT value_ref FROM fnr_secrets WHERE function_id = $1 AND key = $2",
+            )
+            .bind(&fid)
+            .bind(k)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            value_ref
+        }
+    };
+
+    const DSN: &str = "postgres://app:p%40ss@db.internal:5432/orders?sslmode=require";
+    let sealed_here = encryption.encrypt_ref("sealed-before").unwrap();
+    for (k, value) in [
+        ("API_KEY", " aws-sm://prod/api-key "),
+        (
+            "ORDERS_DB",
+            "aws-sm://arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/orders-AbCdEf",
+        ),
+        ("PLAIN_DB", DSN),
+        ("URLISH", "encrypt:aws-sm://not/a/reference"),
+        ("SEALED", sealed_here.as_str()),
+        ("GONE", "aws-sm://prod/deleted"),
+    ] {
+        let (status, body) = put(
+            &app,
+            &format!("{path}/{k}"),
+            &anchor,
+            json!({"value": value}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{k}: {body}");
+    }
+    // Kept as sent (trimmed): the references and this platform's ciphertext.
+    assert_eq!(stored("API_KEY").await, "aws-sm://prod/api-key");
+    assert_eq!(
+        stored("ORDERS_DB").await,
+        "aws-sm://arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/orders-AbCdEf"
+    );
+    assert_eq!(stored("SEALED").await, sealed_here);
+    // Encrypted: a DSN is the secret itself; `encrypt:` is stripped.
+    for (k, plaintext) in [("PLAIN_DB", DSN), ("URLISH", "aws-sm://not/a/reference")] {
+        let value_ref = stored(k).await;
+        assert!(value_ref.starts_with("encrypted:"), "{k}: {value_ref}");
+        assert_eq!(
+            encryption.decrypt_ref(&value_ref).unwrap(),
+            plaintext,
+            "{k}"
+        );
+    }
+
+    // Refused with Java's code, nothing stored and no event.
+    let foreign = EncryptionService::new(&EncryptionService::generate_key())
+        .unwrap()
+        .encrypt_ref("elsewhere")
+        .unwrap();
+    for (value, message) in [
+        ("encrypted:not base64", "encrypted: payload is not base64"),
+        ("encrypted:", "encrypted: payload is empty"),
+        (
+            foreign.as_str(),
+            "encrypted: payload does not decrypt with this platform's key",
+        ),
+        (
+            "aws-sm://",
+            "aws-sm:// reference is malformed: it names no secret; \
+             expected aws-sm://<secret name or ARN>",
+        ),
+        (
+            "aws-sm://prod/db password",
+            "aws-sm:// reference is malformed: a secret name has only letters, digits \
+             and / _ + = . @ -; expected aws-sm://<secret name or ARN>",
+        ),
+    ] {
+        let got = put(
+            &app,
+            &format!("{path}/BAD"),
+            &anchor,
+            json!({"value": value}),
+        )
+        .await;
+        assert_error(&got, StatusCode::BAD_REQUEST, "INVALID_SECRET_REF");
+        assert_eq!(got.1["message"], message, "{value}");
+    }
+    assert_error(
+        &put(
+            &app,
+            &format!("{path}/BAD"),
+            &anchor,
+            json!({"value": "encrypt:"}),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "SETTING_VALUE_REQUIRED",
+    );
+    let settings = FunctionSettingsRepository::new(&app.pool, Some(encryption.clone()));
+    assert!(!settings.has_secret(&fid, "BAD").await.unwrap());
+    assert_eq!(
+        app.event_count_by_type("platform:function:secret:set")
+            .await,
+        6
+    );
+
+    // Delivered: the live version reads API_KEY, PLAIN_DB, URLISH, SEALED
+    // and GONE; ORDERS_DB only through its `db[]` entry.
+    let pool_name = format!("refs-{}", tsid::generate_untyped().to_lowercase());
+    let manifest = {
+        let text = json!({
+            "runtime": "wasm", "entrypoint": "handle", "pool": pool_name,
+            "secrets": ["API_KEY", "PLAIN_DB", "URLISH", "SEALED", "GONE"],
+            "db": [{"name": "orders", "secretRef": "ORDERS_DB", "poolSize": 2}],
+        })
+        .to_string();
+        let defaults = FunctionLimits::defaults();
+        Manifest::parse_strict(
+            Some(&JsonNode::parse(&text).unwrap()),
+            Runtime::Wasm,
+            &defaults,
+            &ClientCeilings::of(&defaults),
+        )
+        .expect("manifest")
+        .to_json()
+        .to_json_string()
+    };
+    let v = insert_version(&app, &fid, 1, "READY", &manifest).await;
+    set_live(&app, &fid, &v).await;
+    let resolver = SecretResolver::new(Some(encryption.clone())).with_store(
+        "aws-sm",
+        Arc::new(TestSecretStore(
+            [(
+                "prod/api-key".to_string(),
+                "sk_from_the_manager".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        )),
+    );
+    let desired = DesiredStateBuilder {
+        functions: app.repos.function_repo.clone(),
+        versions: app.repos.function_version_repo.clone(),
+        hosts: app.repos.function_host_repo.clone(),
+        settings: Arc::new(settings),
+        routes: app.repos.function_route_repo.clone(),
+        credentials: Arc::new(OutboundCredentialsResolver::new(
+            app.repos.service_account_repo.clone(),
+            Some(encryption.clone()),
+        )),
+        secret_resolver: Arc::new(resolver),
+    };
+    let document = desired
+        .build(
+            &DnsLabel::parse("pool", &pool_name).unwrap(),
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&document.to_bytes()).unwrap();
+    let entry = &body["functions"][0];
+    assert_eq!(entry["functionId"], fid.as_str(), "{body}");
+    assert_eq!(
+        entry["secrets"],
+        json!({
+            "API_KEY": "sk_from_the_manager",
+            "ORDERS_DB": "aws-sm://arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/orders-AbCdEf",
+            "PLAIN_DB": DSN,
+            "SEALED": "sealed-before",
+            "URLISH": "aws-sm://not/a/reference",
+        }),
+        "a function-read reference resolved, a db-only one left for the host"
+    );
+    // A reference the manager does not answer is a missing setting.
+    assert_eq!(entry["missingSettings"], json!(["GONE"]));
 }
 
 // ── Policies ────────────────────────────────────────────────────────────────

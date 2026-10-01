@@ -32,6 +32,7 @@ use fc_platform::service_account::entity::RoleAssignment;
 use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
 use fc_platform::shared::authorization_service::AuthorizationService;
 use fc_platform::shared::middleware::{AppState, AuthLayer};
+use fc_platform::shared::secret_ref::SecretResolver;
 use support::TestApp;
 
 use axum::http::HeaderMap;
@@ -91,6 +92,7 @@ async fn harness() -> Harness {
                 app.repos.service_account_repo.clone(),
                 None,
             )),
+            secret_resolver: Arc::new(SecretResolver::new(None)),
         }),
         functions: app.repos.function_repo.clone(),
         versions: app.repos.function_version_repo.clone(),

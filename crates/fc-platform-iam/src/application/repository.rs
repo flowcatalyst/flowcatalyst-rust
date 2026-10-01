@@ -312,13 +312,16 @@ impl ApplicationRepository {
         Ok(count)
     }
 
-    /// Count per-client config entries pointing at this application.
-    pub async fn count_client_configs(&self, application_id: &str) -> Result<i64> {
-        let (count,): (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM app_client_configs WHERE application_id = $1")
-                .bind(application_id)
-                .fetch_one(&self.pool)
-                .await?;
+    /// Count the clients this application is enabled for. Only an enabled
+    /// config blocks a delete (owner decision #55); a disabled one is
+    /// removed with the application ([`Persist::delete`]).
+    pub async fn count_enabled_client_configs(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM app_client_configs WHERE application_id = $1 AND enabled",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
         Ok(count)
     }
 
@@ -406,6 +409,15 @@ impl Persist<Application> for ApplicationRepository {
         // (integrity lives in code). Cascade in the same tx as the app delete
         // so this path holds the invariant even if someone bypasses the use case.
         sqlx::query("DELETE FROM iam_principal_application_access WHERE application_id = $1")
+            .bind(&a.id)
+            .execute(&mut **tx.inner)
+            .await?;
+
+        // A disabled client config no longer blocks the delete (owner
+        // decision #55) and nothing else removes it, so it goes with the
+        // application. An enabled one is refused by the use case first; the
+        // `NOT enabled` keeps this path from ever unwiring a live client.
+        sqlx::query("DELETE FROM app_client_configs WHERE application_id = $1 AND NOT enabled")
             .bind(&a.id)
             .execute(&mut **tx.inner)
             .await?;

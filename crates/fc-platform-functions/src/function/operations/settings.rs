@@ -3,7 +3,9 @@
 //! `function-context.md` §1).
 //!
 //! Config is a full replacement of the function's map. A secret is set,
-//! replaced or deleted one key at a time, and its value reaches neither the
+//! replaced or deleted one key at a time (its value an `aws-sm://`
+//! reference or `encrypted:` value kept as sent, or plaintext to encrypt:
+//! owner decision #54), and its value reaches neither the
 //! event nor the audit row: [`SetSecretCommand`]'s value is a
 //! [`SecretValue`], which serialises as `***`, and the command declares the
 //! field masked as well. The handlers answer `503 ENCRYPTION_UNCONFIGURED`
@@ -22,9 +24,16 @@ use crate::function::entity::{FunctionConfig, FunctionSecret, SecretValue};
 use crate::function::repository::FunctionRepository;
 use crate::function::settings_repository::FunctionSettingsRepository;
 use crate::function::{FunctionAddress, SettingKey};
+use fc_platform_core::shared::secret_ref::{
+    classify_opaque_secret, OpaqueSecret, ENCRYPTED_DOES_NOT_DECRYPT,
+};
 use fc_platform_core::usecase::{
     AuditMasked, Committed, ExecutionContext, UnitOfWork, UseCase, UseCaseError,
 };
+
+/// A secret value that claims to be an `aws-sm://` reference or an
+/// `encrypted:` value and is not a well-formed one (Java's code).
+pub const INVALID_SECRET_REF: &str = "INVALID_SECRET_REF";
 
 /// At most this many config keys (`SETTING_TOO_LARGE`).
 pub const MAX_CONFIG_KEYS: usize = 100;
@@ -156,7 +165,17 @@ impl<U: UnitOfWork> UseCase for SetFunctionSecretUseCase<U> {
                 ),
             ));
         }
-        Ok(())
+        // Owner decision #54: an `aws-sm://` reference or an `encrypted:`
+        // value is kept as sent, so a malformed one is refused here rather
+        // than stored; anything else is plaintext.
+        match classify_opaque_secret(value) {
+            Err(invalid) => Err(UseCaseError::validation(INVALID_SECRET_REF, invalid.0)),
+            Ok(OpaqueSecret::Plaintext("")) => Err(UseCaseError::validation(
+                "SETTING_VALUE_REQUIRED",
+                "value is required",
+            )),
+            Ok(_) => Ok(()),
+        }
     }
 
     /// Load-or-404 and reach are in `execute`, after the load.
@@ -173,6 +192,18 @@ impl<U: UnitOfWork> UseCase for SetFunctionSecretUseCase<U> {
         command: SetSecretCommand,
         ctx: ExecutionContext,
     ) -> Result<Committed<SecretSet>, UseCaseError> {
+        // An `encrypted:` value is kept as sent, so it must be this
+        // platform's: one copied from another environment would never open.
+        if let Ok(OpaqueSecret::Encrypted(encrypted)) =
+            classify_opaque_secret(command.value.expose())
+        {
+            if !self.settings.opens(encrypted) {
+                return Err(UseCaseError::validation(
+                    INVALID_SECRET_REF,
+                    ENCRYPTED_DOES_NOT_DECRYPT,
+                ));
+            }
+        }
         let function = function_by_address(&self.functions, &command.address, ctx.caller()).await?;
         let secret = FunctionSecret {
             function_id: function.id.clone(),

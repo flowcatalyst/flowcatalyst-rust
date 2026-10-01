@@ -46,6 +46,35 @@ fc-dev fn invoke shop.default.hello --path /hello/world
 promotes it to `live`. `fn validate <address> --manifest manifest.json` shows what a promote would wire, without
 publishing.
 
+## Secrets
+
+A function's secrets (the keys its manifest lists under `secrets`, and the connection each `db[]` entry's
+`secretRef` names) are set one key at a time with `PUT /api/functions/{address}/secrets/{key}` (body
+`{"value": "…"}`, permission `platform:function:secret:manage`) or `fc-dev fn secret set <address> <KEY>`, which
+reads the value from stdin or `--from-file`. No response, event or audit row ever carries a value. The value is one
+of (owner decision #54; surrounding whitespace is dropped):
+
+| You send | Stored | The function receives |
+|---|---|---|
+| `aws-sm://<secret name or ARN>` | the reference, as sent | the secret's current string value from AWS Secrets Manager, read by the platform with its own AWS credentials when the host's desired state is built (cached 5 minutes; through an outage, the last value read) |
+| `encrypted:<base64>` produced by this platform's key | as sent | the plaintext it decrypts to |
+| `encrypt:<anything>` | `<anything>`, encrypted | `<anything>`: the prefix forces plaintext, for a secret that looks like a reference |
+| anything else: a token, a `postgres://` DSN, an `https://…?token=` URL, `env://…`, `vault://…` | encrypted with the app key | the value as sent |
+
+A malformed reference or ciphertext is refused with `400 INVALID_SECRET_REF` (Java's code) and nothing is stored:
+`encrypted: payload is not base64` (Java's message), `encrypted: payload is empty`, `encrypted: payload does not
+decrypt with this platform's key` (a value copied from another environment), or `aws-sm:// reference is malformed:
+<why>; expected aws-sm://<secret name or ARN>` (a name is up to 2048 of `A-Z a-z 0-9 / _ + = . @ -`; an ARN is
+`arn:<partition>:secretsmanager:<region>:<account>:secret:<name>`). Only `aws-sm://` is a reference here: an
+`env://` value would make the platform read its own environment for whoever set the secret, so it is plaintext like
+any other string. The platform's AWS role must be allowed `secretsmanager:GetSecretValue` on the secrets functions
+name, and on nothing a function should not read.
+
+An `aws-sm://` reference that cannot be read is delivered as a missing setting (the platform logs the reference
+and the error, never a value). A key that only a `db[]` entry names reaches the host as the reference itself, so the host reads and
+re-reads it (see [Database access](#database-access)); list the key under `secrets` only if the function reads it
+too, in which case the platform resolves it like any other secret.
+
 ## Limits
 
 `limits` in the manifest bounds every invocation of a version. An absent limit takes the platform
@@ -112,7 +141,6 @@ connection pools (owner decision #7; Java's W4 `fc_db_*` contract). The WIT inte
 wraps it:
 
 ```json
-"secrets": ["ORDERS_DB"],
 "db": [{ "name": "orders", "secretRef": "ORDERS_DB", "poolSize": 4 }]
 ```
 
@@ -139,14 +167,17 @@ fn handle(req: Request, ctx: Context) -> Result<Response, Error> {
 `host.db_events()` records what the function did.
 
 **The connection.** `secretRef` names the secret holding it (the platform delivers it with the function's
-other secrets; set it with `fc-dev fn secret set` or the API). Accepted, PostgreSQL only:
+other secrets; set it with `fc-dev fn secret set` or the API, as in [Secrets](#secrets): a DSN is stored
+encrypted, an `aws-sm://` reference as sent). Accepted, PostgreSQL only:
 
 - `postgres://user:pass@host[:port]/db[?sslmode=…]` (or `postgresql://`);
 - `jdbc:postgresql://host[:port]/db?user=…&password=…` (Java's form);
 - `aws-sm://<secret id or ARN>` on hosts built with AWS support (`fc-server`): an AWS Secrets Manager
   secret holding either of the above or an RDS-style JSON secret (`username`, `password`, `host`, `port`,
-  `dbname`). The host re-reads it every `FC_FN_DB_SECRET_REFRESH_SECONDS` (300), so an RDS password rotation
-  reaches the pool without a redeploy.
+  `dbname`). The platform passes the reference through to the host when no other part of the manifest reads the
+  key, and the host reads it with its own AWS credentials and re-reads it every `FC_FN_DB_SECRET_REFRESH_SECONDS`
+  (300), so an RDS password rotation reaches the pool without a redeploy. A key also listed under `secrets` is
+  resolved by the platform instead, and arrives as a plain connection.
 
 Anything else fails the load with `DB_UNSUPPORTED` (heartbeat `FAILED`, the previous version keeps
 serving); an `aws-sm://` secret that cannot be read, `DB_SECRET_UNRESOLVED`. No connection is opened at

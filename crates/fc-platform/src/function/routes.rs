@@ -32,6 +32,9 @@ pub fn routes(ctx: &PlatformContext) -> AggregateRoutes {
             settings: functions.settings.clone(),
             routes: ctx.repos.function_route_repo.clone(),
             credentials: ctx.outbound_credentials.clone(),
+            // The one deliveries use: a function secret stored as an
+            // `aws-sm://` reference opens as a delivery credential does.
+            secret_resolver: ctx.secret_resolver.clone(),
         }),
         functions: ctx.repos.function_repo.clone(),
         versions: ctx.repos.function_version_repo.clone(),

@@ -39,7 +39,7 @@
 //! The reads are batched: a fixed number of queries per build, however many
 //! functions there are (Java reads settings and credentials per function).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -52,12 +52,16 @@ use super::entity::{Function, FunctionHost, FunctionStatus, FunctionVersion, Sig
 use super::host_repository::FunctionHostRepository;
 use super::repository::FunctionRepository;
 use super::route_repository::FunctionRouteRepository;
-use super::settings_repository::FunctionSettingsRepository;
+use super::settings_repository::{FunctionSettingsRepository, OpenedSecret};
 use super::version_repository::{CorruptVersion, FunctionVersionRepository};
 use super::{java_is_blank, DnsLabel, EndpointAuth, FunctionOwner, JsonNode, Manifest, LIVE_ALIAS};
 use axum::http::StatusCode;
 use fc_platform_core::directory::OutboundCredentialSource;
 use fc_platform_core::shared::error::PlatformError;
+use fc_platform_core::shared::log_throttle::LogThrottle;
+use fc_platform_core::shared::secret_ref::SecretResolver;
+use futures::future;
+use std::time::Duration;
 
 /// What one entry is to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -110,7 +114,9 @@ pub struct FunctionEntry {
     pub client_id: Option<String>,
     /// The version's declared config keys that have a value.
     pub config: BTreeMap<String, String>,
-    /// The version's declared secrets (and `db[].secretRef`s), decrypted.
+    /// The version's declared secrets (and `db[].secretRef`s), decrypted,
+    /// and resolved when stored as a secret-manager reference (a key only a
+    /// `db[]` entry names keeps its reference, which the host resolves).
     pub secrets: BTreeMap<String, String>,
     /// Every declared key with no value: config first, in manifest order,
     /// then secrets.
@@ -235,6 +241,10 @@ pub struct DesiredStateBuilder {
     /// The resolver the deliveries use, read fresh (uncached) here so a
     /// rotated signing secret reaches the next poll.
     pub credentials: Arc<dyn OutboundCredentialSource>,
+    /// The platform's shared secret resolver (`PlatformContext`), which
+    /// opens a secret stored as an `aws-sm://` reference (owner decision
+    /// #54) as it opens a delivery credential.
+    pub secret_resolver: Arc<SecretResolver>,
 }
 
 /// One entry before its settings and signing secret are resolved.
@@ -404,12 +414,13 @@ impl DesiredStateBuilder {
                 )
             })
             .collect();
-        let (config_maps, secrets, credentials) = tokio::try_join!(
+        let (config_maps, opened, credentials) = tokio::try_join!(
             self.settings.config_maps(&function_ids),
-            self.settings.decrypt_secrets_each(&secret_requests),
+            self.settings.open_secrets_each(&secret_requests),
             self.credentials
                 .for_applications_fresh(&signing_applications),
         )?;
+        let secrets = self.resolve_references(selected, opened).await;
         let no_config = BTreeMap::new();
         Ok(selected
             .iter()
@@ -480,6 +491,74 @@ impl DesiredStateBuilder {
                 }
             })
             .collect())
+    }
+
+    /// Each entry's secrets as the host receives them (owner decision #54).
+    /// A secret stored as a secret-manager reference is resolved through the
+    /// platform's resolver, every distinct reference once and concurrently,
+    /// when the function reads it (a key in the manifest's `secrets`). One a
+    /// `db[]` entry alone names stays the reference: the host resolves a
+    /// database reference itself and re-reads it, so a rotated password
+    /// reaches its pool without a reload. A reference that cannot be
+    /// resolved, and was never read before, is absent (a missing setting);
+    /// one read before keeps its last value through a secret-manager
+    /// outage. Never a value in a log line.
+    async fn resolve_references(
+        &self,
+        selected: &[Selected<'_>],
+        opened: Vec<BTreeMap<String, OpenedSecret>>,
+    ) -> Vec<BTreeMap<String, String>> {
+        let read_by_function =
+            |s: &Selected<'_>, key: &str| s.version.manifest.secrets.iter().any(|k| k == key);
+        let to_resolve: IndexSet<String> = selected
+            .iter()
+            .zip(&opened)
+            .flat_map(|(s, secrets)| {
+                secrets
+                    .iter()
+                    .filter_map(move |(key, secret)| match secret {
+                        OpenedSecret::Reference(r) if read_by_function(s, key) => Some(r.clone()),
+                        OpenedSecret::Reference(_) | OpenedSecret::Value(_) => None,
+                    })
+            })
+            .collect();
+        let answers = future::join_all(
+            to_resolve
+                .iter()
+                .map(|r| self.secret_resolver.resolve_or_last_known(r)),
+        )
+        .await;
+        let resolved: HashMap<String, String> = to_resolve
+            .into_iter()
+            .zip(answers)
+            .filter_map(|(reference, answer)| match answer {
+                Ok(value) => Some((reference, value)),
+                Err(e) => {
+                    // Every poll, every host: one line a minute.
+                    static UNRESOLVED: LogThrottle = LogThrottle::new(Duration::from_secs(60));
+                    if let Some(suppressed) = UNRESOLVED.admit() {
+                        tracing::warn!(reference = %reference, error = %e, suppressed, "function secret reference did not resolve; delivered as missing");
+                    }
+                    None
+                }
+            })
+            .collect();
+        selected
+            .iter()
+            .zip(opened)
+            .map(|(s, secrets)| {
+                secrets
+                    .into_iter()
+                    .filter_map(|(key, secret)| match secret {
+                        OpenedSecret::Value(value) => Some((key, value)),
+                        OpenedSecret::Reference(r) if read_by_function(s, &key) => {
+                            resolved.get(r.as_str()).map(|value| (key, value.clone()))
+                        }
+                        OpenedSecret::Reference(r) => Some((key, r)),
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// One entry per route of every function whose live version is in the

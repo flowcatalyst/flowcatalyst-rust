@@ -2,14 +2,18 @@
 //! per-function, per-key settings that outlive a deploy.
 //!
 //! **Secrets are encrypted at rest.** `fnr_secrets.value_ref` holds the
-//! [`EncryptionService::encrypt_ref`] form (`encrypted:…`), never plaintext.
-//! With no app key configured, writing a secret fails rather than falling
-//! back to plaintext; the API's `503 ENCRYPTION_UNCONFIGURED` answers before
-//! a write gets here, and this is the second line of defence. Reads never
-//! return a value, only keys and metadata; [`FunctionSettingsRepository::decrypt_secrets`]
-//! is for the host control plane's desired state (P6).
+//! [`EncryptionService::encrypt_ref`] form (`encrypted:…`), never plaintext,
+//! or an `aws-sm://` secret-manager reference the caller sent (owner
+//! decision #54, [`classify_opaque_secret`]): the reference is resolved when
+//! the secret is delivered, not here. With no app key configured, writing a
+//! secret fails rather than falling back to plaintext; the API's
+//! `503 ENCRYPTION_UNCONFIGURED` answers before a write gets here, and this
+//! is the second line of defence. Reads never return a value, only keys and
+//! metadata; [`FunctionSettingsRepository::open_secrets_each`] is for the
+//! host control plane's desired state (P6).
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -18,7 +22,26 @@ use sqlx::PgPool;
 use super::entity::{FunctionConfig, FunctionSecret, SecretInfo};
 use fc_platform_core::shared::encryption_service::EncryptionService;
 use fc_platform_core::shared::error::{PlatformError, Result};
+use fc_platform_core::shared::secret_ref::{classify_opaque_secret, OpaqueSecret};
 use fc_platform_core::usecase::{DbTx, Persist};
+
+/// A stored secret, opened as far as the repository can: an `encrypted:`
+/// value decrypted, a secret-manager reference as stored. `Debug` never
+/// shows a value.
+#[derive(Clone, PartialEq, Eq)]
+pub enum OpenedSecret {
+    Value(String),
+    Reference(String),
+}
+
+impl fmt::Debug for OpenedSecret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OpenedSecret::Value(_) => f.write_str("Value(***)"),
+            OpenedSecret::Reference(r) => f.debug_tuple("Reference").field(r).finish(),
+        }
+    }
+}
 
 pub struct FunctionSettingsRepository {
     pool: PgPool,
@@ -106,45 +129,37 @@ impl FunctionSettingsRepository {
     }
 
     /// Decrypts the function's secrets named in `keys`. A key with no row,
-    /// or whose value does not decrypt, is absent (it then shows as a
-    /// missing setting, never a 500); with no app key, nothing is read.
+    /// whose value does not decrypt, or that holds a secret-manager
+    /// reference, is absent; with no app key, nothing is read.
     pub async fn decrypt_secrets(
         &self,
         function_id: &str,
         keys: &[String],
     ) -> Result<BTreeMap<String, String>> {
-        let Some(encryption) = &self.encryption else {
-            return Ok(BTreeMap::new());
-        };
-        if keys.is_empty() {
-            return Ok(BTreeMap::new());
-        }
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT key, value_ref FROM fnr_secrets WHERE function_id = $1 AND key = ANY($2)",
-        )
-        .bind(function_id)
-        .bind(keys)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
+        let mut opened = self
+            .open_secrets_each(&[(function_id, keys.to_vec())])
+            .await?;
+        Ok(opened
+            .pop()
+            .unwrap_or_default()
             .into_iter()
-            .filter_map(|(key, value_ref)| match encryption.decrypt_ref(&value_ref) {
-                Ok(plaintext) => Some((key, plaintext)),
-                Err(e) => {
-                    tracing::warn!(function_id, key = %key, error = %e, "function secret did not decrypt");
-                    None
-                }
+            .filter_map(|(key, secret)| match secret {
+                OpenedSecret::Value(value) => Some((key, value)),
+                OpenedSecret::Reference(_) => None,
             })
             .collect())
     }
 
-    /// [`Self::decrypt_secrets`] for many `(function_id, declared keys)`
-    /// requests in one query, answered in request order. Only the keys a
-    /// request names are decrypted for it.
-    pub async fn decrypt_secrets_each(
+    /// Opens the secrets of many `(function_id, declared keys)` requests in
+    /// one query, answered in request order. Only the keys a request names
+    /// are opened for it: an `encrypted:` value decrypted, a reference as
+    /// stored (the caller resolves it). A key with no row, or whose value
+    /// does not decrypt, is absent (it then shows as a missing setting,
+    /// never a 500); with no app key, nothing is read.
+    pub async fn open_secrets_each(
         &self,
         requests: &[(&str, Vec<String>)],
-    ) -> Result<Vec<BTreeMap<String, String>>> {
+    ) -> Result<Vec<BTreeMap<String, OpenedSecret>>> {
         let empty = || requests.iter().map(|_| BTreeMap::new()).collect();
         let Some(encryption) = &self.encryption else {
             return Ok(empty());
@@ -173,8 +188,13 @@ impl FunctionSettingsRepository {
                 keys.iter()
                     .filter_map(|key| {
                         let value_ref = refs.get(&(function_id.to_string(), key.clone()))?;
+                        if let Ok(OpaqueSecret::Reference(reference)) =
+                            classify_opaque_secret(value_ref)
+                        {
+                            return Some((key.clone(), OpenedSecret::Reference(reference.to_string())));
+                        }
                         match encryption.decrypt_ref(value_ref) {
-                            Ok(plaintext) => Some((key.clone(), plaintext)),
+                            Ok(plaintext) => Some((key.clone(), OpenedSecret::Value(plaintext))),
                             Err(e) => {
                                 tracing::warn!(function_id, key = %key, error = %e, "function secret did not decrypt");
                                 None
@@ -186,13 +206,28 @@ impl FunctionSettingsRepository {
             .collect())
     }
 
-    fn encrypted_ref(&self, plaintext: &str) -> Result<String> {
+    /// Whether an `encrypted:` value opens with this platform's key (a
+    /// value copied from another environment does not). With no app key,
+    /// nothing opens.
+    pub fn opens(&self, encrypted: &str) -> bool {
+        self.encryption
+            .as_ref()
+            .is_some_and(|e| e.decrypt_ref(encrypted.trim()).is_ok())
+    }
+
+    /// The stored form of a value sent for a secret (owner decision #54): an
+    /// `aws-sm://` reference or an `encrypted:` value as sent, anything else
+    /// encrypted. The use case has already refused a malformed one.
+    fn stored_ref(&self, value: &str) -> Result<String> {
         let encryption = self.encryption.as_ref().ok_or_else(|| {
             PlatformError::internal(
                 "SECRET: FLOWCATALYST_APP_KEY not configured; cannot encrypt function secret",
             )
         })?;
-        Ok(encryption.encrypt_ref(plaintext)?)
+        match classify_opaque_secret(value).map_err(|e| PlatformError::validation(e.0))? {
+            OpaqueSecret::Reference(kept) | OpaqueSecret::Encrypted(kept) => Ok(kept.to_string()),
+            OpaqueSecret::Plaintext(plaintext) => Ok(encryption.encrypt_ref(plaintext)?),
+        }
     }
 }
 
@@ -238,9 +273,9 @@ impl Persist<FunctionConfig> for FunctionSettingsRepository {
 }
 
 impl Persist<FunctionSecret> for FunctionSettingsRepository {
-    /// Encrypts the value and upserts one row.
+    /// Stores the value ([`Self::stored_ref`]) and upserts one row.
     async fn persist(&self, secret: &FunctionSecret, tx: &mut DbTx<'_>) -> Result<()> {
-        let value_ref = self.encrypted_ref(secret.value.expose())?;
+        let value_ref = self.stored_ref(secret.value.expose())?;
         sqlx::query(
             "INSERT INTO fnr_secrets (function_id, key, value_ref, updated_by, updated_at) \
              VALUES ($1, $2, $3, $4, $5) \

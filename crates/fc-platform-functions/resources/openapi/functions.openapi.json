@@ -1511,7 +1511,7 @@
           "function-config"
         ],
         "summary": "Set one secret's value",
-        "description": "Requires `platform:function:secret:manage`.",
+        "description": "Requires `platform:function:secret:manage`. The value is an `aws-sm://<secret name or ARN>` reference or an `encrypted:` value of this platform, kept as sent (a reference is resolved when the function is delivered to its host), or plaintext, which is encrypted: anything else, a `postgres://` DSN included; an `encrypt:` prefix forces plaintext. Owner decision #54.",
         "parameters": [
           {
             "name": "address",
@@ -1547,7 +1547,7 @@
             "description": "Set"
           },
           "400": {
-            "description": "SETTING_KEY_INVALID, SETTING_VALUE_REQUIRED, SETTING_TOO_LARGE",
+            "description": "SETTING_KEY_INVALID, SETTING_VALUE_REQUIRED, SETTING_TOO_LARGE, INVALID_SECRET_REF (a malformed `aws-sm://` reference, or an `encrypted:` value that is not base64 or does not decrypt with this platform's key)",
             "content": {
               "application/json": {
                 "schema": {
