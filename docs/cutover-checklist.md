@@ -116,6 +116,17 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       (`feat/platform-env`)
 - [x] integral's create-user invite flags on `/api/principals/users` (`--invite-link`,
       `--invite-redirect-uri`) (`feat/go-routes` follow-up)
+- [ ] **Delivery targets speak h2c** (found in staging, 2026-10-01). Deployed mode sends HTTP/2
+      prior-knowledge to every `http://` target with no HTTP/1.1 fallback (ruling 2026-09-07;
+      current Go `main` does the same), so an HTTP/1.1-only target fails every delivery as a
+      connection error and its groups loop back to the broker. FrankenPHP/Caddy serve plain HTTP as
+      HTTP/1.1 unless the global options say `servers { protocols h1 h2 h2c }`. Check each target:
+      `curl -sv --http2-prior-knowledge http://<target>/ -o /dev/null` shows `HTTP/2`.
+- [ ] **Internal targets are on the delivery allow-list** (found in staging, 2026-10-01): a service
+      name such as `staging-processor` resolves to a private address, which the router refuses by
+      default. Set `FC_DELIVERY_ALLOW_HOSTS` (e.g. `staging-processor:8000`) or
+      `FC_DELIVERY_ALLOW_PRIVATE=true` on every router and scheduler task. Go `main` needs the same
+      since its netguard (2026-09-29).
 - [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
       move it to SSM
 
