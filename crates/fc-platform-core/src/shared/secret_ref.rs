@@ -18,6 +18,12 @@
 //! anything else is plaintext and is encrypted (an `encrypt:` prefix forces
 //! that for a secret that looks like a URL).
 //!
+//! An *opaque* secret (a function's secret or database connection, owner
+//! decision #54) is written by [`classify_opaque_secret`] instead: an
+//! `aws-sm://` reference or an `encrypted:` value is kept as sent (a
+//! malformed one is `INVALID_SECRET_REF`), and everything else, a
+//! `postgres://` DSN included, is plaintext to encrypt.
+//!
 //! Reading ([`SecretResolver::resolve`]) opens each form. A secret-manager
 //! value is fetched through the [`SecretStore`] registered for its scheme
 //! and cached for [`DEFAULT_CACHE_TTL`], so a rotation in the secret manager
@@ -33,13 +39,16 @@
 //! No error or log line carries a secret value.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use dashmap::DashMap;
 
 use super::encryption_service::{EncryptionError, EncryptionService, ENCRYPTED_PREFIX};
+use super::log_throttle::LogThrottle;
 use aws_sdk_secretsmanager::error::DisplayErrorContext;
 use std::env;
 use tokio::sync::OnceCell;
@@ -162,6 +171,125 @@ pub fn seal_secret_ref(
     let plaintext = v.strip_prefix(ENCRYPT_DIRECTIVE).unwrap_or(v);
     let enc = enc.ok_or(SecretRefError::NotConfigured)?;
     Ok(enc.encrypt_ref(plaintext)?)
+}
+
+/// The secret-manager references an opaque secret keeps as sent: the ones
+/// the platform's resolver ([`SecretResolver::platform`]) can open for
+/// someone other than the platform itself (owner decision #54). `env://` is
+/// deliberately absent: it would read the platform's own environment (its
+/// app key, its database URL) on behalf of whoever set the secret, so it is
+/// plaintext here. `aws-ps://`, `gcp-sm://` and `vault://` have no store yet
+/// and are plaintext too.
+pub const OPAQUE_SECRET_REFERENCE_SCHEMES: [&str; 1] = ["aws-sm://"];
+
+/// The longest secret id or ARN AWS Secrets Manager accepts.
+const AWS_SECRET_ID_MAX: usize = 2048;
+
+/// How a value sent for an opaque secret is stored: a function's secret,
+/// including the connection string a `db[]` entry names (owner decision
+/// #54, the middle road of `docs/plans/go-function-service-fixes.md` §1.2).
+///
+/// Unlike [`seal_secret_ref`], an unknown `<scheme>://` is not refused: a
+/// `postgres://` DSN or an `https://…?token=` URL is the secret itself.
+pub enum OpaqueSecret<'a> {
+    /// A reference in [`OPAQUE_SECRET_REFERENCE_SCHEMES`], trimmed: stored
+    /// as sent and resolved when the secret is delivered.
+    Reference(&'a str),
+    /// An `encrypted:` value whose payload is base64, trimmed: stored as
+    /// sent. Whether it opens with this platform's key is the caller's
+    /// check (it needs the key).
+    Encrypted(&'a str),
+    /// Plaintext to encrypt: the trimmed value, without a leading
+    /// `encrypt:` directive. May be empty.
+    Plaintext(&'a str),
+}
+
+impl fmt::Debug for OpaqueSecret<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OpaqueSecret::Reference(r) => f.debug_tuple("Reference").field(r).finish(),
+            OpaqueSecret::Encrypted(_) => f.write_str("Encrypted(***)"),
+            OpaqueSecret::Plaintext(_) => f.write_str("Plaintext(***)"),
+        }
+    }
+}
+
+/// A value that claims to be a reference or an `encrypted:` value and is
+/// not a well-formed one (`INVALID_SECRET_REF`). The message never carries
+/// the value.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub struct InvalidSecretRef(pub String);
+
+/// The `INVALID_SECRET_REF` message for an `encrypted:` value that does
+/// not open with this platform's key.
+pub const ENCRYPTED_DOES_NOT_DECRYPT: &str =
+    "encrypted: payload does not decrypt with this platform's key";
+
+/// Classifies a value sent for an opaque secret (see [`OpaqueSecret`]):
+/// leading and trailing whitespace is dropped, as [`seal_secret_ref`] (and
+/// Java's `SecretRef.parse`) does.
+pub fn classify_opaque_secret(value: &str) -> Result<OpaqueSecret<'_>, InvalidSecretRef> {
+    let v = value.trim();
+    if let Some(payload) = v.strip_prefix(ENCRYPTED_PREFIX) {
+        // Java's `SecretRef.parse` message; strict, padded base64.
+        if BASE64.decode(payload).is_err() {
+            return Err(InvalidSecretRef(
+                "encrypted: payload is not base64".to_string(),
+            ));
+        }
+        if payload.is_empty() {
+            return Err(InvalidSecretRef("encrypted: payload is empty".to_string()));
+        }
+        return Ok(OpaqueSecret::Encrypted(v));
+    }
+    if let Some(id) = v.strip_prefix("aws-sm://") {
+        check_aws_secret_id(id)?;
+        return Ok(OpaqueSecret::Reference(v));
+    }
+    Ok(OpaqueSecret::Plaintext(
+        v.strip_prefix(ENCRYPT_DIRECTIVE).unwrap_or(v),
+    ))
+}
+
+/// `aws-sm://<secret name or ARN>`: what `GetSecretValue` accepts as a
+/// `SecretId`. A name is 1 to 2048 of `A-Z a-z 0-9 / _ + = . @ -`; an ARN is
+/// `arn:<partition>:secretsmanager:<region>:<account>:secret:<name>`.
+fn check_aws_secret_id(id: &str) -> Result<(), InvalidSecretRef> {
+    let malformed = |why: &str| {
+        Err(InvalidSecretRef(format!(
+            "aws-sm:// reference is malformed: {why}; expected aws-sm://<secret name or ARN>"
+        )))
+    };
+    if id.is_empty() {
+        return malformed("it names no secret");
+    }
+    if id.len() > AWS_SECRET_ID_MAX {
+        return malformed("a secret id is at most 2048 characters");
+    }
+    let name_char = |c: char| c.is_ascii_alphanumeric() || "/_+=.@-".contains(c);
+    if let Some(arn) = id.strip_prefix("arn:") {
+        let parts: Vec<&str> = arn.splitn(6, ':').collect();
+        let well_formed = parts.len() == 6
+            && parts[..4].iter().all(|p| !p.is_empty())
+            && parts[1] == "secretsmanager"
+            && parts[4] == "secret"
+            && parts[0..4]
+                .iter()
+                .all(|p| p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            && !parts[5].is_empty()
+            && parts[5].chars().all(name_char);
+        if !well_formed {
+            return malformed(
+                "an ARN is arn:<partition>:secretsmanager:<region>:<account>:secret:<name>",
+            );
+        }
+        return Ok(());
+    }
+    if !id.chars().all(name_char) {
+        return malformed("a secret name has only letters, digits and / _ + = . @ -");
+    }
+    Ok(())
 }
 
 /// A secret manager that answers one scheme's references.
@@ -316,13 +444,41 @@ impl SecretResolver {
             .insert(v.to_string(), (secret.clone(), Instant::now()));
         Ok(secret)
     }
+
+    /// [`Self::resolve`], except that when a secret manager fails on a
+    /// reference this resolver has read before, it answers the last value it
+    /// read, however old, rather than the error. For a caller to whom a
+    /// missing secret does more harm than a stale one: a function host
+    /// handed a document without the secret reloads the function without
+    /// it. The failure is logged; the value never is.
+    pub async fn resolve_or_last_known(&self, stored: &str) -> Result<String, SecretRefError> {
+        match self.resolve(stored).await {
+            Err(e @ (SecretRefError::NotFound { .. } | SecretRefError::Provider { .. })) => {
+                let Some(last) = self.cache.get(stored.trim()) else {
+                    return Err(e);
+                };
+                // A caller on a poll path asks again every few seconds.
+                static STALE: LogThrottle = LogThrottle::new(Duration::from_secs(60));
+                if let Some(suppressed) = STALE.admit() {
+                    tracing::warn!(
+                        error = %e,
+                        age_secs = last.1.elapsed().as_secs(),
+                        suppressed,
+                        "secret manager lookup failed; using the last value read"
+                    );
+                }
+                Ok(last.0.clone())
+            }
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn enc() -> EncryptionService {
         EncryptionService::new(&EncryptionService::generate_key()).unwrap()
@@ -402,6 +558,171 @@ mod tests {
             "{msg}"
         );
         assert!(!msg.contains("literal:"), "{msg}");
+    }
+
+    /// Owner decision #54: what an opaque secret's value is stored as.
+    #[test]
+    fn an_opaque_secret_keeps_an_aws_reference_or_ciphertext_and_encrypts_the_rest() {
+        let kept = |v: &str| match classify_opaque_secret(v).unwrap() {
+            OpaqueSecret::Reference(r) => format!("ref:{r}"),
+            OpaqueSecret::Encrypted(r) => format!("enc:{r}"),
+            OpaqueSecret::Plaintext(p) => format!("plain:{p}"),
+        };
+        // An AWS Secrets Manager reference, a name or an ARN, trimmed.
+        assert_eq!(
+            kept("aws-sm://prod/orders-db"),
+            "ref:aws-sm://prod/orders-db"
+        );
+        assert_eq!(
+            kept("  aws-sm://a_b+c=d.e@f-g \n"),
+            "ref:aws-sm://a_b+c=d.e@f-g"
+        );
+        let arn = "aws-sm://arn:aws:secretsmanager:eu-west-1:123456789012:secret:prod/db-AbCdEf";
+        assert_eq!(kept(arn), format!("ref:{arn}"));
+        // An existing ciphertext, as sent.
+        let sealed = enc().encrypt_ref("x").unwrap();
+        assert_eq!(kept(&sealed), format!("enc:{sealed}"));
+        // Everything else is the secret itself, a URL-shaped one included.
+        for v in [
+            "s3cret",
+            "postgres://app:p%40ss@db.internal:5432/orders?sslmode=require",
+            "jdbc:postgresql://db/orders?user=a&password=b",
+            "https://hooks.example.com/x?token=abc",
+            "env://FLOWCATALYST_APP_KEY",
+            "aws-ps:///fc/db",
+            "vault://kv/x#f",
+            "gcp-sm://projects/p/secrets/s",
+            "aws-smm://prod/db",
+            "AWS-SM://prod/db",
+            "literal:dev",
+            "p@ss://word",
+        ] {
+            assert_eq!(kept(v), format!("plain:{v}"), "{v}");
+        }
+        // The `encrypt:` directive (Java's) is stripped: what follows is
+        // plaintext, even when it looks like a reference.
+        assert_eq!(
+            kept("encrypt:aws-sm://not/a/ref"),
+            "plain:aws-sm://not/a/ref"
+        );
+        assert_eq!(kept("encrypt:encrypted:AAAA"), "plain:encrypted:AAAA");
+        assert_eq!(kept(" encrypt:mysecret "), "plain:mysecret");
+        assert_eq!(kept("encrypt:"), "plain:");
+        assert_eq!(kept("   "), "plain:");
+    }
+
+    #[test]
+    fn a_malformed_reference_or_ciphertext_is_refused_without_echoing_it() {
+        let refused = |v: &str| classify_opaque_secret(v).unwrap_err().to_string();
+        // Java's message for the base64 case.
+        assert_eq!(
+            refused("encrypted:not base64"),
+            "encrypted: payload is not base64"
+        );
+        // Base64 but no envelope: classified, and refused by the caller
+        // that holds the key (ENCRYPTED_DOES_NOT_DECRYPT).
+        assert!(matches!(
+            classify_opaque_secret("encrypted:QUJD"),
+            Ok(OpaqueSecret::Encrypted("encrypted:QUJD"))
+        ));
+        assert_eq!(refused("encrypted:QUI"), "encrypted: payload is not base64");
+        assert_eq!(refused("encrypted:"), "encrypted: payload is empty");
+        let expected = "; expected aws-sm://<secret name or ARN>";
+        for (v, why) in [
+            ("aws-sm://", "it names no secret"),
+            ("aws-sm://  ", "it names no secret"),
+            (
+                "aws-sm://prod/db password",
+                "a secret name has only letters, digits and / _ + = . @ -",
+            ),
+            (
+                "aws-sm://prod/db#field",
+                "a secret name has only letters, digits and / _ + = . @ -",
+            ),
+            (
+                "aws-sm://arn:aws:secretsmanager:eu-west-1:1234:prod/db",
+                "an ARN is arn:<partition>:secretsmanager:<region>:<account>:secret:<name>",
+            ),
+            (
+                "aws-sm://arn:aws:ssm:eu-west-1:1234:secret:prod/db",
+                "an ARN is arn:<partition>:secretsmanager:<region>:<account>:secret:<name>",
+            ),
+            (
+                "aws-sm://arn:aws:secretsmanager::1234:secret:prod",
+                "an ARN is arn:<partition>:secretsmanager:<region>:<account>:secret:<name>",
+            ),
+            (
+                "aws-sm://arn:aws:secretsmanager:eu-west-1:1234:secret:",
+                "an ARN is arn:<partition>:secretsmanager:<region>:<account>:secret:<name>",
+            ),
+        ] {
+            assert_eq!(
+                refused(v),
+                format!("aws-sm:// reference is malformed: {why}{expected}"),
+                "{v}"
+            );
+        }
+        let long = format!("aws-sm://{}", "a".repeat(2049));
+        assert_eq!(
+            refused(&long),
+            format!("aws-sm:// reference is malformed: a secret id is at most 2048 characters{expected}")
+        );
+        assert!(classify_opaque_secret(&format!("aws-sm://{}", "a".repeat(2048))).is_ok());
+        assert!(!refused("aws-sm://prod/hunter2 x").contains("hunter2"));
+    }
+
+    #[test]
+    fn opaque_debug_hides_the_value() {
+        assert_eq!(
+            format!("{:?}", OpaqueSecret::Plaintext("hunter2")),
+            "Plaintext(***)"
+        );
+        assert_eq!(
+            format!("{:?}", OpaqueSecret::Encrypted("encrypted:AAAA")),
+            "Encrypted(***)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_last_value_read_outlives_a_failing_secret_manager() {
+        struct Flaky {
+            fail: AtomicBool,
+        }
+        #[async_trait]
+        impl SecretStore for Flaky {
+            async fn get(&self, key: &str) -> Result<String, SecretRefError> {
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(SecretRefError::Provider {
+                        scheme: "aws-sm".into(),
+                        key: key.into(),
+                        message: "throttled".into(),
+                    });
+                }
+                Ok("v1".into())
+            }
+        }
+        let store = Arc::new(Flaky {
+            fail: AtomicBool::new(false),
+        });
+        let r = SecretResolver::new(None)
+            .with_store("aws-sm", store.clone())
+            .with_cache_ttl(Duration::ZERO);
+        // Never read: the failure is the answer.
+        store.fail.store(true, Ordering::SeqCst);
+        assert!(r.resolve_or_last_known("aws-sm://k").await.is_err());
+        store.fail.store(false, Ordering::SeqCst);
+        assert_eq!(r.resolve_or_last_known("aws-sm://k").await.unwrap(), "v1");
+        store.fail.store(true, Ordering::SeqCst);
+        assert!(
+            r.resolve("aws-sm://k").await.is_err(),
+            "resolve itself is strict"
+        );
+        assert_eq!(r.resolve_or_last_known(" aws-sm://k ").await.unwrap(), "v1");
+        // A form with no secret manager behind it is never papered over.
+        assert!(matches!(
+            r.resolve_or_last_known("vault://x").await,
+            Err(SecretRefError::NoProvider(_))
+        ));
     }
 
     #[test]

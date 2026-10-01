@@ -33,6 +33,7 @@ use fc_platform::function::DnsLabel;
 use fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver;
 use fc_platform::shared::encryption_service::EncryptionService;
 use fc_platform::shared::error::PlatformError;
+use fc_platform::shared::secret_ref::SecretResolver;
 use std::fs;
 use support::TestApp;
 
@@ -60,8 +61,9 @@ async fn builder(app: &TestApp, app_key: &str) -> DesiredStateBuilder {
         routes: app.repos.function_route_repo.clone(),
         credentials: Arc::new(OutboundCredentialsResolver::new(
             app.repos.service_account_repo.clone(),
-            encryption,
+            encryption.clone(),
         )),
+        secret_resolver: Arc::new(SecretResolver::new(encryption)),
     }
 }
 

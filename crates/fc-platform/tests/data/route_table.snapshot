@@ -361,11 +361,11 @@
 /api/oauth-clients/{id}/revoke-previous-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/oauth-clients/{id}/rotate-secret POST: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/oauth-clients/{id}/rotate-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi-functions.json GET: 200 ct=application/json body=9ebf87ba6521 limiter=- buckets=- doc=-
+/api/openapi-functions.json GET: 200 ct=application/json body=9706aebaf9cf limiter=- buckets=- doc=-
 /api/openapi-functions.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.json GET: 200 ct=application/json body=e0f17763f0e8 limiter=- buckets=- doc=-
+/api/openapi.json GET: 200 ct=application/json body=a5e456b6a29a limiter=- buckets=- doc=-
 /api/openapi.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.yaml GET: 200 ct=application/yaml body=18298e0de5b4 limiter=- buckets=- doc=-
+/api/openapi.yaml GET: 200 ct=application/yaml body=2d371bc51705 limiter=- buckets=- doc=-
 /api/openapi.yaml PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/platform-config/access/{id} DELETE: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/platform-config/access/{id} PROBE: allow=DELETE 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -834,9 +834,9 @@
 /portal/auth/password-reset PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
 /portal/authorize GET: 400 ct=application/json body=ba621266571c limiter=portal-ip buckets=- doc=-
 /portal/authorize PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
-/q/openapi GET: 200 ct=application/json body=e0f17763f0e8 limiter=- buckets=- doc=-
+/q/openapi GET: 200 ct=application/json body=a5e456b6a29a limiter=- buckets=- doc=-
 /q/openapi PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/q/openapi-full GET: 200 ct=application/json body=5226ec1fdcfd limiter=- buckets=- doc=-
+/q/openapi-full GET: 200 ct=application/json body=6ec4630f1dd7 limiter=- buckets=- doc=-
 /q/openapi-full PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /swagger-ui GET: 303 ct=- location=/swagger-ui/ body=e3b0c44298fc limiter=- buckets=- doc=-
 /swagger-ui PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -846,11 +846,11 @@
 /swagger-ui/{*rest} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /zz-no-route PROBE: allow=- 404 ct=- body=e3b0c44298fc limiter=- buckets=-
 /{*__private__axum_fallback} PROBE: allow=- 404 ct=- body=e3b0c44298fc limiter=- buckets=-
-DOC /api/openapi.json: e0f17763f0e8
-DOC /api/openapi.yaml: 18298e0de5b4
-DOC /q/openapi: e0f17763f0e8
-DOC /q/openapi-full: 5226ec1fdcfd
-DOC developer-portal (build's returned document): e0f17763f0e8
+DOC /api/openapi.json: a5e456b6a29a
+DOC /api/openapi.yaml: 2d371bc51705
+DOC /q/openapi: a5e456b6a29a
+DOC /q/openapi-full: 6ec4630f1dd7
+DOC developer-portal (build's returned document): a5e456b6a29a
 
 == full: app key (mounts /api/dispatch/*), SPA directory
 / GET: 200 ct=text/html body=691f5a3987e4 limiter=- buckets=- doc=-
@@ -1217,11 +1217,11 @@ DOC developer-portal (build's returned document): e0f17763f0e8
 /api/oauth-clients/{id}/revoke-previous-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/oauth-clients/{id}/rotate-secret POST: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/oauth-clients/{id}/rotate-secret PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi-functions.json GET: 200 ct=application/json body=9ebf87ba6521 limiter=- buckets=- doc=-
+/api/openapi-functions.json GET: 200 ct=application/json body=9706aebaf9cf limiter=- buckets=- doc=-
 /api/openapi-functions.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.json GET: 200 ct=application/json body=e0f17763f0e8 limiter=- buckets=- doc=-
+/api/openapi.json GET: 200 ct=application/json body=a5e456b6a29a limiter=- buckets=- doc=-
 /api/openapi.json PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/api/openapi.yaml GET: 200 ct=application/yaml body=18298e0de5b4 limiter=- buckets=- doc=-
+/api/openapi.yaml GET: 200 ct=application/yaml body=2d371bc51705 limiter=- buckets=- doc=-
 /api/openapi.yaml PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /api/platform-config/access/{id} DELETE: 403 ct=application/json body=850104f5ec67 limiter=- buckets=- doc=published+full
 /api/platform-config/access/{id} PROBE: allow=DELETE 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -1703,9 +1703,9 @@ DOC developer-portal (build's returned document): e0f17763f0e8
 /portal/auth/password-reset PROBE: allow=POST 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
 /portal/authorize GET: 400 ct=application/json body=ba621266571c limiter=portal-ip buckets=- doc=-
 /portal/authorize PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=portal-ip buckets=-
-/q/openapi GET: 200 ct=application/json body=e0f17763f0e8 limiter=- buckets=- doc=-
+/q/openapi GET: 200 ct=application/json body=a5e456b6a29a limiter=- buckets=- doc=-
 /q/openapi PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-/q/openapi-full GET: 200 ct=application/json body=5226ec1fdcfd limiter=- buckets=- doc=-
+/q/openapi-full GET: 200 ct=application/json body=6ec4630f1dd7 limiter=- buckets=- doc=-
 /q/openapi-full PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /swagger-ui GET: 303 ct=- location=/swagger-ui/ body=e3b0c44298fc limiter=- buckets=- doc=-
 /swagger-ui PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
@@ -1717,8 +1717,8 @@ DOC developer-portal (build's returned document): e0f17763f0e8
 /zz-no-route PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
 /{*__private__axum_fallback} GET: 200 ct=text/html body=691f5a3987e4 limiter=- buckets=- doc=-
 /{*__private__axum_fallback} PROBE: allow=GET,HEAD 405 ct=- body=e3b0c44298fc limiter=- buckets=-
-DOC /api/openapi.json: e0f17763f0e8
-DOC /api/openapi.yaml: 18298e0de5b4
-DOC /q/openapi: e0f17763f0e8
-DOC /q/openapi-full: 5226ec1fdcfd
-DOC developer-portal (build's returned document): e0f17763f0e8
+DOC /api/openapi.json: a5e456b6a29a
+DOC /api/openapi.yaml: 2d371bc51705
+DOC /q/openapi: a5e456b6a29a
+DOC /q/openapi-full: 6ec4630f1dd7
+DOC developer-portal (build's returned document): a5e456b6a29a

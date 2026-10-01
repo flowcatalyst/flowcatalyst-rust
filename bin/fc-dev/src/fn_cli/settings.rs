@@ -35,7 +35,10 @@ pub enum ConfigCommand {
 
 #[derive(clap::Subcommand, Debug)]
 pub enum SecretCommand {
-    /// Set a secret; the value is read from stdin (or --from-file).
+    /// Set a secret; the value is read from stdin (or --from-file). An
+    /// aws-sm:// reference is kept and resolved when the function is
+    /// delivered; anything else is stored encrypted (an `encrypt:` prefix
+    /// forces that for a value that looks like a reference).
     Set {
         /// Full function address, app.service.name.
         address: String,

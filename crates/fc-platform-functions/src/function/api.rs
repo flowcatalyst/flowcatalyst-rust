@@ -970,6 +970,12 @@ pub async fn get_secrets(
 }
 
 /// Set or replace one secret. The value is never echoed back.
+///
+/// The value is an `aws-sm://<secret name or ARN>` reference or an
+/// `encrypted:` value of this platform, kept as sent (a reference is
+/// resolved when the function is delivered to its host), or plaintext,
+/// which is encrypted: anything else, a `postgres://` DSN included. An
+/// `encrypt:` prefix forces plaintext (owner decision #54).
 #[utoipa::path(
     put, path = "/api/functions/{address}/secrets/{key}", tag = "functions",
     operation_id = "putApiFunctionsByAddressSecretsByKey",
@@ -980,7 +986,7 @@ pub async fn get_secrets(
     request_body = SetSecretRequest,
     responses(
         (status = 204),
-        (status = 400, description = "SETTING_KEY_INVALID, SETTING_VALUE_REQUIRED or SETTING_TOO_LARGE"),
+        (status = 400, description = "SETTING_KEY_INVALID, SETTING_VALUE_REQUIRED, SETTING_TOO_LARGE or INVALID_SECRET_REF (a malformed `aws-sm://` reference, or an `encrypted:` value that is not base64 or does not decrypt with this platform's key)"),
         (status = 403), (status = 404),
         (status = 503, description = "ENCRYPTION_UNCONFIGURED"),
     ),
