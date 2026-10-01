@@ -80,6 +80,8 @@ The binding record for the work that follows. It supersedes anything in older do
 | 51 | SDK licence split (owner, 2026-09-30) | The types the Apache-2.0 `fc-sdk` needs from AGPL `fc-common` (outbox status and item types, TSIDs, audit redaction) move to a permissively licensed crate, so SDK users take no AGPL code. |
 | 52 | No SQLite in `fc-server` (owner, 2026-09-30) | `fc-server`'s outbox role reads Postgres and MySQL; SQLite stays in `fc-outbox-processor` and fc-dev only. Removes the SQLite C build from the production binary. |
 | 53 | Go delete guards (owner, 2026-09-30, decision #34 applied to Go) | Go refuses deleting a connection that still has subscriptions, and an application that still has grants (409), matching Rust. |
+| 54 | Function secret references (owner, 2026-10-01) | `PUT /api/functions/{address}/secrets/{key}` (and DB settings) keep an external secret-manager reference (`aws-sm://…`) or an already-`encrypted:` value as given, resolved when the function runs; every other value, including a `postgres://` DSN, is plaintext and encrypted. A malformed `aws-sm://` or `encrypted:` value is a 400 with its message (Java's `INVALID_SECRET_REF`). The middle road of `docs/plans/go-function-service-fixes.md` §1.2. |
+| 55 | Application delete and disabled client configs (owner, 2026-10-01) | The #34 guard counts only *enabled* client configs; disabled ones no longer block an application delete and are removed with it. Applies to Rust and Go. |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
