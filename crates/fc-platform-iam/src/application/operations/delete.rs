@@ -85,9 +85,11 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
             .application_repo
             .count_access_grants(&application.id)
             .await?;
+        // Only enabled configs (owner decision #55): a disabled one is
+        // deleted with the application.
         let configs = self
             .application_repo
-            .count_client_configs(&application.id)
+            .count_enabled_client_configs(&application.id)
             .await?;
         let sas = self
             .application_repo
