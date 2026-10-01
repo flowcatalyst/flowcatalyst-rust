@@ -255,6 +255,14 @@ build-outbox:
 build-server:
     cargo build --bin fc-server
 
+# Build the fc-server Docker image locally, as the publish-docker workflow does.
+# One image runs the platform, the router or both, chosen by FC_*_ENABLED env.
+# `just image` → flowcatalyst-rust:<short sha>; `just image dev-1 linux/arm64`.
+image tag=`git rev-parse --short HEAD` platform="linux/amd64":
+    docker build --platform {{ platform }} -f Dockerfile \
+      --build-arg FC_BUILD_VERSION={{ tag }} \
+      -t flowcatalyst-rust:{{ tag }} .
+
 # Run unified server (all subsystems via env vars)
 run-server:
     FC_DATABASE_URL={{ FC_DATABASE_URL }} cargo run --bin fc-server
