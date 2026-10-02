@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio::sync::Semaphore;
 
 use fc_common::{
     AckNack, BatchMessage, MediationOutcome, MediationResult, MediationType, Message,
@@ -1112,4 +1113,259 @@ async fn group_snapshot_reflects_a_gated_ordered_group() {
         pool.group_snapshot().is_empty(),
         "a fully-drained group must not show up in the snapshot"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Waiting unordered messages are data in a queue, not parked tasks
+// ---------------------------------------------------------------------------
+
+/// Mediator that records the order messages reach it and blocks each call
+/// until a permit is added to `release`.
+struct GateMediator {
+    arrived: parking_lot::Mutex<Vec<String>>,
+    release: Semaphore,
+}
+
+impl GateMediator {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            arrived: parking_lot::Mutex::new(Vec::new()),
+            release: Semaphore::new(0),
+        })
+    }
+
+    fn arrived(&self) -> Vec<String> {
+        self.arrived.lock().clone()
+    }
+}
+
+#[async_trait]
+impl Mediator for GateMediator {
+    async fn mediate(&self, message: &Message) -> MediationOutcome {
+        self.arrived.lock().push(message.id.clone());
+        if let Ok(permit) = self.release.acquire().await {
+            permit.forget();
+        }
+        MediationOutcome::success(200)
+    }
+}
+
+async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !cond() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[tokio::test]
+async fn waiting_unordered_messages_do_not_each_hold_a_task() {
+    const CONCURRENCY: u32 = 100;
+    const WAITING: usize = 3_000;
+
+    let mediator = GateMediator::new();
+    let pool = Arc::new(ProcessPool::new(
+        PoolConfig {
+            code: "TEST".to_string(),
+            concurrency: CONCURRENCY,
+            rate_limit_per_minute: None,
+        },
+        mediator.clone(),
+    ));
+    pool.start().await;
+
+    let total = CONCURRENCY as usize + WAITING;
+    let mut receivers = Vec::with_capacity(total);
+    for i in 0..total {
+        let (msg, rx) = create_batch_message(&format!("m{i}"), None);
+        pool.submit(msg).await.unwrap();
+        receivers.push(rx);
+    }
+
+    wait_until("the first 100 to reach the mediator", || {
+        mediator.arrived().len() == CONCURRENCY as usize
+    })
+    .await;
+    // Let the dispatcher settle on the next waiting message.
+    time::sleep(Duration::from_millis(100)).await;
+
+    // In flight: 100 delivery tasks + the one dispatcher. Not 3,100.
+    let tasks = pool.tracked_tasks();
+    assert!(
+        tasks <= CONCURRENCY as usize + 2,
+        "live pool tasks must track messages in flight, not buffered: {tasks}"
+    );
+    assert_eq!(pool.active_workers(), CONCURRENCY);
+    // Every waiting message holds its queue slot; the 100 in flight gave
+    // theirs back when they began mediating.
+    let capacity = (CONCURRENCY * 40) as usize;
+    assert_eq!(pool.available_capacity(), capacity - WAITING);
+    assert_eq!(mediator.arrived().len(), CONCURRENCY as usize);
+
+    mediator.release.add_permits(total);
+    for rx in receivers {
+        let ack = time::timeout(Duration::from_secs(30), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ack, AckNack::Ack));
+    }
+    time::timeout(Duration::from_secs(5), pool.wait_drained())
+        .await
+        .expect("pool drains to zero");
+    assert!(pool.is_fully_drained());
+    assert_eq!(pool.available_capacity(), capacity);
+    assert_eq!(pool.active_workers(), 0);
+    assert_eq!(pool.queue_size(), 0);
+}
+
+#[tokio::test]
+async fn waiting_unordered_messages_start_oldest_first() {
+    let mediator = GateMediator::new();
+    let pool = Arc::new(ProcessPool::new(
+        PoolConfig {
+            code: "TEST".to_string(),
+            concurrency: 1,
+            rate_limit_per_minute: None,
+        },
+        mediator.clone(),
+    ));
+    pool.start().await;
+
+    let mut receivers = Vec::new();
+    for i in 0..20 {
+        let (msg, rx) = create_batch_message(&format!("m{i}"), None);
+        pool.submit(msg).await.unwrap();
+        receivers.push(rx);
+    }
+    for i in 0..20 {
+        wait_until("the next message to start", || mediator.arrived().len() > i).await;
+        mediator.release.add_permits(1);
+    }
+    for rx in receivers {
+        let ack = time::timeout(Duration::from_secs(5), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ack, AckNack::Ack));
+    }
+    let expected: Vec<String> = (0..20).map(|i| format!("m{i}")).collect();
+    assert_eq!(mediator.arrived(), expected);
+}
+
+fn immediate_grouped(id: &str, group: &str) -> (BatchMessage, oneshot::Receiver<AckNack>) {
+    let (mut msg, rx) = create_batch_message(id, Some(group));
+    msg.message.dispatch_mode = fc_common::DispatchMode::Immediate;
+    (msg, rx)
+}
+
+#[tokio::test]
+async fn a_suppressed_waiting_message_is_acked_without_a_permit() {
+    let mediator = GateMediator::new();
+    let pool = Arc::new(ProcessPool::new(
+        PoolConfig {
+            code: "TEST".to_string(),
+            concurrency: 1,
+            rate_limit_per_minute: None,
+        },
+        mediator.clone(),
+    ));
+    pool.start().await;
+
+    // Occupies the only slot until released.
+    let (blocker, blocker_rx) = create_batch_message("blocker", None);
+    pool.submit(blocker).await.unwrap();
+    wait_until("the blocker to be mediating", || {
+        mediator.arrived().len() == 1
+    })
+    .await;
+
+    pool.group_flush_registry().flush("flushed", Some(60));
+    let (waiting, waiting_rx) = immediate_grouped("suppressed", "flushed");
+    pool.submit(waiting).await.unwrap();
+
+    let ack = time::timeout(Duration::from_secs(2), waiting_rx)
+        .await
+        .expect("suppressed message acked while the only slot is held")
+        .unwrap();
+    assert!(matches!(ack, AckNack::Ack));
+    assert_eq!(mediator.arrived(), vec!["blocker".to_string()]);
+    assert_eq!(
+        pool.queue_size(),
+        0,
+        "the blocker gave its queue slot back when it began mediating, and the suppressed message released its own"
+    );
+
+    mediator.release.add_permits(1);
+    let ack = time::timeout(Duration::from_secs(2), blocker_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ack, AckNack::Ack));
+    time::timeout(Duration::from_secs(5), pool.wait_drained())
+        .await
+        .expect("drains");
+}
+
+/// A callback whose `ensure_tracked` says another copy owns the pipeline.
+struct DuplicateCallback {
+    inner: TestCallback,
+}
+
+#[async_trait]
+impl MessageCallback for DuplicateCallback {
+    async fn ack(&self) {
+        self.inner.ack().await;
+    }
+    async fn nack(&self, delay_seconds: Option<u32>) {
+        self.inner.nack(delay_seconds).await;
+    }
+    fn ensure_tracked(&self) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn a_duplicate_waiting_message_is_acked_without_a_permit() {
+    let mediator = GateMediator::new();
+    let pool = Arc::new(ProcessPool::new(
+        PoolConfig {
+            code: "TEST".to_string(),
+            concurrency: 1,
+            rate_limit_per_minute: None,
+        },
+        mediator.clone(),
+    ));
+    pool.start().await;
+
+    let (blocker, blocker_rx) = create_batch_message("blocker", None);
+    pool.submit(blocker).await.unwrap();
+    wait_until("the blocker to be mediating", || {
+        mediator.arrived().len() == 1
+    })
+    .await;
+
+    let (mut dup, dup_rx) = create_batch_message("dup", None);
+    let (tx, rx) = oneshot::channel();
+    dup.callback = Box::new(DuplicateCallback {
+        inner: TestCallback {
+            tx: parking_lot::Mutex::new(Some(tx)),
+        },
+    });
+    drop(dup_rx);
+    pool.submit(dup).await.unwrap();
+
+    let ack = time::timeout(Duration::from_secs(2), rx)
+        .await
+        .expect("duplicate acked while the only slot is held")
+        .unwrap();
+    assert!(matches!(ack, AckNack::Ack));
+    assert_eq!(mediator.arrived(), vec!["blocker".to_string()]);
+
+    mediator.release.add_permits(1);
+    let ack = time::timeout(Duration::from_secs(2), blocker_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(ack, AckNack::Ack));
 }

@@ -6,7 +6,7 @@
 //! is empty (Java `OrderedGroups` + `runDrainer`), using ~200 bytes per idle group vs
 //! ~100KB with the old design.
 //!
-//! Every task spawned by the pool (`spawn_immediate_task`'s standalone workers and
+//! Every task spawned by the pool (`ImmediateDispatcher`'s standalone workers and
 //! `spawn_drain_task`'s per-group drainers) is spawned via `self.tracker`, a
 //! `tokio_util::task::TaskTracker`, instead of bare `tokio::spawn`. Nothing explicitly
 //! joins these tasks — they're self-terminating — but the tracker gives the pool a
@@ -25,6 +25,8 @@ use governor::{
     state::{InMemoryState, NotKeyed},
     Quota, RateLimiter,
 };
+use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -56,6 +58,7 @@ use std::cmp;
 use std::mem;
 use std::time::Instant;
 use tokio::sync::Notify;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::SemaphorePermit;
 use tokio::time;
 
@@ -76,7 +79,7 @@ fn queue_capacity_for(concurrency: u32) -> u32 {
 /// `docs/go-mirror/2026-09-06-go-fix-list.md`).
 ///
 /// Cloned into every worker/drain closure that needs to decrement
-/// `queue_size` on completion (`spawn_immediate_task`, `spawn_drain_task`,
+/// `queue_size` on completion (`ImmediateDispatcher`, `spawn_drain_task`,
 /// group releases, `release_remainder()`, the worker guards), so the crossing-detection
 /// logic lives in one place instead of being reimplemented at each of the
 /// half-dozen decrement sites — and, more importantly, so it is provably
@@ -119,7 +122,7 @@ impl QueueSlotReleaser {
 // ============================================================================
 //
 // `disposition_of` is the single, pure decision both delivery paths
-// (`spawn_immediate_task`, `spawn_drain_task`) make about a mediation
+// (`ImmediateDispatcher`, `spawn_drain_task`) make about a mediation
 // outcome, so they make the same decision by construction and a test can
 // assert it without a pool, a mediator or a broker.
 //
@@ -705,7 +708,7 @@ enum Attempt {
 
 /// The pool state one delivery attempt reads, cloned into each spawned task.
 ///
-/// Both delivery paths (`spawn_immediate_task`, `spawn_drain_task`) run the
+/// Both delivery paths (`ImmediateDispatcher`, `spawn_drain_task`) run the
 /// same [`attempt`](Self::attempt) and differ only in what they then do with
 /// the [`Disposition`], as Go's single `processOne` does. Having one copy
 /// stops the two from drifting apart.
@@ -722,6 +725,41 @@ struct Deliverer {
 }
 
 impl Deliverer {
+    /// The cheap checks that must not occupy a concurrency slot: group-flush
+    /// suppression and duplicate detection. Returns true when the message
+    /// was settled (acked, its queue slot released) and must not be touched
+    /// further. Shared by [`Self::attempt`] (ordered path) and
+    /// [`ImmediateDispatcher`] (unordered path).
+    async fn settle_without_slot(
+        &self,
+        guard: &mut WorkerGuard,
+        task: &PoolTask,
+        ctx: &EventContext,
+    ) -> bool {
+        // Group-flush suppression (ledger A-05/R-52/R-53), checked BEFORE the
+        // semaphore/rate limiter so a suppressed group spends neither a
+        // concurrency slot nor a rate-limit token: that saving is the whole
+        // point of suppression.
+        if ack_if_suppressed(&self.flush_registry, &self.metrics_collector, task).await {
+            self.recorder
+                .record(EventKind::Suppressed, ctx, Facts::default());
+            guard.release_slot();
+            return true;
+        }
+
+        // Go `InFlightTracker.EnsureTracked`: a different copy of this
+        // message now owns the pipeline, so this one is acked, not delivered
+        // twice.
+        if !task.callback.ensure_tracked() {
+            self.recorder
+                .record(EventKind::DuplicateAcked, ctx, Facts::default());
+            guard.release_slot();
+            task.callback.ack().await;
+            return true;
+        }
+        false
+    }
+
     /// Take `task` through suppression, duplicate detection, the concurrency
     /// slot and the rate limiter, mediate it, and record the result.
     ///
@@ -734,25 +772,7 @@ impl Deliverer {
         task: &PoolTask,
         ctx: &EventContext,
     ) -> Attempt {
-        // Group-flush suppression (ledger A-05/R-52/R-53), checked BEFORE the
-        // semaphore/rate limiter so a suppressed group spends neither a
-        // concurrency slot nor a rate-limit token: that saving is the whole
-        // point of suppression.
-        if ack_if_suppressed(&self.flush_registry, &self.metrics_collector, task).await {
-            self.recorder
-                .record(EventKind::Suppressed, ctx, Facts::default());
-            guard.release_slot();
-            return Attempt::Settled;
-        }
-
-        // Go `InFlightTracker.EnsureTracked`: a different copy of this
-        // message now owns the pipeline, so this one is acked, not delivered
-        // twice.
-        if !task.callback.ensure_tracked() {
-            self.recorder
-                .record(EventKind::DuplicateAcked, ctx, Facts::default());
-            guard.release_slot();
-            task.callback.ack().await;
+        if self.settle_without_slot(guard, task, ctx).await {
             return Attempt::Settled;
         }
 
@@ -769,6 +789,24 @@ impl Deliverer {
             }
         };
 
+        let (outcome, disposition) = self.mediate_holding_slot(guard, task, ctx).await;
+        drop(permit);
+
+        Attempt::Delivered {
+            outcome,
+            disposition,
+        }
+    }
+
+    /// Everything after the concurrency slot is held: pace on the rate
+    /// limiter, mediate, and record the result. The caller owns the permit
+    /// and drops it when this returns (after `guard.end()`, as before).
+    async fn mediate_holding_slot(
+        &self,
+        guard: &mut WorkerGuard,
+        task: &PoolTask,
+        ctx: &EventContext,
+    ) -> (MediationOutcome, Disposition) {
         // Wait for rate limit permit (no timeout — see fn doc).
         ProcessPool::wait_for_rate_limit_permit(&self.rate_limiter, &self.metrics_collector).await;
 
@@ -817,11 +855,219 @@ impl Deliverer {
             );
         }
         guard.end();
+
+        (outcome, disposition)
+    }
+}
+
+/// Unordered (IMMEDIATE) messages waiting for a concurrency slot, oldest
+/// first, and whether a dispatcher is alive to start them.
+///
+/// A waiting message is plain data here, not a task: the pool buffers up to
+/// `concurrency * QUEUE_CAPACITY_MULTIPLIER` of them, and a parked task each
+/// (its future carrying the `PoolTask`, guard and callback) is the cost this
+/// queue exists to avoid. Tasks track the messages in flight instead.
+#[derive(Default)]
+struct ImmediateQueue {
+    state: Mutex<ImmediateState>,
+}
+
+#[derive(Default)]
+struct ImmediateState {
+    waiting: VecDeque<PoolTask>,
+    /// An [`ImmediateDispatcher`] task is alive. Decided under the same lock
+    /// as the queue, so an enqueue is never missed.
+    running: bool,
+}
+
+impl ImmediateQueue {
+    /// File `task` behind those already waiting. Returns true when the caller
+    /// must start a dispatcher (none was running; `running` is now set).
+    fn push(&self, task: PoolTask) -> bool {
+        let mut state = self.state.lock();
+        state.waiting.push_back(task);
+        !mem::replace(&mut state.running, true)
+    }
+
+    /// The oldest waiting message. When none is left the dispatcher is
+    /// marked stopped under the same lock, so a concurrent [`Self::push`]
+    /// starts a new one.
+    fn pop(&self) -> Option<PoolTask> {
+        let mut state = self.state.lock();
+        let task = state.waiting.pop_front();
+        if task.is_none() {
+            state.running = false;
+        }
+        task
+    }
+
+    /// Called when a dispatcher unwound or was dropped mid-loop: hand the
+    /// queue to a fresh one if anything is waiting. True when the caller
+    /// must start it.
+    fn restart_needed(&self) -> bool {
+        let mut state = self.state.lock();
+        state.running = !state.waiting.is_empty();
+        state.running
+    }
+}
+
+/// Starts waiting unordered messages, oldest first, each as soon as a
+/// concurrency slot is free (Go `dispatchImmediate`).
+///
+/// One dispatcher task per pool at most: it takes the oldest message, runs
+/// the cheap pre-checks that must not occupy a slot
+/// ([`Deliverer::settle_without_slot`]), waits for an owned semaphore permit
+/// and only then spawns the delivery task, which holds the permit. Live
+/// tasks therefore track the messages in flight, never the messages buffered.
+///
+/// **Exits:** when the queue is empty; the next enqueue starts it again, so
+/// an idle pool holds none.
+/// **Tracked by:** the pool's `tracker`, as is every delivery task, so
+/// `wait_drained()` covers queued and in-flight unordered work.
+/// **Panic safety:** the message in hand is held by a [`WorkerGuard`] (slot
+/// and callback fallback nack on unwind), and [`DispatcherLife`] hands the
+/// queue to a new dispatcher if this one unwinds.
+#[derive(Clone)]
+struct ImmediateDispatcher {
+    queue: Arc<ImmediateQueue>,
+    deliverer: Deliverer,
+    slots: QueueSlotReleaser,
+    mediating: Arc<DashMap<u64, MediatingEntry>>,
+    stop: CancellationToken,
+    tracker: TaskTracker,
+}
+
+/// Restarts the dispatcher if its task unwinds with messages still queued.
+struct DispatcherLife<'a> {
+    dispatcher: &'a ImmediateDispatcher,
+    /// The loop ended on an empty queue (`running` already cleared).
+    finished: bool,
+}
+
+impl Drop for DispatcherLife<'_> {
+    fn drop(&mut self) {
+        if !self.finished && self.dispatcher.queue.restart_needed() {
+            self.dispatcher.spawn();
+        }
+    }
+}
+
+impl ImmediateDispatcher {
+    /// Queue `task` (it already holds a queue slot) and make sure a
+    /// dispatcher is running.
+    fn enqueue(&self, task: PoolTask) {
+        if self.queue.push(task) {
+            self.spawn();
+        }
+    }
+
+    fn spawn(&self) {
+        self.tracker.spawn(self.clone().run());
+    }
+
+    async fn run(self) {
+        let mut life = DispatcherLife {
+            dispatcher: &self,
+            finished: false,
+        };
+        while let Some(task) = self.queue.pop() {
+            self.start(task).await;
+        }
+        life.finished = true;
+    }
+
+    /// Settle or start one message: pre-checks, then a permit, then its own
+    /// delivery task.
+    async fn start(&self, task: PoolTask) {
+        let mut guard = WorkerGuard::new(self.slots.clone(), self.mediating.clone());
+        let ctx = event_context(&self.deliverer.pool_code, &task);
+
+        if self
+            .deliverer
+            .settle_without_slot(&mut guard, &task, &ctx)
+            .await
+        {
+            return;
+        }
+
+        let permit = match self.deliverer.semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                error!("Semaphore closed");
+                guard.release_slot();
+                task.callback.nack(Some(10)).await;
+                return;
+            }
+        };
+
+        // Every line logged while this message is in the worker (the
+        // mediator's, the callback's, a panic's) carries its id.
+        let span = dispatch_span(&self.deliverer.pool_code, &task);
+        self.tracker.spawn(
+            self.clone()
+                .deliver(task, guard, ctx, permit)
+                .instrument(span),
+        );
+    }
+
+    /// Mediate one message that holds a concurrency permit and act on its
+    /// [`Disposition`]. A `Retry` gives the permit back, waits out the
+    /// backoff (counted as queued, as in Go, holding no permit) and queues
+    /// the message again; this task ends there, so a retrying message costs
+    /// only the sleep.
+    ///
+    /// **Panic safety:** the [`WorkerGuard`] gives back the queue slot and
+    /// the `mediating` entry, the permit drops on unwind, and the message's
+    /// callback fires its fallback nack as it drops.
+    async fn deliver(
+        self,
+        mut task: PoolTask,
+        mut guard: WorkerGuard,
+        ctx: EventContext,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let (outcome, disposition) = self
+            .deliverer
+            .mediate_holding_slot(&mut guard, &task, &ctx)
+            .await;
         drop(permit);
 
-        Attempt::Delivered {
-            outcome,
-            disposition,
+        // IMMEDIATE has no group buffer: `disposition.group` has nothing to
+        // act on here.
+        match disposition.action {
+            BrokerAction::Ack => {
+                maybe_flush_group(&self.deliverer.flush_registry, &task.message, &outcome);
+                task.callback.ack().await;
+            }
+            BrokerAction::Release => {
+                self.deliverer
+                    .metrics_collector
+                    .events()
+                    .reject(RejectReason::Released, 1);
+                task.callback.nack(disposition.nack_delay_secs()).await;
+            }
+            BrokerAction::Retry => {
+                task.attempts += 1;
+                tracing::Span::current().record("attempt", task.attempts);
+                // Go `InFlightTracker.MarkRetrying`: the reaper and
+                // stall detector leave a live retry alone.
+                task.callback.mark_retrying();
+                guard.reserve_slot();
+                tokio::select! {
+                    biased;
+                    _ = self.stop.cancelled() => {
+                        // Handed back rather than held through shutdown.
+                        guard.release_slot();
+                        task.callback.nack(disposition.nack_delay_secs()).await;
+                        return;
+                    }
+                    _ = time::sleep(disposition.retry_after) => {}
+                }
+                // The queue slot travels with the message: the dispatcher's
+                // guard takes it over, so this one must not release it.
+                guard.slot_held = false;
+                self.enqueue(task);
+            }
         }
     }
 }
@@ -1365,6 +1611,9 @@ pub struct ProcessPool {
     /// Pool-level concurrency semaphore
     semaphore: Arc<Semaphore>,
 
+    /// Unordered messages waiting for a concurrency slot (data, not tasks).
+    immediate: Arc<ImmediateQueue>,
+
     /// The ordered groups' buffers and drainer bookkeeping (lightweight:
     /// a FIFO and a flag per group).
     groups: Arc<GroupQueues>,
@@ -1423,7 +1672,7 @@ pub struct ProcessPool {
     /// with).
     flush_registry: Arc<GroupFlushRegistry>,
 
-    /// Tracks every worker/drain task spawned by this pool (`spawn_immediate_task`,
+    /// Tracks every worker/drain task spawned by this pool (`ImmediateDispatcher`,
     /// `spawn_drain_task`). Tasks spawned through it are always tracked, before
     /// or after `close()` — closing only arms `wait()`, which then resolves as
     /// soon as the tracker is empty. `drain()`/`shutdown()` close it;
@@ -1492,6 +1741,7 @@ impl ProcessPool {
             mediator,
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
+            immediate: Arc::new(ImmediateQueue::default()),
             groups: Arc::new(GroupQueues::new()),
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
@@ -1629,7 +1879,7 @@ impl ProcessPool {
         {
             Some(g) if task.message.dispatch_mode.requires_ordering() => Arc::from(g),
             _ => {
-                self.spawn_immediate_task(task);
+                self.enqueue_immediate(task);
                 return Ok(());
             }
         };
@@ -1643,86 +1893,26 @@ impl ProcessPool {
         Ok(())
     }
 
-    /// Spawn a standalone task for an IMMEDIATE mode message (Go
-    /// `runImmediate`): acquire a concurrency slot, rate-limit, mediate, and
-    /// act on the [`Disposition`]. A `Retry` keeps the message in this task:
-    /// it gives the slot back, waits out the backoff (counted as queued,
-    /// as in Go), and goes round again.
-    ///
-    /// **Owns:** Arc clones of the pool's semaphore / mediator / counters /
-    /// rate limiter / metrics, plus the single `PoolTask` handed in.
-    /// **Exits:** when the message is acked or nacked — including when
-    /// [`Self::shutdown`]/[`Self::release_remainder`] interrupt a retry
-    /// backoff, which nacks it.
-    /// **Tracked by:** `self.tracker`, so `wait_drained()` includes it.
-    /// **Panic safety:** [`WorkerGuard`] gives back the queue slot, the
-    /// `mediating` entry and the queue slot this task held; the
-    /// message's callback fires its fallback nack as it drops.
-    fn spawn_immediate_task(&self, task: PoolTask) {
-        let deliverer = self.deliverer();
-        let queue_size = self.queue_slot_releaser();
-        let mediating = self.mediating.clone();
-        let stop = self.stop.clone();
-        // Every line logged while this message is in the worker (the
-        // mediator's, the callback's, a panic's) carries its id.
-        let span = dispatch_span(&deliverer.pool_code, &task);
+    /// Queue an IMMEDIATE mode message for the dispatcher (Go
+    /// `enqueueImmediate`). The message waits as plain data; a delivery task
+    /// exists only once it holds a concurrency permit — see
+    /// [`ImmediateDispatcher`]. A `Retry` re-queues it after the backoff.
+    fn enqueue_immediate(&self, task: PoolTask) {
+        if self.immediate.push(task) {
+            self.immediate_dispatcher().spawn();
+        }
+    }
 
-        self.tracker.spawn(
-            async move {
-                let mut task = task;
-                let mut guard = WorkerGuard::new(queue_size, mediating);
-                let ctx = event_context(&deliverer.pool_code, &task);
-
-                loop {
-                    let (outcome, disposition) =
-                        match deliverer.attempt(&mut guard, &task, &ctx).await {
-                            Attempt::Delivered {
-                                outcome,
-                                disposition,
-                            } => (outcome, disposition),
-                            Attempt::Settled | Attempt::Closed => return,
-                        };
-
-                    // IMMEDIATE has no group buffer: `disposition.group` has
-                    // nothing to act on here.
-                    match disposition.action {
-                        BrokerAction::Ack => {
-                            maybe_flush_group(&deliverer.flush_registry, &task.message, &outcome);
-                            task.callback.ack().await;
-                            return;
-                        }
-                        BrokerAction::Release => {
-                            deliverer
-                                .metrics_collector
-                                .events()
-                                .reject(RejectReason::Released, 1);
-                            task.callback.nack(disposition.nack_delay_secs()).await;
-                            return;
-                        }
-                        BrokerAction::Retry => {
-                            task.attempts += 1;
-                            tracing::Span::current().record("attempt", task.attempts);
-                            // Go `InFlightTracker.MarkRetrying`: the reaper and
-                            // stall detector leave a live retry alone.
-                            task.callback.mark_retrying();
-                            guard.reserve_slot();
-                            tokio::select! {
-                                biased;
-                                _ = stop.cancelled() => {
-                                    // Handed back rather than held through
-                                    // shutdown.
-                                    guard.release_slot();
-                                    task.callback.nack(disposition.nack_delay_secs()).await;
-                                    return;
-                                }
-                                _ = time::sleep(disposition.retry_after) => {}
-                            }
-                        }
-                    }
-                }
-            }
-            .instrument(span),
-        );
+    /// The state the dispatcher and its delivery tasks own.
+    fn immediate_dispatcher(&self) -> ImmediateDispatcher {
+        ImmediateDispatcher {
+            queue: self.immediate.clone(),
+            deliverer: self.deliverer(),
+            slots: self.queue_slot_releaser(),
+            mediating: self.mediating.clone(),
+            stop: self.stop.clone(),
+            tracker: self.tracker.clone(),
+        }
     }
 
     /// Start `group`'s [`Drainer`]. The caller has claimed the group
@@ -1764,7 +1954,7 @@ impl ProcessPool {
     }
 
     /// Record `task` as entering a worker — the operator "Mediating" view's
-    /// single write path (both `spawn_immediate_task` and the group-drain
+    /// single write path (both `ImmediateDispatcher` and the group-drain
     /// path call this via [`Deliverer::attempt`]). Returns the key
     /// `end_mediating` needs to remove it again. Static (takes the Arc clones directly) so it
     /// can run inside a spawned task that only owns clones, not `&self`.
