@@ -348,7 +348,7 @@ async fn route_batch_reports_pool_at_capacity_warning_once_per_transition() {
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
             code: "SATURATED".to_string(),
-            concurrency: 1, // capacity = max(1 * 20, 50) = 50
+            concurrency: 1, // capacity = max(1 * 40, 100) = 100
             rate_limit_per_minute: None,
         }],
         queues: vec![],
@@ -358,7 +358,7 @@ async fn route_batch_reports_pool_at_capacity_warning_once_per_transition() {
     let pool = manager
         .get_pool("SATURATED")
         .expect("pool must exist after apply_config");
-    for i in 0..50 {
+    for i in 0..100 {
         pool.submit(filler_batch_message(&format!("filler-{i}"), "SATURATED"))
             .await
             .expect("submit must succeed while under capacity");
@@ -2556,7 +2556,7 @@ async fn route_batch_admits_what_fits_and_defers_the_rest() {
         .apply_config(RouterConfig {
             processing_pools: vec![PoolConfig {
                 code: "NEARLY".to_string(),
-                concurrency: 1, // capacity 50
+                concurrency: 1, // capacity 100
                 rate_limit_per_minute: None,
             }],
             queues: vec![],
@@ -2564,7 +2564,7 @@ async fn route_batch_admits_what_fits_and_defers_the_rest() {
         .await
         .unwrap();
     let pool = manager.get_pool("NEARLY").unwrap();
-    for i in 0..47 {
+    for i in 0..97 {
         pool.submit(filler_batch_message(&format!("filler-{i}"), "NEARLY"))
             .await
             .unwrap();

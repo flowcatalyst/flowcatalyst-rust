@@ -1382,8 +1382,8 @@ mod g12_capacity_gate_tests {
     }
 
     /// Build a manager with one real pool saturated to exactly its
-    /// capacity (`max(concurrency * 20, 50)` — concurrency 1 → 50), so
-    /// `has_pool_capacity()` reads false. The 50 `submit()` calls are
+    /// capacity (`max(concurrency * 40, 100)` — concurrency 1 → 100), so
+    /// `has_pool_capacity()` reads false. The 100 `submit()` calls are
     /// awaited back-to-back with no other `.await` in between; on this
     /// current-thread test runtime nothing spawned by `submit()` gets a
     /// chance to run until the caller's task itself yields, so every
@@ -1404,7 +1404,7 @@ mod g12_capacity_gate_tests {
             .get_or_create_pool("TEST", Some(pool_config))
             .await
             .expect("pool creation must succeed");
-        for i in 0..50 {
+        for i in 0..100 {
             pool.submit(dummy_batch_message(&format!("m{i}")))
                 .await
                 .expect("submit must succeed while under capacity");

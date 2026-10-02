@@ -59,8 +59,12 @@ use tokio::sync::Notify;
 use tokio::sync::SemaphorePermit;
 use tokio::time;
 
-const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
-const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
+/// A pool buffers up to `concurrency * QUEUE_CAPACITY_MULTIPLIER` messages
+/// before pushing back, with a floor of `MIN_QUEUE_CAPACITY`. The Go and Java
+/// routers use the same two numbers (40 and 100), so a pool of a given
+/// concurrency absorbs the same burst whichever router runs it.
+const QUEUE_CAPACITY_MULTIPLIER: u32 = 40;
+const MIN_QUEUE_CAPACITY: u32 = 100;
 
 /// Queue capacity for a pool running `concurrency` workers.
 fn queue_capacity_for(concurrency: u32) -> u32 {
@@ -2727,15 +2731,15 @@ mod capacity_tests {
     #[tokio::test]
     async fn capacity_follows_a_concurrency_increase() {
         let pool = pool(10);
-        assert_eq!(pool.capacity(), 200);
-        assert_eq!(pool.get_stats().queue_capacity, 200);
+        assert_eq!(pool.capacity(), 400);
+        assert_eq!(pool.get_stats().queue_capacity, 400);
 
         assert!(pool.update_concurrency(100).await);
-        assert_eq!(pool.capacity(), 2000, "admission uses the new size");
-        assert_eq!(pool.get_stats().queue_capacity, 2000);
+        assert_eq!(pool.capacity(), 4000, "admission uses the new size");
+        assert_eq!(pool.get_stats().queue_capacity, 4000);
         assert_eq!(
             pool.queue_slot_releaser().capacity.load(Ordering::Relaxed),
-            2000
+            4000
         );
     }
 
@@ -2743,8 +2747,8 @@ mod capacity_tests {
     async fn capacity_follows_a_concurrency_decrease() {
         let pool = pool(100);
         assert!(pool.update_concurrency(10).await);
-        assert_eq!(pool.capacity(), 200);
-        assert_eq!(pool.get_stats().queue_capacity, 200);
+        assert_eq!(pool.capacity(), 400);
+        assert_eq!(pool.get_stats().queue_capacity, 400);
     }
 
     #[tokio::test]

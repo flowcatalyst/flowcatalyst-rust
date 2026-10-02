@@ -48,7 +48,7 @@ impl Mediator for Instant200 {
 struct Counting {
     acked: AtomicU64,
     /// Admission window: the router takes at most 1000 unsettled messages
-    /// (under the pool's 64 × 20 capacity), without spinning.
+    /// (under the pool's 64 × 40 capacity), without spinning.
     window: Semaphore,
     done: Notify,
     total: u64,

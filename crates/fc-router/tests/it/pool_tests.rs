@@ -615,14 +615,14 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
     const PER_SUBMITTER: usize = 1000;
     const N: usize = SUBMITTERS * PER_SUBMITTER;
 
-    // `available_capacity` is `concurrency * QUEUE_CAPACITY_MULTIPLIER` (20),
+    // `available_capacity` is `concurrency * QUEUE_CAPACITY_MULTIPLIER` (40),
     // pool-wide, not per-group. With a single ordered group here, submits
     // vastly outrun drains, so concurrency must be high enough that the
     // pool-wide queue never legitimately fills — otherwise `submit()`'s own
     // capacity check nacks messages with `Some(10)`, which is
     // indistinguishable from (and would mask) the race's cascading
     // `Some(10)` "batch+group failed" nack. `concurrency: 1000` gives a
-    // capacity of 20000, comfortably above `N`.
+    // capacity of 40000, comfortably above `N`.
     let config = PoolConfig {
         code: "TEST".to_string(),
         concurrency: 1000,
