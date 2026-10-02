@@ -476,6 +476,20 @@ async fn forward(mut f: Forwarder) {
     }
 }
 
+/// Delay async-nats sleeps before each connect attempt. `attempts` is
+/// 1-based: the library increments its counter before invoking the callback,
+/// so the very first connect passes 1 (async-nats' own default returns zero
+/// for `attempts <= 1`). The first attempt must not wait — otherwise every
+/// consumer's initial connect burns the full delay; only retries after a
+/// failure back off.
+fn reconnect_delay(attempts: usize) -> Duration {
+    if attempts <= 1 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(2)
+    }
+}
+
 impl NatsQueueConsumer {
     /// Create a new NATS JetStream consumer.
     ///
@@ -490,11 +504,11 @@ impl NatsQueueConsumer {
             "Connecting to NATS JetStream"
         );
 
-        // Connect to NATS with reconnect settings matching Java:
-        // unlimited reconnects, 2s reconnect wait, 10s connection timeout
+        // Connect to NATS: unlimited reconnects, 10s connection timeout, and
+        // `reconnect_delay` between attempts (none before the first).
         let client = async_nats::ConnectOptions::new()
             .connection_timeout(Duration::from_secs(10))
-            .reconnect_delay_callback(|_attempts| Duration::from_secs(2))
+            .reconnect_delay_callback(reconnect_delay)
             .connect(&config.servers)
             .await
             .map_err(|e| QueueError::nats("Failed to connect to NATS", e))?;
@@ -933,6 +947,14 @@ impl QueueConsumer for NatsQueueConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnect_delay_is_zero_on_first_attempt_then_two_seconds() {
+        assert_eq!(reconnect_delay(0), Duration::ZERO);
+        assert_eq!(reconnect_delay(1), Duration::ZERO);
+        assert_eq!(reconnect_delay(2), Duration::from_secs(2));
+        assert_eq!(reconnect_delay(50), Duration::from_secs(2));
+    }
 
     #[test]
     fn test_default_config() {

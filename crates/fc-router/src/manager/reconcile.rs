@@ -14,9 +14,13 @@ use crate::error::RouterError;
 use crate::pool::ProcessPool;
 use crate::Result;
 use futures::future;
+use futures::{stream, StreamExt};
 
 use super::QueueManager;
 use std::sync::atomic::Ordering;
+
+/// Upper bound on consumers being built at once during a config sync.
+const CONSUMER_CREATE_CONCURRENCY: usize = 8;
 
 /// Every field of a queue's config matters: a changed URI points at a
 /// different queue, and connections / visibility timeout are fixed when the
@@ -415,12 +419,30 @@ impl QueueManager {
             return Ok((0, queues_removed));
         };
 
-        for (name, queue_config) in &wanted {
-            if self.consumers.get(name).is_some() {
-                continue;
+        // Build the missing consumers concurrently (each build is a broker
+        // round-trip; 16 queues built one at a time used to take 16x the
+        // latency), then register them one at a time in `wanted` order so
+        // logs and behaviour stay deterministic. `buffered` yields results
+        // in input order.
+        // Owned inputs (not references into `wanted`) keep the stream's
+        // futures `Send` for the spawned reload task.
+        let missing: Vec<(String, fc_common::QueueConfig)> = wanted
+            .iter()
+            .filter(|(name, _)| self.consumers.get(name.as_str()).is_none())
+            .map(|(name, cfg)| (name.clone(), cfg.clone()))
+            .collect();
+        let mut built = stream::iter(missing.into_iter().map(|(name, queue_config)| {
+            let factory = factory.clone();
+            async move {
+                info!(queue_id = %name, "Creating queue consumer");
+                let result = factory.create_consumer(&queue_config).await;
+                (name, queue_config, result)
             }
-            info!(queue_id = %name, "Creating queue consumer");
-            match factory.create_consumer(queue_config).await {
+        }))
+        .buffered(CONSUMER_CREATE_CONCURRENCY);
+
+        while let Some((name, queue_config, result)) = built.next().await {
+            match result {
                 Ok(consumer) => {
                     let rc = self.new_running_consumer(
                         consumer,

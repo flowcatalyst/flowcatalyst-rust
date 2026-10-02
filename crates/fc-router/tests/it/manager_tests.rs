@@ -1052,6 +1052,85 @@ impl ConsumerFactory for SlowConsumerFactory {
     }
 }
 
+/// `ConsumerFactory` with a fixed build latency that keeps every consumer it
+/// builds, in build order, and counts builds per queue.
+struct LatencyConsumerFactory {
+    delay: Duration,
+    handles: parking_lot::Mutex<Vec<Arc<MockQueueConsumer>>>,
+}
+
+#[async_trait]
+impl ConsumerFactory for LatencyConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
+        time::sleep(self.delay).await;
+        let mock = Arc::new(MockQueueConsumer::new(&config.name));
+        self.handles.lock().push(mock.clone());
+        Ok(mock as Arc<dyn QueueConsumer>)
+    }
+}
+
+/// A config sync that needs many consumers builds them concurrently (bounded)
+/// rather than one broker round-trip after another: 16 queues at 100 ms each
+/// take ~200 ms (8 in flight), not ~1600 ms. Every queue ends up registered
+/// exactly once, each with its own poll task running.
+#[tokio::test]
+async fn reload_config_creates_missing_consumers_concurrently() {
+    let factory = Arc::new(LatencyConsumerFactory {
+        delay: Duration::from_millis(100),
+        handles: parking_lot::Mutex::new(Vec::new()),
+    });
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(Arc::new(MockMediator::new()))
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+
+    let queues: Vec<fc_common::QueueConfig> = (0..16)
+        .map(|i| fc_common::QueueConfig {
+            name: format!("q{i}"),
+            uri: format!("mock://q{i}"),
+            connections: 1,
+            visibility_timeout: 30,
+        })
+        .collect();
+
+    let start = Instant::now();
+    manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues,
+        })
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_millis(800),
+        "16 x 100ms builds should overlap, took {elapsed:?}"
+    );
+
+    let mut ids = manager.consumer_ids().await;
+    ids.sort();
+    let mut expected: Vec<String> = (0..16).map(|i| format!("q{i}")).collect();
+    expected.sort();
+    assert_eq!(ids, expected, "every queue registered exactly once");
+
+    let handles = factory.handles.lock().clone();
+    assert_eq!(handles.len(), 16, "one build per queue");
+    time::sleep(Duration::from_millis(100)).await;
+    for h in &handles {
+        assert!(
+            h.poll_count() >= 1,
+            "consumer {} has no running poll task",
+            h.identifier()
+        );
+    }
+    manager.shutdown().await;
+}
+
 /// `QueueManager::shutdown()` must not hang when there are no consumers and
 /// no pools — the `CancellationToken`-based signalling and the
 /// `wait_drained()` timeout logic should both resolve immediately on an
