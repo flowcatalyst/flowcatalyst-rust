@@ -1,15 +1,20 @@
 use async_trait::async_trait;
+use aws_sdk_sqs::types::DeleteMessageBatchRequestEntry;
 use aws_sdk_sqs::{types::Message as SqsMessage, types::QueueAttributeName, Client};
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
 use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use aws_sdk_sqs::config::timeout::TimeoutConfig;
 use aws_sdk_sqs::config::Builder;
+use aws_sdk_sqs::error::DisplayErrorContext;
 use aws_sdk_sqs::types::MessageSystemAttributeName;
 use fc_common::{Message, QueuedMessage};
+use std::result::Result as StdResult;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -25,6 +30,205 @@ fn visibility_for(delay_seconds: Option<u32>) -> i32 {
     delay_seconds.unwrap_or(0).min(SQS_MAX_VISIBILITY_SECONDS) as i32
 }
 
+/// SQS's hard limit on entries in one `DeleteMessageBatch`.
+const DELETE_BATCH_MAX: usize = 10;
+
+/// Long-lived drainer tasks per queue, so one slow round trip does not cap the
+/// queue at `DELETE_BATCH_MAX` deletes per round trip.
+const DELETE_DRAINERS: usize = 4;
+
+/// Per-call SQS API timeout (matches the receive path).
+const SQS_CALL_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// One entry's outcome from a batch call: `Err(reason)` if the broker reported
+/// it failed.
+type EntryOutcome = StdResult<(), String>;
+
+/// Sends one `DeleteMessageBatch`. Whole-call failure is the outer `Err`;
+/// otherwise one outcome per receipt, in order. A trait so the batcher is
+/// testable without AWS.
+#[async_trait]
+trait DeleteBatchSender: Send + Sync + 'static {
+    async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String>;
+}
+
+struct SqsDeleteSender {
+    client: Client,
+    queue_url: String,
+}
+
+#[async_trait]
+impl DeleteBatchSender for SqsDeleteSender {
+    async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String> {
+        let mut entries = Vec::with_capacity(receipts.len());
+        for (i, handle) in receipts.iter().enumerate() {
+            let entry = DeleteMessageBatchRequestEntry::builder()
+                .id(i.to_string())
+                .receipt_handle(handle)
+                .build()
+                .map_err(|e| e.to_string())?;
+            entries.push(entry);
+        }
+        let timeout_config = TimeoutConfig::builder()
+            .operation_timeout(SQS_CALL_TIMEOUT)
+            .build();
+        let out = self
+            .client
+            .delete_message_batch()
+            .queue_url(&self.queue_url)
+            .set_entries(Some(entries))
+            .customize()
+            .config_override(Builder::default().timeout_config(timeout_config))
+            .send()
+            .await
+            .map_err(|e| DisplayErrorContext(&e).to_string())?;
+
+        let mut outcomes: Vec<EntryOutcome> = vec![Ok(()); receipts.len()];
+        for f in out.failed() {
+            let reason = format!("{}: {}", f.code(), f.message().unwrap_or("delete failed"));
+            match f.id().parse::<usize>() {
+                Ok(i) if i < outcomes.len() => outcomes[i] = Err(reason),
+                _ => warn!(entry_id = %f.id(), "DeleteMessageBatch failure for unknown entry id"),
+            }
+        }
+        Ok(outcomes)
+    }
+}
+
+struct DeleteItem {
+    receipt_handle: String,
+    done: oneshot::Sender<EntryOutcome>,
+}
+
+/// Coalesces concurrent acks into `DeleteMessageBatch` calls. No fill window:
+/// a drainer sends whatever is already waiting (up to `DELETE_BATCH_MAX`).
+struct DeleteBatcher {
+    tx: mpsc::UnboundedSender<DeleteItem>,
+    closed: Arc<AtomicBool>,
+}
+
+impl DeleteBatcher {
+    /// Must be called inside a tokio runtime (spawns the drainers).
+    fn start(sender: Arc<dyn DeleteBatchSender>) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel::<DeleteItem>();
+        let rx = Arc::new(AsyncMutex::new(rx));
+        let closed = Arc::new(AtomicBool::new(false));
+        for _ in 0..DELETE_DRAINERS {
+            tokio::spawn(Self::drain(rx.clone(), sender.clone(), closed.clone()));
+        }
+        Self { tx, closed }
+    }
+
+    async fn drain(
+        rx: Arc<AsyncMutex<mpsc::UnboundedReceiver<DeleteItem>>>,
+        sender: Arc<dyn DeleteBatchSender>,
+        closed: Arc<AtomicBool>,
+    ) {
+        loop {
+            let mut batch: Vec<DeleteItem> = Vec::with_capacity(DELETE_BATCH_MAX);
+            {
+                let mut rx = rx.lock().await;
+                match rx.recv().await {
+                    Some(item) => batch.push(item),
+                    None => return,
+                }
+                while batch.len() < DELETE_BATCH_MAX {
+                    match rx.try_recv() {
+                        Ok(item) => batch.push(item),
+                        Err(_) => break,
+                    }
+                }
+            }
+            if closed.load(Ordering::SeqCst) {
+                // Shut down: dropping the items fails their waiters.
+                return;
+            }
+            let receipts: Vec<String> = batch.iter().map(|i| i.receipt_handle.clone()).collect();
+            match sender.send_batch(&receipts).await {
+                Ok(outcomes) => {
+                    for (i, item) in batch.into_iter().enumerate() {
+                        let outcome = outcomes
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| Err("no result for batch entry".to_string()));
+                        let _ = item.done.send(outcome);
+                    }
+                }
+                Err(e) => {
+                    for item in batch {
+                        let _ = item.done.send(Err(e.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete one receipt, resolving once the broker answered for it.
+    async fn delete(&self, receipt_handle: &str) -> EntryOutcome {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err("delete batcher is shut down".to_string());
+        }
+        let (done, wait) = oneshot::channel();
+        let item = DeleteItem {
+            receipt_handle: receipt_handle.to_string(),
+            done,
+        };
+        if self.tx.send(item).is_err() {
+            return Err("delete batcher is shut down".to_string());
+        }
+        match wait.await {
+            Ok(outcome) => outcome,
+            Err(_) => Err("delete batcher shut down before the delete completed".to_string()),
+        }
+    }
+
+    /// Stop accepting work; items still queued fail instead of hanging.
+    fn shutdown(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Drop for DeleteBatcher {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// Acked-message-id guard with an insertion-ordered FIFO so expiry pops from
+/// the front only (one clock read per prune) instead of scanning the map.
+#[derive(Default)]
+struct PendingDeletes {
+    map: HashMap<String, Instant>,
+    order: VecDeque<(String, Instant)>,
+}
+
+impl PendingDeletes {
+    fn insert(&mut self, id: String, at: Instant) {
+        self.map.insert(id.clone(), at);
+        self.order.push_back((id, at));
+    }
+
+    /// Drop entries whose age at `now` is >= `ttl`. A FIFO entry superseded by
+    /// a later re-insert of the same id is discarded without touching the map.
+    fn prune(&mut self, now: Instant, ttl: Duration) {
+        while let Some((_, ts)) = self.order.front() {
+            if now.saturating_duration_since(*ts) < ttl {
+                break;
+            }
+            let Some((id, ts)) = self.order.pop_front() else {
+                break;
+            };
+            if self.map.get(&id) == Some(&ts) {
+                self.map.remove(&id);
+            }
+        }
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.map.contains_key(id)
+    }
+}
+
 /// AWS SQS queue consumer
 pub struct SqsQueueConsumer {
     client: Client,
@@ -38,7 +242,9 @@ pub struct SqsQueueConsumer {
     /// redelivery, and a failed delete obviously needs the same guard. Every
     /// redelivery within the TTL is batch-deleted without re-routing to the
     /// mediator. Entries age out after `PENDING_DELETE_TTL`.
-    pending_delete_ids: Mutex<HashMap<String, Instant>>,
+    pending_delete_ids: Mutex<PendingDeletes>,
+    /// Coalesces acks into DeleteMessageBatch; started on first ack.
+    delete_batcher: OnceLock<DeleteBatcher>,
     /// Maps receipt handle -> SQS message ID so `ack` (which only receives the
     /// handle) can record the message ID in `pending_delete_ids`. Entries are
     /// pruned periodically to prevent unbounded growth.
@@ -78,7 +284,8 @@ impl SqsQueueConsumer {
             visibility_timeout_seconds,
             wait_time_seconds: Self::DEFAULT_WAIT_TIME_SECONDS,
             running: AtomicBool::new(true),
-            pending_delete_ids: Mutex::new(HashMap::new()),
+            pending_delete_ids: Mutex::new(PendingDeletes::default()),
+            delete_batcher: OnceLock::new(),
             receipt_to_message_id: Mutex::new(HashMap::new()),
             total_polled: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),
@@ -173,8 +380,8 @@ impl QueueConsumer for SqsQueueConsumer {
             if let Some(msg_id) = sqs_msg.message_id() {
                 let should_delete = {
                     let mut pending = self.pending_delete_ids.lock();
-                    pending.retain(|_, ts| ts.elapsed() < Self::PENDING_DELETE_TTL);
-                    pending.contains_key(msg_id)
+                    pending.prune(Instant::now(), Self::PENDING_DELETE_TTL);
+                    pending.contains(msg_id)
                 };
                 if should_delete {
                     info!(
@@ -262,16 +469,15 @@ impl QueueConsumer for SqsQueueConsumer {
                 .insert(id.clone(), Instant::now());
         }
 
-        let result = self
-            .client
-            .delete_message()
-            .queue_url(&self.queue_url)
-            .receipt_handle(receipt_handle)
-            .send()
-            .await;
+        let batcher = self.delete_batcher.get_or_init(|| {
+            DeleteBatcher::start(Arc::new(SqsDeleteSender {
+                client: self.client.clone(),
+                queue_url: self.queue_url.clone(),
+            }))
+        });
 
-        match result {
-            Ok(_) => {
+        match batcher.delete(receipt_handle).await {
+            Ok(()) => {
                 self.total_acked.fetch_add(1, Ordering::Relaxed);
                 debug!(
                     receipt_handle = %receipt_handle,
@@ -440,5 +646,208 @@ mod visibility_clamp_tests {
             43_200,
             "never wraps negative"
         );
+    }
+}
+
+#[cfg(test)]
+mod delete_batcher_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use tokio::task::yield_now;
+    use tokio::time::{sleep, timeout};
+
+    /// Records each batch's size; behaviour set per test.
+    struct FakeSender {
+        sizes: Mutex<Vec<usize>>,
+        calls: AtomicUsize,
+        /// Receipts that report a per-entry failure.
+        fail_receipts: Vec<String>,
+        whole_call_error: bool,
+        /// Hold each call this long so concurrent acks pile up.
+        delay: Duration,
+    }
+
+    impl FakeSender {
+        fn new() -> Self {
+            Self {
+                sizes: Mutex::new(Vec::new()),
+                calls: AtomicUsize::new(0),
+                fail_receipts: Vec::new(),
+                whole_call_error: false,
+                delay: Duration::ZERO,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl DeleteBatchSender for FakeSender {
+        async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.sizes.lock().push(receipts.len());
+            if !self.delay.is_zero() {
+                sleep(self.delay).await;
+            }
+            if self.whole_call_error {
+                return Err("boom".to_string());
+            }
+            Ok(receipts
+                .iter()
+                .map(|r| {
+                    if self.fail_receipts.contains(r) {
+                        Err("entry failed".to_string())
+                    } else {
+                        Ok(())
+                    }
+                })
+                .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn batches_never_exceed_ten_and_coalesce() {
+        let fake = Arc::new(FakeSender {
+            delay: Duration::from_millis(50),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start(fake.clone()));
+        let mut tasks = Vec::new();
+        for i in 0..200 {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), Ok(()));
+        }
+        let sizes = fake.sizes.lock().clone();
+        assert!(sizes.iter().all(|&n| (1..=10).contains(&n)), "{sizes:?}");
+        assert_eq!(sizes.iter().sum::<usize>(), 200);
+        assert!(
+            fake.calls.load(Ordering::SeqCst) < 200,
+            "acks must coalesce, got {} calls",
+            fake.calls.load(Ordering::SeqCst)
+        );
+    }
+
+    #[tokio::test]
+    async fn lone_ack_succeeds_promptly() {
+        let fake = Arc::new(FakeSender::new());
+        let batcher = DeleteBatcher::start(fake.clone());
+        let out = timeout(Duration::from_millis(500), batcher.delete("only"))
+            .await
+            .expect("a lone ack must not wait for a fill window");
+        assert_eq!(out, Ok(()));
+        assert_eq!(*fake.sizes.lock(), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn per_entry_failure_fails_only_that_ack() {
+        let fake = Arc::new(FakeSender {
+            fail_receipts: vec!["bad".to_string()],
+            delay: Duration::from_millis(30),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start(fake));
+        let mut tasks = Vec::new();
+        for name in ["a", "bad", "b", "c"] {
+            let b = batcher.clone();
+            tasks.push((name, tokio::spawn(async move { b.delete(name).await })));
+        }
+        for (name, t) in tasks {
+            let out = t.await.unwrap();
+            if name == "bad" {
+                assert!(out.is_err());
+            } else {
+                assert_eq!(out, Ok(()), "{name}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn whole_call_error_fails_every_entry() {
+        let fake = Arc::new(FakeSender {
+            whole_call_error: true,
+            delay: Duration::from_millis(30),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start(fake));
+        let mut tasks = Vec::new();
+        for i in 0..5 {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+        }
+        for t in tasks {
+            assert!(t.await.unwrap().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_fails_waiting_items_without_hanging() {
+        // Every drainer is stuck in a long call; further items sit queued.
+        let fake = Arc::new(FakeSender {
+            delay: Duration::from_millis(300),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start(fake));
+        let mut tasks = Vec::new();
+        for i in 0..(DELETE_DRAINERS * DELETE_BATCH_MAX + 20) {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+            yield_now().await;
+        }
+        sleep(Duration::from_millis(50)).await;
+        batcher.shutdown();
+        let all = timeout(Duration::from_secs(5), async {
+            let mut failed = 0;
+            for t in tasks {
+                if t.await.unwrap().is_err() {
+                    failed += 1;
+                }
+            }
+            failed
+        })
+        .await
+        .expect("waiting acks must not hang after shutdown");
+        assert!(all > 0, "queued items must fail on shutdown");
+        assert!(batcher.delete("late").await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod pending_deletes_tests {
+    use super::*;
+
+    const TTL: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn expired_removed_fresh_kept() {
+        let base = Instant::now();
+        let mut p = PendingDeletes::default();
+        p.insert("old".into(), base);
+        p.insert("fresh".into(), base + Duration::from_secs(8));
+        p.prune(base + Duration::from_secs(11), TTL);
+        assert!(!p.contains("old"));
+        assert!(p.contains("fresh"));
+        assert_eq!(p.order.len(), 1);
+    }
+
+    #[test]
+    fn reinserted_id_survives_its_old_fifo_entry() {
+        let base = Instant::now();
+        let mut p = PendingDeletes::default();
+        p.insert("x".into(), base);
+        p.insert("x".into(), base + Duration::from_secs(8));
+        // The first entry expires; the id was re-inserted so it must stay.
+        p.prune(base + Duration::from_secs(11), TTL);
+        assert!(p.contains("x"));
+        // Later the newer entry expires too.
+        p.prune(base + Duration::from_secs(19), TTL);
+        assert!(!p.contains("x"));
+        assert!(p.order.is_empty());
     }
 }
