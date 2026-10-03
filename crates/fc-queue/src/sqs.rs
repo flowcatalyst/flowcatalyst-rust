@@ -229,6 +229,54 @@ impl PendingDeletes {
     }
 }
 
+/// Receipt handle -> (SQS message id, polled-at) with an insertion-ordered
+/// FIFO so expiry pops from the front only (one clock read per prune) instead
+/// of scanning the whole map on every poll.
+#[derive(Default)]
+struct ReceiptMap {
+    map: HashMap<String, (String, Instant)>,
+    order: VecDeque<(String, Instant)>,
+}
+
+impl ReceiptMap {
+    /// Prune only once the map holds more than this many entries.
+    const PRUNE_THRESHOLD: usize = 1000;
+
+    fn insert(&mut self, handle: String, msg_id: String, at: Instant) {
+        self.map.insert(handle.clone(), (msg_id, at));
+        self.order.push_back((handle, at));
+    }
+
+    fn remove(&mut self, handle: &str) -> Option<String> {
+        self.map.remove(handle).map(|(id, _)| id)
+    }
+
+    /// If the map is over the threshold, drop entries whose age at `now`
+    /// is at least `ttl`. A FIFO entry superseded by a later re-insert of the same
+    /// handle (or already removed) is discarded without touching the map.
+    ///
+    /// Returns how many FIFO entries were examined (popped).
+    fn prune(&mut self, now: Instant, ttl: Duration) -> usize {
+        if self.map.len() <= Self::PRUNE_THRESHOLD {
+            return 0;
+        }
+        let mut examined = 0;
+        while let Some((_, ts)) = self.order.front() {
+            if now.saturating_duration_since(*ts) < ttl {
+                break;
+            }
+            let Some((handle, ts)) = self.order.pop_front() else {
+                break;
+            };
+            examined += 1;
+            if self.map.get(&handle).is_some_and(|(_, t)| *t == ts) {
+                self.map.remove(&handle);
+            }
+        }
+        examined
+    }
+}
+
 /// AWS SQS queue consumer
 pub struct SqsQueueConsumer {
     client: Client,
@@ -248,7 +296,7 @@ pub struct SqsQueueConsumer {
     /// Maps receipt handle -> SQS message ID so `ack` (which only receives the
     /// handle) can record the message ID in `pending_delete_ids`. Entries are
     /// pruned periodically to prevent unbounded growth.
-    receipt_to_message_id: Mutex<HashMap<String, (String, Instant)>>,
+    receipt_to_message_id: Mutex<ReceiptMap>,
     /// Total messages polled from queue
     total_polled: AtomicU64,
     /// Total messages successfully ACKed
@@ -286,7 +334,7 @@ impl SqsQueueConsumer {
             running: AtomicBool::new(true),
             pending_delete_ids: Mutex::new(PendingDeletes::default()),
             delete_batcher: OnceLock::new(),
-            receipt_to_message_id: Mutex::new(HashMap::new()),
+            receipt_to_message_id: Mutex::new(ReceiptMap::default()),
             total_polled: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),
             total_nacked: AtomicU64::new(0),
@@ -410,10 +458,9 @@ impl QueueConsumer for SqsQueueConsumer {
                     // message ID in pending_delete_ids (ack only has the handle).
                     if let Some(ref msg_id) = broker_message_id {
                         let mut map = self.receipt_to_message_id.lock();
-                        if map.len() > 1000 {
-                            map.retain(|_, (_, ts)| ts.elapsed() < Self::PENDING_DELETE_TTL);
-                        }
-                        map.insert(receipt_handle.clone(), (msg_id.clone(), Instant::now()));
+                        let now = Instant::now();
+                        map.prune(now, Self::PENDING_DELETE_TTL);
+                        map.insert(receipt_handle.clone(), msg_id.clone(), now);
                     }
                     messages.push(QueuedMessage {
                         message,
@@ -458,11 +505,7 @@ impl QueueConsumer for SqsQueueConsumer {
         // redelivery; a failed delete obviously needs the same guard.
         // Redeliveries within the TTL are batch-deleted in `poll` without
         // being re-routed to the mediator.
-        let msg_id = self
-            .receipt_to_message_id
-            .lock()
-            .remove(receipt_handle)
-            .map(|(id, _)| id);
+        let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle);
         if let Some(ref id) = msg_id {
             self.pending_delete_ids
                 .lock()
@@ -512,6 +555,9 @@ impl QueueConsumer for SqsQueueConsumer {
             .await
             .map_err(QueueError::sqs)?;
 
+        // The handle is spent: redelivery arrives under a fresh handle that
+        // `poll` records, and `ack` is never called for this one.
+        self.receipt_to_message_id.lock().remove(receipt_handle);
         self.total_nacked.fetch_add(1, Ordering::Relaxed);
         debug!(
             receipt_handle = %receipt_handle,
@@ -535,6 +581,9 @@ impl QueueConsumer for SqsQueueConsumer {
             .await
             .map_err(QueueError::sqs)?;
 
+        // The handle is spent: redelivery arrives under a fresh handle that
+        // `poll` records, and `ack` is never called for this one.
+        self.receipt_to_message_id.lock().remove(receipt_handle);
         self.total_deferred.fetch_add(1, Ordering::Relaxed);
         debug!(
             receipt_handle = %receipt_handle,
@@ -849,5 +898,80 @@ mod pending_deletes_tests {
         p.prune(base + Duration::from_secs(19), TTL);
         assert!(!p.contains("x"));
         assert!(p.order.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod receipt_map_tests {
+    use super::*;
+
+    const TTL: Duration = Duration::from_secs(10);
+
+    fn filled(n: usize, at: Instant) -> ReceiptMap {
+        let mut m = ReceiptMap::default();
+        for i in 0..n {
+            m.insert(format!("h{i}"), format!("m{i}"), at);
+        }
+        m
+    }
+
+    #[test]
+    fn expired_removed_fresh_kept() {
+        let base = Instant::now();
+        let mut m = filled(1001, base);
+        m.insert("fresh".into(), "mf".into(), base + Duration::from_secs(8));
+        m.prune(base + Duration::from_secs(11), TTL);
+        assert_eq!(m.map.len(), 1);
+        assert!(m.map.contains_key("fresh"));
+        assert_eq!(m.order.len(), 1);
+    }
+
+    #[test]
+    fn reinserted_receipt_survives_its_old_fifo_entry() {
+        let base = Instant::now();
+        let mut m = filled(1001, base);
+        m.insert("h0".into(), "m0b".into(), base + Duration::from_secs(8));
+        m.prune(base + Duration::from_secs(11), TTL);
+        assert_eq!(m.map.get("h0").map(|(id, _)| id.as_str()), Some("m0b"));
+        assert_eq!(m.map.len(), 1);
+    }
+
+    #[test]
+    fn removed_entry_leaves_harmless_fifo_entry() {
+        let base = Instant::now();
+        let mut m = filled(1002, base);
+        assert_eq!(m.remove("h5").as_deref(), Some("m5"));
+        assert_eq!(m.remove("h5"), None);
+        m.prune(base + Duration::from_secs(11), TTL);
+        assert!(m.map.is_empty());
+        assert!(m.order.is_empty());
+    }
+
+    #[test]
+    fn no_prune_at_or_under_threshold() {
+        let base = Instant::now();
+        let mut m = filled(ReceiptMap::PRUNE_THRESHOLD, base);
+        let examined = m.prune(base + Duration::from_secs(100), TTL);
+        assert_eq!(examined, 0);
+        assert_eq!(m.map.len(), ReceiptMap::PRUNE_THRESHOLD);
+    }
+
+    #[test]
+    fn prune_cost_tracks_expired_not_size() {
+        let base = Instant::now();
+        let mut m = filled(50_000, base + Duration::from_secs(5));
+        // Nothing expired: no entry examined beyond the front peek.
+        assert_eq!(m.prune(base + Duration::from_secs(6), TTL), 0);
+        assert_eq!(m.map.len(), 50_000);
+        // Three old entries ahead of the fresh ones.
+        let mut old = ReceiptMap::default();
+        for i in 0..3 {
+            old.insert(format!("o{i}"), format!("om{i}"), base);
+        }
+        old.order.append(&mut m.order);
+        old.map.extend(m.map.drain());
+        let examined = old.prune(base + Duration::from_secs(11), TTL);
+        assert_eq!(examined, 3);
+        assert_eq!(old.map.len(), 50_000);
     }
 }
