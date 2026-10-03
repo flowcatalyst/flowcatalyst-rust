@@ -8,8 +8,8 @@ use std::collections::{HashMap, VecDeque};
 use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
-use tokio::time::timeout;
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Notify};
+use tokio::time::{timeout, timeout_at, Instant as TokioInstant};
 use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
@@ -36,10 +36,6 @@ fn visibility_for(delay_seconds: Option<u32>) -> i32 {
 
 /// SQS's hard limit on entries in one `DeleteMessageBatch`.
 const DELETE_BATCH_MAX: usize = 10;
-
-/// Long-lived drainer tasks per queue, so one slow round trip does not cap the
-/// queue at `DELETE_BATCH_MAX` deletes per round trip.
-const DELETE_DRAINERS: usize = 4;
 
 /// Per-call SQS API timeout (matches the receive path).
 const SQS_CALL_TIMEOUT: Duration = Duration::from_secs(25);
@@ -104,81 +100,190 @@ struct DeleteItem {
     done: oneshot::Sender<EntryOutcome>,
 }
 
-/// Coalesces concurrent acks into `DeleteMessageBatch` calls. No fill window:
-/// a drainer sends whatever is already waiting (up to `DELETE_BATCH_MAX`).
+/// Max extra drainers started under load, beside the one primary.
+const DELETE_MAX_HELPERS: usize = 3;
+
+/// How long the primary drainer waits, from the first ack of a batch, for more
+/// acks before sending a short batch. A full batch is sent at once.
+const DELETE_LINGER: Duration = Duration::from_millis(1);
+
+/// State shared by the batcher and its drainer tasks.
+struct DeleteShared {
+    queue: Mutex<VecDeque<DeleteItem>>,
+    /// Wakes the primary drainer (`notify_one` stores a permit, so a push
+    /// between its check and its wait is never lost).
+    wake: Notify,
+    closed: AtomicBool,
+    helpers: AtomicUsize,
+    sender: Arc<dyn DeleteBatchSender>,
+    linger: Duration,
+}
+
+impl DeleteShared {
+    /// Pop up to `DELETE_BATCH_MAX - batch.len()` items into `batch`.
+    fn fill(&self, batch: &mut Vec<DeleteItem>) {
+        let mut q = self.queue.lock();
+        while batch.len() < DELETE_BATCH_MAX {
+            match q.pop_front() {
+                Some(item) => batch.push(item),
+                None => break,
+            }
+        }
+    }
+
+    /// Shut down: dropping queued items fails their waiters.
+    fn fail_queued(&self) {
+        let items: Vec<DeleteItem> = self.queue.lock().drain(..).collect();
+        drop(items);
+    }
+
+    async fn send(&self, batch: Vec<DeleteItem>) {
+        let receipts: Vec<String> = batch.iter().map(|i| i.receipt_handle.clone()).collect();
+        match self.sender.send_batch(&receipts).await {
+            Ok(outcomes) => {
+                for (i, item) in batch.into_iter().enumerate() {
+                    let outcome = outcomes
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| Err("no result for batch entry".to_string()));
+                    let _ = item.done.send(outcome);
+                }
+            }
+            Err(e) => {
+                for item in batch {
+                    let _ = item.done.send(Err(e.clone()));
+                }
+            }
+        }
+    }
+
+    /// The one long-lived drainer: waits for an ack, lingers up to `linger`
+    /// for more (or until the batch is full), then sends.
+    async fn primary(self: Arc<Self>) {
+        loop {
+            let mut batch: Vec<DeleteItem> = Vec::with_capacity(DELETE_BATCH_MAX);
+            // Wait for the first item.
+            loop {
+                if self.closed.load(Ordering::SeqCst) {
+                    self.fail_queued();
+                    return;
+                }
+                self.fill(&mut batch);
+                if !batch.is_empty() {
+                    break;
+                }
+                self.wake.notified().await;
+            }
+            // Linger for more, measured from the first item.
+            let deadline = TokioInstant::now() + self.linger;
+            while batch.len() < DELETE_BATCH_MAX {
+                if timeout_at(deadline, self.wake.notified()).await.is_err() {
+                    self.fill(&mut batch);
+                    break;
+                }
+                self.fill(&mut batch);
+            }
+            if self.closed.load(Ordering::SeqCst) {
+                drop(batch);
+                self.fail_queued();
+                return;
+            }
+            self.send(batch).await;
+        }
+    }
+
+    /// A load-only drainer: takes what is already waiting, no linger, and
+    /// exits when the queue is empty.
+    async fn helper(self: Arc<Self>) {
+        let _guard = HelperGuard(&self.helpers);
+        loop {
+            if self.closed.load(Ordering::SeqCst) {
+                self.fail_queued();
+                return;
+            }
+            let mut batch: Vec<DeleteItem> = Vec::with_capacity(DELETE_BATCH_MAX);
+            self.fill(&mut batch);
+            if batch.is_empty() {
+                return;
+            }
+            self.send(batch).await;
+        }
+    }
+}
+
+/// Releases a helper slot however the helper task ends.
+struct HelperGuard<'a>(&'a AtomicUsize);
+
+impl Drop for HelperGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Coalesces concurrent acks into `DeleteMessageBatch` calls. One primary
+/// drainer per queue lingers briefly to fill batches; under load (a full batch
+/// already waiting) up to `DELETE_MAX_HELPERS` helpers drain in parallel.
 struct DeleteBatcher {
-    tx: mpsc::UnboundedSender<DeleteItem>,
-    closed: Arc<AtomicBool>,
+    shared: Arc<DeleteShared>,
 }
 
 impl DeleteBatcher {
-    /// Must be called inside a tokio runtime (spawns the drainers).
+    /// Must be called inside a tokio runtime (spawns the primary drainer).
     fn start(sender: Arc<dyn DeleteBatchSender>) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel::<DeleteItem>();
-        let rx = Arc::new(AsyncMutex::new(rx));
-        let closed = Arc::new(AtomicBool::new(false));
-        for _ in 0..DELETE_DRAINERS {
-            tokio::spawn(Self::drain(rx.clone(), sender.clone(), closed.clone()));
-        }
-        Self { tx, closed }
+        Self::start_with_linger(sender, DELETE_LINGER)
     }
 
-    async fn drain(
-        rx: Arc<AsyncMutex<mpsc::UnboundedReceiver<DeleteItem>>>,
-        sender: Arc<dyn DeleteBatchSender>,
-        closed: Arc<AtomicBool>,
-    ) {
-        loop {
-            let mut batch: Vec<DeleteItem> = Vec::with_capacity(DELETE_BATCH_MAX);
-            {
-                let mut rx = rx.lock().await;
-                match rx.recv().await {
-                    Some(item) => batch.push(item),
-                    None => return,
-                }
-                while batch.len() < DELETE_BATCH_MAX {
-                    match rx.try_recv() {
-                        Ok(item) => batch.push(item),
-                        Err(_) => break,
-                    }
-                }
-            }
-            if closed.load(Ordering::SeqCst) {
-                // Shut down: dropping the items fails their waiters.
-                return;
-            }
-            let receipts: Vec<String> = batch.iter().map(|i| i.receipt_handle.clone()).collect();
-            match sender.send_batch(&receipts).await {
-                Ok(outcomes) => {
-                    for (i, item) in batch.into_iter().enumerate() {
-                        let outcome = outcomes
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| Err("no result for batch entry".to_string()));
-                        let _ = item.done.send(outcome);
-                    }
-                }
-                Err(e) => {
-                    for item in batch {
-                        let _ = item.done.send(Err(e.clone()));
-                    }
-                }
-            }
+    fn start_with_linger(sender: Arc<dyn DeleteBatchSender>, linger: Duration) -> Self {
+        let shared = Arc::new(DeleteShared {
+            queue: Mutex::new(VecDeque::new()),
+            wake: Notify::new(),
+            closed: AtomicBool::new(false),
+            helpers: AtomicUsize::new(0),
+            sender,
+            linger,
+        });
+        tokio::spawn(shared.clone().primary());
+        Self { shared }
+    }
+
+    /// Start a helper if the queue holds a full batch and a slot is free.
+    fn maybe_spawn_helper(&self, queued: usize) {
+        if queued < DELETE_BATCH_MAX {
+            return;
+        }
+        let claimed = self
+            .shared
+            .helpers
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < DELETE_MAX_HELPERS).then_some(n + 1)
+            })
+            .is_ok();
+        if claimed {
+            tokio::spawn(self.shared.clone().helper());
         }
     }
 
     /// Delete one receipt, resolving once the broker answered for it.
     async fn delete(&self, receipt_handle: &str) -> EntryOutcome {
-        if self.closed.load(Ordering::SeqCst) {
-            return Err("delete batcher is shut down".to_string());
+        const SHUT: &str = "delete batcher is shut down";
+        if self.shared.closed.load(Ordering::SeqCst) {
+            return Err(SHUT.to_string());
         }
         let (done, wait) = oneshot::channel();
-        let item = DeleteItem {
-            receipt_handle: receipt_handle.to_string(),
-            done,
+        let queued = {
+            let mut q = self.shared.queue.lock();
+            q.push_back(DeleteItem {
+                receipt_handle: receipt_handle.to_string(),
+                done,
+            });
+            q.len()
         };
-        if self.tx.send(item).is_err() {
-            return Err("delete batcher is shut down".to_string());
+        self.shared.wake.notify_one();
+        if self.shared.closed.load(Ordering::SeqCst) {
+            // Raced with shutdown after the drainers may have emptied the queue.
+            self.shared.fail_queued();
+        } else {
+            self.maybe_spawn_helper(queued);
         }
         match wait.await {
             Ok(outcome) => outcome,
@@ -188,7 +293,8 @@ impl DeleteBatcher {
 
     /// Stop accepting work; items still queued fail instead of hanging.
     fn shutdown(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        self.shared.closed.store(true, Ordering::SeqCst);
+        self.shared.wake.notify_one();
     }
 }
 
@@ -993,11 +1099,15 @@ mod delete_batcher_tests {
         whole_call_error: bool,
         /// Hold each call this long so concurrent acks pile up.
         delay: Duration,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
     }
 
     impl FakeSender {
         fn new() -> Self {
             Self {
+                in_flight: AtomicUsize::new(0),
+                max_in_flight: AtomicUsize::new(0),
                 sizes: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
                 fail_receipts: Vec::new(),
@@ -1012,9 +1122,12 @@ mod delete_batcher_tests {
         async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.sizes.lock().push(receipts.len());
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(now, Ordering::SeqCst);
             if !self.delay.is_zero() {
                 sleep(self.delay).await;
             }
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
             if self.whole_call_error {
                 return Err("boom".to_string());
             }
@@ -1121,7 +1234,7 @@ mod delete_batcher_tests {
         });
         let batcher = Arc::new(DeleteBatcher::start(fake));
         let mut tasks = Vec::new();
-        for i in 0..(DELETE_DRAINERS * DELETE_BATCH_MAX + 20) {
+        for i in 0..((DELETE_MAX_HELPERS + 1) * DELETE_BATCH_MAX + 20) {
             let b = batcher.clone();
             tasks.push(tokio::spawn(
                 async move { b.delete(&format!("r{i}")).await },
@@ -1143,6 +1256,107 @@ mod delete_batcher_tests {
         .expect("waiting acks must not hang after shutdown");
         assert!(all > 0, "queued items must fail on shutdown");
         assert!(batcher.delete("late").await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn steady_moderate_load_fills_batches() {
+        // tokio timers have 1ms resolution, so this is the 1ms-linger /
+        // 100us-spacing scenario scaled 10x: one ack per 1ms, linger 10ms
+        // (same acks-per-linger ratio).
+        let fake = Arc::new(FakeSender {
+            delay: Duration::from_millis(2),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start_with_linger(
+            fake.clone(),
+            Duration::from_millis(10),
+        ));
+        let mut tasks = Vec::new();
+        for i in 0..2000 {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+            sleep(Duration::from_millis(1)).await;
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), Ok(()));
+        }
+        let sizes = fake.sizes.lock().clone();
+        assert_eq!(sizes.iter().sum::<usize>(), 2000);
+        assert!(sizes.iter().all(|&n| (1..=10).contains(&n)), "{sizes:?}");
+        let avg = 2000.0 / sizes.len() as f64;
+        assert!(avg >= 8.0, "average batch {avg} over {} calls", sizes.len());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lone_ack_completes_after_about_one_linger() {
+        let linger = Duration::from_millis(50);
+        let fake = Arc::new(FakeSender::new());
+        let batcher = DeleteBatcher::start_with_linger(fake.clone(), linger);
+        let start = TokioInstant::now();
+        assert_eq!(batcher.delete("only").await, Ok(()));
+        let elapsed = start.elapsed();
+        assert!(elapsed >= linger, "sent before the linger: {elapsed:?}");
+        assert!(elapsed < linger * 2, "stuck past the linger: {elapsed:?}");
+        assert_eq!(*fake.sizes.lock(), vec![1]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn full_batch_is_sent_without_lingering() {
+        let linger = Duration::from_secs(10);
+        let fake = Arc::new(FakeSender::new());
+        let batcher = Arc::new(DeleteBatcher::start_with_linger(fake.clone(), linger));
+        let start = TokioInstant::now();
+        let mut tasks = Vec::new();
+        for i in 0..DELETE_BATCH_MAX {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), Ok(()));
+        }
+        assert!(start.elapsed() < linger, "a full batch must not linger");
+        assert_eq!(*fake.sizes.lock(), vec![DELETE_BATCH_MAX]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn burst_engages_helpers_and_they_exit_when_idle() {
+        let fake = Arc::new(FakeSender {
+            delay: Duration::from_millis(20),
+            ..FakeSender::new()
+        });
+        let batcher = Arc::new(DeleteBatcher::start_with_linger(
+            fake.clone(),
+            Duration::from_millis(1),
+        ));
+        let mut tasks = Vec::new();
+        for i in 0..500 {
+            let b = batcher.clone();
+            tasks.push(tokio::spawn(
+                async move { b.delete(&format!("r{i}")).await },
+            ));
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap(), Ok(()));
+        }
+        let sizes = fake.sizes.lock().clone();
+        assert!(sizes.iter().all(|&n| (1..=10).contains(&n)), "{sizes:?}");
+        assert_eq!(sizes.iter().sum::<usize>(), 500);
+        let peak = fake.max_in_flight.load(Ordering::SeqCst);
+        assert!(peak >= 2, "helpers must run concurrent calls, peak {peak}");
+        assert!(
+            peak <= DELETE_MAX_HELPERS + 1,
+            "helper cap exceeded, peak {peak}"
+        );
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            batcher.shared.helpers.load(Ordering::SeqCst),
+            0,
+            "helpers must exit when idle"
+        );
     }
 }
 
