@@ -104,6 +104,14 @@ pub trait QueueConsumer: Send + Sync {
     /// Acknowledge a message (remove from queue)
     async fn ack(&self, receipt_handle: &str) -> Result<()>;
 
+    /// Acknowledge a message whose ack is urgent: the router is waiting on it
+    /// before it delivers the next message of an ordered group. A backend that
+    /// batches or delays acks should send promptly; the default is plain
+    /// [`ack`](Self::ack), which is right for every backend that does not.
+    async fn ack_urgent(&self, receipt_handle: &str) -> Result<()> {
+        self.ack(receipt_handle).await
+    }
+
     /// Negative acknowledge a message (make visible again after delay)
     /// This is counted as a failure in metrics.
     async fn nack(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()>;

@@ -121,6 +121,19 @@ pub struct Message {
     pub dispatch_mode_specified: bool,
 }
 
+impl Message {
+    /// Whether the router delivers this message strictly after the previous
+    /// one of its group has been acked: it has a non-empty group id and a
+    /// dispatch mode that requires ordering. Its ack is on the group's
+    /// critical path.
+    pub fn is_ordered(&self) -> bool {
+        self.message_group_id
+            .as_deref()
+            .is_some_and(|g| !g.is_empty())
+            && self.dispatch_mode.requires_ordering()
+    }
+}
+
 impl<'de> Deserialize<'de> for Message {
     fn deserialize<D>(deserializer: D) -> result::Result<Self, D::Error>
     where

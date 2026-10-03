@@ -138,6 +138,10 @@ struct QueueMessageCallback {
     queue_identifier: String,
     /// This admission's tracker generation — see the type's doc.
     generation: u64,
+    /// The message is ordered within its group, so the router waits on this
+    /// ack before delivering the group's next message: ack it urgently (a
+    /// batching broker must not linger for it).
+    ordered: bool,
     /// The entry as it was admitted, with this copy's own receipt handle:
     /// what an ack falls back to when the entry is gone, and what
     /// `ensure_tracked` restores.
@@ -286,7 +290,15 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
 
-        let acked = match time::timeout(BROKER_OP_TIMEOUT, self.consumer().ack(&handle)).await {
+        let consumer = self.consumer();
+        let ack = async {
+            if self.ordered {
+                consumer.ack_urgent(&handle).await
+            } else {
+                consumer.ack(&handle).await
+            }
+        };
+        let acked = match time::timeout(BROKER_OP_TIMEOUT, ack).await {
             Ok(r) => r.map_err(|e| e.to_string()),
             Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
         };
@@ -904,6 +916,7 @@ impl QueueManager {
                         app_message_id: app_message_id.clone(),
                         queue_identifier,
                         generation,
+                        ordered: msg.message.is_ordered(),
                         admitted: in_flight,
                         origin: consumer.clone(),
                         origin_generation,
@@ -1226,6 +1239,7 @@ mod callback_drop_tests {
     #[derive(Default)]
     struct RecordingConsumer {
         acks: AtomicU32,
+        urgent_acks: AtomicU32,
         nacks: AtomicU32,
     }
 
@@ -1239,6 +1253,10 @@ mod callback_drop_tests {
         }
         async fn ack(&self, _: &str) -> QueueResult<()> {
             self.acks.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        }
+        async fn ack_urgent(&self, _: &str) -> QueueResult<()> {
+            self.urgent_acks.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(())
         }
         async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
@@ -1299,6 +1317,7 @@ mod callback_drop_tests {
             app_message_id,
             queue_identifier: "queue-id".to_string(),
             generation: 1,
+            ordered: false,
             admitted: in_flight,
             origin: consumer as Arc<dyn QueueConsumer>,
             origin_generation: 0,
@@ -1358,6 +1377,22 @@ mod callback_drop_tests {
             0,
             "no fallback nack after explicit ack"
         );
+    }
+
+    #[tokio::test]
+    async fn ordered_message_acks_urgently_and_unordered_does_not() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (mut cb, _, _) = build_callback(consumer.clone());
+        cb.ordered = true;
+        cb.ack().await;
+        assert_eq!(consumer.urgent_acks.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(consumer.acks.load(AtomicOrdering::SeqCst), 0);
+
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, _, _) = build_callback(consumer.clone());
+        cb.ack().await;
+        assert_eq!(consumer.urgent_acks.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(consumer.acks.load(AtomicOrdering::SeqCst), 1);
     }
 
     /// A broker whose ack and nack always fail.
