@@ -5,6 +5,7 @@ use aws_sdk_sqs::types::{
 use aws_sdk_sqs::{types::Message as SqsMessage, types::QueueAttributeName, Client};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
+use std::mem;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
@@ -446,15 +447,17 @@ impl VisibilityShared {
 
 /// Acked-message-id guard with an insertion-ordered FIFO so expiry pops from
 /// the front only (one clock read per prune) instead of scanning the map.
+/// The id is one `Arc<str>` allocation shared by the map key and the FIFO entry.
 #[derive(Default)]
 struct PendingDeletes {
-    map: HashMap<String, Instant>,
-    order: VecDeque<(String, Instant)>,
+    map: HashMap<Arc<str>, Instant>,
+    order: VecDeque<(Arc<str>, Instant)>,
 }
 
 impl PendingDeletes {
-    fn insert(&mut self, id: String, at: Instant) {
-        self.map.insert(id.clone(), at);
+    fn insert(&mut self, id: &str, at: Instant) {
+        let id: Arc<str> = Arc::from(id);
+        self.map.insert(Arc::clone(&id), at);
         self.order.push_back((id, at));
     }
 
@@ -482,18 +485,25 @@ impl PendingDeletes {
 /// Receipt handle -> (SQS message id, polled-at) with an insertion-ordered
 /// FIFO so expiry pops from the front only (one clock read per prune) instead
 /// of scanning the whole map on every poll.
+///
+/// Acks, nacks and defers remove handles from the map but cannot cheaply
+/// remove them from the FIFO, so `prune` also discards stale entries (map
+/// entry gone or re-inserted with a newer timestamp) from the front regardless
+/// of age, and compacts the FIFO whenever it outgrows the live map by more
+/// than 2x. The FIFO length is therefore bounded by O(live receipts).
 #[derive(Default)]
 struct ReceiptMap {
-    map: HashMap<String, (String, Instant)>,
-    order: VecDeque<(String, Instant)>,
+    map: HashMap<Arc<str>, (String, Instant)>,
+    order: VecDeque<(Arc<str>, Instant)>,
 }
 
 impl ReceiptMap {
-    /// Prune only once the map holds more than this many entries.
-    const PRUNE_THRESHOLD: usize = 1000;
+    /// Slack allowed in the FIFO beyond 2x the live map before compacting.
+    const COMPACT_SLACK: usize = 64;
 
-    fn insert(&mut self, handle: String, msg_id: String, at: Instant) {
-        self.map.insert(handle.clone(), (msg_id, at));
+    fn insert(&mut self, handle: &str, msg_id: String, at: Instant) {
+        let handle: Arc<str> = Arc::from(handle);
+        self.map.insert(Arc::clone(&handle), (msg_id, at));
         self.order.push_back((handle, at));
     }
 
@@ -501,27 +511,38 @@ impl ReceiptMap {
         self.map.remove(handle).map(|(id, _)| id)
     }
 
-    /// If the map is over the threshold, drop entries whose age at `now`
-    /// is at least `ttl`. A FIFO entry superseded by a later re-insert of the same
-    /// handle (or already removed) is discarded without touching the map.
+    fn is_live(&self, handle: &str, ts: Instant) -> bool {
+        self.map.get(handle).is_some_and(|(_, t)| *t == ts)
+    }
+
+    /// Pop stale or expired entries from the FIFO front. A stale entry (already
+    /// removed, or superseded by a re-insert) is popped immediately; a live
+    /// entry is popped, and its map entry removed, only once age >= `ttl`.
+    /// If stale entries are buried behind a live front entry, compact the FIFO
+    /// when it exceeds 2x the live map (amortised O(1) per insert).
     ///
-    /// Returns how many FIFO entries were examined (popped).
+    /// Returns how many FIFO entries were examined (popped or discarded).
     fn prune(&mut self, now: Instant, ttl: Duration) -> usize {
-        if self.map.len() <= Self::PRUNE_THRESHOLD {
-            return 0;
-        }
         let mut examined = 0;
-        while let Some((_, ts)) = self.order.front() {
-            if now.saturating_duration_since(*ts) < ttl {
+        while let Some((handle, ts)) = self.order.front() {
+            let live = self.is_live(handle, *ts);
+            if live && now.saturating_duration_since(*ts) < ttl {
                 break;
             }
-            let Some((handle, ts)) = self.order.pop_front() else {
+            let Some((handle, _)) = self.order.pop_front() else {
                 break;
             };
             examined += 1;
-            if self.map.get(&handle).is_some_and(|(_, t)| *t == ts) {
+            if live {
                 self.map.remove(&handle);
             }
+        }
+        if self.order.len() > 2 * self.map.len() + Self::COMPACT_SLACK {
+            let before = self.order.len();
+            let mut order = mem::take(&mut self.order);
+            order.retain(|(h, ts)| self.is_live(h, *ts));
+            self.order = order;
+            examined += before - self.order.len();
         }
         examined
     }
@@ -744,7 +765,7 @@ impl QueueConsumer for SqsQueueConsumer {
                         let mut map = self.receipt_to_message_id.lock();
                         let now = Instant::now();
                         map.prune(now, Self::PENDING_DELETE_TTL);
-                        map.insert(receipt_handle.clone(), msg_id.clone(), now);
+                        map.insert(&receipt_handle, msg_id.clone(), now);
                     }
                     messages.push(QueuedMessage {
                         message,
@@ -791,9 +812,7 @@ impl QueueConsumer for SqsQueueConsumer {
         // being re-routed to the mediator.
         let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle);
         if let Some(ref id) = msg_id {
-            self.pending_delete_ids
-                .lock()
-                .insert(id.clone(), Instant::now());
+            self.pending_delete_ids.lock().insert(id, Instant::now());
         }
 
         let batcher = self.delete_batcher.get_or_init(|| {
@@ -1369,8 +1388,8 @@ mod pending_deletes_tests {
     fn expired_removed_fresh_kept() {
         let base = Instant::now();
         let mut p = PendingDeletes::default();
-        p.insert("old".into(), base);
-        p.insert("fresh".into(), base + Duration::from_secs(8));
+        p.insert("old", base);
+        p.insert("fresh", base + Duration::from_secs(8));
         p.prune(base + Duration::from_secs(11), TTL);
         assert!(!p.contains("old"));
         assert!(p.contains("fresh"));
@@ -1381,8 +1400,8 @@ mod pending_deletes_tests {
     fn reinserted_id_survives_its_old_fifo_entry() {
         let base = Instant::now();
         let mut p = PendingDeletes::default();
-        p.insert("x".into(), base);
-        p.insert("x".into(), base + Duration::from_secs(8));
+        p.insert("x", base);
+        p.insert("x", base + Duration::from_secs(8));
         // The first entry expires; the id was re-inserted so it must stay.
         p.prune(base + Duration::from_secs(11), TTL);
         assert!(p.contains("x"));
@@ -1402,7 +1421,7 @@ mod receipt_map_tests {
     fn filled(n: usize, at: Instant) -> ReceiptMap {
         let mut m = ReceiptMap::default();
         for i in 0..n {
-            m.insert(format!("h{i}"), format!("m{i}"), at);
+            m.insert(&format!("h{i}"), format!("m{i}"), at);
         }
         m
     }
@@ -1411,7 +1430,7 @@ mod receipt_map_tests {
     fn expired_removed_fresh_kept() {
         let base = Instant::now();
         let mut m = filled(1001, base);
-        m.insert("fresh".into(), "mf".into(), base + Duration::from_secs(8));
+        m.insert("fresh", "mf".into(), base + Duration::from_secs(8));
         m.prune(base + Duration::from_secs(11), TTL);
         assert_eq!(m.map.len(), 1);
         assert!(m.map.contains_key("fresh"));
@@ -1422,7 +1441,7 @@ mod receipt_map_tests {
     fn reinserted_receipt_survives_its_old_fifo_entry() {
         let base = Instant::now();
         let mut m = filled(1001, base);
-        m.insert("h0".into(), "m0b".into(), base + Duration::from_secs(8));
+        m.insert("h0", "m0b".into(), base + Duration::from_secs(8));
         m.prune(base + Duration::from_secs(11), TTL);
         assert_eq!(m.map.get("h0").map(|(id, _)| id.as_str()), Some("m0b"));
         assert_eq!(m.map.len(), 1);
@@ -1440,12 +1459,68 @@ mod receipt_map_tests {
     }
 
     #[test]
-    fn no_prune_at_or_under_threshold() {
+    fn small_map_still_prunes_expired() {
         let base = Instant::now();
-        let mut m = filled(ReceiptMap::PRUNE_THRESHOLD, base);
+        let mut m = filled(5, base);
         let examined = m.prune(base + Duration::from_secs(100), TTL);
-        assert_eq!(examined, 0);
-        assert_eq!(m.map.len(), ReceiptMap::PRUNE_THRESHOLD);
+        assert_eq!(examined, 5);
+        assert!(m.map.is_empty());
+        assert!(m.order.is_empty());
+    }
+
+    #[test]
+    fn insert_then_ack_all_drains_fifo() {
+        let base = Instant::now();
+        let n = 10_000;
+        let mut m = filled(n, base);
+        for i in 0..n {
+            assert!(m.remove(&format!("h{i}")).is_some());
+        }
+        // Nothing is expired; the stale entries must go regardless of age.
+        let examined = m.prune(base + Duration::from_secs(1), TTL);
+        assert_eq!(examined, n);
+        assert!(m.map.is_empty());
+        assert_eq!(m.order.len(), 0);
+    }
+
+    #[test]
+    fn fifo_stays_bounded_behind_a_live_front_entry() {
+        let base = Instant::now();
+        let mut m = ReceiptMap::default();
+        m.insert("stuck", "ms".into(), base);
+        for i in 0..10_000 {
+            let h = format!("h{i}");
+            m.insert(&h, format!("m{i}"), base + Duration::from_secs(1));
+            m.remove(&h);
+            m.prune(base + Duration::from_secs(2), TTL);
+            assert!(m.order.len() <= 2 * m.map.len() + ReceiptMap::COMPACT_SLACK + 1);
+        }
+        assert!(m.map.contains_key("stuck"));
+    }
+
+    #[test]
+    fn reinserted_after_remove_survives_stale_entry() {
+        let base = Instant::now();
+        let mut m = ReceiptMap::default();
+        m.insert("h", "m1".into(), base);
+        m.remove("h");
+        m.insert("h", "m2".into(), base + Duration::from_secs(1));
+        m.prune(base + Duration::from_secs(2), TTL);
+        assert_eq!(m.map.get("h").map(|(id, _)| id.as_str()), Some("m2"));
+        assert_eq!(m.order.len(), 1);
+    }
+
+    #[test]
+    fn prune_examined_counts_only_popped_entries() {
+        let base = Instant::now();
+        let mut m = filled(100, base + Duration::from_secs(5));
+        // Live, unexpired: zero examined however large the map is.
+        assert_eq!(m.prune(base + Duration::from_secs(6), TTL), 0);
+        m.remove("h0");
+        m.remove("h1");
+        assert_eq!(m.prune(base + Duration::from_secs(6), TTL), 2);
+        assert_eq!(m.map.len(), 98);
+        assert_eq!(m.order.len(), 98);
     }
 
     #[test]
@@ -1458,7 +1533,7 @@ mod receipt_map_tests {
         // Three old entries ahead of the fresh ones.
         let mut old = ReceiptMap::default();
         for i in 0..3 {
-            old.insert(format!("o{i}"), format!("om{i}"), base);
+            old.insert(&format!("o{i}"), format!("om{i}"), base);
         }
         old.order.append(&mut m.order);
         old.map.extend(m.map.drain());
