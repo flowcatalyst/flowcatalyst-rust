@@ -1,11 +1,10 @@
 //! Hands claimed dispatch jobs to the queues the router consumes.
 //!
 //! A port of Go's `DispatchPublisher` contract
-//! (`internal/platform/scheduler/publisher.go`): the poller calls
-//! [`DispatchPublisher::publish`] once per claim, while the claim transaction
-//! is still open (the rows locked, nothing yet marked QUEUED), and marks
-//! QUEUED exactly the ids it does not report unpublished; the rest stay
-//! PENDING. A publisher must never report an id the broker accepted as
+//! (`internal/platform/scheduler/publisher.go`): a dispatcher lane calls
+//! [`DispatchPublisher::publish`] once per batch (nothing yet marked QUEUED,
+//! no transaction open) and marks QUEUED exactly the ids it does not report
+//! unpublished; the rest stay PENDING. A publisher must never report an id the broker accepted as
 //! unpublished (it would be published again next poll), nor the reverse (the
 //! job would be marked QUEUED with no queue message until stale recovery).
 //!

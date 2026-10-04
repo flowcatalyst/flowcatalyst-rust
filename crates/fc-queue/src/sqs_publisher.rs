@@ -2,8 +2,8 @@
 //!
 //! A port of Go's `SQSDispatchPublisher`
 //! (`flowcatalyst-go/internal/platform/scheduler/publisher_sqs.go`). The
-//! scheduler claims up to a batch of jobs per tick, resolves each one's
-//! destination queue, and hands the whole claim-ordered batch here. This
+//! scheduler's dispatcher lanes resolve each job's destination queue and hand
+//! a claim-ordered batch here (a group is always in one lane). This
 //! publisher knows nothing about jobs beyond their id, their destination and
 //! their FIFO group: the body is rendered by the caller.
 //!
@@ -61,8 +61,8 @@ use tracing::{info, warn};
 pub const MAX_SQS_BATCH_SIZE: usize = 10;
 
 /// The most one dispatch publish call (including the SDK's own retries) may
-/// take before it is abandoned. A hung broker call must not hold the
-/// scheduler's claim transaction, and its row locks, open indefinitely.
+/// take before it is abandoned. A hung broker call must not hold a
+/// dispatcher lane, and the buffer permits its jobs hold, indefinitely.
 pub const SQS_PUBLISH_OPERATION_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// The most one HTTP attempt of a publish call may take; a slow attempt is
