@@ -14,9 +14,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use aws_sdk_sqs::config::timeout::TimeoutConfig;
-use aws_sdk_sqs::config::Builder;
 use aws_sdk_sqs::error::DisplayErrorContext;
-use aws_sdk_sqs::types::MessageSystemAttributeName;
+use aws_sdk_sqs::operation::receive_message::builders::ReceiveMessageFluentBuilder;
 use fc_common::{Message, QueuedMessage};
 use std::result::Result as StdResult;
 use std::time::Duration;
@@ -49,7 +48,7 @@ type EntryOutcome = StdResult<(), String>;
 /// testable without AWS.
 #[async_trait]
 trait DeleteBatchSender: Send + Sync + 'static {
-    async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String>;
+    async fn send_batch(&self, receipts: Vec<String>) -> StdResult<Vec<EntryOutcome>, String>;
 }
 
 struct SqsDeleteSender {
@@ -59,9 +58,10 @@ struct SqsDeleteSender {
 
 #[async_trait]
 impl DeleteBatchSender for SqsDeleteSender {
-    async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String> {
-        let mut entries = Vec::with_capacity(receipts.len());
-        for (i, handle) in receipts.iter().enumerate() {
+    async fn send_batch(&self, receipts: Vec<String>) -> StdResult<Vec<EntryOutcome>, String> {
+        let count = receipts.len();
+        let mut entries = Vec::with_capacity(count);
+        for (i, handle) in receipts.into_iter().enumerate() {
             let entry = DeleteMessageBatchRequestEntry::builder()
                 .id(i.to_string())
                 .receipt_handle(handle)
@@ -69,21 +69,16 @@ impl DeleteBatchSender for SqsDeleteSender {
                 .map_err(|e| e.to_string())?;
             entries.push(entry);
         }
-        let timeout_config = TimeoutConfig::builder()
-            .operation_timeout(SQS_CALL_TIMEOUT)
-            .build();
         let out = self
             .client
             .delete_message_batch()
             .queue_url(&self.queue_url)
             .set_entries(Some(entries))
-            .customize()
-            .config_override(Builder::default().timeout_config(timeout_config))
             .send()
             .await
             .map_err(|e| DisplayErrorContext(&e).to_string())?;
 
-        let mut outcomes: Vec<EntryOutcome> = vec![Ok(()); receipts.len()];
+        let mut outcomes: Vec<EntryOutcome> = vec![Ok(()); count];
         for f in out.failed() {
             let reason = format!("{}: {}", f.code(), f.message().unwrap_or("delete failed"));
             match f.id().parse::<usize>() {
@@ -163,9 +158,14 @@ impl DeleteShared {
         drop(items);
     }
 
-    async fn send(&self, batch: Vec<DeleteItem>) {
-        let receipts: Vec<String> = batch.iter().map(|i| i.receipt_handle.clone()).collect();
-        match self.sender.send_batch(&receipts).await {
+    async fn send(&self, mut batch: Vec<DeleteItem>) {
+        // The handles move to the sender: nothing reads them from the items
+        // afterwards.
+        let receipts: Vec<String> = batch
+            .iter_mut()
+            .map(|i| mem::take(&mut i.receipt_handle))
+            .collect();
+        match self.sender.send_batch(receipts).await {
             Ok(outcomes) => {
                 for (i, item) in batch.into_iter().enumerate() {
                     let outcome = outcomes
@@ -363,6 +363,24 @@ const VISIBILITY_DRAINERS: usize = 4;
 /// starts the drainers again (so a dropped queue's tasks go away).
 const VISIBILITY_IDLE_EXIT: Duration = Duration::from_secs(30);
 
+/// `client` with the per-call API timeout built in, once. The batch and
+/// receive calls used to attach the same timeout as a per-call config
+/// override, which rebuilt a config layer and a customised operation for
+/// every call. The derived client shares the original's HTTP client,
+/// credentials and retry setup; only its timeout config differs.
+fn with_call_timeout(client: &Client) -> Client {
+    let timeout_config = TimeoutConfig::builder()
+        .operation_timeout(SQS_CALL_TIMEOUT)
+        .build();
+    Client::from_conf(
+        client
+            .config()
+            .to_builder()
+            .timeout_config(timeout_config)
+            .build(),
+    )
+}
+
 /// One `ChangeMessageVisibility`, as a batch entry.
 struct VisibilityChange {
     receipt_handle: String,
@@ -401,16 +419,11 @@ impl VisibilityBatchSender for SqsVisibilitySender {
                 .map_err(|e| e.to_string())?;
             entries.push(entry);
         }
-        let timeout_config = TimeoutConfig::builder()
-            .operation_timeout(SQS_CALL_TIMEOUT)
-            .build();
         let out = self
             .client
             .change_message_visibility_batch()
             .queue_url(&self.queue_url)
             .set_entries(Some(entries))
-            .customize()
-            .config_override(Builder::default().timeout_config(timeout_config))
             .send()
             .await
             .map_err(|e| DisplayErrorContext(&e).to_string())?;
@@ -616,9 +629,16 @@ struct PendingDeletes {
 impl PendingDeletes {
     /// Remember `id` as in flight; returns the generation to hand to
     /// [`complete`](Self::complete).
+    #[cfg(test)]
     fn insert(&mut self, id: &str) -> u64 {
+        self.insert_shared(Arc::from(id))
+    }
+
+    /// [`insert`](Self::insert) with the id already shared, so it is not
+    /// copied again.
+    fn insert_shared(&mut self, id: Arc<str>) -> u64 {
         self.next_gen += 1;
-        self.map.insert(Arc::from(id), (self.next_gen, None));
+        self.map.insert(id, (self.next_gen, None));
         self.next_gen
     }
 
@@ -668,7 +688,7 @@ impl PendingDeletes {
 /// than 2x. The FIFO length is therefore bounded by O(live receipts).
 #[derive(Default)]
 struct ReceiptMap {
-    map: HashMap<Arc<str>, (String, Instant)>,
+    map: HashMap<Arc<str>, (Arc<str>, Instant)>,
     order: VecDeque<(Arc<str>, Instant)>,
 }
 
@@ -676,13 +696,18 @@ impl ReceiptMap {
     /// Slack allowed in the FIFO beyond 2x the live map before compacting.
     const COMPACT_SLACK: usize = 64;
 
+    #[cfg(test)]
     fn insert(&mut self, handle: &str, msg_id: String, at: Instant) {
+        self.insert_shared(handle, Arc::from(msg_id), at);
+    }
+
+    fn insert_shared(&mut self, handle: &str, msg_id: Arc<str>, at: Instant) {
         let handle: Arc<str> = Arc::from(handle);
         self.map.insert(Arc::clone(&handle), (msg_id, at));
         self.order.push_back((handle, at));
     }
 
-    fn remove(&mut self, handle: &str) -> Option<String> {
+    fn remove(&mut self, handle: &str) -> Option<Arc<str>> {
         self.map.remove(handle).map(|(id, _)| id)
     }
 
@@ -726,6 +751,9 @@ impl ReceiptMap {
 /// AWS SQS queue consumer
 pub struct SqsQueueConsumer {
     client: Client,
+    /// `client` with [`SQS_CALL_TIMEOUT`] as its operation timeout: used by
+    /// the receive and batch calls.
+    timeout_client: Client,
     queue_url: String,
     queue_name: String,
     visibility_timeout_seconds: i32,
@@ -786,15 +814,15 @@ impl SqsQueueConsumer {
         // in that window are deleted in `poll` without being re-routed.
         let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle);
         let on_complete: Option<Completion> = msg_id.as_ref().map(|id| {
-            let gen = self.pending_delete_ids.lock().insert(id);
+            let gen = self.pending_delete_ids.lock().insert_shared(Arc::clone(id));
             let pending = Arc::clone(&self.pending_delete_ids);
-            let id = id.clone();
+            let id = Arc::clone(id);
             Box::new(move || pending.lock().complete(&id, gen, Instant::now())) as Completion
         });
 
         let batcher = self.delete_batcher.get_or_init(|| {
             DeleteBatcher::start(Arc::new(SqsDeleteSender {
-                client: self.client.clone(),
+                client: self.timeout_client.clone(),
                 queue_url: self.queue_url.clone(),
             }))
         });
@@ -841,7 +869,7 @@ impl SqsQueueConsumer {
         let batcher = self.visibility_batcher.get_or_init(|| {
             VisibilityBatcher::new(
                 Arc::new(SqsVisibilitySender {
-                    client: self.client.clone(),
+                    client: self.timeout_client.clone(),
                     queue_url: self.queue_url.clone(),
                 }),
                 self.queue_name.clone(),
@@ -862,6 +890,7 @@ impl SqsQueueConsumer {
         visibility_timeout_seconds: i32,
     ) -> Self {
         Self {
+            timeout_client: with_call_timeout(&client),
             client,
             queue_url,
             queue_name,
@@ -902,6 +931,19 @@ impl SqsQueueConsumer {
         self
     }
 
+    /// The `ReceiveMessage` call. Only the body, receipt handle and
+    /// MessageId are read from what comes back, so no system or message
+    /// attributes are requested (each one asked for is serialised by the
+    /// service and decoded here for nothing).
+    fn receive_request(&self, max_per_poll: i32) -> ReceiveMessageFluentBuilder {
+        self.timeout_client
+            .receive_message()
+            .queue_url(&self.queue_url)
+            .max_number_of_messages(max_per_poll)
+            .visibility_timeout(self.visibility_timeout_seconds)
+            .wait_time_seconds(self.wait_time_seconds)
+    }
+
     fn parse_sqs_message(&self, sqs_msg: &SqsMessage) -> Result<(Message, String, Option<String>)> {
         let body = sqs_msg
             .body()
@@ -933,22 +975,10 @@ impl QueueConsumer for SqsQueueConsumer {
 
         let max_per_poll = max_messages.min(10) as i32; // SQS max is 10
 
-        // Java: 25s per-request API call timeout to prevent indefinite blocking
-        let timeout_config = TimeoutConfig::builder()
-            .operation_timeout(Duration::from_secs(25))
-            .build();
-
+        // Java: 25s per-request API call timeout to prevent indefinite
+        // blocking — built into `timeout_client`.
         let result = self
-            .client
-            .receive_message()
-            .queue_url(&self.queue_url)
-            .max_number_of_messages(max_per_poll)
-            .visibility_timeout(self.visibility_timeout_seconds)
-            .wait_time_seconds(self.wait_time_seconds)
-            .message_system_attribute_names(MessageSystemAttributeName::All)
-            .message_attribute_names("All")
-            .customize()
-            .config_override(Builder::default().timeout_config(timeout_config))
+            .receive_request(max_per_poll)
             .send()
             .await
             .map_err(QueueError::sqs)?;
@@ -997,7 +1027,7 @@ impl QueueConsumer for SqsQueueConsumer {
                         let mut map = self.receipt_to_message_id.lock();
                         let now = Instant::now();
                         map.prune(now, Self::RECEIPT_MAP_TTL);
-                        map.insert(&receipt_handle, msg_id.clone(), now);
+                        map.insert_shared(&receipt_handle, Arc::from(msg_id.as_str()), now);
                     }
                     messages.push(QueuedMessage {
                         message,
@@ -1212,7 +1242,7 @@ mod delete_batcher_tests {
 
     #[async_trait]
     impl DeleteBatchSender for FakeSender {
-        async fn send_batch(&self, receipts: &[String]) -> StdResult<Vec<EntryOutcome>, String> {
+        async fn send_batch(&self, receipts: Vec<String>) -> StdResult<Vec<EntryOutcome>, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.sizes.lock().push(receipts.len());
             let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1859,7 +1889,7 @@ mod receipt_map_tests {
         let mut m = filled(1001, base);
         m.insert("h0", "m0b".into(), base + Duration::from_secs(8));
         m.prune(base + Duration::from_secs(11), TTL);
-        assert_eq!(m.map.get("h0").map(|(id, _)| id.as_str()), Some("m0b"));
+        assert_eq!(m.map.get("h0").map(|(id, _)| &**id), Some("m0b"));
         assert_eq!(m.map.len(), 1);
     }
 
@@ -1922,7 +1952,7 @@ mod receipt_map_tests {
         m.remove("h");
         m.insert("h", "m2".into(), base + Duration::from_secs(1));
         m.prune(base + Duration::from_secs(2), TTL);
-        assert_eq!(m.map.get("h").map(|(id, _)| id.as_str()), Some("m2"));
+        assert_eq!(m.map.get("h").map(|(id, _)| &**id), Some("m2"));
         assert_eq!(m.order.len(), 1);
     }
 
@@ -1956,5 +1986,45 @@ mod receipt_map_tests {
         let examined = old.prune(base + Duration::from_secs(11), TTL);
         assert_eq!(examined, 3);
         assert_eq!(old.map.len(), 50_000);
+    }
+
+    fn offline_consumer() -> SqsQueueConsumer {
+        use aws_sdk_sqs::config::{BehaviorVersion, Region};
+        let conf = aws_sdk_sqs::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .build();
+        SqsQueueConsumer::new(
+            Client::from_conf(conf),
+            "http://q/url".into(),
+            "q".into(),
+            30,
+        )
+    }
+
+    /// Nothing reads message or system attributes, so none are requested.
+    #[test]
+    fn receive_request_asks_for_no_attributes() {
+        let c = offline_consumer();
+        let input = c.receive_request(7).as_input().clone().build().unwrap();
+        assert!(input.message_system_attribute_names().is_empty());
+        assert!(input.message_attribute_names().is_empty());
+        assert_eq!(input.max_number_of_messages(), Some(7));
+        assert_eq!(input.visibility_timeout(), Some(30));
+        assert_eq!(
+            input.wait_time_seconds(),
+            Some(SqsQueueConsumer::DEFAULT_WAIT_TIME_SECONDS)
+        );
+        assert_eq!(input.queue_url(), Some("http://q/url"));
+    }
+
+    /// The receive and batch calls go through a client whose operation
+    /// timeout is the per-call API timeout.
+    #[test]
+    fn call_client_carries_the_api_timeout() {
+        let c = offline_consumer();
+        let t = c.timeout_client.config().timeout_config().cloned().unwrap();
+        assert_eq!(t.operation_timeout(), Some(SQS_CALL_TIMEOUT));
+        assert_eq!(SQS_CALL_TIMEOUT, Duration::from_secs(25));
     }
 }
