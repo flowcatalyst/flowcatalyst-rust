@@ -2,6 +2,7 @@
 //! `InFlightTracker`, `internal/router/inflight.go`).
 
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fc_common::InFlightMessage;
@@ -21,7 +22,10 @@ pub(crate) const REAP_RETRY_GRACE: Duration = Duration::from_secs(30 * 60);
 /// [`InFlightMessage`] (which it derefs to).
 #[derive(Debug, Clone)]
 pub(crate) struct Tracked {
-    pub(crate) msg: InFlightMessage,
+    /// Shared with the callback's `admitted` copy: one record per message,
+    /// copied (`Arc::make_mut`) only if a redelivery mutates it while the
+    /// callback still holds it.
+    pub(crate) msg: Arc<InFlightMessage>,
     /// Refreshed at route time and on every broker redelivery of the
     /// message (the receipt-handle swap), so the idle bound reaps only an
     /// entry the broker has stopped redelivering (Go: `LastSeenAt`).
@@ -39,6 +43,10 @@ pub(crate) struct Tracked {
 
 impl Tracked {
     pub(crate) fn new(msg: InFlightMessage, generation: u64) -> Self {
+        Self::shared(Arc::new(msg), generation)
+    }
+
+    pub(crate) fn shared(msg: Arc<InFlightMessage>, generation: u64) -> Self {
         Self {
             msg,
             last_seen: Instant::now(),
@@ -52,7 +60,7 @@ impl Tracked {
     /// receipt handle and refresh the idle clock.
     pub(crate) fn redelivered(&mut self, receipt_handle: &str) {
         if self.msg.receipt_handle != receipt_handle {
-            self.msg.receipt_handle = receipt_handle.to_string();
+            Arc::make_mut(&mut self.msg).receipt_handle = receipt_handle.to_string();
         }
         self.last_seen = Instant::now();
     }
@@ -104,7 +112,7 @@ impl Deref for Tracked {
 
 impl DerefMut for Tracked {
     fn deref_mut(&mut self) -> &mut InFlightMessage {
-        &mut self.msg
+        Arc::make_mut(&mut self.msg)
     }
 }
 
@@ -131,7 +139,7 @@ mod tests {
             1,
         );
         let now = Instant::now();
-        t.msg.started_at = now - age;
+        t.started_at = now - age;
         t.last_seen = now - last_seen_ago;
         t
     }

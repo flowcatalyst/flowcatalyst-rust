@@ -50,6 +50,15 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
     format!("{queue_identifier}\0{broker_id}")
 }
 
+/// [`broker_scope_key`] built into a reusable buffer, so a per-message key
+/// costs one allocation (the final `Arc<str>`) instead of two.
+fn scope_key_into(buf: &mut String, queue_identifier: &str, broker_id: &str) {
+    buf.clear();
+    buf.push_str(queue_identifier);
+    buf.push('\0');
+    buf.push_str(broker_id);
+}
+
 /// Bound on one ack/nack broker call made by a callback. A broker call that
 /// never returns would otherwise pin the pool worker — and, for an ordered
 /// group, every message behind it — indefinitely. An ack that times out is
@@ -129,13 +138,13 @@ pub(super) async fn ack_bounded(
 /// admission's tracking synchronously and fires a best-effort `nack`, so
 /// broker redeliveries are not swallowed as duplicates of a dead owner.
 struct QueueMessageCallback {
-    pipeline_key: String,
-    app_message_id: String,
+    pipeline_key: Arc<str>,
+    app_message_id: Arc<str>,
     /// The queue this message was polled from — `Consumer::identifier()`.
     /// Used (G11) to scope the `pending_delete` broker-id key the same way
     /// `pipeline_key` itself is scoped, so an ACK-failed retry never
     /// collides with another queue's entry at the same broker id.
-    queue_identifier: String,
+    queue_identifier: Arc<str>,
     /// This admission's tracker generation — see the type's doc.
     generation: u64,
     /// The message is ordered within its group, so the router waits on this
@@ -145,7 +154,7 @@ struct QueueMessageCallback {
     /// The entry as it was admitted, with this copy's own receipt handle:
     /// what an ack falls back to when the entry is gone, and what
     /// `ensure_tracked` restores.
-    admitted: InFlightMessage,
+    admitted: Arc<InFlightMessage>,
     /// The consumer instance that received the message — the last-resort
     /// target when nothing in the registry answers for its queue (a message
     /// routed by a consumer the manager never registered).
@@ -157,8 +166,8 @@ struct QueueMessageCallback {
     /// through it when they run (Go: `resolveConsumer`), not through an
     /// instance captured at route time that may since have been replaced.
     registry: Arc<ConsumerRegistry>,
-    in_pipeline: Arc<DashMap<String, Tracked>>,
-    app_message_to_pipeline_key: Arc<DashMap<String, String>>,
+    in_pipeline: Arc<DashMap<Arc<str>, Tracked>>,
+    app_message_to_pipeline_key: Arc<DashMap<Arc<str>, Arc<str>>>,
     pending_delete: Arc<DashMap<String, Instant>>,
     /// Set to true the moment `ack()` or `nack()` is entered. The `Drop`
     /// impl checks this and only fires fallback cleanup if no resolution
@@ -214,7 +223,7 @@ impl QueueMessageCallback {
             .is_some();
         if removed {
             self.app_message_to_pipeline_key
-                .remove_if(&self.app_message_id, |_, k| *k == self.pipeline_key);
+                .remove_if(&*self.app_message_id, |_, k| *k == self.pipeline_key);
         }
     }
 }
@@ -230,7 +239,7 @@ impl MessageCallback for QueueMessageCallback {
         }
         if let Some(key) = self
             .app_message_to_pipeline_key
-            .get(&self.app_message_id)
+            .get(&*self.app_message_id)
             .map(|k| k.value().clone())
         {
             if key != self.pipeline_key && self.in_pipeline.contains_key(&key) {
@@ -239,7 +248,7 @@ impl MessageCallback for QueueMessageCallback {
         }
         self.in_pipeline
             .entry(self.pipeline_key.clone())
-            .or_insert_with(|| Tracked::new(self.admitted.clone(), self.generation));
+            .or_insert_with(|| Tracked::shared(self.admitted.clone(), self.generation));
         self.app_message_to_pipeline_key
             .insert(self.app_message_id.clone(), self.pipeline_key.clone());
         true
@@ -734,6 +743,7 @@ impl QueueManager {
         // Flight-recorder context shared per batch (queue), per pool and per
         // group, so each message adds only its own id.
         let mut queue_arc: Arc<str> = Arc::from(consumer.identifier());
+        let mut key_buf = String::new();
 
         for (pool_code, pool_messages) in by_pool {
             let pool_arc: Arc<str> = Arc::from(pool_code.as_str());
@@ -855,7 +865,7 @@ impl QueueManager {
                         continue;
                     }
 
-                    let app_message_id = msg.message.id.clone();
+                    let app_message_id: Arc<str> = Arc::from(msg.message.id.as_str());
 
                     // Use broker_message_id, scoped to its queue (G11), as
                     // pipeline key (mirrors Java's sqsMessageId usage, plus
@@ -866,22 +876,24 @@ impl QueueManager {
                     // otherwise collide. Fall back to a composite key
                     // (already queue-scoped) if broker_message_id is not
                     // available.
-                    let pipeline_key = msg
-                        .broker_message_id
-                        .as_deref()
-                        .map(|bid| broker_scope_key(&msg.queue_identifier, bid))
-                        .unwrap_or_else(|| {
-                            format!("fallback:{}:{}", msg.queue_identifier, msg.message.id)
-                        });
-
-                    let receipt_handle = msg.receipt_handle.clone();
+                    match msg.broker_message_id.as_deref() {
+                        Some(bid) => scope_key_into(&mut key_buf, &msg.queue_identifier, bid),
+                        None => {
+                            key_buf.clear();
+                            key_buf.push_str("fallback:");
+                            key_buf.push_str(&msg.queue_identifier);
+                            key_buf.push(':');
+                            key_buf.push_str(&msg.message.id);
+                        }
+                    }
+                    let pipeline_key: Arc<str> = Arc::from(key_buf.as_str());
 
                     // One context per message, shared by its callback and
                     // this routing step (the pool, group and queue are
                     // shared per batch).
                     let event_ctx = if self.flight_recorder.is_enabled() {
                         EventContext::from_parts(
-                            Arc::from(msg.message.id.as_str()),
+                            app_message_id.clone(),
                             Some(pool_arc.clone()),
                             group_arc.clone(),
                             Some(queue_arc.clone()),
@@ -890,20 +902,21 @@ impl QueueManager {
                         EventContext::unrecorded()
                     };
 
-                    // Track in pipeline with receipt handle
-                    let queue_identifier = msg.queue_identifier.clone();
-                    let in_flight = InFlightMessage::new(
+                    // Track in pipeline with receipt handle. The one
+                    // record is shared by the tracker entry and the
+                    // callback.
+                    let in_flight = Arc::new(InFlightMessage::new(
                         &msg.message,
                         msg.broker_message_id.clone(),
                         msg.queue_identifier.clone(),
                         Some(Arc::clone(&batch_id)),
                         msg.receipt_handle.clone(),
-                    );
+                    ));
                     let generation =
                         self.next_tracker_generation.fetch_add(1, Ordering::Relaxed) + 1;
                     self.in_pipeline.insert(
                         pipeline_key.clone(),
-                        Tracked::new(in_flight.clone(), generation),
+                        Tracked::shared(in_flight.clone(), generation),
                     );
 
                     // Track app message ID -> pipeline key for requeue detection
@@ -914,7 +927,7 @@ impl QueueManager {
                     let callback = QueueMessageCallback {
                         pipeline_key: pipeline_key.clone(),
                         app_message_id: app_message_id.clone(),
-                        queue_identifier,
+                        queue_identifier: queue_arc.clone(),
                         generation,
                         ordered: msg.message.is_ordered(),
                         admitted: in_flight,
@@ -928,6 +941,10 @@ impl QueueManager {
                         recorder: self.flight_recorder.clone(),
                         event_ctx: event_ctx.clone(),
                     };
+
+                    // The submit-failure path needs only the handle; the
+                    // message itself moves into the batch below.
+                    let receipt_handle = msg.receipt_handle.clone();
 
                     let batch_msg = BatchMessage {
                         message: msg.message,
@@ -997,6 +1014,7 @@ impl QueueManager {
             requeued: Vec::new(),
         };
 
+        let mut key_buf = String::new();
         for msg in messages {
             // Check 1: Same broker message ID (physical redelivery from SQS due to visibility timeout)
             // This MUST be checked FIRST because the same broker ID means it's a visibility timeout redelivery,
@@ -1004,8 +1022,8 @@ impl QueueManager {
             if let Some(ref broker_msg_id) = msg.broker_message_id {
                 // G11: look up the queue-scoped key, not the bare broker id
                 // — see `broker_scope_key`'s doc comment.
-                let pipeline_key = broker_scope_key(&msg.queue_identifier, broker_msg_id);
-                if let Some(mut entry) = self.in_pipeline.get_mut(&pipeline_key) {
+                scope_key_into(&mut key_buf, &msg.queue_identifier, broker_msg_id);
+                if let Some(mut entry) = self.in_pipeline.get_mut(key_buf.as_str()) {
                     // Adopt the redelivery's receipt handle so the eventual
                     // ACK uses the latest valid one, and refresh the idle
                     // clock the reaper judges the entry by (Go:
@@ -1023,7 +1041,7 @@ impl QueueManager {
                     drop(entry);
                     result.duplicates.push(DuplicateMessage {
                         message: msg,
-                        existing_pipeline_key: pipeline_key,
+                        existing_pipeline_key: key_buf.clone(),
                     });
                     continue;
                 }
@@ -1032,8 +1050,9 @@ impl QueueManager {
             // Check 2: Same application message ID but DIFFERENT broker message ID (requeued by external process)
             // This happens when a separate process requeues messages that were stuck in QUEUED status for 20+ min
             // The external process creates a NEW SQS message with the same application message ID
-            if let Some(existing_pipeline_key) =
-                self.app_message_to_pipeline_key.get(&msg.message.id)
+            if let Some(existing_pipeline_key) = self
+                .app_message_to_pipeline_key
+                .get(msg.message.id.as_str())
             {
                 let existing_key = existing_pipeline_key.value().clone();
 
@@ -1045,8 +1064,8 @@ impl QueueManager {
                 // "different" now that the scoping prefix never matches a
                 // bare id.
                 if let Some(ref new_broker_id) = msg.broker_message_id {
-                    let candidate_key = broker_scope_key(&msg.queue_identifier, new_broker_id);
-                    if candidate_key != existing_key {
+                    scope_key_into(&mut key_buf, &msg.queue_identifier, new_broker_id);
+                    if key_buf.as_str() != &*existing_key {
                         info!(
                             app_message_id = %msg.message.id,
                             existing_broker_id = %existing_key,
@@ -1055,7 +1074,7 @@ impl QueueManager {
                         );
                         result.requeued.push(DuplicateMessage {
                             message: msg,
-                            existing_pipeline_key: existing_key,
+                            existing_pipeline_key: existing_key.to_string(),
                         });
                         continue;
                     }
@@ -1067,7 +1086,7 @@ impl QueueManager {
                     entry.redelivered(&msg.receipt_handle);
                     result.duplicates.push(DuplicateMessage {
                         message: msg,
-                        existing_pipeline_key: existing_key,
+                        existing_pipeline_key: existing_key.to_string(),
                     });
                     continue;
                 }
@@ -1279,11 +1298,11 @@ mod callback_drop_tests {
         consumer: Arc<RecordingConsumer>,
     ) -> (
         QueueMessageCallback,
-        Arc<DashMap<String, Tracked>>,
-        Arc<DashMap<String, String>>,
+        Arc<DashMap<Arc<str>, Tracked>>,
+        Arc<DashMap<Arc<str>, Arc<str>>>,
     ) {
-        let in_pipeline: Arc<DashMap<String, Tracked>> = Arc::new(DashMap::new());
-        let app_index: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
+        let in_pipeline: Arc<DashMap<Arc<str>, Tracked>> = Arc::new(DashMap::new());
+        let app_index: Arc<DashMap<Arc<str>, Arc<str>>> = Arc::new(DashMap::new());
         let pending_delete = Arc::new(DashMap::new());
 
         let pipeline_key = "broker-msg-1".to_string();
@@ -1309,13 +1328,16 @@ mod callback_drop_tests {
             None,
             "receipt-handle-xyz".to_string(),
         );
-        in_pipeline.insert(pipeline_key.clone(), Tracked::new(in_flight.clone(), 1));
+        let in_flight = Arc::new(in_flight);
+        let pipeline_key: Arc<str> = pipeline_key.into();
+        let app_message_id: Arc<str> = app_message_id.into();
+        in_pipeline.insert(pipeline_key.clone(), Tracked::shared(in_flight.clone(), 1));
         app_index.insert(app_message_id.clone(), pipeline_key.clone());
 
         let cb = QueueMessageCallback {
             pipeline_key,
             app_message_id,
-            queue_identifier: "queue-id".to_string(),
+            queue_identifier: "queue-id".into(),
             generation: 1,
             ordered: false,
             admitted: in_flight,
@@ -1498,8 +1520,8 @@ mod callback_drop_tests {
         // Re-admit: same key, new generation, fresher receipt.
         let mut newer = in_pipeline.get("broker-msg-1").unwrap().clone();
         newer.generation = 2;
-        newer.msg.receipt_handle = "receipt-newer".to_string();
-        in_pipeline.insert("broker-msg-1".to_string(), newer);
+        newer.receipt_handle = "receipt-newer".to_string();
+        in_pipeline.insert("broker-msg-1".into(), newer);
 
         cb.nack(Some(5)).await;
         assert_eq!(
@@ -1549,8 +1571,8 @@ mod callback_drop_tests {
         cb.origin = handles.clone();
         let mut newer = in_pipeline.get("broker-msg-1").unwrap().clone();
         newer.generation = 2;
-        newer.msg.receipt_handle = "receipt-newer".to_string();
-        in_pipeline.insert("broker-msg-1".to_string(), newer);
+        newer.receipt_handle = "receipt-newer".to_string();
+        in_pipeline.insert("broker-msg-1".into(), newer);
 
         cb.ack().await;
         assert_eq!(*handles.0.lock(), vec!["receipt-handle-xyz".to_string()]);
@@ -1568,13 +1590,16 @@ mod callback_drop_tests {
         app_index.clear();
         assert!(cb.ensure_tracked());
         assert_eq!(in_pipeline.get("broker-msg-1").unwrap().generation, 1);
-        assert_eq!(app_index.get("app-msg-1").unwrap().value(), "broker-msg-1");
+        assert_eq!(
+            &**app_index.get("app-msg-1").unwrap().value(),
+            "broker-msg-1"
+        );
 
         // A different broker copy of the same app message owns it now.
         in_pipeline.clear();
         let foreign = cb.admitted.clone();
-        in_pipeline.insert("other-broker-key".to_string(), Tracked::new(foreign, 9));
-        app_index.insert("app-msg-1".to_string(), "other-broker-key".to_string());
+        in_pipeline.insert("other-broker-key".into(), Tracked::shared(foreign, 9));
+        app_index.insert("app-msg-1".into(), "other-broker-key".into());
         assert!(!cb.ensure_tracked());
         // Ours is not resurrected.
         assert!(!in_pipeline.contains_key("broker-msg-1"));
@@ -1936,7 +1961,7 @@ mod g11_broker_scoping_tests {
         assert_eq!(filtered_a.unique.len(), 1);
         let key_a = broker_scope_key(&a.queue_identifier, "9");
         manager.in_pipeline.insert(
-            key_a.clone(),
+            key_a.as_str().into(),
             InFlightMessage::new(
                 &a.message,
                 a.broker_message_id.clone(),
@@ -1948,7 +1973,7 @@ mod g11_broker_scoping_tests {
         );
         manager
             .app_message_to_pipeline_key
-            .insert(a.message.id.clone(), key_a.clone());
+            .insert(a.message.id.as_str().into(), key_a.as_str().into());
 
         // Register B, on a different queue, sharing the bare broker id "9".
         let filtered_b = manager.filter_duplicates(vec![b.clone()]);
@@ -1960,7 +1985,7 @@ mod g11_broker_scoping_tests {
         );
         let key_b = broker_scope_key(&b.queue_identifier, "9");
         manager.in_pipeline.insert(
-            key_b.clone(),
+            key_b.as_str().into(),
             InFlightMessage::new(
                 &b.message,
                 b.broker_message_id.clone(),
@@ -1972,7 +1997,7 @@ mod g11_broker_scoping_tests {
         );
         manager
             .app_message_to_pipeline_key
-            .insert(b.message.id.clone(), key_b.clone());
+            .insert(b.message.id.as_str().into(), key_b.as_str().into());
 
         assert_eq!(
             manager.in_pipeline.len(),
@@ -1992,14 +2017,14 @@ mod g11_broker_scoping_tests {
         );
         assert_eq!(filtered_redeliver.unique.len(), 0);
 
-        let a_entry = manager.in_pipeline.get(&key_a).unwrap();
+        let a_entry = manager.in_pipeline.get(key_a.as_str()).unwrap();
         assert_eq!(
             a_entry.receipt_handle, "receipt-a-v2",
             "A's receipt handle must be updated to the fresher redelivery"
         );
         drop(a_entry);
 
-        let b_entry = manager.in_pipeline.get(&key_b).unwrap();
+        let b_entry = manager.in_pipeline.get(key_b.as_str()).unwrap();
         assert_eq!(
             b_entry.receipt_handle, "receipt-b-v1",
             "B's entry must be untouched by A's redelivery — a bare-broker-id \

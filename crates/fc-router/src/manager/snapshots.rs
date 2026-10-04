@@ -289,7 +289,7 @@ impl QueueManager {
     /// Cheap presence check for a single application message ID. O(1).
     pub fn is_in_flight_by_app_id(&self, app_message_id: &str) -> bool {
         match self.app_message_to_pipeline_key.get(app_message_id) {
-            Some(e) => self.in_pipeline.contains_key(e.value().as_str()),
+            Some(e) => self.in_pipeline.contains_key(&**e.value()),
             None => false,
         }
     }

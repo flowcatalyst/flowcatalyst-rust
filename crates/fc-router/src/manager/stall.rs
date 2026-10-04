@@ -4,6 +4,7 @@
 //! periodic sweep that evicts stale `in_pipeline`/`pending_delete_broker_ids`
 //! entries.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -107,7 +108,7 @@ impl QueueManager {
         }
         let ceiling = idle * super::tracking::ABSOLUTE_MAX_AGE_FACTOR;
         let now = Instant::now();
-        let stale: Vec<(String, u64)> = self
+        let stale: Vec<(Arc<str>, u64)> = self
             .in_pipeline
             .iter()
             .filter(|e| e.value().should_reap(now, idle, ceiling))
@@ -123,7 +124,7 @@ impl QueueManager {
                 .remove_if(&key, |_, e| e.generation == generation)
             {
                 self.app_message_to_pipeline_key
-                    .remove_if(&entry.message_id, |_, k| *k == key);
+                    .remove_if(entry.message_id.as_str(), |_, k| *k == key);
                 let past_ceiling = now.duration_since(entry.started_at) > ceiling;
                 warn!(
                     message_id = %entry.message_id,
@@ -340,7 +341,7 @@ impl QueueManager {
                 // same as `force_ack_in_flight`/`is_in_flight_by_app_id`.
                 let Some(pipeline_key) = self
                     .app_message_to_pipeline_key
-                    .get(&msg.message_id)
+                    .get(msg.message_id.as_str())
                     .map(|e| e.value().clone())
                 else {
                     continue;
@@ -374,7 +375,8 @@ impl QueueManager {
                         } else {
                             // Remove from pipeline since we've force-NACKed
                             self.in_pipeline.remove(&pipeline_key);
-                            self.app_message_to_pipeline_key.remove(&msg.message_id);
+                            self.app_message_to_pipeline_key
+                                .remove(msg.message_id.as_str());
                             force_nacked += 1;
                         }
                     }
@@ -465,7 +467,7 @@ mod stall_warning_tests {
         let manager = manager_with_stall_threshold(5);
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
+            .insert("bh-msg-1".into(), stalled_in_flight("msg-1").into());
 
         // Simulate several detector ticks against the same still-stalled message.
         manager.check_and_handle_stalled_messages().await;
@@ -488,7 +490,7 @@ mod stall_warning_tests {
         let manager = manager_with_stall_threshold(5);
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
+            .insert("bh-msg-1".into(), stalled_in_flight("msg-1").into());
 
         manager.check_and_handle_stalled_messages().await;
         assert_eq!(
@@ -510,7 +512,7 @@ mod stall_warning_tests {
         // the process.
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
+            .insert("bh-msg-1".into(), stalled_in_flight("msg-1").into());
         manager.check_and_handle_stalled_messages().await;
 
         assert_eq!(
@@ -531,13 +533,13 @@ mod stall_warning_tests {
         let manager = manager_with_stall_threshold(5);
         let now = Instant::now();
         let mut live: super::super::tracking::Tracked = stalled_in_flight("live").into();
-        live.msg.started_at = now - Duration::from_secs(20 * 60);
+        live.started_at = now - Duration::from_secs(20 * 60);
         live.last_seen = now;
         let mut idle: super::super::tracking::Tracked = stalled_in_flight("idle").into();
-        idle.msg.started_at = now - Duration::from_secs(20 * 60);
+        idle.started_at = now - Duration::from_secs(20 * 60);
         idle.last_seen = now - Duration::from_secs(16 * 60);
         let mut ancient: super::super::tracking::Tracked = stalled_in_flight("ancient").into();
-        ancient.msg.started_at = now - Duration::from_secs(3 * 60 * 60);
+        ancient.started_at = now - Duration::from_secs(3 * 60 * 60);
         ancient.last_seen = now;
         manager.in_pipeline.insert("k-live".into(), live);
         manager.in_pipeline.insert("k-idle".into(), idle);
@@ -558,12 +560,12 @@ mod stall_warning_tests {
         let rc = manager.new_running_consumer(consumer.clone(), "STREAM1".to_string(), None);
         manager.consumers.insert(rc);
         let mut in_flight: super::super::tracking::Tracked = stalled_in_flight("msg-r").into();
-        in_flight.msg.queue_identifier = "STREAM1/router".to_string();
+        in_flight.queue_identifier = "STREAM1/router".to_string();
         in_flight.mark_retrying();
-        manager.in_pipeline.insert("k-r".to_string(), in_flight);
+        manager.in_pipeline.insert("k-r".into(), in_flight);
         manager
             .app_message_to_pipeline_key
-            .insert("msg-r".to_string(), "k-r".to_string());
+            .insert("msg-r".into(), "k-r".into());
 
         assert_eq!(manager.check_and_handle_stalled_messages().await, 0);
         assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 0);
@@ -658,10 +660,10 @@ mod stall_warning_tests {
         in_flight.queue_identifier = "STREAM1/router".to_string();
         manager
             .in_pipeline
-            .insert("scoped-key-1".to_string(), in_flight.into());
+            .insert("scoped-key-1".into(), in_flight.into());
         manager
             .app_message_to_pipeline_key
-            .insert("msg-1".to_string(), "scoped-key-1".to_string());
+            .insert("msg-1".into(), "scoped-key-1".into());
 
         let force_nacked = manager.check_and_handle_stalled_messages().await;
 

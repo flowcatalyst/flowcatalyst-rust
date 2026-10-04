@@ -113,7 +113,7 @@ pub(super) struct RestartRecord {
 pub struct QueueManager {
     /// In-pipeline message tracking for deduplication
     /// Wrapped in Arc so spawned tasks can share the same map
-    in_pipeline: Arc<DashMap<String, tracking::Tracked>>,
+    in_pipeline: Arc<DashMap<Arc<str>, tracking::Tracked>>,
 
     /// Generation stamped on each in-flight entry at admission — see
     /// [`tracking::Tracked::generation`].
@@ -121,7 +121,7 @@ pub struct QueueManager {
 
     /// App message ID to pipeline key mapping for deduplication
     /// Wrapped in Arc so spawned tasks can share the same map
-    app_message_to_pipeline_key: Arc<DashMap<String, String>>,
+    app_message_to_pipeline_key: Arc<DashMap<Arc<str>, Arc<str>>>,
 
     /// The pools serving traffic, by code. Routing
     /// (`route_batch`/`group_by_pool`/`has_pool_capacity`/`get_pool`/
