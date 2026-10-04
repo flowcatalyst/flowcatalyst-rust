@@ -11,19 +11,26 @@
 //!
 //! SQS caps `SendMessageBatch` at 10 entries and one call addresses one queue.
 //! [`SqsFifoPublisher::publish`] partitions the batch into one ordered list per
-//! destination (first-seen order) and chunks each list. Two items bound for
-//! different queues have no order to preserve; within a destination a single
-//! forward pass keeps claim order exactly.
+//! destination (first-seen order) and sends each queue's chunks sequentially.
+//! Two items bound for different queues have no order to preserve.
+//!
+//! Within a queue the claim arrives sorted by group, so most of a group's
+//! items are adjacent. Chunks are therefore built round-robin across groups
+//! ([`ChunkPlanner`]): each chunk takes the next unsent item of up to ten
+//! different groups (groups in order of first appearance, the rotation
+//! continuing where the previous chunk stopped), so ten groups of ten items
+//! cost ten full calls rather than ninety-one nearly empty ones. A group's
+//! items still go out in their original order, one per chunk.
 //!
 //! # No two items of one group ever share a chunk
 //!
 //! SQS reports batch failures per entry. If the earlier of two same-group
 //! entries failed and the later succeeded, the later would be durably queued
 //! while the earlier reverts and is published again afterwards: the group
-//! would be delivered out of order. Two rules prevent it, as in Go:
+//! would be delivered out of order. Two rules prevent it:
 //!
-//! 1. A candidate whose group is already in the chunk being built closes the
-//!    chunk without being consumed.
+//! 1. A chunk takes at most one item per group, and a group's next item is
+//!    only ever in a later chunk, sent after the earlier chunk has returned.
 //! 2. A group that fails poisons its own later items for the rest of the call:
 //!    they are reported unpublished without being sent.
 //!
@@ -40,7 +47,7 @@
 //! A send to a queue that does not exist creates it (FIFO, content-based
 //! deduplication off) and retries the same request once.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use async_trait::async_trait;
 use aws_sdk_sqs::error::DisplayErrorContext;
@@ -280,13 +287,12 @@ impl<A: SqsBatchApi> SqsFifoPublisher<A> {
         let mut last_error: Option<String> = None;
 
         for queue_name in &order {
-            let queued = &by_queue[queue_name];
-            let mut i = 0;
-            while i < queued.len() {
-                let (chunk, next) = next_chunk(queued, i, &failed_groups, &mut unpublished);
-                i = next;
+            let queued = by_queue.remove(queue_name).unwrap_or_default();
+            let mut planner = ChunkPlanner::new(queued);
+            loop {
+                let chunk = planner.next_chunk(&failed_groups, &mut unpublished);
                 if chunk.is_empty() {
-                    continue;
+                    break;
                 }
                 match self.send_chunk(queue_name, &chunk, &nonce).await {
                     Ok(failed_ids) => {
@@ -366,33 +372,75 @@ impl<A: SqsBatchApi> SqsFifoPublisher<A> {
     }
 }
 
-/// Build the next chunk from `queued[start..]`, returning it and the index to
-/// resume at. Items of a failed group are reported unpublished without being
-/// sent; a repeated group closes the chunk without consuming the candidate.
-fn next_chunk(
-    queued: &[FifoPublishItem],
-    start: usize,
-    failed_groups: &HashSet<String>,
-    unpublished: &mut Vec<String>,
-) -> (Vec<FifoPublishItem>, usize) {
-    let mut chunk: Vec<FifoPublishItem> = Vec::with_capacity(MAX_SQS_BATCH_SIZE);
-    let mut in_chunk: HashSet<&str> = HashSet::new();
-    let mut i = start;
-    while i < queued.len() && chunk.len() < MAX_SQS_BATCH_SIZE {
-        let candidate = &queued[i];
-        if failed_groups.contains(&candidate.group_id) {
-            unpublished.push(candidate.id.clone());
-            i += 1;
-            continue;
+/// One group's unsent items, in claim order.
+struct GroupQueue {
+    group_id: String,
+    items: VecDeque<FifoPublishItem>,
+}
+
+/// Builds one destination queue's chunks round-robin across its groups.
+///
+/// The groups sit in a ring in order of first appearance. A chunk takes the
+/// front item of each of the next (up to ten) groups, so it never holds two
+/// items of one group; the groups it took go to the back of the ring, so the
+/// next chunk continues where this one stopped and full chunks stay full
+/// while at least ten groups have items left. Chunks are produced lazily so
+/// that a failure reported after one chunk poisons the group's remaining
+/// items before they are packed.
+struct ChunkPlanner {
+    ring: VecDeque<GroupQueue>,
+}
+
+impl ChunkPlanner {
+    fn new(queued: Vec<FifoPublishItem>) -> Self {
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut groups: Vec<GroupQueue> = Vec::new();
+        for item in queued {
+            let i = *index.entry(item.group_id.clone()).or_insert_with(|| {
+                groups.push(GroupQueue {
+                    group_id: item.group_id.clone(),
+                    items: VecDeque::new(),
+                });
+                groups.len() - 1
+            });
+            groups[i].items.push_back(item);
         }
-        if in_chunk.contains(candidate.group_id.as_str()) {
-            break;
+        Self {
+            ring: groups.into(),
         }
-        in_chunk.insert(candidate.group_id.as_str());
-        chunk.push(candidate.clone());
-        i += 1;
     }
-    (chunk, i)
+
+    /// The next chunk, empty when nothing is left. Items of a group in
+    /// `failed_groups` are moved to `unpublished` without being sent.
+    fn next_chunk(
+        &mut self,
+        failed_groups: &HashSet<String>,
+        unpublished: &mut Vec<String>,
+    ) -> Vec<FifoPublishItem> {
+        self.ring.retain(|g| {
+            if failed_groups.contains(&g.group_id) {
+                unpublished.extend(g.items.iter().map(|i| i.id.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        let mut chunk = Vec::with_capacity(MAX_SQS_BATCH_SIZE);
+        let mut taken: Vec<GroupQueue> = Vec::new();
+        while chunk.len() < MAX_SQS_BATCH_SIZE {
+            let Some(mut g) = self.ring.pop_front() else {
+                break;
+            };
+            if let Some(item) = g.items.pop_front() {
+                chunk.push(item);
+            }
+            if !g.items.is_empty() {
+                taken.push(g);
+            }
+        }
+        self.ring.extend(taken);
+        chunk
+    }
 }
 
 /// `{id}:{nonce}`, clipped to SQS's limit. Never the bare id: see the module
@@ -540,8 +588,8 @@ mod tests {
         assert_eq!(
             sent_ids(&p),
             vec![
-                vec!["1".to_string()],
-                vec!["2".into(), "3".into()],
+                vec!["1".to_string(), "3".into()],
+                vec!["2".into()],
                 vec!["4".into()]
             ]
         );
@@ -609,6 +657,112 @@ mod tests {
         let sent: Vec<String> = sent_ids(&p).into_iter().flatten().collect();
         assert!(!sent.contains(&"2".to_string()) && !sent.contains(&"4".to_string()));
         assert!(sent.contains(&"3".to_string()));
+    }
+
+    /// Claim order: sorted by group, as the scheduler's claim query yields.
+    fn grouped(groups: usize, per_group: usize) -> Vec<FifoPublishItem> {
+        (0..groups)
+            .flat_map(|g| {
+                (0..per_group).map(move |n| item(&format!("g{g}-{n:02}"), "q", &format!("g{g}")))
+            })
+            .collect()
+    }
+
+    /// No chunk repeats a group.
+    fn assert_no_group_repeats(p: &SqsFifoPublisher<FakeApi>) {
+        for (_, es) in p.api.sends.lock().unwrap().iter() {
+            let groups: HashSet<&str> = es.iter().map(|e| e.group_id.as_str()).collect();
+            assert_eq!(groups.len(), es.len(), "a group twice in one chunk: {es:?}");
+        }
+    }
+
+    /// Each group's items, in the order they were sent across chunks.
+    fn sent_per_group(p: &SqsFifoPublisher<FakeApi>) -> HashMap<String, Vec<String>> {
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for (_, es) in p.api.sends.lock().unwrap().iter() {
+            for e in es {
+                out.entry(e.group_id.clone())
+                    .or_default()
+                    .push(e.id.clone());
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn ten_groups_of_ten_cost_ten_full_calls() {
+        let p = publisher();
+        let out = p.publish(grouped(10, 10)).await;
+        assert!(out.unpublished.is_empty(), "{out:?}");
+        let sizes: Vec<usize> = sent_ids(&p).iter().map(Vec::len).collect();
+        assert_eq!(sizes, vec![10; 10]);
+        assert_no_group_repeats(&p);
+        let per_group = sent_per_group(&p);
+        assert_eq!(per_group.len(), 10);
+        for (g, ids) in per_group {
+            let want: Vec<String> = (0..10).map(|n| format!("{g}-{n:02}")).collect();
+            assert_eq!(ids, want, "group {g} order");
+        }
+    }
+
+    #[tokio::test]
+    async fn one_group_of_25_is_25_calls_of_one_in_order() {
+        let p = publisher();
+        let out = p.publish(grouped(1, 25)).await;
+        assert!(out.unpublished.is_empty());
+        let sent = sent_ids(&p);
+        assert_eq!(sent.len(), 25);
+        assert!(sent.iter().all(|c| c.len() == 1));
+        let flat: Vec<String> = sent.into_iter().flatten().collect();
+        let want: Vec<String> = (0..25).map(|n| format!("g0-{n:02}")).collect();
+        assert_eq!(flat, want);
+    }
+
+    #[tokio::test]
+    async fn grouped_and_ungrouped_mix_packs_and_keeps_order() {
+        // 3 groups of 5 plus 12 ungrouped jobs (each its own group): 27 items.
+        let p = publisher();
+        let mut items = grouped(3, 5);
+        items.extend((0..12).map(|n| item(&format!("u{n:02}"), "q", &format!("u{n:02}"))));
+        let total = items.len();
+        let out = p.publish(items).await;
+        assert!(out.unpublished.is_empty());
+        assert_no_group_repeats(&p);
+        let sent = sent_ids(&p);
+        assert_eq!(sent.iter().map(Vec::len).sum::<usize>(), total);
+        // 15 groups live at first, so the first chunks are full.
+        assert_eq!(sent[0].len(), 10);
+        for (g, ids) in sent_per_group(&p) {
+            if g.starts_with('g') {
+                let want: Vec<String> = (0..5).map(|n| format!("{g}-{n:02}")).collect();
+                assert_eq!(ids, want, "group {g} order");
+            }
+        }
+        // 27 items need at least 3 calls and the five-deep groups force at
+        // least 5; adjacent-only packing needed 5 for the grouped part plus
+        // 2 for the rest.
+        assert!(sent.len() <= 6, "{} calls: {sent:?}", sent.len());
+    }
+
+    #[tokio::test]
+    async fn a_failed_group_stays_poisoned_across_round_robin_chunks() {
+        let p = publisher();
+        // g0's first item is rejected; its other items (in later chunks)
+        // must never be sent, and the other groups complete in order.
+        p.api.reject_ids.lock().unwrap().insert("g0-00".into());
+        let out = p.publish(grouped(3, 4)).await;
+        let mut un = out.unpublished.clone();
+        un.sort();
+        assert_eq!(un, vec!["g0-00", "g0-01", "g0-02", "g0-03"]);
+        let per_group = sent_per_group(&p);
+        assert_eq!(
+            per_group.get("g0").map(|v| v.as_slice()),
+            Some(&["g0-00".to_string()][..])
+        );
+        for g in ["g1", "g2"] {
+            let want: Vec<String> = (0..4).map(|n| format!("{g}-{n:02}")).collect();
+            assert_eq!(per_group[g], want);
+        }
     }
 
     #[tokio::test]
