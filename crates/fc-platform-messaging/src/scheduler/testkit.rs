@@ -2,7 +2,7 @@
 //! like the claim and the QUEUED update, and a publisher that records.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -17,6 +17,17 @@ use super::lane::{ClaimedJob, LaneJob};
 use super::poller::{JobStore, MarkKey, PendingJobPoller, PollerSettings};
 use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
 use super::SchedulerError;
+
+/// A cheap deterministic pseudo-random number from a counter (splitmix64).
+pub(crate) fn mix(counter: &AtomicU64) -> u64 {
+    let mut z = counter
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap()
@@ -55,6 +66,11 @@ pub(crate) struct FakeStore {
     pub fail_claim: AtomicBool,
     pub fail_mark: AtomicBool,
     pub claim_calls: AtomicUsize,
+    /// Chance in 1000 that a status update fails (stress test).
+    pub mark_fail_per_mille: AtomicU32,
+    /// Longest real-time pause inside a claim, in us (stress test).
+    pub claim_jitter_us: AtomicU32,
+    rng: AtomicU64,
     /// When set, the claim with this call number (1-based) announces on
     /// `entered` once it has its arguments (generation and snapshot already
     /// taken) and waits for a permit on `proceed` before it reads the table.
@@ -152,7 +168,7 @@ impl JobStore for FakeStore {
         let call = self.claim_calls.fetch_add(1, Ordering::SeqCst) + 1;
         // A poller that claims in a hot loop never lets paused time advance,
         // so a test would hang instead of failing.
-        assert!(call <= 2000, "the poller is claiming in a hot loop");
+        assert!(call <= 200_000, "the poller is claiming in a hot loop");
         let gate = {
             let mut g = lock(&self.gate);
             if g.as_ref().is_some_and(|(n, _, _)| *n == call) {
@@ -164,6 +180,10 @@ impl JobStore for FakeStore {
         if let Some((_, entered, proceed)) = gate {
             entered.notify_one();
             proceed.acquire().await.unwrap().forget();
+        }
+        let jitter = u64::from(self.claim_jitter_us.load(Ordering::Relaxed));
+        if jitter > 0 {
+            time::sleep(Duration::from_micros(mix(&self.rng) % (jitter + 1))).await;
         }
         if self.fail_claim.load(Ordering::SeqCst) {
             return Err(SchedulerError::ConfigError("claim failed".into()));
@@ -186,7 +206,8 @@ impl JobStore for FakeStore {
     }
 
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
-        if self.fail_mark.load(Ordering::SeqCst) {
+        let per_mille = u64::from(self.mark_fail_per_mille.load(Ordering::Relaxed));
+        if self.fail_mark.load(Ordering::SeqCst) || mix(&self.rng) % 1000 < per_mille {
             return Err(SchedulerError::ConfigError("mark failed".into()));
         }
         let versions: HashMap<&str, DateTime<Utc>> =
@@ -218,6 +239,11 @@ pub(crate) struct FakePublisher {
     pub gate: Mutex<Option<Arc<Semaphore>>>,
     /// Virtual time each call takes.
     pub delay: Mutex<Duration>,
+    /// Chance in 1000 that a job fails to publish (stress test).
+    pub fail_per_mille: AtomicU32,
+    /// Longest real-time pause inside a call, in us (stress test).
+    pub jitter_us: AtomicU32,
+    rng: AtomicU64,
     /// Announced when a call starts.
     pub started: Notify,
 }
@@ -251,6 +277,11 @@ impl DispatchPublisher for FakePublisher {
         if !delay.is_zero() {
             time::sleep(delay).await;
         }
+        let jitter = u64::from(self.jitter_us.load(Ordering::Relaxed));
+        if jitter > 0 {
+            time::sleep(Duration::from_micros(mix(&self.rng) % (jitter + 1))).await;
+        }
+        let per_mille = u64::from(self.fail_per_mille.load(Ordering::Relaxed));
         if self.fail_all.load(Ordering::SeqCst) {
             return PublishOutcome {
                 unpublished: items.iter().map(|i| i.job_id.clone()).collect(),
@@ -261,7 +292,8 @@ impl DispatchPublisher for FakePublisher {
         let mut unpublished = Vec::new();
         for item in &items {
             let group = item.group_id().to_string();
-            let once = lock(&self.fail_once).remove(&item.job_id);
+            let once = lock(&self.fail_once).remove(&item.job_id)
+                || (per_mille > 0 && mix(&self.rng) % 1000 < per_mille);
             if failed_groups.contains(&group) || once || lock(&self.fail_ids).contains(&item.job_id)
             {
                 failed_groups.insert(group);

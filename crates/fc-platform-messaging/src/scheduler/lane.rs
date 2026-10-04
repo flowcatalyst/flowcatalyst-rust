@@ -33,15 +33,30 @@
 //!   claims `j` again, in order. Its jobs pass, and the first one clears the
 //!   poison.
 //!
-//! **A dropped job poisons its group too**, again at the generation read
-//! after its removal. Without that, a job of `g` still waiting in the lane
-//! (so still in the in-flight set, so excluded from a later claim) is dropped,
-//! and the later claim, which could not see it, takes the job *behind* it and
-//! publishes it ahead of the dropped one.
+//! # The claim must not skip a doomed job
+//!
+//! A job of `g` still waiting in the lane when `g` is poisoned is doomed (it
+//! will be dropped), yet it is in the in-flight set, so a later claim
+//! excludes it and, if that claim is newer than the poison, takes the job
+//! *behind* it, which would then be published ahead of the doomed one. The
+//! poller therefore checks every claim against the in-flight set it
+//! snapshotted: if the snapshot holds a job of `g` that is doomed (its
+//! generation is `<=` the group's poison), the claim's jobs of `g` are not
+//! submitted; they stay PENDING and are claimed again once the doomed jobs
+//! have been dropped.
+//!
+//! (Making a *drop* poison the group again, at the generation read after the
+//! drop, also closes the hole, but it livelocks whenever the poller claims
+//! faster than a lane drains: every claim made while a batch is being dropped
+//! is older than that batch's poison, so it is dropped in turn, without end.)
 
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+#[cfg(test)]
+use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -96,13 +111,41 @@ fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+struct InFlight {
+    group: Option<String>,
+    generation: u64,
+}
+
+struct Poison {
+    generation: u64,
+    set_at: Instant,
+}
+
+#[derive(Default)]
+struct State {
+    in_flight: HashMap<String, InFlight>,
+    poison: HashMap<String, Poison>,
+}
+
+/// The in-flight set as a claim saw it.
+pub(crate) struct Snapshot {
+    pub ids: Vec<String>,
+    /// Per group, the oldest generation among its in-flight jobs.
+    min_generation: HashMap<String, u64>,
+}
+
 /// What the poller and the lanes share. See the module docs.
 pub(crate) struct Pipeline {
     capacity: usize,
     generation: AtomicU64,
-    in_flight: Mutex<HashSet<String>>,
+    state: Mutex<State>,
     permits: Semaphore,
     failed: AtomicBool,
+    /// Test only: the longest pause [`Self::race_point`] takes, in us.
+    #[cfg(test)]
+    race_pause_us: AtomicU32,
+    #[cfg(test)]
+    race_seq: AtomicU64,
 }
 
 impl Pipeline {
@@ -110,10 +153,40 @@ impl Pipeline {
         Self {
             capacity,
             generation: AtomicU64::new(0),
-            in_flight: Mutex::new(HashSet::new()),
+            state: Mutex::new(State::default()),
             permits: Semaphore::new(capacity),
             failed: AtomicBool::new(false),
+            #[cfg(test)]
+            race_pause_us: AtomicU32::new(0),
+            #[cfg(test)]
+            race_seq: AtomicU64::new(0),
         }
+    }
+
+    /// A point where two threads can interleave in the steps the ordering
+    /// rule depends on (between the generation and the snapshot; around the
+    /// removal of a batch's ids). Does nothing outside tests; the stress test
+    /// widens these windows so a wrong order is reachable.
+    #[inline]
+    pub fn race_point(&self) {
+        #[cfg(test)]
+        {
+            let max = self.race_pause_us.load(Ordering::Relaxed);
+            if max > 0 {
+                let mut z = self
+                    .race_seq
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                let us = (z >> 33) % u64::from(max + 1);
+                thread::sleep(Duration::from_micros(us));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn set_race_pause(&self, max_us: u32) {
+        self.race_pause_us.store(max_us, Ordering::Relaxed);
     }
 
     /// Take the next claim generation. Called before [`Self::snapshot_in_flight`].
@@ -125,29 +198,87 @@ impl Pipeline {
         self.generation.load(Ordering::SeqCst)
     }
 
-    pub fn snapshot_in_flight(&self) -> Vec<String> {
-        locked(&self.in_flight).iter().cloned().collect()
+    pub fn snapshot_in_flight(&self) -> Snapshot {
+        let state = locked(&self.state);
+        let mut min_generation: HashMap<String, u64> = HashMap::new();
+        for entry in state.in_flight.values() {
+            if let Some(group) = &entry.group {
+                let slot = min_generation.entry(group.clone()).or_insert(u64::MAX);
+                *slot = (*slot).min(entry.generation);
+            }
+        }
+        Snapshot {
+            ids: state.in_flight.keys().cloned().collect(),
+            min_generation,
+        }
     }
 
     /// `false` when the id was already in flight.
-    pub fn add_in_flight(&self, id: &str) -> bool {
-        let mut set = locked(&self.in_flight);
-        let added = set.insert(id.to_string());
-        metrics::gauge!("scheduler.in_flight.size").set(set.len() as f64);
+    pub fn add_in_flight(&self, job: &ClaimedJob, generation: u64) -> bool {
+        let mut state = locked(&self.state);
+        let entry = InFlight {
+            group: job.group().map(str::to_string),
+            generation,
+        };
+        let added = state
+            .in_flight
+            .insert(job.id().to_string(), entry)
+            .is_none();
+        metrics::gauge!("scheduler.in_flight.size").set(state.in_flight.len() as f64);
         added
     }
 
     pub fn remove_in_flight<'a>(&self, ids: impl IntoIterator<Item = &'a str>) {
-        let mut set = locked(&self.in_flight);
+        let mut state = locked(&self.state);
         for id in ids {
-            set.remove(id);
+            state.in_flight.remove(id);
         }
-        metrics::gauge!("scheduler.in_flight.size").set(set.len() as f64);
+        metrics::gauge!("scheduler.in_flight.size").set(state.in_flight.len() as f64);
     }
 
     #[cfg(test)]
     pub fn in_flight_len(&self) -> usize {
-        locked(&self.in_flight).len()
+        locked(&self.state).in_flight.len()
+    }
+
+    /// Whether a claim that took `snapshot` must not submit its jobs of
+    /// `group`: the snapshot held a job of the group that is doomed, so the
+    /// claim skipped it.
+    pub fn skipped_a_doomed_job(&self, snapshot: &Snapshot, group: &str) -> bool {
+        let state = locked(&self.state);
+        match (state.poison.get(group), snapshot.min_generation.get(group)) {
+            (Some(p), Some(min)) => *min <= p.generation,
+            _ => false,
+        }
+    }
+
+    /// A job of `group` with `generation` reaches the lane: `false` when it is
+    /// poisoned and must be dropped. The first job newer than the poison
+    /// clears it.
+    pub fn admit(&self, group: &str, generation: u64) -> bool {
+        let mut state = locked(&self.state);
+        match state.poison.get(group) {
+            Some(p) if generation <= p.generation => false,
+            Some(_) => {
+                state.poison.remove(group);
+                true
+            }
+            None => true,
+        }
+    }
+
+    pub fn poison(&self, groups: impl IntoIterator<Item = String>, generation: u64) {
+        let mut state = locked(&self.state);
+        let set_at = Instant::now();
+        for group in groups {
+            state.poison.insert(group, Poison { generation, set_at });
+        }
+    }
+
+    pub fn evict_expired_poison(&self) {
+        locked(&self.state)
+            .poison
+            .retain(|_, p| p.set_at.elapsed() < POISON_TTL);
     }
 
     /// Block for one permit, then take as many more as are free, up to `max`
@@ -201,11 +332,6 @@ pub(crate) struct LaneReport {
     pub dropped: usize,
 }
 
-struct Poison {
-    generation: u64,
-    set_at: Instant,
-}
-
 /// One dispatcher: publishes the jobs it is handed and marks them QUEUED.
 pub(crate) struct Lane {
     index: usize,
@@ -214,7 +340,6 @@ pub(crate) struct Lane {
     dispatcher: Arc<MessageGroupDispatcher>,
     /// How many jobs a batch takes beyond its first.
     batch_extra: usize,
-    poison: HashMap<String, Poison>,
 }
 
 impl Lane {
@@ -231,7 +356,6 @@ impl Lane {
             store,
             dispatcher,
             batch_extra,
-            poison: HashMap::new(),
         }
     }
 
@@ -260,10 +384,6 @@ impl Lane {
         }
     }
 
-    fn evict_expired_poison(&mut self) {
-        self.poison.retain(|_, p| p.set_at.elapsed() < POISON_TTL);
-    }
-
     /// Publish one batch and finish it: drop what is poisoned, publish the
     /// rest, mark the published ids QUEUED, then remove every id from the
     /// in-flight set, record the poison, and release the permits, in that
@@ -272,31 +392,27 @@ impl Lane {
         if batch.is_empty() {
             return LaneReport::default();
         }
-        self.evict_expired_poison();
+        self.pipeline.evict_expired_poison();
         let ids: Vec<String> = batch.iter().map(|j| j.job.id().to_string()).collect();
 
-        // Groups that must not publish anything more in this batch: one with
-        // a job dropped here (a later job of it would overtake the dropped
-        // one), later extended by the groups the publish fails.
-        let mut stopped_groups: HashSet<String> = HashSet::new();
+        // Groups with a job dropped in this batch: a later job of the group
+        // must not overtake it. Groups whose publish failed are poisoned below.
+        let mut dropped_groups: HashSet<String> = HashSet::new();
+        let mut failed_groups: HashSet<String> = HashSet::new();
         let mut to_publish: Vec<ClaimedJob> = Vec::with_capacity(batch.len());
         let mut dropped = 0usize;
         for LaneJob { job, generation } in batch {
             if let Some(group) = job.group() {
-                if stopped_groups.contains(group) {
+                if dropped_groups.contains(group) {
                     dropped += 1;
                     continue;
                 }
-                match self.poison.get(group) {
-                    Some(p) if generation <= p.generation => {
-                        stopped_groups.insert(group.to_string());
-                        dropped += 1;
-                        continue;
-                    }
-                    Some(_) => {
-                        self.poison.remove(group);
-                    }
-                    None => {}
+                if !self.pipeline.admit(group, generation) {
+                    // Later jobs of the group in this batch follow it. The
+                    // poison already stands; a drop does not renew it.
+                    dropped_groups.insert(group.to_string());
+                    dropped += 1;
+                    continue;
                 }
             }
             to_publish.push(job);
@@ -321,7 +437,7 @@ impl Lane {
                 if unpublished.contains(job.id()) {
                     failed = true;
                     if let Some(group) = job.group() {
-                        stopped_groups.insert(group.to_string());
+                        failed_groups.insert(group.to_string());
                     }
                 } else {
                     to_mark.push((job.id().to_string(), job.created_at, job.updated_at));
@@ -358,14 +474,13 @@ impl Lane {
         }
 
         // Ids out of the set, THEN the generation read, THEN the permits.
+        self.pipeline.race_point();
         self.pipeline
             .remove_in_flight(ids.iter().map(String::as_str));
-        if !stopped_groups.is_empty() {
+        self.pipeline.race_point();
+        if !failed_groups.is_empty() {
             let generation = self.pipeline.current_generation();
-            let set_at = Instant::now();
-            for group in stopped_groups {
-                self.poison.insert(group, Poison { generation, set_at });
-            }
+            self.pipeline.poison(failed_groups, generation);
         }
         if failed {
             self.pipeline.note_failure();
@@ -426,8 +541,12 @@ mod tests {
             }
             jobs.iter()
                 .map(|(id, g)| {
-                    assert!(self.pipeline.add_in_flight(id), "{id} already in flight");
-                    lane_job(id, *g, generation)
+                    let job = lane_job(id, *g, generation);
+                    assert!(
+                        self.pipeline.add_in_flight(&job.job, generation),
+                        "{id} already in flight"
+                    );
+                    job
                 })
                 .collect()
         }
@@ -476,46 +595,22 @@ mod tests {
         assert!(h.idle());
     }
 
-    /// A dropped job poisons its group at the generation read after its own
-    /// removal. Otherwise a claim that could not see it (it was still in the
-    /// in-flight set) takes the job behind it, and that job is published
-    /// ahead of the dropped one.
+    /// A drop does not renew the poison (that livelocks: see the module docs).
+    /// The lane alone therefore passes a newer claim's job behind a dropped
+    /// one; what keeps such a job from being submitted is the poller's check
+    /// against its in-flight snapshot (`poller::tests::a_claim_that_skipped_a_doomed_job_...`).
     #[tokio::test]
-    async fn a_dropped_job_poisons_its_group_too() {
+    async fn a_drop_does_not_renew_the_poison() {
         let mut h = harness(&[("j1", Some("g")), ("j2", Some("g")), ("j3", Some("g"))]);
         lock(&h.publisher.fail_once).insert("j1".into());
-
-        // Claim A (generation 1) took j1 and j2; the lane received them in
-        // two batches.
         let ga = h.pipeline.next_generation();
-        let batch_x = h.submit(&[("j1", Some("g"))], ga).await;
-        let batch_y = h.submit(&[("j2", Some("g"))], ga).await;
-
-        // j1 fails; poison[g] = 1.
-        assert_eq!(h.lane.process(batch_x).await.unpublished, 1);
-
-        // Claim B starts now: generation 2, and its snapshot still holds j2
-        // (batch Y is unprocessed), so it returns j1 and j3 but not j2.
+        let x = h.submit(&[("j1", Some("g"))], ga).await;
+        let y = h.submit(&[("j2", Some("g"))], ga).await;
+        assert_eq!(h.lane.process(x).await.unpublished, 1);
+        assert_eq!(h.lane.process(y).await.dropped, 1);
         let gb = h.pipeline.next_generation();
-        let batch_z = h.submit(&[("j1", Some("g")), ("j3", Some("g"))], gb).await;
-
-        // The lane drops j2 (generation 1 <= 1) and must poison g again.
-        assert_eq!(h.lane.process(batch_y).await.dropped, 1);
-        let r = h.lane.process(batch_z).await;
-        assert_eq!((r.published, r.dropped), (0, 2), "j3 must not pass j2");
-        assert!(h.publisher.published_ids().is_empty());
-
-        // Claim C sees all three again, in order.
-        let gc = h.pipeline.next_generation();
-        let all = h
-            .submit(
-                &[("j1", Some("g")), ("j2", Some("g")), ("j3", Some("g"))],
-                gc,
-            )
-            .await;
-        assert_eq!(h.lane.process(all).await.published, 3);
-        assert_eq!(h.publisher.published_ids(), vec!["j1", "j2", "j3"]);
-        assert!(h.idle());
+        let z = h.submit(&[("j3", Some("g"))], gb).await;
+        assert_eq!(h.lane.process(z).await.published, 1);
     }
 
     /// Ids leave the in-flight set and permits return on every path:
@@ -607,7 +702,7 @@ mod tests {
             while got < 1 {
                 got += h.pipeline.acquire_up_to(1).await;
             }
-            assert!(h.pipeline.add_in_flight(c.id()));
+            assert!(h.pipeline.add_in_flight(&c, g));
             jobs.push(LaneJob {
                 job: c,
                 generation: g,

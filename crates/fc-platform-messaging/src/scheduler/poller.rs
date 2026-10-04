@@ -45,6 +45,7 @@
 //! held only by a row whose group is literally `default` — Go's quirk,
 //! kept.
 
+use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -387,9 +388,10 @@ impl ClaimStage {
         // The generation BEFORE the snapshot: the ordering rule in `lane`
         // depends on it.
         let generation = self.pipeline.next_generation();
-        let exclude = self.pipeline.snapshot_in_flight();
+        self.pipeline.race_point();
+        let snapshot = self.pipeline.snapshot_in_flight();
         let started = Instant::now();
-        let claimed = self.store.claim(want, exclude).await;
+        let claimed = self.store.claim(want, snapshot.ids.clone()).await;
         metrics::histogram!("scheduler.claim.duration_seconds").record(started.elapsed());
         let rows = match claimed {
             Ok(rows) => rows,
@@ -401,8 +403,17 @@ impl ClaimStage {
         let claimed = rows.len();
         let mut jobs = Vec::with_capacity(claimed);
         for job in rows {
+            // The claim skipped a job of this group that is doomed (it will be
+            // dropped): this one is behind it. Leave it PENDING; it is claimed
+            // again, in order, once the doomed job has gone.
+            if job
+                .group()
+                .is_some_and(|g| self.pipeline.skipped_a_doomed_job(&snapshot, g))
+            {
+                continue;
+            }
             // Cannot happen (the claim excluded the set); never submit twice.
-            if self.pipeline.add_in_flight(job.id()) {
+            if self.pipeline.add_in_flight(&job, generation) {
                 jobs.push(LaneJob { job, generation });
             }
         }
@@ -653,14 +664,22 @@ impl PendingJobPoller {
             cancel: cancel.clone(),
             is_leader,
         };
-        tokio::select! {
-            () = drive(&claimer, interval, &ctl) => {}
-            Some(res) = lane_tasks.join_next() => {
-                if !cancel.is_cancelled() {
-                    error!(result = ?res, "a dispatch lane stopped unexpectedly");
-                    lane_tasks.abort_all();
-                    // Supervised: the loop restarts with fresh lanes.
-                    panic!("a dispatch lane stopped unexpectedly");
+        // A lane that exits while we are not shutting down is a failure; one
+        // that exits because of the shutdown must not cut the poller's
+        // current pass short (it would leak that pass's permits).
+        {
+            let mut driving = pin!(drive(&claimer, interval, &ctl));
+            loop {
+                tokio::select! {
+                    () = &mut driving => break,
+                    Some(res) = lane_tasks.join_next() => {
+                        if !cancel.is_cancelled() {
+                            error!(result = ?res, "a dispatch lane stopped unexpectedly");
+                            lane_tasks.abort_all();
+                            // Supervised: the loop restarts with fresh lanes.
+                            panic!("a dispatch lane stopped unexpectedly");
+                        }
+                    }
                 }
             }
         }
@@ -676,7 +695,7 @@ impl PendingJobPoller {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashSet, VecDeque};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::future::Future;
     use std::mem;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -689,7 +708,7 @@ mod tests {
     use crate::scheduler::auth::DispatchAuthService;
     use crate::scheduler::dispatcher::MessageGroupDispatcher;
     use crate::scheduler::testkit::{
-        claimed, lock, rig, settings, FakePublisher, FakeStore, Rig, Status,
+        claimed, dispatcher, lock, rig, settings, FakePublisher, FakeStore, Rig, Status,
     };
 
     const TICK: Duration = Duration::from_secs(1);
@@ -1441,5 +1460,141 @@ mod tests {
             }
         );
         assert_eq!(r.store.ids_with(Status::Queued), vec!["a-00"]);
+    }
+
+    /// The claim must not skip a doomed job. j2 waits in the lane, doomed
+    /// (j1 failed and poisoned the group); a claim taken after the poison
+    /// excludes j2 (in flight) and would take j3 behind it. Its jobs of the
+    /// group are not submitted; once j2 is dropped, the next claim takes
+    /// j1, j2, j3 in order.
+    #[tokio::test]
+    async fn a_claim_that_skipped_a_doomed_job_does_not_submit_the_jobs_behind_it() {
+        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "j3"]
+            .iter()
+            .map(|i| (i.to_string(), Some("g".to_string())))
+            .collect();
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 2));
+        lock(&r.publisher.fail_once).insert("j1".into());
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage {
+            store: r.store.clone(),
+            pipeline: pipeline.clone(),
+        };
+        let mut lane = Lane::new(
+            0,
+            pipeline.clone(),
+            r.store.clone(),
+            dispatcher(r.publisher.clone()),
+            0,
+        );
+        let take = |n: usize| {
+            let pipeline = pipeline.clone();
+            async move {
+                let mut got = 0;
+                while got < n {
+                    got += pipeline.acquire_up_to(n - got).await;
+                }
+            }
+        };
+
+        // Claim A takes j1 and j2; the lane receives them in two batches.
+        take(2).await;
+        let (mut a, _) = stage.claim(2).await.unwrap();
+        let (a2, a1) = (a.pop().unwrap(), a.pop().unwrap());
+        assert_eq!((a1.job.id(), a2.job.id()), ("j1", "j2"));
+        // j1 fails: poison at the current generation.
+        assert_eq!(lane.process(vec![a1]).await.unpublished, 1);
+
+        // Claim B: j2 is still in flight (and doomed), so the store returns
+        // j1 and j3; neither may be submitted.
+        take(2).await;
+        let (b, claimed) = stage.claim(2).await.unwrap();
+        assert_eq!(claimed, 2, "the store did return j1 and j3");
+        assert!(b.is_empty(), "submitted behind a doomed job: {b:?}");
+        assert_eq!(pipeline.available(), 10 - 1, "only j2 holds a permit");
+
+        // The lane drops j2; claim C sees everything, in order.
+        assert_eq!(lane.process(vec![a2]).await.dropped, 1);
+        take(3).await;
+        let (c, _) = stage.claim(3).await.unwrap();
+        assert_eq!(c.len(), 3);
+        assert_eq!(lane.process(c).await.published, 3);
+        assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
+        assert_eq!(pipeline.available(), 10);
+    }
+
+    /// Real threads, real time, random publish and mark failures, a small
+    /// buffer, and the race windows of the ordering rule widened: for every
+    /// group the broker's FIRST delivery of each job must be in claim order
+    /// (duplicates are fine: a job published and then not marked is
+    /// published again).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn stress_first_deliveries_stay_in_claim_order() {
+        const GROUPS: usize = 30;
+        const PER_GROUP: usize = 100;
+        let ids: Vec<(String, Option<String>)> = (0..GROUPS)
+            .flat_map(|g| {
+                (0..PER_GROUP).map(move |n| (format!("g{g:02}-{n:03}"), Some(format!("g{g:02}"))))
+            })
+            .collect();
+        let settings = PollerSettings {
+            lane_batch: 4,
+            ..settings(24, 4, 8)
+        };
+        let r = rig(FakeStore::with_jobs(ids), settings);
+        r.publisher.fail_per_mille.store(30, Ordering::Relaxed);
+        r.publisher.jitter_us.store(300, Ordering::Relaxed);
+        r.store.mark_fail_per_mille.store(10, Ordering::Relaxed);
+        r.store.claim_jitter_us.store(300, Ordering::Relaxed);
+        let pipeline = Arc::new(Pipeline::new(24));
+        pipeline.set_race_pause(150);
+
+        let cancel = CancellationToken::new();
+        let total = GROUPS * PER_GROUP;
+        let run = r.poller.run_with(
+            pipeline.clone(),
+            Duration::from_millis(1),
+            leader(true),
+            cancel.clone(),
+        );
+        let watch = async {
+            let finished = time::timeout(Duration::from_secs(30), async {
+                while r.store.count(Status::Queued) != total {
+                    time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await;
+            cancel.cancel();
+            finished
+        };
+        let (_, finished) = tokio::join!(run, watch);
+        assert!(
+            finished.is_ok(),
+            "not all jobs were queued in time: {} pending, {} permits free of 24, {} in flight, {} claims, {} publishes",
+            r.store.count(Status::Pending),
+            pipeline.available(),
+            pipeline.in_flight_len(),
+            r.store.claim_calls.load(Ordering::SeqCst),
+            r.publisher.calls.load(Ordering::SeqCst),
+        );
+
+        let mut last_first: HashMap<String, usize> = HashMap::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for id in r.publisher.published_ids() {
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            let (group, n) = id.split_once('-').unwrap();
+            let n: usize = n.parse().unwrap();
+            if let Some(prev) = last_first.insert(group.to_string(), n) {
+                assert!(
+                    n > prev,
+                    "{id} was first delivered after {group}-{prev:03}: out of claim order"
+                );
+            }
+        }
+        assert_eq!(seen.len(), total, "every job was delivered");
+        assert_eq!(pipeline.in_flight_len(), 0);
+        assert_eq!(pipeline.available(), 24);
     }
 }
