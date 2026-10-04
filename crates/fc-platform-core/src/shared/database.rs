@@ -672,6 +672,13 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "062_function_registry_fnr",
             include_str!("../../../../migrations/062_function_registry_fnr.sql"),
         ),
+        // msg_dispatch_jobs indexes rebuilt around the statements that use
+        // them: the claim's total order (no sort), the hold-back checks,
+        // the stale / reaper sweeps, and the projector's dirty predicate.
+        (
+            "063_dispatch_job_scheduler_indexes",
+            include_str!("../../../../migrations/063_dispatch_job_scheduler_indexes.sql"),
+        ),
     ]
 }
 
@@ -1017,6 +1024,13 @@ pub async fn run_migrations_with(
              AND EXISTS (SELECT 1 FROM pg_constraint \
              WHERE conname = 'chk_msg_subscriptions_source' \
                AND pg_get_constraintdef(oid) LIKE '%''FUNCTION''%')",
+        ),
+        // 063 only swaps indexes; the last one it creates means it ran.
+        (
+            "063_dispatch_job_scheduler_indexes",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
+               AND indexname = 'idx_msg_dispatch_jobs_dirty')",
         ),
     ];
 
