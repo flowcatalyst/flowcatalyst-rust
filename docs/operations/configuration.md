@@ -240,7 +240,15 @@ Router architecture: [../architecture/message-router.md](../architecture/message
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
 
-Batch size (100) and the stale-job threshold (15 minutes) are fixed.
+The poller claims jobs and hands them to dispatcher lanes that publish and mark them QUEUED in bulk; it never waits for a publish and blocks only when `FC_SCHEDULER_BUFFER_CAPACITY` jobs are already claimed and unfinished. A message group always uses one lane. A value that is unset, empty, unparseable or zero keeps the default.
+
+| Variable | Alias | Default | Description |
+|---|---|---|---|
+| `FC_SCHEDULER_BUFFER_CAPACITY` | — | `1000` | Most jobs claimed and not yet finished by a lane; the poller blocks when it is reached |
+| `FC_SCHEDULER_DISPATCHERS` | — | `10` | Dispatcher lanes (concurrent publishers) |
+| `FC_SCHEDULER_BATCH_SIZE` | `FLOWCATALYST_SCHEDULER_BATCH_SIZE` | `500` | Most rows one claim asks for |
+
+The lane batch (100) and the stale-job threshold (75 minutes) are fixed.
 
 Scheduler architecture: [../architecture/scheduler.md](../architecture/scheduler.md).
 

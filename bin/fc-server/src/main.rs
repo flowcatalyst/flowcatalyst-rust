@@ -1303,10 +1303,12 @@ fn load_scheduler_config(api_port: u16) -> SchedulerConfig {
             "FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS",
             defaults.poll_interval.as_millis() as u64,
         )),
-        batch_size: env_or_parse("FLOWCATALYST_SCHEDULER_BATCH_SIZE", defaults.batch_size),
         processing_endpoint,
         ..defaults
     }
+    // FC_SCHEDULER_BUFFER_CAPACITY / _DISPATCHERS / _BATCH_SIZE (the last
+    // also as FLOWCATALYST_SCHEDULER_BATCH_SIZE).
+    .with_env_overrides()
 }
 
 /// Spawn the CQRS stream processor, gated on leadership: event and

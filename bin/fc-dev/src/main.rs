@@ -861,7 +861,8 @@ async fn main() -> Result<()> {
         let config = SchedulerConfig {
             processing_endpoint: format!("http://localhost:{}/api/dispatch/process", args.api_port),
             ..SchedulerConfig::default()
-        };
+        }
+        .with_env_overrides();
         // The platform's own callback is exempt from the delivery policy, for a
         // developer who has turned loopback delivery off.
         netguard::default_policy().allow_url(&config.processing_endpoint);
