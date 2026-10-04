@@ -51,6 +51,11 @@ authors = ["FlowCatalyst Team"]
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+# Global allocator for fc-server (owner decision 2026-10-04). The system allocator (glibc)
+# locks its arenas when memory allocated on one thread is freed on another, which Tokio's
+# work-stealing does constantly: measured on the router at 1/2/4 CPUs, 18.9k/20.7k/30.1k
+# msg/s with glibc against 29.2k/49.1k/73.6k with this. Compiles a C library (libmimalloc-sys).
+mimalloc = { version = "0.1", default-features = false }
 tokio = { version = "1.44", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 serde = { version = "1.0", features = ["derive"] }

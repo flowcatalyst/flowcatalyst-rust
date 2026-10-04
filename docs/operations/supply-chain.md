@@ -227,3 +227,19 @@ cargo-deny never meets `instant` on our targets). Of those seven:
 - build time only: paste (unmaintained proc-macro, utoipa-axum 0.2);
 - in no shipped binary: instant (wasm targets only) and rustls-pemfile
   (lapin, fc-queue's `activemq` feature, which no binary enables).
+
+## The global allocator (2026-10-04)
+
+fc-server uses `mimalloc` as its global allocator (owner decision 2026-10-04). It is the one
+place the policy's preference against new build scripts and single-maintainer crates is set
+aside deliberately: `libmimalloc-sys` compiles Microsoft's mimalloc C library with `cc`, and
+the two binding crates come from one publisher. Both are `cargo vet` **exemptions**, not
+audits (`libmimalloc-sys` is about 51,000 lines of C and bindings); they join the tail to
+audit.
+
+The reason is measured. With the system allocator (glibc) the router did not scale across
+CPUs and spent about a third of its time allocating: glibc locks an arena when memory
+allocated on one thread is freed on another, and the work-stealing runtime does that
+constantly. Router throughput at 1 / 2 / 4 CPUs was 18.9k / 20.7k / 30.1k messages a second
+with glibc and 29.2k / 49.1k / 73.6k with mimalloc, at the same memory. Only fc-server links
+it; fc-dev and fc-outbox-processor keep the system allocator.

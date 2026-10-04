@@ -10,6 +10,7 @@ name = "fc-server"
 path = "src/main.rs"
 
 [dependencies]
+mimalloc = { workspace = true }
 fc-common = { path = "../../crates/fc-common" }
 fc-platform = { path = "../../crates/fc-platform" }
 fc-router = { path = "../../crates/fc-router", features = ["backends"] }

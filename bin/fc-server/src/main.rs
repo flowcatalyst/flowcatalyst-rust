@@ -230,6 +230,14 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+/// A per-thread-cache allocator in place of the system one. glibc's allocator takes an arena
+/// lock when memory is freed on a different thread from the one that allocated it, and the
+/// work-stealing runtime moves tasks between threads constantly; with it the router did not
+/// scale past one CPU and spent about a third of its time allocating. See the workspace
+/// `Cargo.toml` note and `docs/operations/supply-chain.md`.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Both rustls crypto backends are compiled into this binary (the AWS SDK
