@@ -64,7 +64,23 @@ fn env_parse<T: FromStr>(key: &str, default: T) -> T {
 /// * `FC_DB_IDLE_TIMEOUT_SECS` (default: 300)
 /// * `FC_DB_MAX_LIFETIME_SECS` (default: 1800)
 pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
-    let cfg = PoolConfig::from_env();
+    create_pool_with(database_url, PoolConfig::from_env()).await
+}
+
+/// [`create_pool`] with its own `max_connections` (the other settings still
+/// come from the environment): for a subsystem that must not compete with the
+/// API for connections. The minimum is capped at the maximum.
+pub async fn create_pool_sized(
+    database_url: &str,
+    max_connections: u32,
+) -> Result<PgPool, sqlx::Error> {
+    let mut cfg = PoolConfig::from_env();
+    cfg.max_connections = max_connections.max(1);
+    cfg.min_connections = cfg.min_connections.min(cfg.max_connections);
+    create_pool_with(database_url, cfg).await
+}
+
+async fn create_pool_with(database_url: &str, cfg: PoolConfig) -> Result<PgPool, sqlx::Error> {
     info!(
         max_connections = cfg.max_connections,
         min_connections = cfg.min_connections,

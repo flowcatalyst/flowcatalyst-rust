@@ -496,7 +496,9 @@ async fn main() -> Result<()> {
         processor_tasks.push((
             "dispatch scheduler",
             spawn_scheduler(
-                &db.pool,
+                &db.url,
+                db.secret_provider.clone(),
+                db.secret_refresh_interval,
                 active_rx.clone(),
                 api_port,
                 processors_stop.clone(),
@@ -1158,7 +1160,9 @@ async fn start_router(
 /// with nowhere to publish would claim jobs into the void, and one without
 /// the key would publish tokens `/api/dispatch/process` rejects.
 async fn spawn_scheduler(
-    pg_pool: &sqlx::PgPool,
+    database_url: &str,
+    secret_provider: Option<Arc<dyn SecretProvider>>,
+    secret_refresh_interval: Duration,
     active_rx: watch::Receiver<bool>,
     api_port: u16,
     stop: CancellationToken,
@@ -1174,7 +1178,21 @@ async fn spawn_scheduler(
         )
     })?;
     let config = load_scheduler_config(api_port);
-    let scheduler = DispatchScheduler::from_settings(config, pg_pool.clone(), &settings, auth)
+    // The scheduler's own pool: its claim and its lanes' status updates must
+    // not compete with API requests for the shared pool's connections. Like
+    // every pool opened from these credentials it registers its own refresh.
+    let pg_pool = database::create_pool_sized(database_url, config.db_max_connections())
+        .await
+        .map_err(|e| anyhow::anyhow!("dispatch scheduler PG pool failed: {e}"))?;
+    if let Some(provider) = secret_provider {
+        database::start_secret_refresh(
+            provider,
+            pg_pool.clone(),
+            database_url.to_string(),
+            secret_refresh_interval,
+        );
+    }
+    let scheduler = DispatchScheduler::from_settings(config, pg_pool, &settings, auth)
         .await
         .map_err(|e| anyhow::anyhow!("dispatch scheduler refused to start: {e}"))?;
 

@@ -125,6 +125,24 @@ impl SchedulerConfig {
     }
 }
 
+/// The scheduler's own connection pool size: one connection per dispatcher
+/// lane (each does a status update) plus one for the poller's claim and one
+/// spare, unless `configured` overrides it (zero is ignored).
+pub fn db_pool_size(dispatchers: usize, configured: Option<u32>) -> u32 {
+    configured
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| u32::try_from(dispatchers.max(1) + 2).unwrap_or(u32::MAX))
+}
+
+impl SchedulerConfig {
+    /// The size of the pool the scheduler opens for itself: see
+    /// [`db_pool_size`]; `FC_SCHEDULER_DB_MAX_CONNECTIONS` overrides it.
+    pub fn db_max_connections(&self) -> u32 {
+        let configured: u32 = env_first_parse(&["FC_SCHEDULER_DB_MAX_CONNECTIONS"], 0);
+        db_pool_size(self.dispatchers, (configured > 0).then_some(configured))
+    }
+}
+
 /// `value`, or `fallback` when it is zero.
 fn positive(value: usize, fallback: usize) -> usize {
     if value == 0 {
@@ -282,7 +300,33 @@ mod tests {
         assert_eq!(c.stale_scan_interval, Duration::from_secs(60));
     }
 
-    /// The only test that touches these variables.
+    #[test]
+    fn the_scheduler_pool_is_dispatchers_plus_two_unless_overridden() {
+        assert_eq!(db_pool_size(10, None), 12);
+        assert_eq!(db_pool_size(1, None), 3);
+        assert_eq!(db_pool_size(0, None), 3, "never fewer than one lane");
+        assert_eq!(db_pool_size(10, Some(30)), 30);
+        assert_eq!(db_pool_size(10, Some(0)), 12, "zero is ignored");
+    }
+
+    #[test]
+    fn the_pool_size_override_is_read_from_the_environment() {
+        use std::env;
+        let key = "FC_SCHEDULER_DB_MAX_CONNECTIONS";
+        let config = SchedulerConfig {
+            dispatchers: 4,
+            ..SchedulerConfig::default()
+        };
+        env::remove_var(key);
+        assert_eq!(config.db_max_connections(), 6);
+        env::set_var(key, "25");
+        assert_eq!(config.db_max_connections(), 25);
+        env::set_var(key, "lots");
+        assert_eq!(config.db_max_connections(), 6, "unparseable is ignored");
+        env::remove_var(key);
+    }
+
+    /// The only test that touches the other scheduler variables.
     #[test]
     fn env_overrides_apply_and_bad_values_are_ignored() {
         use std::env;

@@ -870,13 +870,19 @@ async fn main() -> Result<()> {
         let auth = DispatchAuthService::from_env().ok_or_else(|| {
             anyhow::anyhow!("FLOWCATALYST_APP_KEY is required to sign dispatch tokens")
         })?;
+        // The scheduler's own pool, so its claim and status updates do not
+        // compete with the API for connections.
+        let scheduler_pool =
+            database::create_pool_sized(&args.database_url, config.db_max_connections())
+                .await
+                .map_err(|e| anyhow::anyhow!("dispatch scheduler PG pool failed: {e}"))?;
         let pool_codes = Arc::new(PoolCodeResolver::new(
-            pg_pool.clone(),
+            scheduler_pool.clone(),
             config.paused_cache_ttl,
         ));
         let scheduler = DispatchScheduler::new(
             config,
-            pg_pool.clone(),
+            scheduler_pool,
             Arc::new(SingleQueuePublisher::new(queue.clone())),
             auth,
             pool_codes,

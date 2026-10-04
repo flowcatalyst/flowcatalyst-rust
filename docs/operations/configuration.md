@@ -247,6 +247,7 @@ The poller claims jobs and hands them to dispatcher lanes that publish and mark 
 | `FC_SCHEDULER_BUFFER_CAPACITY` | — | `1000` | Most jobs claimed and not yet finished by a lane; the poller blocks when it is reached |
 | `FC_SCHEDULER_DISPATCHERS` | — | `10` | Dispatcher lanes (concurrent publishers) |
 | `FC_SCHEDULER_BATCH_SIZE` | `FLOWCATALYST_SCHEDULER_BATCH_SIZE` | `500` | Most rows one claim asks for |
+| `FC_SCHEDULER_DB_MAX_CONNECTIONS` | — | dispatchers + 2 (`12`) | Size of the scheduler's own database pool (one connection per lane for its status update, one for the claim, one spare). Opened only when the scheduler is enabled; the other `FC_DB_*` pool settings apply to it too. The API keeps `FC_DB_MAX_CONNECTIONS` to itself |
 
 The lane batch (100) and the stale-job threshold (75 minutes) are fixed.
 
