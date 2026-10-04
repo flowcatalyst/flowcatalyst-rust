@@ -6,8 +6,8 @@
 //! from the claim order plus the FIFO queue, not from in-process
 //! serialisation. Unlike Go, the poller publishes while its claim
 //! transaction is still open and marks only the published ids QUEUED (see
-//! [`super::poller`]); [`revert_unpublished`] remains for a claim that was
-//! committed QUEUED first.
+//! [`super::poller`]), so nothing needs reverting; [`revert_unpublished`]
+//! is kept for a claim that was committed QUEUED before publishing.
 
 use std::sync::Arc;
 use std::time::Duration;

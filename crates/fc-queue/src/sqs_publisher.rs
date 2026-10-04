@@ -26,7 +26,7 @@
 //!
 //! SQS reports batch failures per entry. If the earlier of two same-group
 //! entries failed and the later succeeded, the later would be durably queued
-//! while the earlier reverts and is published again afterwards: the group
+//! while the earlier stays PENDING and is published again afterwards: the group
 //! would be delivered out of order. Two rules prevent it:
 //!
 //! 1. A chunk takes at most one item per group, and a group's next item is
@@ -107,7 +107,7 @@ pub enum SendBatchError {
 /// The result of one [`SqsFifoPublisher::publish`] call.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FifoPublishOutcome {
-    /// The ids NOT published. The caller reverts exactly these: an id the
+    /// The ids NOT published. The caller leaves exactly these PENDING: an id the
     /// broker accepted is never listed, and one it did not accept always is.
     pub unpublished: Vec<String>,
     /// The last error seen, for logging only; carries no ids.

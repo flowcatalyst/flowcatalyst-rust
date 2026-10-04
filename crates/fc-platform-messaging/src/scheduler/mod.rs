@@ -4,11 +4,13 @@
 //! behaving as a drop-in for it:
 //!
 //! - [`PendingJobPoller`] claims due PENDING jobs with `FOR UPDATE SKIP
-//!   LOCKED`, marks them QUEUED in the same transaction, commits, then
-//!   publishes the claim in one call (`poller.rs`).
+//!   LOCKED`, publishes the claim in one call while the transaction is
+//!   still open, then marks the published jobs QUEUED and commits
+//!   (`poller.rs`). Unpublished jobs stay PENDING.
 //! - [`MessageGroupDispatcher`] renders each queue message (signed token,
-//!   resolved pool code, dispatch mode, message group) and reverts exactly
-//!   the unpublished jobs `QUEUED → PENDING` (`dispatcher.rs`).
+//!   resolved pool code, dispatch mode, message group), publishes the claim
+//!   under a deadline and reports exactly the unpublished jobs
+//!   (`dispatcher.rs`).
 //! - A [`DispatchPublisher`] sends to the configured queues: per-(tenant,
 //!   priority) SQS FIFO queues in production (`publisher.rs`,
 //!   `destination.rs`).

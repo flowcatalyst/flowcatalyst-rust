@@ -2,10 +2,12 @@
 //!
 //! A port of Go's `DispatchPublisher` contract
 //! (`internal/platform/scheduler/publisher.go`): the poller calls
-//! [`DispatchPublisher::publish`] once per tick, after the claim transaction
-//! has committed, and reverts exactly the ids it reports unpublished. A
-//! publisher must never report an id the broker accepted as unpublished (it
-//! would be delivered twice), nor the reverse (it would strand at QUEUED).
+//! [`DispatchPublisher::publish`] once per claim, while the claim transaction
+//! is still open (the rows locked, nothing yet marked QUEUED), and marks
+//! QUEUED exactly the ids it does not report unpublished; the rest stay
+//! PENDING. A publisher must never report an id the broker accepted as
+//! unpublished (it would be published again next poll), nor the reverse (the
+//! job would be marked QUEUED with no queue message until stale recovery).
 //!
 //! Three publishers:
 //! - [`SqsDispatchPublisher`]: per-(tenant, priority) SQS FIFO queues,
@@ -158,7 +160,7 @@ impl<A: SqsBatchApi + 'static> DispatchPublisher for SqsDispatchPublisher<A> {
                     body: wire_body(&item.message),
                 }),
                 Err(e) => {
-                    // Costs only this job: it reverts and retries next poll.
+                    // Costs only this job: it stays PENDING and retries next poll.
                     warn!(job_id = %item.job_id, error = %e,
                         "could not resolve a dispatch destination; job will revert to PENDING");
                     unpublished.push(item.job_id.clone());
@@ -234,7 +236,7 @@ impl DispatchPublisher for PostgresDispatchPublisher {
                 .or_insert_with(|| PostgresQueue::new(self.pool.clone(), name.clone(), 30));
             if let Err(e) = queue.publish(item.message.clone()).await {
                 // Everything from here on is unpublished; everything before
-                // it is durably queued and must not be reverted.
+                // it is durably queued and must be marked QUEUED.
                 return PublishOutcome {
                     unpublished: items[i..].iter().map(|x| x.job_id.clone()).collect(),
                     error: Some(format!("postgres dispatch publish: {e}")),
