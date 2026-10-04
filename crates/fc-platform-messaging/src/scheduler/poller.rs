@@ -77,7 +77,7 @@ pub const GROUP_HOLDING_STATUS_SQL: &str =
 /// One statement, no lock: see the module docs.
 const CLAIM_SQL: &str = "\
 SELECT j.id, j.subscription_id, j.message_group, j.mode, j.dispatch_pool_id, j.client_id, \
-       j.created_at, j.queue \
+       j.created_at, j.updated_at, j.queue \
   FROM msg_dispatch_jobs j \
  WHERE j.status = 'PENDING' \
    AND (j.scheduled_for IS NULL OR j.scheduled_for <= NOW()) \
@@ -92,15 +92,20 @@ SELECT j.id, j.subscription_id, j.message_group, j.mode, j.dispatch_pool_id, j.c
  ORDER BY j.message_group ASC NULLS LAST, j.sequence ASC, j.created_at ASC, j.id ASC \
  LIMIT $1";
 
-/// Marks exactly the published ids QUEUED, on a pooled connection. The
-/// `status = 'PENDING'` guard matters: the router can deliver and the
-/// callback can move the job on before this runs, and it must never be
-/// regressed to QUEUED.
+/// Marks exactly the published ids QUEUED, on a pooled connection, and only
+/// the row version the claim read. The router can deliver and the callback
+/// can move the job on before this runs; the update must never regress it.
+/// `status = 'PENDING'` covers a job that is past PENDING; `updated_at`
+/// covers one the callback put back to PENDING (a retry, a deferral, a
+/// BLOCK_ON_ERROR hold) in the meantime: every status write on the table
+/// stamps `updated_at`, so such a row is no longer the version claimed and
+/// stays PENDING, to be claimed and published again.
 const MARK_QUEUED_SQL: &str = "\
 UPDATE msg_dispatch_jobs SET status = 'QUEUED', queued_at = NOW(), updated_at = NOW() \
-  FROM UNNEST($1::varchar[], $2::timestamptz[]) AS t(id, created_at) \
+  FROM UNNEST($1::varchar[], $2::timestamptz[], $3::timestamptz[]) AS t(id, created_at, updated_at) \
  WHERE msg_dispatch_jobs.id = t.id AND msg_dispatch_jobs.created_at = t.created_at \
-   AND msg_dispatch_jobs.status = 'PENDING'";
+   AND msg_dispatch_jobs.status = 'PENDING' \
+   AND msg_dispatch_jobs.updated_at = t.updated_at";
 
 #[derive(Debug, sqlx::FromRow)]
 struct ClaimRow {
@@ -111,6 +116,7 @@ struct ClaimRow {
     dispatch_pool_id: Option<String>,
     client_id: Option<String>,
     created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
     queue: Option<String>,
 }
 
@@ -156,6 +162,9 @@ impl PausedConnectionCache {
     }
 }
 
+/// (id, `created_at`, `updated_at` as claimed): one row to mark QUEUED.
+pub(crate) type MarkKey = (String, DateTime<Utc>, DateTime<Utc>);
+
 /// The database side of the pipeline, so the loop can be tested without one.
 #[async_trait]
 pub(crate) trait JobStore: Send + Sync {
@@ -169,7 +178,7 @@ pub(crate) trait JobStore: Send + Sync {
 
     /// Mark the given jobs QUEUED where they are still PENDING; returns how
     /// many rows changed.
-    async fn mark_queued(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError>;
+    async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError>;
 }
 
 struct PgJobStore {
@@ -200,6 +209,7 @@ impl JobStore for PgJobStore {
                 .await;
             jobs.push(ClaimedJob {
                 created_at: c.created_at,
+                updated_at: c.updated_at,
                 token: DispatchJobToken {
                     job_id: c.id,
                     message_group: c.message_group,
@@ -214,12 +224,14 @@ impl JobStore for PgJobStore {
         Ok(jobs)
     }
 
-    async fn mark_queued(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
-        let (ids, created): (Vec<&str>, Vec<DateTime<Utc>>) =
-            jobs.iter().map(|(id, at)| (id.as_str(), *at)).unzip();
+    async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
+        let ids: Vec<&str> = jobs.iter().map(|(id, _, _)| id.as_str()).collect();
+        let created: Vec<DateTime<Utc>> = jobs.iter().map(|(_, at, _)| *at).collect();
+        let updated: Vec<DateTime<Utc>> = jobs.iter().map(|(_, _, at)| *at).collect();
         let done = sqlx::query(MARK_QUEUED_SQL)
             .bind(&ids)
             .bind(&created)
+            .bind(&updated)
             .execute(&self.pool)
             .await?;
         Ok(done.rows_affected())
@@ -700,6 +712,11 @@ mod tests {
     #[test]
     fn the_queued_update_only_touches_pending_rows() {
         assert!(MARK_QUEUED_SQL.contains("AND msg_dispatch_jobs.status = 'PENDING'"));
+        // ...and only the row version the claim read: a job the callback put
+        // back to PENDING (reschedule, hold, retry) is not QUEUED.
+        assert!(MARK_QUEUED_SQL.contains("AND msg_dispatch_jobs.updated_at = t.updated_at"));
+        assert!(MARK_QUEUED_SQL.contains("$3::timestamptz[]"));
+        assert!(CLAIM_SQL.contains("j.updated_at"));
         assert!(MARK_QUEUED_SQL.contains("queued_at = NOW()"));
     }
 
@@ -1405,10 +1422,7 @@ mod tests {
         ) -> Result<Vec<ClaimedJob>, SchedulerError> {
             Ok(mem::take(&mut *lock(&self.0)))
         }
-        async fn mark_queued(
-            &self,
-            jobs: &[(String, DateTime<Utc>)],
-        ) -> Result<u64, SchedulerError> {
+        async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
             Ok(jobs.len() as u64)
         }
     }

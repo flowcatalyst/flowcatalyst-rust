@@ -14,7 +14,7 @@ use tokio::time;
 use super::auth::DispatchAuthService;
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
 use super::lane::{ClaimedJob, LaneJob};
-use super::poller::{JobStore, PendingJobPoller, PollerSettings};
+use super::poller::{JobStore, MarkKey, PendingJobPoller, PollerSettings};
 use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
 use super::SchedulerError;
 
@@ -31,6 +31,8 @@ pub(crate) enum Status {
 struct Row {
     job: ClaimedJob,
     status: Status,
+    /// Bumped by [`FakeStore::touch`]: a status write by the callback.
+    updated_at: DateTime<Utc>,
 }
 
 /// (call number, entered, proceed): see [`FakeStore::gate_claim`].
@@ -75,6 +77,7 @@ pub(crate) fn claimed(id: &str, group: Option<&str>) -> ClaimedJob {
     ClaimedJob {
         token: token(id, group),
         created_at: DateTime::<Utc>::UNIX_EPOCH,
+        updated_at: DateTime::<Utc>::UNIX_EPOCH,
     }
 }
 
@@ -92,9 +95,20 @@ impl FakeStore {
             lock(&store.rows).push(Row {
                 job: claimed(&id, group.as_deref()),
                 status: Status::Pending,
+                updated_at: DateTime::<Utc>::UNIX_EPOCH,
             });
         }
         Arc::new(store)
+    }
+
+    /// The callback wrote to the row (a reschedule back to PENDING, say):
+    /// its version moves on.
+    pub fn touch(&self, id: &str) {
+        for r in lock(&self.rows).iter_mut() {
+            if r.job.id() == id {
+                r.updated_at += chrono::Duration::seconds(1);
+            }
+        }
     }
 
     pub fn status_of(&self, id: &str) -> Status {
@@ -159,7 +173,10 @@ impl JobStore for FakeStore {
             .iter()
             .filter(|r| r.status == Status::Pending && !excluded.contains(r.job.id()))
             .take(limit)
-            .map(|r| r.job.clone())
+            .map(|r| ClaimedJob {
+                updated_at: r.updated_at,
+                ..r.job.clone()
+            })
             .collect();
         lock(&self.claims).push(ClaimLog {
             exclude,
@@ -168,14 +185,15 @@ impl JobStore for FakeStore {
         Ok(returned)
     }
 
-    async fn mark_queued(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
+    async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
         if self.fail_mark.load(Ordering::SeqCst) {
             return Err(SchedulerError::ConfigError("mark failed".into()));
         }
-        let ids: HashSet<&str> = jobs.iter().map(|(id, _)| id.as_str()).collect();
+        let versions: HashMap<&str, DateTime<Utc>> =
+            jobs.iter().map(|(id, _, at)| (id.as_str(), *at)).collect();
         let mut n = 0;
         for r in lock(&self.rows).iter_mut() {
-            if ids.contains(r.job.id()) && r.status == Status::Pending {
+            if versions.get(r.job.id()) == Some(&r.updated_at) && r.status == Status::Pending {
                 r.status = Status::Queued;
                 n += 1;
             }

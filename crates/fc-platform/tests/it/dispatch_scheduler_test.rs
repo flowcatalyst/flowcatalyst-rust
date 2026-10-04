@@ -475,6 +475,55 @@ async fn the_queued_update_does_not_regress_a_job_that_moved_on() {
     assert_eq!(status(&pool, &c.id).await, "QUEUED");
 }
 
+/// The callback can put a job back to PENDING (a BLOCK_ON_ERROR hold, a retry
+/// backoff, a deferral) between the publish and the lane's QUEUED update. The
+/// update is optimistic on the row version the claim read, so that job is NOT
+/// set QUEUED (it would sit QUEUED with no queue message until stale
+/// recovery); it stays PENDING and is claimed again. Compile-checked only
+/// where Docker is not available.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_job_rescheduled_to_pending_between_publish_and_mark_is_not_queued() {
+    let (pool, _c) = setup_db().await;
+    let (a, b) = (job(1), job(2));
+    insert(&pool, &a).await;
+    insert(&pool, &b).await;
+
+    struct RescheduleFirst {
+        pool: PgPool,
+        id: String,
+    }
+    #[async_trait]
+    impl DispatchPublisher for RescheduleFirst {
+        async fn publish(&self, _items: Vec<PublishItem>) -> PublishOutcome {
+            // What `reschedule` does: status PENDING, queued_at NULL, and the
+            // version (`updated_at`) moves on.
+            sqlx::query(
+                "UPDATE msg_dispatch_jobs SET status = 'PENDING', \
+                 scheduled_for = NOW() + INTERVAL '1 hour', queued_at = NULL, \
+                 updated_at = NOW() + INTERVAL '1 second' WHERE id = $1",
+            )
+            .bind(&self.id)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+            PublishOutcome::default()
+        }
+        fn describe(&self) -> String {
+            "reschedule first".into()
+        }
+    }
+
+    let publisher = Arc::new(RescheduleFirst {
+        pool: pool.clone(),
+        id: a.id.clone(),
+    });
+    let s = scheduler(&pool, publisher, 100);
+    s.poller().poll_once().await.unwrap();
+    assert_eq!(status(&pool, &a.id).await, "PENDING");
+    assert_eq!(status(&pool, &b.id).await, "QUEUED");
+}
+
 // ── Holds and backoff ───────────────────────────────────────────────────
 
 /// A FAILED job holds only the BLOCK_ON_ERROR jobs behind it in its group;

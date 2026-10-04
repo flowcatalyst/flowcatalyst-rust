@@ -51,7 +51,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
-use super::poller::JobStore;
+use super::poller::{JobStore, MarkKey};
 
 /// How long a group stays poisoned without being seen again before its entry
 /// is forgotten.
@@ -66,6 +66,9 @@ const MARK_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct ClaimedJob {
     pub token: DispatchJobToken,
     pub created_at: DateTime<Utc>,
+    /// The row's `updated_at` as the claim read it: the version the QUEUED
+    /// update must still find.
+    pub updated_at: DateTime<Utc>,
 }
 
 impl ClaimedJob {
@@ -303,7 +306,7 @@ impl Lane {
         }
 
         let mut failed = false;
-        let mut to_mark: Vec<(String, DateTime<Utc>)> = Vec::with_capacity(to_publish.len());
+        let mut to_mark: Vec<MarkKey> = Vec::with_capacity(to_publish.len());
         if !to_publish.is_empty() {
             let tokens: Vec<DispatchJobToken> =
                 to_publish.iter().map(|j| j.token.clone()).collect();
@@ -321,7 +324,7 @@ impl Lane {
                         stopped_groups.insert(group.to_string());
                     }
                 } else {
-                    to_mark.push((job.id().to_string(), job.created_at));
+                    to_mark.push((job.id().to_string(), job.created_at, job.updated_at));
                 }
             }
         }
@@ -379,6 +382,7 @@ impl Lane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scheduler::poller::JobStore;
     use crate::scheduler::testkit::{dispatcher, lane_job, lock, FakePublisher, FakeStore, Status};
 
     const CAP: usize = 10;
@@ -588,5 +592,32 @@ mod tests {
         let g2 = h.pipeline.next_generation();
         let again = h.submit(&[("a", Some("g"))], g2).await;
         assert_eq!(h.lane.process(again).await.dropped, 0, "no poison");
+    }
+
+    /// A job the callback rescheduled to PENDING between publish and mark is
+    /// not set QUEUED (its row version moved on); it stays PENDING.
+    #[tokio::test]
+    async fn a_job_rescheduled_before_the_mark_is_not_queued() {
+        let mut h = harness(&[("a", None), ("b", None)]);
+        let claimed = h.store.claim(10, Vec::new()).await.unwrap();
+        let g = h.pipeline.next_generation();
+        let mut jobs = Vec::new();
+        for c in claimed {
+            let mut got = 0;
+            while got < 1 {
+                got += h.pipeline.acquire_up_to(1).await;
+            }
+            assert!(h.pipeline.add_in_flight(c.id()));
+            jobs.push(LaneJob {
+                job: c,
+                generation: g,
+            });
+        }
+        h.store.touch("a");
+        let r = h.lane.process(jobs).await;
+        assert_eq!(r.published, 2, "both reached the broker");
+        assert_eq!(h.store.status_of("a"), Status::Pending);
+        assert_eq!(h.store.status_of("b"), Status::Queued);
+        assert!(h.idle());
     }
 }
