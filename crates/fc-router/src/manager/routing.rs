@@ -25,6 +25,7 @@ use super::tracking::Tracked;
 use super::{ConsumerRegistry, QueueManager, RunningConsumer};
 use std::any::Any;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
@@ -183,10 +184,7 @@ struct QueueMessageCallback {
 /// Whose tracker entry sits under this callback's pipeline key.
 enum Ownership {
     /// This admission's: act with the entry's freshest receipt handle.
-    Owned {
-        receipt_handle: String,
-        broker_message_id: Option<String>,
-    },
+    Owned(Arc<InFlightMessage>),
     /// No entry (reaped, force-acked, or shutdown cleared it).
     Gone,
     /// A later admission of the same message owns it.
@@ -204,10 +202,7 @@ impl QueueMessageCallback {
 
     fn ownership(&self) -> Ownership {
         match self.in_pipeline.get(&self.pipeline_key) {
-            Some(e) if e.generation == self.generation => Ownership::Owned {
-                receipt_handle: e.receipt_handle.clone(),
-                broker_message_id: e.broker_message_id.clone(),
-            },
+            Some(e) if e.generation == self.generation => Ownership::Owned(e.msg.clone()),
             Some(_) => Ownership::Other,
             None => Ownership::Gone,
         }
@@ -278,33 +273,29 @@ impl MessageCallback for QueueMessageCallback {
         // owned the resolution even if a panic happens mid-await.
         self.completed.store(true, Ordering::Release);
 
-        let (handle, broker_id) = match self.ownership() {
-            Ownership::Owned {
-                receipt_handle,
-                broker_message_id,
-            } => (receipt_handle, broker_message_id),
-            Ownership::Gone => (
-                self.admitted.receipt_handle.clone(),
-                self.admitted.broker_message_id.clone(),
-            ),
+        // The record whose receipt handle and broker id this ack uses: the
+        // tracker entry's (freshest) when this admission owns it, else this
+        // copy's own. Shared, not copied.
+        let record = match self.ownership() {
+            Ownership::Owned(rec) => rec,
+            Ownership::Gone => self.admitted.clone(),
             Ownership::Other => {
                 warn!(
                     app_message_id = %self.app_message_id,
                     "ACK for a copy whose tracker entry now belongs to a later admission; acking with this copy's own receipt"
                 );
-                (
-                    self.admitted.receipt_handle.clone(),
-                    self.admitted.broker_message_id.clone(),
-                )
+                self.admitted.clone()
             }
         };
+        let handle = &record.receipt_handle;
+        let broker_id = &record.broker_message_id;
 
         let consumer = self.consumer();
         let ack = async {
             if self.ordered {
-                consumer.ack_urgent(&handle).await
+                consumer.ack_urgent(handle).await
             } else {
-                consumer.ack(&handle).await
+                consumer.ack(handle).await
             }
         };
         let acked = match time::timeout(BROKER_OP_TIMEOUT, ack).await {
@@ -353,8 +344,8 @@ impl MessageCallback for QueueMessageCallback {
         self.completed.store(true, Ordering::Release);
 
         let handle = match self.ownership() {
-            Ownership::Owned { receipt_handle, .. } => Some(receipt_handle),
-            Ownership::Gone => Some(self.admitted.receipt_handle.clone()),
+            Ownership::Owned(rec) => Some(rec),
+            Ownership::Gone => Some(self.admitted.clone()),
             Ownership::Other => {
                 warn!(
                     app_message_id = %self.app_message_id,
@@ -364,7 +355,13 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
         if let Some(handle) = handle {
-            match nack_bounded(self.consumer().as_ref(), &handle, delay_seconds).await {
+            match nack_bounded(
+                self.consumer().as_ref(),
+                &handle.receipt_handle,
+                delay_seconds,
+            )
+            .await
+            {
                 Ok(()) => self.recorder.record(
                     EventKind::Nacked,
                     &self.event_ctx,
@@ -399,8 +396,8 @@ impl Drop for QueueMessageCallback {
         // best-effort nack so the message returns sooner than its natural
         // visibility timeout.
         let handle = match self.ownership() {
-            Ownership::Owned { receipt_handle, .. } => Some(receipt_handle),
-            Ownership::Gone => Some(self.admitted.receipt_handle.clone()),
+            Ownership::Owned(rec) => Some(rec),
+            Ownership::Gone => Some(self.admitted.clone()),
             Ownership::Other => None,
         };
 
@@ -427,7 +424,7 @@ impl Drop for QueueMessageCallback {
             if let Ok(rt) = Handle::try_current() {
                 let consumer = self.consumer();
                 rt.spawn(async move {
-                    if let Err(e) = nack_bounded(consumer.as_ref(), &handle, Some(10)).await {
+                    if let Err(e) = nack_bounded(consumer.as_ref(), &handle.receipt_handle, Some(10)).await {
                         warn!(error = %e, "fallback NACK failed; the broker redelivers at its own timeout");
                     }
                 });
@@ -791,18 +788,19 @@ impl QueueManager {
             // This mirrors Java's messagesByGroup logic in routeMessageBatch
             let messages_by_group = self.group_by_message_group(pool_messages);
 
-            for (group_id, group_messages) in messages_by_group {
+            for bucket in messages_by_group {
+                let ungrouped = bucket.is_ungrouped();
                 let mut nack_remaining = false;
                 let mut defer_remaining = false;
                 // Every message of a bucket shares its group (a groupless
                 // message has a bucket of its own).
-                let group_arc: Option<Arc<str>> = group_messages
+                let group_arc: Option<Arc<str>> = bucket
                     .first()
                     .and_then(|m| m.message.message_group_id.as_deref())
                     .filter(|g| !g.is_empty())
                     .map(Arc::from);
 
-                for msg in group_messages {
+                for msg in bucket.into_messages() {
                     if *queue_arc != *msg.queue_identifier {
                         queue_arc = Arc::from(msg.queue_identifier.as_str());
                     }
@@ -846,7 +844,10 @@ impl QueueManager {
                     if nack_remaining {
                         debug!(
                             message_id = %msg.message.id,
-                            group_id = %group_id,
+                            group_id = %GroupLabel {
+                                ungrouped_id: ungrouped.then_some(msg.message.id.as_str()),
+                                group: group_arc.as_deref(),
+                            },
                             "NACKing message - previous message in group failed submission"
                         );
                         nack_recorded(
@@ -970,7 +971,10 @@ impl QueueManager {
                     if let Err(e) = pool.submit(batch_msg).await {
                         error!(
                             message_id = %app_message_id,
-                            group_id = %group_id,
+                            group_id = %GroupLabel {
+                                ungrouped_id: ungrouped.then_some(&*app_message_id),
+                                group: group_arc.as_deref(),
+                            },
                             error = %e,
                             "Failed to submit to pool - NACKing this and remaining messages in group"
                         );
@@ -1193,25 +1197,101 @@ impl QueueManager {
     /// other on a submit failure, even though nothing actually links them.
     /// With strict routing off, this is the "ordered mode with no group id
     /// routes down the IMMEDIATE path" behaviour (Go parity, deliberate).
-    fn group_by_message_group(
-        &self,
-        messages: Vec<QueuedMessage>,
-    ) -> indexmap::IndexMap<String, Vec<QueuedMessage>> {
-        // Use IndexMap to preserve insertion order (like Java's LinkedHashMap)
-        let mut by_group: indexmap::IndexMap<String, Vec<QueuedMessage>> =
-            indexmap::IndexMap::new();
+    fn group_by_message_group(&self, messages: Vec<QueuedMessage>) -> Vec<GroupBucket> {
+        // Buckets stay in first-seen order (like Java's LinkedHashMap). A
+        // message with no real group is its own bucket and costs no map
+        // entry, key string or Vec; real groups are found by name without
+        // allocating on a hit.
+        let mut buckets: Vec<GroupBucket> = Vec::with_capacity(messages.len());
+        let mut named: HashMap<String, usize> = HashMap::new();
 
         for msg in messages {
-            let group_id = match &msg.message.message_group_id {
+            match &msg.message.message_group_id {
                 Some(g) if !g.is_empty() && msg.message.dispatch_mode.requires_ordering() => {
-                    g.clone()
+                    if let Some(&at) = named.get(g.as_str()) {
+                        if let GroupBucket::Group(v) = &mut buckets[at] {
+                            v.push(msg);
+                            continue;
+                        }
+                    }
+                    named.insert(g.clone(), buckets.len());
+                    buckets.push(GroupBucket::Group(vec![msg]));
                 }
-                _ => format!("__ungrouped__:{}", msg.message.id),
-            };
-            by_group.entry(group_id).or_default().push(msg);
+                _ => buckets.push(GroupBucket::Ungrouped(msg)),
+            }
         }
 
-        by_group
+        buckets
+    }
+}
+
+/// One FIFO-enforcement bucket of a routed batch (see
+/// [`QueueManager::group_by_message_group`]).
+enum GroupBucket {
+    /// A message with no real ordered group: its own bucket (the
+    /// pseudo-group `__ungrouped__:{id}`).
+    Ungrouped(QueuedMessage),
+    /// Messages sharing a real ordered group, in arrival order.
+    Group(Vec<QueuedMessage>),
+}
+
+impl GroupBucket {
+    fn is_ungrouped(&self) -> bool {
+        matches!(self, GroupBucket::Ungrouped(_))
+    }
+
+    fn first(&self) -> Option<&QueuedMessage> {
+        match self {
+            GroupBucket::Ungrouped(m) => Some(m),
+            GroupBucket::Group(v) => v.first(),
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        match self {
+            GroupBucket::Ungrouped(_) => 1,
+            GroupBucket::Group(v) => v.len(),
+        }
+    }
+
+    fn into_messages(self) -> BucketMessages {
+        match self {
+            GroupBucket::Ungrouped(m) => BucketMessages::One(Some(m)),
+            GroupBucket::Group(v) => BucketMessages::Many(v.into_iter()),
+        }
+    }
+}
+
+/// The messages of a [`GroupBucket`], by value.
+enum BucketMessages {
+    One(Option<QueuedMessage>),
+    Many(std::vec::IntoIter<QueuedMessage>),
+}
+
+impl Iterator for BucketMessages {
+    type Item = QueuedMessage;
+    fn next(&mut self) -> Option<QueuedMessage> {
+        match self {
+            BucketMessages::One(m) => m.take(),
+            BucketMessages::Many(it) => it.next(),
+        }
+    }
+}
+
+/// The group key a routing log line names: the real group id, or the
+/// `__ungrouped__:{message id}` pseudo-group, rendered only if logged.
+struct GroupLabel<'a> {
+    ungrouped_id: Option<&'a str>,
+    group: Option<&'a str>,
+}
+
+impl fmt::Display for GroupLabel<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.ungrouped_id {
+            Some(id) => write!(f, "__ungrouped__:{id}"),
+            None => f.write_str(self.group.unwrap_or("")),
+        }
     }
 }
 
@@ -1884,7 +1964,7 @@ mod routing_gate_tests {
 
         let grouped = manager.group_by_message_group(vec![a, b]);
         assert_eq!(grouped.len(), 1);
-        assert_eq!(grouped.get("g1").map(|v| v.len()), Some(2));
+        assert_eq!(grouped[0].len(), 2);
     }
 
     /// R-13: an empty pool_code must warn exactly like an unknown one — it

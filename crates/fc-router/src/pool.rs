@@ -1603,6 +1603,9 @@ pub struct BufferedMessage {
 /// Process pool with FIFO ordering and rate limiting
 pub struct ProcessPool {
     config: PoolConfig,
+    /// `config.code`, shared: every delivery task owns a clone instead of
+    /// allocating the code afresh.
+    code: Arc<str>,
     mediator: Arc<dyn Mediator>,
 
     /// Current concurrency level (may differ from config after updates)
@@ -1737,6 +1740,7 @@ impl ProcessPool {
             .and_then(RateLimitState::from_rpm);
 
         Self {
+            code: Arc::from(config.code.as_str()),
             config: config.clone(),
             mediator,
             concurrency: AtomicU32::new(concurrency_val),
@@ -1942,7 +1946,7 @@ impl ProcessPool {
     /// The state one delivery attempt reads, for a spawned task to own.
     fn deliverer(&self) -> Deliverer {
         Deliverer {
-            pool_code: Arc::from(self.config.code.as_str()),
+            pool_code: self.code.clone(),
             semaphore: self.semaphore.clone(),
             mediator: self.mediator.clone(),
             rate_limiter: self.rate_limiter.clone(),
@@ -2253,7 +2257,7 @@ impl ProcessPool {
 
         let mut released = 0usize;
         let queue_slot_releaser = self.queue_slot_releaser();
-        let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
+        let pool_code: Arc<str> = self.code.clone();
         for group_id in group_ids {
             let drained = self.groups.take_buffered(&group_id);
             released += drained.len();
