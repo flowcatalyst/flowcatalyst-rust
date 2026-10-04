@@ -227,11 +227,12 @@ The platform itself exposes a number of Postgres-touching metrics:
 | `fc_stream_events_fanned_out_total` | fan-out throughput |
 | `fc_scheduler_jobs_polled_total` | scheduler poll throughput |
 | `fc_scheduler_jobs_queued_total` | scheduler publish throughput |
-| `fc_scheduler_pending_jobs` | depth of PENDING (gauge) |
+| `fc_scheduler_pending_jobs` | jobs claimed by the last poll, at most the batch size (gauge); not the backlog |
+| `fc_scheduler_poll_full_batches_total` | polls that filled the batch (a backlog is draining) |
 | `fc_scheduler_queued_jobs` | depth of QUEUED (gauge) |
 | `fc_scheduler_stale_jobs_recovered_total` | recovery firings (should usually be 0) |
 
-If `fc_scheduler_pending_jobs` grows unboundedly: dispatcher is slow or stuck.
+If `fc_scheduler_poll_full_batches_total` rises continuously and `fc_scheduler_jobs_queued_total` lags it: the publish path is slow or stuck (`fc_scheduler_pending_jobs` is capped at the batch size and cannot show a backlog).
 If `fc_scheduler_stale_jobs_recovered_total` increments routinely: the router isn't completing dispatches within the 15-minute window — investigate.
 If `fc_stream_events_fanned_out_total` lags `fc_events_received_total`: fan-out is starving.
 

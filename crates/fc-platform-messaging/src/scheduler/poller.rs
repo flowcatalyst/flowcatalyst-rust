@@ -42,7 +42,7 @@
 //! kept.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -147,6 +147,46 @@ pub struct PendingJobPoller {
     pool_codes: Arc<PoolCodeResolver>,
 }
 
+/// Registers the scheduler's metric descriptions (idempotent).
+fn describe_metrics() {
+    use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
+    describe_gauge!(
+        "scheduler.pending_jobs",
+        "Jobs claimed by the most recent poll (at most the batch size). NOT the PENDING backlog; the name is historical."
+    );
+    describe_counter!(
+        "scheduler.jobs.claimed_total",
+        "Jobs claimed from PENDING by the poller."
+    );
+    describe_counter!(
+        "scheduler.poll.full_batches_total",
+        "Polls whose claim filled the batch (a backlog is likely waiting)."
+    );
+    describe_counter!(
+        "scheduler.poll.errors_total",
+        "Polls that failed (claim, publish bookkeeping, mark QUEUED or commit)."
+    );
+    describe_histogram!(
+        "scheduler.poll.duration_seconds",
+        Unit::Seconds,
+        "Wall time of one poll pass, including the publish."
+    );
+    describe_histogram!(
+        "scheduler.publish.duration_seconds",
+        Unit::Seconds,
+        "Wall time of publishing one claim to the queues."
+    );
+    describe_counter!(
+        "scheduler.publish.timeouts_total",
+        "Claims whose publish hit the deadline and was abandoned."
+    );
+    describe_gauge!(
+        "scheduler.poll.last_success_timestamp_seconds",
+        Unit::Seconds,
+        "Unix time of the last poll that completed without error."
+    );
+}
+
 /// What one tick did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PollReport {
@@ -162,6 +202,7 @@ impl PendingJobPoller {
         dispatcher: Arc<MessageGroupDispatcher>,
         pool_codes: Arc<PoolCodeResolver>,
     ) -> Self {
+        describe_metrics();
         Self {
             paused: PausedConnectionCache::new(pool.clone(), paused_cache_ttl),
             pool,
@@ -171,15 +212,33 @@ impl PendingJobPoller {
         }
     }
 
-    /// Claim, mark QUEUED, commit, publish, revert the unpublished. Runs in
-    /// a `scheduler.poll` span carrying how many jobs it claimed and
-    /// published.
+    /// One pass: claim, publish, mark the published ids QUEUED, commit. Runs
+    /// in a `scheduler.poll` span carrying how many jobs it claimed and
+    /// published, and is measured: `scheduler.poll.duration_seconds`
+    /// (every pass, including the publish), `scheduler.poll.errors_total`,
+    /// and, on success, `scheduler.poll.last_success_timestamp_seconds`.
     #[tracing::instrument(
         name = "scheduler.poll",
         skip_all,
         fields(claimed = Empty, published = Empty)
     )]
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
+        let started = Instant::now();
+        let result = self.poll_pass().await;
+        metrics::histogram!("scheduler.poll.duration_seconds").record(started.elapsed());
+        match &result {
+            Ok(_) => {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0.0, |d| d.as_secs_f64());
+                metrics::gauge!("scheduler.poll.last_success_timestamp_seconds").set(now);
+            }
+            Err(_) => metrics::counter!("scheduler.poll.errors_total").increment(1),
+        }
+        result
+    }
+
+    async fn poll_pass(&self) -> Result<PollReport, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
 
         let mut tx = self.pool.begin().await?;
@@ -216,7 +275,14 @@ impl PendingJobPoller {
         }
         let claimed = tokens.len();
         tracing::Span::current().record("claimed", claimed);
+        // `scheduler.pending_jobs` is the size of THIS claim (at most the
+        // batch size), not the PENDING backlog; the name is kept for
+        // existing dashboards.
         metrics::gauge!("scheduler.pending_jobs").set(claimed as f64);
+        metrics::counter!("scheduler.jobs.claimed_total").increment(claimed as u64);
+        if claimed >= self.batch_size {
+            metrics::counter!("scheduler.poll.full_batches_total").increment(1);
+        }
 
         // Publish while the claim is still locked and uncommitted: see the
         // module doc. What did not publish simply stays PENDING.

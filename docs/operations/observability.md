@@ -120,7 +120,12 @@ fc_scheduler_jobs_queued_total
 fc_scheduler_jobs_failed_to_queue_total
 fc_scheduler_poll_duration_seconds         # histogram
 fc_scheduler_publish_duration_seconds       # histogram
-fc_scheduler_pending_jobs                   # gauge — depth of PENDING
+fc_scheduler_pending_jobs                   # gauge — jobs claimed by the last poll (<= batch size); NOT the PENDING backlog
+fc_scheduler_jobs_claimed_total
+fc_scheduler_poll_full_batches_total        # claim filled the batch: a backlog is likely waiting
+fc_scheduler_poll_errors_total
+fc_scheduler_poll_last_success_timestamp_seconds   # gauge — alert when it stops advancing on the leader
+fc_scheduler_publish_timeouts_total
 fc_scheduler_queued_jobs                    # gauge — depth of QUEUED
 fc_scheduler_stale_jobs_recovered_total     # should usually be flat at 0
 fc_scheduler_active_groups                  # gauge
@@ -191,7 +196,7 @@ If `sqlx_pool_acquire_duration_seconds` grows, the pool is exhausted. Either rai
 
 1. **Dispatch throughput.** `rate(fc_scheduler_jobs_queued_total[5m])` + `rate(fc_router_messages_processed_total[5m])`. Difference is the in-flight buffer between scheduler and router; should be tiny in steady state.
 2. **End-to-end latency.** `fc_router_dispatch_duration_seconds` p99 per pool.
-3. **Backlog.** `fc_scheduler_pending_jobs` + `fc_outbox_pending_items`. Sustained growth = something is broken downstream of the producer.
+3. **Backlog.** `rate(fc_scheduler_poll_full_batches_total[5m])` (the scheduler's claim keeps filling) + `fc_outbox_pending_items`. (`fc_scheduler_pending_jobs` is the last claim's size, not a depth.) Sustained growth = something is broken downstream of the producer.
 4. **Failure rate.** `rate(fc_router_messages_failed_total[5m]) / rate(fc_router_messages_processed_total[5m])` per pool. Per-pool view shows which endpoint is bleeding.
 5. **Leadership.** `up{role="fc-server"}` + a gauge showing who's leader. Useful during failover postmortems.
 
@@ -199,8 +204,8 @@ If `sqlx_pool_acquire_duration_seconds` grows, the pool is exhausted. Either rai
 
 | Alert | Condition | Severity |
 |---|---|---|
-| Pending backlog | `fc_scheduler_pending_jobs > 10000 for 10m` | Warning |
-| Pending backlog (sustained) | `fc_scheduler_pending_jobs > 100000 for 30m` | Critical |
+| Scheduler saturated | `rate(fc_scheduler_poll_full_batches_total[5m]) > 0 for 30m` | Warning |
+| Scheduler stalled | `time() - max(fc_scheduler_poll_last_success_timestamp_seconds) > 120` | Critical |
 | Stale recovery firing | `rate(fc_scheduler_stale_jobs_recovered_total[5m]) > 0 for 10m` | Warning — investigate why jobs are stuck in QUEUED |
 | Router pool 95th latency | `histogram_quantile(0.95, fc_router_dispatch_duration_seconds) > 30 for 5m` per pool | Warning per pool |
 | Circuit breaker open | `fc_router_circuit_breaker_state == 1 for 5m` per endpoint | Warning |

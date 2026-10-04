@@ -117,6 +117,7 @@ impl MessageGroupDispatcher {
         // nothing published: the caller then rolls the claim back, so a
         // timeout can never mark a job QUEUED. Anything the broker did take
         // is re-published next poll (at-least-once; `/process` delivers once).
+        let started = time::Instant::now();
         let outcome = match time::timeout(self.publish_timeout, self.publisher.publish(items)).await
         {
             Ok(outcome) => outcome,
@@ -131,6 +132,7 @@ impl MessageGroupDispatcher {
                 }
             }
         };
+        metrics::histogram!("scheduler.publish.duration_seconds").record(started.elapsed());
         tracing::Span::current().record("unpublished", outcome.unpublished.len());
         if let Some(e) = &outcome.error {
             warn!(unpublished = outcome.unpublished.len(), of = total, error = %e,
