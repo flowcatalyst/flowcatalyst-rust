@@ -48,8 +48,10 @@
 //! deduplication off) and retries the same request once.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use aws_sdk_sqs::config::timeout::TimeoutConfig;
 use aws_sdk_sqs::error::DisplayErrorContext;
 use aws_sdk_sqs::types::{QueueAttributeName, SendMessageBatchRequestEntry};
 use aws_sdk_sqs::Client;
@@ -57,6 +59,15 @@ use tracing::{info, warn};
 
 /// SQS's hard cap on one `SendMessageBatch`.
 pub const MAX_SQS_BATCH_SIZE: usize = 10;
+
+/// The most one dispatch publish call (including the SDK's own retries) may
+/// take before it is abandoned. A hung broker call must not hold the
+/// scheduler's claim transaction, and its row locks, open indefinitely.
+pub const SQS_PUBLISH_OPERATION_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// The most one HTTP attempt of a publish call may take; a slow attempt is
+/// retried within [`SQS_PUBLISH_OPERATION_TIMEOUT`].
+pub const SQS_PUBLISH_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// SQS's hard cap on a `MessageDeduplicationId`.
 pub const MAX_DEDUP_ID_LENGTH: usize = 128;
@@ -247,8 +258,31 @@ impl SqsFifoPublisher<AwsSqsBatchApi> {
             loader = loader.region(aws_config::Region::new(region));
         }
         let config = loader.load().await;
-        Self::new(AwsSqsBatchApi::new(Client::new(&config)), addressing)
+        let client = with_publish_timeouts(&Client::new(&config));
+        Self::new(AwsSqsBatchApi::new(client), addressing)
     }
+}
+
+/// `client` with the publish operation and attempt timeouts built in, once.
+/// The SDK sets none by default, so a hung call would wait forever. Other
+/// timeouts the client already carries (the default chain's connect
+/// timeout) are kept.
+fn with_publish_timeouts(client: &Client) -> Client {
+    let base = match client.config().timeout_config() {
+        Some(existing) => existing.clone().to_builder(),
+        None => TimeoutConfig::builder(),
+    };
+    let timeouts = base
+        .operation_timeout(SQS_PUBLISH_OPERATION_TIMEOUT)
+        .operation_attempt_timeout(SQS_PUBLISH_ATTEMPT_TIMEOUT)
+        .build();
+    Client::from_conf(
+        client
+            .config()
+            .to_builder()
+            .timeout_config(timeouts)
+            .build(),
+    )
 }
 
 impl<A: SqsBatchApi> SqsFifoPublisher<A> {
@@ -531,6 +565,28 @@ mod tests {
             .iter()
             .map(|(_, es)| es.iter().map(|e| e.id.clone()).collect())
             .collect()
+    }
+
+    /// The publisher's client carries both timeouts (and keeps what the
+    /// client already had).
+    #[test]
+    fn publish_client_carries_operation_and_attempt_timeouts() {
+        use aws_sdk_sqs::config::{BehaviorVersion, Region};
+        let connect = Duration::from_millis(3100);
+        let conf = aws_sdk_sqs::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .timeout_config(TimeoutConfig::builder().connect_timeout(connect).build())
+            .build();
+        let client = with_publish_timeouts(&Client::from_conf(conf));
+        let t = client.config().timeout_config().cloned().unwrap();
+        assert_eq!(t.operation_timeout(), Some(SQS_PUBLISH_OPERATION_TIMEOUT));
+        assert_eq!(
+            t.operation_attempt_timeout(),
+            Some(SQS_PUBLISH_ATTEMPT_TIMEOUT)
+        );
+        assert_eq!(t.connect_timeout(), Some(connect));
+        assert!(SQS_PUBLISH_ATTEMPT_TIMEOUT < SQS_PUBLISH_OPERATION_TIMEOUT);
     }
 
     #[test]
