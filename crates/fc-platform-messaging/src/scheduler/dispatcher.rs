@@ -1,13 +1,11 @@
 //! Renders and publishes a claim.
 //!
-//! A port of Go's `MessageGroupDispatcher` (`scheduler/dispatcher.go`): the
-//! whole claim goes to the publisher in one call, in claim order, and the
-//! publisher reports exactly which ids it did not publish. Ordering comes
-//! from the claim order plus the FIFO queue, not from in-process
-//! serialisation. Unlike Go, the poller publishes while its claim
-//! transaction is still open and marks only the published ids QUEUED (see
-//! [`super::poller`]), so nothing needs reverting; [`revert_unpublished`]
-//! is kept for a claim that was committed QUEUED before publishing.
+//! A port of Go's `MessageGroupDispatcher` (`scheduler/dispatcher.go`): a
+//! batch goes to the publisher in one call, in claim order, and the
+//! publisher reports exactly which ids it did not publish. Each lane
+//! ([`super::lane`]) calls it with the jobs it was handed and marks only the
+//! published ids QUEUED, so nothing needs reverting; [`revert_unpublished`]
+//! is kept for a batch that was marked QUEUED before publishing.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,12 +20,13 @@ use super::publisher::{DispatchPublisher, PublishItem, PublishOutcome};
 use crate::dispatch_job::entity;
 use tracing::field::Empty;
 
-/// The longest one claim's publish may take, end to end. The poller holds a
-/// pool connection and up to a batch of row locks for as long as the publish
-/// runs, so a hung broker call must be cut off: past this the claim counts
-/// as not published and its transaction rolls back (the rows stay PENDING).
-/// Well above the SQS client's own operation timeout times the chunk count
-/// of a normal claim.
+/// The longest one lane batch's publish may take, end to end. A lane is
+/// stuck for as long as its publish runs (its jobs keep their buffer permits,
+/// so enough hung lanes stop the poller), so a hung broker call must be cut
+/// off: past this the batch counts as not published and its rows stay
+/// PENDING. Well above the SQS client's own operation timeout times the
+/// chunk count of a normal batch. Shutdown also waits at most this long for
+/// a lane that is mid-publish.
 pub const PUBLISH_CLAIM_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What the poller hands the dispatcher for one claimed job.
@@ -68,7 +67,7 @@ impl MessageGroupDispatcher {
 
     /// Override [`PUBLISH_CLAIM_TIMEOUT`] (tests).
     #[cfg(test)]
-    fn with_publish_timeout(mut self, timeout: Duration) -> Self {
+    pub(crate) fn with_publish_timeout(mut self, timeout: Duration) -> Self {
         self.publish_timeout = timeout;
         self
     }
@@ -91,7 +90,7 @@ impl MessageGroupDispatcher {
         }
     }
 
-    /// Publish a claim, in claim order, and report what did not publish.
+    /// Publish a batch, in claim order, and report what did not publish.
     /// The caller marks only the rest QUEUED.
     #[tracing::instrument(
         name = "scheduler.publish",
@@ -114,7 +113,7 @@ impl MessageGroupDispatcher {
             })
             .collect();
         // A publish that outlives the deadline is dropped and reported as
-        // nothing published: the caller then rolls the claim back, so a
+        // nothing published: the caller then marks nothing QUEUED, so a
         // timeout can never mark a job QUEUED. Anything the broker did take
         // is re-published next poll (at-least-once; `/process` delivers once).
         let started = time::Instant::now();
@@ -193,7 +192,7 @@ mod tests {
     }
 
     /// A hung publish is cut off at the deadline and reports every job
-    /// unpublished, so the poller rolls back and marks nothing QUEUED.
+    /// unpublished, so the lane marks nothing QUEUED.
     #[tokio::test(start_paused = true)]
     async fn a_hung_publish_times_out_and_publishes_nothing() {
         let d = MessageGroupDispatcher::new(

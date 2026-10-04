@@ -348,8 +348,8 @@ impl DispatchPublisher for DiesMidPublish {
 /// Delivery run 3, `worker-restart`: a worker killed between claiming and
 /// finishing its publish must not strand its claim. Go commits the claim
 /// QUEUED before publishing and the unpublished rows wait 75 minutes for
-/// stale recovery; here the claim commits only after the publish, so the
-/// dead worker's claim rolls back to PENDING and the next poll publishes
+/// stale recovery; here nothing is marked QUEUED until the publish is done,
+/// so the dead worker's claim is still PENDING and the next poll publishes
 /// every job (the ones already sent a second time — `/process` delivers
 /// each once).
 #[tokio::test]
@@ -393,11 +393,13 @@ async fn a_worker_dying_mid_publish_leaves_its_claim_pending() {
     }
 }
 
-/// Two schedulers polling the same table at once never claim the same job
-/// (`FOR UPDATE SKIP LOCKED`).
+/// Two schedulers polling the same table at once (a leadership overlap):
+/// the claim takes no lock, so a job can be published twice, which is
+/// accepted (the router drops the copy, `/process` delivers once). What must
+/// hold is that no job is lost: every job is published and ends QUEUED.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn concurrent_schedulers_never_publish_a_job_twice() {
+async fn concurrent_schedulers_lose_no_job() {
     let (pool, _c) = setup_db().await;
     for n in 0..60 {
         insert(&pool, &job(n)).await;
@@ -414,8 +416,63 @@ async fn concurrent_schedulers_never_publish_a_job_twice() {
     let mut all = p1.ids();
     all.extend(p2.ids());
     let unique: HashSet<&String> = all.iter().collect();
-    assert_eq!(all.len(), 60, "every job published");
-    assert_eq!(unique.len(), 60, "no job published twice");
+    assert_eq!(unique.len(), 60, "every job published at least once");
+    let (queued,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM msg_dispatch_jobs WHERE status = 'QUEUED'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(queued, 60);
+}
+
+/// The lane's QUEUED update never regresses a job the callback already moved
+/// past PENDING (the router can deliver before the update runs). Drives the
+/// scheduler's own statement through a publisher that, mid-publish, plays the
+/// callback: one job goes PROCESSING, one COMPLETED.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_queued_update_does_not_regress_a_job_that_moved_on() {
+    let (pool, _c) = setup_db().await;
+    let (a, b, c) = (job(1), job(2), job(3));
+    for j in [&a, &b, &c] {
+        insert(&pool, j).await;
+    }
+
+    struct CallbackFirst {
+        pool: PgPool,
+        processing: String,
+        completed: String,
+    }
+    #[async_trait]
+    impl DispatchPublisher for CallbackFirst {
+        async fn publish(&self, _items: Vec<PublishItem>) -> PublishOutcome {
+            sqlx::query("UPDATE msg_dispatch_jobs SET status = 'PROCESSING' WHERE id = $1")
+                .bind(&self.processing)
+                .execute(&self.pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE msg_dispatch_jobs SET status = 'COMPLETED' WHERE id = $1")
+                .bind(&self.completed)
+                .execute(&self.pool)
+                .await
+                .unwrap();
+            PublishOutcome::default()
+        }
+        fn describe(&self) -> String {
+            "callback first".into()
+        }
+    }
+
+    let publisher = Arc::new(CallbackFirst {
+        pool: pool.clone(),
+        processing: a.id.clone(),
+        completed: b.id.clone(),
+    });
+    let s = scheduler(&pool, publisher, 100);
+    s.poller().poll_once().await.unwrap();
+    assert_eq!(status(&pool, &a.id).await, "PROCESSING");
+    assert_eq!(status(&pool, &b.id).await, "COMPLETED");
+    assert_eq!(status(&pool, &c.id).await, "QUEUED");
 }
 
 // ── Holds and backoff ───────────────────────────────────────────────────
