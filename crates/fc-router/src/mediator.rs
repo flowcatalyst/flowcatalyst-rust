@@ -31,7 +31,7 @@ use fc_common::error_chain::ErrorChain;
 use fc_common::{MediationOutcome, MediationType, Message, WarningCategory, WarningSeverity};
 use tracing::{debug, error, info, warn};
 
-use crate::circuit_breaker_registry::{breaker_key, CircuitBreakerRegistry};
+use crate::circuit_breaker_registry::{breaker_key_cached, CircuitBreakerRegistry};
 use crate::http_pool::{HostKey, HostPoolSizing};
 use crate::pool::breaker_effect;
 use crate::warning::WarningService;
@@ -204,7 +204,9 @@ impl HttpMediator {
             HttpVersion::Http2 => info!("HttpMediator configured for HTTP/2 (ALPN negotiation)"),
         }
 
+        let retry_policy = RetryPolicy::new(config.max_retries, config.retry_delays.clone());
         let inner = Arc::new(MediatorInner {
+            retry_policy,
             config,
             host_pools,
             warning_service,
@@ -258,7 +260,7 @@ impl HttpMediator {
             return MediationOutcome::pre_flight_rejected(detail);
         }
 
-        let host_key = match HostKey::from_url(&message.mediation_target) {
+        let host_key = match HostKey::from_url_cached(&message.mediation_target) {
             Ok(k) => k,
             Err(e) => {
                 let detail = format!("Invalid mediation target URL: {}", e);
@@ -280,7 +282,7 @@ impl HttpMediator {
                 return MediationOutcome::pre_flight_rejected(detail);
             }
         };
-        let slot = self.inner.host_pools.acquire(host_key);
+        let slot = self.inner.host_pools.acquire_ref(&host_key);
 
         let payload = MediationPayload {
             message_id: &message.id,
@@ -321,7 +323,7 @@ impl HttpMediator {
                 // negotiated — `{:?}` on `http::Version` gives "HTTP/2.0",
                 // "HTTP/1.1", etc., same label shape as the bench rig's own
                 // `proto_counts`.
-                router_metrics::record_mediation_http_version(&format!("{:?}", response.version()));
+                router_metrics::record_mediation_http_version_of(response.version());
                 response::classify(response, message, &self.inner.warning_service).await
             }
             Err(e) => {
@@ -388,7 +390,7 @@ impl Mediator for HttpMediator {
     ///   `ErrorConnection` record a failure, `RateLimited`/`Deferred`
     ///   record neither. Exactly `pool.rs`'s old rule table, unchanged.
     async fn mediate(&self, message: &Message) -> MediationOutcome {
-        let endpoint = breaker_key(&message.mediation_target);
+        let endpoint = breaker_key_cached(&message.mediation_target);
         if !self.inner.breakers.allow_request(&endpoint) {
             debug!(
                 message_id = %message.id,
@@ -404,11 +406,11 @@ impl Mediator for HttpMediator {
         // call site compiling. `RetryPolicy` is the named, documented,
         // independently-tested schedule ledger A-03 asks for; this is just
         // where config's loose fields become that policy for the call.
-        let policy = RetryPolicy::new(
-            self.inner.config.max_retries,
-            self.inner.config.retry_delays.clone(),
-        );
-        let outcome = retry::run(&message.id, &policy, || self.mediate_once(message)).await;
+        // Built once at construction (the config never changes after).
+        let outcome = retry::run(&message.id, &self.inner.retry_policy, || {
+            self.mediate_once(message)
+        })
+        .await;
 
         match breaker_effect(&outcome) {
             Some(true) => self.inner.breakers.record_success(&endpoint),

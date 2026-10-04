@@ -25,7 +25,7 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use reqwest::Client;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -52,7 +52,26 @@ impl HostKey {
         let port = u.port_or_known_default().ok_or(HostKeyError::MissingPort)?;
         Ok(Self { scheme, host, port })
     }
+
+    /// [`from_url`](Self::from_url) memoised per target string, shared as
+    /// an `Arc`: the same few targets recur on every message. Errors are
+    /// not stored, and past the cap a key is computed without being stored.
+    pub fn from_url_cached(target: &str) -> Result<Arc<Self>, HostKeyError> {
+        static CACHE: OnceLock<DashMap<Box<str>, Arc<HostKey>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(DashMap::new);
+        if let Some(hit) = cache.get(target) {
+            return Ok(Arc::clone(hit.value()));
+        }
+        let key = Arc::new(Self::from_url(target)?);
+        if cache.len() < HOST_KEY_CACHE_CAP {
+            cache.insert(target.into(), Arc::clone(&key));
+        }
+        Ok(key)
+    }
 }
+
+/// Most distinct targets kept in the [`HostKey::from_url_cached`] memo.
+const HOST_KEY_CACHE_CAP: usize = 4096;
 
 impl Display for HostKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -394,6 +413,19 @@ impl HostPoolRegistry {
         if let Some(pool) = self.pools.get(&host) {
             return pool.acquire();
         }
+        self.create_and_acquire(host)
+    }
+
+    /// [`acquire`](Self::acquire) by reference: the common case, an
+    /// existing pool, clones nothing.
+    pub fn acquire_ref(&self, host: &HostKey) -> SlotGuard {
+        if let Some(pool) = self.pools.get(host) {
+            return pool.acquire();
+        }
+        self.create_and_acquire(host.clone())
+    }
+
+    fn create_and_acquire(&self, host: HostKey) -> SlotGuard {
         let pool = self
             .pools
             .entry(host.clone())

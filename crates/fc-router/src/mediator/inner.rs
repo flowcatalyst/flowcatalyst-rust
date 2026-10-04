@@ -24,6 +24,8 @@ use tokio::time::MissedTickBehavior;
 /// State shared by the mediator's public methods and the background sweep.
 pub(super) struct MediatorInner {
     pub(super) config: HttpMediatorConfig,
+    /// The in-call retry schedule, derived from `config` once.
+    pub(super) retry_policy: super::RetryPolicy,
     pub(super) host_pools: HostPoolRegistry,
     pub(super) warning_service: Arc<WarningService>,
     /// Per-endpoint circuit breaker registry this mediator consults before

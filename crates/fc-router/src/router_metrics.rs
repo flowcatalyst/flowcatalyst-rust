@@ -23,6 +23,21 @@ pub fn record_mediation_http_version(version: &str) {
     .increment(1);
 }
 
+/// [`record_mediation_http_version`] for a `reqwest::Version`, labelled with
+/// the same `Debug` form (`"HTTP/2.0"`, …) but from static strings, so the
+/// per-response label costs no allocation.
+pub fn record_mediation_http_version_of(version: reqwest::Version) {
+    let label: &'static str = match version {
+        reqwest::Version::HTTP_09 => "HTTP/0.9",
+        reqwest::Version::HTTP_10 => "HTTP/1.0",
+        reqwest::Version::HTTP_11 => "HTTP/1.1",
+        reqwest::Version::HTTP_2 => "HTTP/2.0",
+        reqwest::Version::HTTP_3 => "HTTP/3.0",
+        other => return record_mediation_http_version(&format!("{other:?}")),
+    };
+    counter!("fc_mediation_http_version_total", "version" => label).increment(1);
+}
+
 // --- Broker connectivity metrics (Java: BrokerHealthService) ---
 
 /// Record a broker connectivity check attempt

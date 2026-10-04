@@ -4,11 +4,12 @@
 //! Used by ProcessPool to gate requests before mediation.
 //! Compatible with Java's Resilience4j circuit breaker stats format.
 
+use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use utoipa::ToSchema;
 
@@ -46,6 +47,28 @@ pub fn breaker_key(url: &str) -> String {
         }
         Err(_) => url.to_string(),
     }
+}
+
+/// Most distinct target strings kept in the [`breaker_key_cached`] memo.
+/// Targets are queue/pool configuration, so a handful of values is normal;
+/// past the cap a key is computed without being stored, so a stream of
+/// unique targets cannot grow the memo.
+const BREAKER_KEY_CACHE_CAP: usize = 4096;
+
+/// [`breaker_key`] memoised per target string: the same few targets recur
+/// on every message, and parsing the URL each time cost several
+/// allocations. The result is identical to `breaker_key(url)`.
+pub fn breaker_key_cached(url: &str) -> Arc<str> {
+    static CACHE: OnceLock<DashMap<Box<str>, Arc<str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(DashMap::new);
+    if let Some(hit) = cache.get(url) {
+        return Arc::clone(hit.value());
+    }
+    let key: Arc<str> = Arc::from(breaker_key(url));
+    if cache.len() < BREAKER_KEY_CACHE_CAP {
+        cache.insert(url.into(), Arc::clone(&key));
+    }
+    key
 }
 
 /// Circuit breaker state (the Resilience4j state names)
@@ -602,6 +625,19 @@ mod tests {
     // ------------------------------------------------------------------
     // R-12: breaker key = origin + path, query stripped
     // ------------------------------------------------------------------
+
+    #[test]
+    fn cached_key_equals_computed_key() {
+        for url in [
+            "https://example.com/webhook?x=1",
+            "http://h:8080/a#f",
+            "not a url",
+        ] {
+            assert_eq!(&*breaker_key_cached(url), breaker_key(url).as_str());
+            // second call is a hit and still equal
+            assert_eq!(&*breaker_key_cached(url), breaker_key(url).as_str());
+        }
+    }
 
     #[test]
     fn breaker_key_strips_query_string() {

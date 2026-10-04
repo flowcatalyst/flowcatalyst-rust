@@ -66,7 +66,11 @@ pub(super) async fn classify(
 
     if status.is_success() {
         // Parse response body for ack, delaySeconds and flushGroup.
-        if let Ok(body) = response.text().await {
+        // Bytes parsed in place: no `String` copy of the body (valid UTF-8
+        // is what `text()` yields unchanged; anything else takes the same
+        // lossy conversion `text()` applies).
+        if let Ok(body) = response.bytes().await {
+            let body = String::from_utf8_lossy(&body);
             if let Ok(resp) = serde_json::from_str::<MediationResponse>(&body) {
                 if !resp.ack {
                     // `delaySeconds` here is a *floor* on the pool's own
