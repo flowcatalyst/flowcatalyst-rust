@@ -210,10 +210,10 @@ impl QueueManager {
             let consumer = self.consumers.resolve(&m.queue_identifier, 0)?;
             self.flight_recorder.record(
                 EventKind::ReleasedAtShutdown,
-                &EventContext::new(m.message_id.as_str())
-                    .pool(m.pool_code.as_str())
+                &EventContext::new(&*m.message_id)
+                    .pool(&*m.pool_code)
                     .group(m.message_group_id.as_deref())
-                    .queue(m.queue_identifier.as_str()),
+                    .queue(&*m.queue_identifier),
                 Facts::text(format!(
                     "still in a worker when the drain budget ran out; nacked, visible in {}s",
                     Self::ABANDONED_NACK_DELAY_SECS

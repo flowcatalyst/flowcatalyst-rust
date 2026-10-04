@@ -51,6 +51,16 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
     format!("{queue_identifier}\0{broker_id}")
 }
 
+/// `shared` when it already holds `value`, else a fresh `Arc<str>`: the
+/// per-batch pool and group `Arc`s cover almost every message, so the copy
+/// is the exception.
+fn shared_or_new(shared: Option<&Arc<str>>, value: &str) -> Arc<str> {
+    match shared {
+        Some(a) if **a == *value => a.clone(),
+        _ => Arc::from(value),
+    }
+}
+
 /// [`broker_scope_key`] built into a reusable buffer, so a per-message key
 /// costs one allocation (the final `Arc<str>`) instead of two.
 fn scope_key_into(buf: &mut String, queue_identifier: &str, broker_id: &str) {
@@ -906,10 +916,15 @@ impl QueueManager {
                     // Track in pipeline with receipt handle. The one
                     // record is shared by the tracker entry and the
                     // callback.
-                    let in_flight = Arc::new(InFlightMessage::new(
-                        &msg.message,
+                    let in_flight = Arc::new(InFlightMessage::from_shared(
+                        app_message_id.clone(),
+                        shared_or_new(Some(&pool_arc), &msg.message.pool_code),
+                        queue_arc.clone(),
+                        msg.message
+                            .message_group_id
+                            .as_deref()
+                            .map(|g| shared_or_new(group_arc.as_ref(), g)),
                         msg.broker_message_id.clone(),
-                        msg.queue_identifier.clone(),
                         Some(Arc::clone(&batch_id)),
                         msg.receipt_handle.clone(),
                     ));

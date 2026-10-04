@@ -731,7 +731,7 @@ impl QueueManager {
             !self
                 .in_pipeline
                 .iter()
-                .any(|e| e.value().queue_identifier == id && e.value().started_at < detached_at)
+                .any(|e| &*e.value().queue_identifier == id && e.value().started_at < detached_at)
         });
         for rc in &retired {
             info!(

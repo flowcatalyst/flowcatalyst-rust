@@ -396,12 +396,14 @@ pub enum AckNack {
 /// Tracks a message currently being processed
 #[derive(Debug, Clone)]
 pub struct InFlightMessage {
-    pub message_id: String,
+    // Identity strings are `Arc<str>` so the router can share the ones it
+    // already holds per message/batch instead of copying them.
+    pub message_id: Arc<str>,
     pub broker_message_id: Option<String>,
-    pub pool_code: String,
-    pub queue_identifier: String,
+    pub pool_code: Arc<str>,
+    pub queue_identifier: Arc<str>,
     pub started_at: Instant,
-    pub message_group_id: Option<String>,
+    pub message_group_id: Option<Arc<str>>,
     pub batch_id: Option<Arc<str>>,
     /// Current receipt handle - may be updated on SQS redelivery
     pub receipt_handle: String,
@@ -416,12 +418,36 @@ impl InFlightMessage {
         receipt_handle: String,
     ) -> Self {
         Self {
-            message_id: message.id.clone(),
+            message_id: Arc::from(message.id.as_str()),
             broker_message_id,
-            pool_code: message.pool_code.clone(),
+            pool_code: Arc::from(message.pool_code.as_str()),
+            queue_identifier: Arc::from(queue_identifier),
+            started_at: Instant::now(),
+            message_group_id: message.message_group_id.as_deref().map(Arc::from),
+            batch_id,
+            receipt_handle,
+        }
+    }
+
+    /// [`new`](Self::new) with the identity strings supplied already
+    /// shared, so a router that holds them per message or batch allocates
+    /// none of them here.
+    pub fn from_shared(
+        message_id: Arc<str>,
+        pool_code: Arc<str>,
+        queue_identifier: Arc<str>,
+        message_group_id: Option<Arc<str>>,
+        broker_message_id: Option<String>,
+        batch_id: Option<Arc<str>>,
+        receipt_handle: String,
+    ) -> Self {
+        Self {
+            message_id,
+            broker_message_id,
+            pool_code,
             queue_identifier,
             started_at: Instant::now(),
-            message_group_id: message.message_group_id.clone(),
+            message_group_id,
             batch_id,
             receipt_handle,
         }

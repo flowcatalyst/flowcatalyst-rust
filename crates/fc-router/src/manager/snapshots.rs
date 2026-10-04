@@ -255,10 +255,10 @@ impl QueueManager {
         self.app_message_to_pipeline_key.remove(message_id);
         self.flight_recorder.record(
             EventKind::Untracked,
-            &EventContext::new(entry.message_id.as_str())
-                .pool(entry.pool_code.as_str())
+            &EventContext::new(&*entry.message_id)
+                .pool(&*entry.pool_code)
                 .group(entry.message_group_id.as_deref())
-                .queue(entry.queue_identifier.as_str()),
+                .queue(&*entry.queue_identifier),
             Facts::text(format!(
                 "force-acked by an operator (broker ack {})",
                 if broker_acked { "succeeded" } else { "failed" }
@@ -275,9 +275,9 @@ impl QueueManager {
         );
 
         Some(ForceAckResult {
-            message_id: entry.message_id.clone(),
-            queue_id: entry.queue_identifier.clone(),
-            pool_code: entry.pool_code.clone(),
+            message_id: entry.message_id.to_string(),
+            queue_id: entry.queue_identifier.to_string(),
+            pool_code: entry.pool_code.to_string(),
             elapsed_ms: entry.started_at.elapsed().as_millis() as u64,
             broker_acked,
             broker_ack_error,
@@ -407,13 +407,17 @@ impl InFlightMessageInfo {
             )
         };
         Self {
-            message_id: t.message_id.clone(),
+            message_id: t.message_id.to_string(),
             broker_message_id: t.broker_message_id.clone(),
-            queue_id: t.queue_identifier.clone(),
-            pool_code: t.pool_code.clone(),
+            queue_id: t.queue_identifier.to_string(),
+            pool_code: t.pool_code.to_string(),
             elapsed_time_ms: now.saturating_duration_since(t.started_at).as_millis() as u64,
             added_to_in_pipeline_at: ago(t.started_at),
-            message_group: t.message_group_id.clone().unwrap_or_default(),
+            message_group: t
+                .message_group_id
+                .as_deref()
+                .unwrap_or_default()
+                .to_string(),
             attempts: t.attempts,
             last_seen_at: ago(t.last_seen),
             last_seen_elapsed_ms: now.saturating_duration_since(t.last_seen).as_millis() as u64,

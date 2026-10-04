@@ -124,7 +124,7 @@ impl QueueManager {
                 .remove_if(&key, |_, e| e.generation == generation)
             {
                 self.app_message_to_pipeline_key
-                    .remove_if(entry.message_id.as_str(), |_, k| *k == key);
+                    .remove_if(&*entry.message_id, |_, k| *k == key);
                 let past_ceiling = now.duration_since(entry.started_at) > ceiling;
                 warn!(
                     message_id = %entry.message_id,
@@ -139,10 +139,10 @@ impl QueueManager {
                 );
                 self.flight_recorder.record(
                     EventKind::Untracked,
-                    &EventContext::new(entry.message_id.as_str())
-                        .pool(entry.pool_code.as_str())
+                    &EventContext::new(&*entry.message_id)
+                        .pool(&*entry.pool_code)
                         .group(entry.message_group_id.as_deref())
-                        .queue(entry.queue_identifier.as_str()),
+                        .queue(&*entry.queue_identifier),
                     Facts::text(format!(
                         "reaped from the in-flight tracker (idle {}s, age {}s{})",
                         entry.last_seen.elapsed().as_secs(),
@@ -185,10 +185,10 @@ impl QueueManager {
             .map(|entry| {
                 let msg = entry.value();
                 StalledMessageInfo {
-                    message_id: msg.message_id.clone(),
-                    message_group_id: msg.message_group_id.clone(),
-                    pool_code: msg.pool_code.clone(),
-                    queue_identifier: msg.queue_identifier.clone(),
+                    message_id: msg.message_id.to_string(),
+                    message_group_id: msg.message_group_id.as_deref().map(str::to_string),
+                    pool_code: msg.pool_code.to_string(),
+                    queue_identifier: msg.queue_identifier.to_string(),
                     elapsed_seconds: msg.elapsed_seconds(),
                     detected_at: now,
                 }
@@ -252,7 +252,7 @@ impl QueueManager {
         let live: HashSet<String> = self
             .in_pipeline
             .iter()
-            .map(|entry| entry.value().message_id.clone())
+            .map(|entry| entry.value().message_id.to_string())
             .collect();
         self.forget_resolved_stalls(&live);
 
@@ -274,7 +274,7 @@ impl QueueManager {
             .in_pipeline
             .iter()
             .filter(|e| e.value().attempts > 0)
-            .map(|e| e.value().message_id.clone())
+            .map(|e| e.value().message_id.to_string())
             .collect();
 
         for msg in &stalled {
@@ -560,7 +560,7 @@ mod stall_warning_tests {
         let rc = manager.new_running_consumer(consumer.clone(), "STREAM1".to_string(), None);
         manager.consumers.insert(rc);
         let mut in_flight: super::super::tracking::Tracked = stalled_in_flight("msg-r").into();
-        in_flight.queue_identifier = "STREAM1/router".to_string();
+        in_flight.queue_identifier = "STREAM1/router".into();
         in_flight.mark_retrying();
         manager.in_pipeline.insert("k-r".into(), in_flight);
         manager
@@ -657,7 +657,7 @@ mod stall_warning_tests {
         manager.consumers.insert(rc);
 
         let mut in_flight = stalled_in_flight("msg-1");
-        in_flight.queue_identifier = "STREAM1/router".to_string();
+        in_flight.queue_identifier = "STREAM1/router".into();
         manager
             .in_pipeline
             .insert("scoped-key-1".into(), in_flight.into());
