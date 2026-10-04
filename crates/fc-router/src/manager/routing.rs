@@ -29,6 +29,7 @@ use std::fmt;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
+use std::vec;
 use tokio::runtime::Handle;
 use tokio::time;
 use tracing::field::Empty;
@@ -1281,7 +1282,7 @@ impl GroupBucket {
 /// The messages of a [`GroupBucket`], by value.
 enum BucketMessages {
     One(Option<QueuedMessage>),
-    Many(std::vec::IntoIter<QueuedMessage>),
+    Many(vec::IntoIter<QueuedMessage>),
 }
 
 impl Iterator for BucketMessages {

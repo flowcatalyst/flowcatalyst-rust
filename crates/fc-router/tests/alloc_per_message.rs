@@ -19,9 +19,11 @@
 
 use async_trait::async_trait;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
+use tokio::task;
 
 use fc_common::{
     DispatchMode, MediationOutcome, MediationType, Message, PoolConfig, QueuedMessage, RouterConfig,
@@ -80,7 +82,7 @@ impl QueueConsumer for Acker {
         "alloc-q"
     }
     async fn poll(&self, _: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
-        std::future::pending().await
+        future::pending().await
     }
     async fn ack(&self, _: &str) -> fc_queue::Result<()> {
         if self.acked.fetch_add(1, Ordering::Relaxed) + 1 == self.total {
@@ -162,7 +164,7 @@ async fn run(total: u64, start: u64) -> (u64, u64) {
             .await
             .unwrap();
         while sent - consumer.acked.load(Ordering::Relaxed) > 500 {
-            tokio::task::yield_now().await;
+            task::yield_now().await;
         }
     }
     let done = consumer.done.notified();
@@ -175,9 +177,10 @@ async fn run(total: u64, start: u64) -> (u64, u64) {
     )
 }
 
-/// Allocation ceilings per message (a little above the measured figure).
-const MAX_ALLOCS_PER_MSG: u64 = 50;
-const MAX_BYTES_PER_MSG: u64 = 7_200;
+/// Allocation ceilings per message, a little above the measured figure
+/// (24 allocs, ~5.5 KB; before the reductions: 46 allocs, ~6.5 KB).
+const MAX_ALLOCS_PER_MSG: u64 = 30;
+const MAX_BYTES_PER_MSG: u64 = 6_000;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn allocations_per_message() {
