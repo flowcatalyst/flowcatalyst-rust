@@ -261,25 +261,72 @@ impl PendingJobPoller {
 
     /// Drive the poller every `interval` until cancelled, only while
     /// `is_leader` says so (the per-group order needs one active scheduler).
+    /// A full batch that published something is followed by another pass at
+    /// once rather than by a sleep: see [`drive`].
     pub async fn run(
         &self,
         interval: Duration,
         is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
         cancel: CancellationToken,
     ) {
-        let mut tick = time::interval(interval);
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        drive(self, self.batch_size, interval, is_leader, cancel).await;
+    }
+}
+
+/// One poll pass, so [`drive`] can be tested without a database.
+pub(crate) trait PollSource {
+    async fn poll(&self) -> Result<PollReport, SchedulerError>;
+}
+
+impl PollSource for PendingJobPoller {
+    async fn poll(&self) -> Result<PollReport, SchedulerError> {
+        self.poll_once().await
+    }
+}
+
+/// Whether `report` says there is probably more waiting: the claim filled
+/// the batch and at least one job went out. A claim that published nothing
+/// (a failing broker) must not become a hot loop, so it falls back to the
+/// interval.
+fn more_waiting(report: PollReport, batch_size: usize) -> bool {
+    report.claimed >= batch_size && report.published > 0
+}
+
+/// The poller loop. Each interval tick runs a pass; while passes keep
+/// filling the batch and publishing, the next pass follows immediately
+/// (a backlog drains at the speed of the broker, not at `batch / interval`).
+/// Leadership and cancellation are re-checked before every pass. A short
+/// batch, a pass that published nothing, or an error returns to the
+/// interval, so a failing mark/commit is retried at most once per tick.
+pub(crate) async fn drive<S: PollSource>(
+    source: &S,
+    batch_size: usize,
+    interval: Duration,
+    is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
+    cancel: CancellationToken,
+) {
+    let mut tick = time::interval(interval);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tick.tick() => {}
+        }
         loop {
-            tokio::select! {
-                _ = cancel.cancelled() => break,
-                _ = tick.tick() => {}
+            if cancel.is_cancelled() || !is_leader() {
+                break;
             }
-            if !is_leader() {
-                continue;
+            match source.poll().await {
+                Ok(report) if more_waiting(report, batch_size) => {}
+                Ok(_) => break,
+                Err(e) => {
+                    warn!(error = %e, "dispatch poll error");
+                    break;
+                }
             }
-            if let Err(e) = self.poll_once().await {
-                warn!(error = %e, "dispatch poll error");
-            }
+        }
+        if cancel.is_cancelled() {
+            break;
         }
     }
 }
@@ -309,5 +356,170 @@ mod tests {
         let (failed, backoff) = aliased.split_once(" OR ").unwrap();
         assert!(claim.contains(failed), "{claim}");
         assert!(claim.contains(backoff), "{claim}");
+    }
+
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tokio::time::Instant as TokioInstant;
+
+    /// Plays back scripted results, then empty ones; records when each
+    /// pass ran.
+    struct Script {
+        results: parking_lot::Mutex<VecDeque<Result<PollReport, SchedulerError>>>,
+        calls: AtomicUsize,
+        at: parking_lot::Mutex<Vec<Duration>>,
+        start: TokioInstant,
+        /// Cancelled once the script is exhausted.
+        done: CancellationToken,
+    }
+
+    impl Script {
+        fn new(results: Vec<Result<PollReport, SchedulerError>>, done: CancellationToken) -> Self {
+            Self {
+                results: parking_lot::Mutex::new(results.into()),
+                calls: AtomicUsize::new(0),
+                at: parking_lot::Mutex::new(Vec::new()),
+                start: TokioInstant::now(),
+                done,
+            }
+        }
+    }
+
+    impl PollSource for Script {
+        async fn poll(&self) -> Result<PollReport, SchedulerError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.at.lock().push(self.start.elapsed());
+            let next = self.results.lock().pop_front();
+            if self.results.lock().is_empty() {
+                self.done.cancel();
+            }
+            next.unwrap_or(Ok(PollReport::default()))
+        }
+    }
+
+    fn report(claimed: usize, published: usize) -> Result<PollReport, SchedulerError> {
+        Ok(PollReport { claimed, published })
+    }
+
+    fn leader(v: bool) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        Arc::new(move || v)
+    }
+
+    const TICK: Duration = Duration::from_secs(1);
+
+    /// Full batches follow one another with no interval wait; the short
+    /// batch ends the drain.
+    #[tokio::test(start_paused = true)]
+    async fn full_batches_drain_without_waiting_for_the_tick() {
+        let cancel = CancellationToken::new();
+        let s = Script::new(
+            vec![
+                report(100, 100),
+                report(100, 100),
+                report(100, 100),
+                report(7, 7),
+            ],
+            cancel.clone(),
+        );
+        drive(&s, 100, TICK, leader(true), cancel).await;
+        assert_eq!(s.calls.load(Ordering::SeqCst), 4);
+        // The first tick of a tokio interval is immediate; all four passes
+        // ran within it, with no paused-clock time spent between them.
+        assert!(
+            s.at.lock().iter().all(|t| *t == Duration::ZERO),
+            "{:?}",
+            s.at.lock()
+        );
+    }
+
+    /// A full claim that publishes nothing waits for the next tick.
+    #[tokio::test(start_paused = true)]
+    async fn a_full_claim_that_publishes_nothing_waits_for_the_tick() {
+        let cancel = CancellationToken::new();
+        let s = Script::new(vec![report(100, 0), report(100, 0)], cancel.clone());
+        drive(&s, 100, TICK, leader(true), cancel).await;
+        let at = s.at.lock().clone();
+        assert_eq!(at, vec![Duration::ZERO, TICK]);
+    }
+
+    /// An error returns to the interval too (no immediate retry of a
+    /// failing mark/commit).
+    #[tokio::test(start_paused = true)]
+    async fn an_error_waits_for_the_tick() {
+        let cancel = CancellationToken::new();
+        let s = Script::new(
+            vec![
+                Err(SchedulerError::ConfigError("boom".into())),
+                report(100, 100),
+            ],
+            cancel.clone(),
+        );
+        drive(&s, 100, TICK, leader(true), cancel).await;
+        let at = s.at.lock().clone();
+        assert_eq!(at, vec![Duration::ZERO, TICK]);
+    }
+
+    /// A non-leader never polls, however many ticks pass.
+    #[tokio::test(start_paused = true)]
+    async fn a_non_leader_does_not_poll() {
+        let cancel = CancellationToken::new();
+        let s = Script::new(vec![report(100, 100)], CancellationToken::new());
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            time::sleep(Duration::from_secs(5)).await;
+            stop.cancel();
+        });
+        drive(&s, 100, TICK, leader(false), cancel).await;
+        assert_eq!(s.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// Losing leadership mid-drain stops the drain before the next pass.
+    #[tokio::test(start_paused = true)]
+    async fn leadership_is_rechecked_before_every_pass() {
+        let cancel = CancellationToken::new();
+        let s = Script::new((0..5).map(|_| report(100, 100)).collect(), cancel.clone());
+        let flag = Arc::new(AtomicBool::new(true));
+        let seen = Arc::new(AtomicUsize::new(0));
+        let is_leader: Arc<dyn Fn() -> bool + Send + Sync> = {
+            let (flag, seen) = (flag.clone(), seen.clone());
+            Arc::new(move || {
+                // Leader for the first two checks only.
+                if seen.fetch_add(1, Ordering::SeqCst) >= 2 {
+                    flag.store(false, Ordering::SeqCst);
+                }
+                flag.load(Ordering::SeqCst)
+            })
+        };
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            time::sleep(Duration::from_millis(500)).await;
+            stop.cancel();
+        });
+        drive(&s, 100, TICK, is_leader, cancel).await;
+        assert_eq!(s.calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// Cancellation mid-drain ends the drain.
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_stops_a_drain() {
+        let cancel = CancellationToken::new();
+        let s = Script::new(
+            (0..50).map(|_| report(100, 100)).collect(),
+            CancellationToken::new(),
+        );
+        let c2 = cancel.clone();
+        // Cancel after the second pass.
+        struct CancelAfter<'a>(&'a Script, CancellationToken);
+        impl PollSource for CancelAfter<'_> {
+            async fn poll(&self) -> Result<PollReport, SchedulerError> {
+                let r = self.0.poll().await;
+                if self.0.calls.load(Ordering::SeqCst) == 2 {
+                    self.1.cancel();
+                }
+                r
+            }
+        }
+        drive(&CancelAfter(&s, c2), 100, TICK, leader(true), cancel).await;
+        assert_eq!(s.calls.load(Ordering::SeqCst), 2);
     }
 }

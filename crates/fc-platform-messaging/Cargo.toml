@@ -58,7 +58,8 @@ metrics = { workspace = true }
 [dev-dependencies]
 # `InMemoryUnitOfWork` and `assert_str_enum` for the unit tests.
 fc-platform-core = { path = "../fc-platform-core", features = ["test-support"] }
-tokio = { workspace = true, features = ["full"] }
+# `test-util` for paused-time tests of the poller loop.
+tokio = { workspace = true, features = ["full", "test-util"] }
 
 [lints.clippy]
 # Imports, not inline paths (CLAUDE.md "Imports"): `use std::sync::Arc;`
