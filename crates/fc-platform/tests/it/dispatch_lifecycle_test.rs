@@ -1078,6 +1078,44 @@ async fn an_enter_behind_a_leave_cannot_lose_the_job() {
     assert_invariant(&pool, id, "enter behind leave").await;
 }
 
+/// A mark-QUEUED that read a queue row's version must not delete the row once
+/// the job has re-entered PENDING (a new version): that would be a PENDING
+/// job with no queue row, a lost job. The re-enter holds the job and queue row
+/// locks, uncommitted; the mark-QUEUED statement (which saw the old version)
+/// blocks behind it; after the commit it must leave the refreshed row alone.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn mark_queued_never_deletes_a_queue_row_refreshed_while_it_waited() {
+    let (pool, _c) = setup_db().await;
+    let created_at = Utc::now() - Duration::minutes(5);
+    let id = "m00000000001";
+    insert_job(&pool, id, "PENDING", None, 1, "IMMEDIATE", created_at).await;
+    let claimed_version = row(&pool, id).await.updated_at;
+
+    // The re-enter (a retry) holds the locks, uncommitted.
+    let mut tx = pool.begin().await.unwrap();
+    assert!(
+        lifecycle::defer(&mut *tx, id, created_at, Utc::now() + Duration::minutes(1))
+            .await
+            .unwrap()
+    );
+    // The scheduler's mark-QUEUED, with the version the claim read, blocks.
+    let p2 = pool.clone();
+    let mark = tokio::spawn(async move {
+        lifecycle::mark_queued(&p2, &[(id.to_string(), created_at, claimed_version)]).await
+    });
+    wait_for_a_blocked_statement(&pool).await;
+    tx.commit().await.unwrap();
+    assert_eq!(
+        mark.await.unwrap().unwrap().len(),
+        0,
+        "the job's version moved on: nothing is marked"
+    );
+
+    assert_eq!(row(&pool, id).await.status, "PENDING");
+    assert_invariant(&pool, id, "mark-QUEUED behind a re-enter").await;
+}
+
 /// The documented, accepted anomaly: a leave that waits on the job's row lock
 /// behind an enter cannot see the queue row the enter inserted, so a queue
 /// row outlives the job's PENDING status. It is an orphan (never a lost

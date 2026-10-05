@@ -535,14 +535,17 @@ const LEAVE_TAIL: &str = concat!(
 /// of every `(id, claimed version)` of the batch even when the job row did
 /// not match (status moved on without the queue row being refreshed). A row
 /// whose version differs (the job re-entered PENDING since the claim) is left
-/// alone.
+/// alone, and the DELETE re-checks that version against the row's CURRENT state
+/// (a re-enter that committed while the statement waited on the row lock
+/// refreshed it): `q.version = d.version`, except for rows the UPDATE moved,
+/// which the statement holds the job lock for.
 const LEAVE_CLAIMED_TAIL: &str = concat!(
     " ), gone AS ( DELETE FROM msg_dispatch_queue q USING ( \
-     SELECT m.id FROM moved m \
-     UNION \
-     SELECT c.id FROM claimed c \
+     SELECT m.id, NULL::timestamptz AS version, TRUE AS moved FROM moved m \
+     UNION ALL \
+     SELECT c.id, c.updated_at, FALSE FROM claimed c \
        JOIN msg_dispatch_queue s ON s.job_id = c.id AND s.version = c.updated_at \
-     ) d WHERE q.job_id = d.id ) ",
+     ) d WHERE q.job_id = d.id AND (d.moved OR q.version = d.version) ) ",
     select_moved!()
 );
 
@@ -2244,9 +2247,11 @@ mod tests {
             AND j.updated_at = t.updated_at AND j.status = 'PENDING' RETURNING j.id, \
             j.created_at, j.message_group, j.sequence, j.scheduled_for, j.subscription_id, \
             j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at ), \
-            gone AS ( DELETE FROM msg_dispatch_queue q USING ( SELECT m.id FROM moved m UNION \
-            SELECT c.id FROM claimed c JOIN msg_dispatch_queue s ON s.job_id = c.id \
-            AND s.version = c.updated_at ) d WHERE q.job_id = d.id ) \
+            gone AS ( DELETE FROM msg_dispatch_queue q USING ( \
+            SELECT m.id, NULL::timestamptz AS version, TRUE AS moved FROM moved m UNION ALL \
+            SELECT c.id, c.updated_at, FALSE FROM claimed c JOIN msg_dispatch_queue s \
+            ON s.job_id = c.id AND s.version = c.updated_at ) d \
+            WHERE q.job_id = d.id AND (d.moved OR q.version = d.version) ) \
             SELECT m.id, m.created_at, m.message_group, m.sequence, m.scheduled_for, \
             m.subscription_id, m.dispatch_pool_id, m.client_id, m.mode, m.queue, m.updated_at \
             FROM moved m";
