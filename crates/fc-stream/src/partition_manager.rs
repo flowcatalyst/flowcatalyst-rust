@@ -4,7 +4,10 @@
 //!   - Ensures monthly partitions exist for the next N months on each
 //!     partitioned parent (default: 3 months ahead).
 //!   - Drops partitions whose date range falls before the retention cutoff
-//!     (default: 90 days).
+//!     (default: 90 days). Dropping a `msg_dispatch_jobs` partition also
+//!     deletes the `msg_dispatch_queue` rows of its range (the queue table
+//!     has no foreign key to the partitioned parent), logging at WARN how
+//!     many PENDING jobs were discarded.
 //!
 //! Partition naming convention (set in migration 019/022): `<parent>_YYYY_MM`.
 //! The manager parses the `YYYY_MM` suffix to determine partition age.
@@ -139,8 +142,9 @@ pub async fn run(
 }
 
 /// One full pass: create missing forward partitions, drop expired ones.
-/// Returns `(created_count, dropped_count)` summed across all parents.
-async fn tick(pool: &PgPool, config: &PartitionManagerConfig) -> anyhow::Result<(u32, u32)> {
+/// Returns `(created_count, dropped_count)` summed across all parents. The
+/// same pass [`run`] repeats; public so a test can drive it.
+pub async fn tick(pool: &PgPool, config: &PartitionManagerConfig) -> anyhow::Result<(u32, u32)> {
     let now = Utc::now();
     let mut created_total = 0u32;
     let mut dropped_total = 0u32;
@@ -236,6 +240,9 @@ async fn drop_old_partitions(
                 Ok(_) => {
                     info!(partition = %name, "Dropped expired partition");
                     dropped += 1;
+                    if parent == DISPATCH_JOBS {
+                        remove_queue_rows(pool, &name, end).await;
+                    }
                 }
                 Err(e) => {
                     warn!(partition = %name, error = %e, "Failed to drop partition");
@@ -246,6 +253,46 @@ async fn drop_old_partitions(
 
     Ok(dropped)
 }
+
+/// The parent whose partitions the dispatch queue table mirrors.
+const DISPATCH_JOBS: &str = "msg_dispatch_jobs";
+
+/// The first instant of the month before `end` (a partition's start, given
+/// the end [`parse_partition_end`] returns).
+fn partition_start(end: DateTime<Utc>) -> DateTime<Utc> {
+    month_start(end, -1)
+}
+
+/// Deletes the `msg_dispatch_queue` rows whose job lay in the partition just
+/// dropped (`job_created_at` in `[start, end)`): the partition's PENDING jobs
+/// were discarded with it. Nothing else may delete them, because the queue
+/// table has no foreign key (the parent is partitioned). A failure is logged;
+/// the rows are orphans the drift check reports.
+async fn remove_queue_rows(pool: &PgPool, partition: &str, end: DateTime<Utc>) {
+    let start = partition_start(end);
+    match sqlx::query(DELETE_QUEUE_ROWS_SQL)
+        .bind(start)
+        .bind(end)
+        .execute(pool)
+        .await
+    {
+        Ok(r) if r.rows_affected() > 0 => warn!(
+            partition = %partition,
+            removed = r.rows_affected(),
+            "Dropped partition held PENDING dispatch jobs: their queue rows were removed"
+        ),
+        Ok(_) => {}
+        Err(e) => warn!(
+            partition = %partition,
+            error = %e,
+            "Failed to remove the dropped partition's dispatch queue rows"
+        ),
+    }
+}
+
+/// The queue rows of one dropped job partition's range.
+const DELETE_QUEUE_ROWS_SQL: &str =
+    "DELETE FROM msg_dispatch_queue WHERE job_created_at >= $1 AND job_created_at < $2";
 
 async fn partition_exists(pool: &PgPool, name: &str) -> anyhow::Result<bool> {
     let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pg_class WHERE relname = $1")
@@ -380,6 +427,29 @@ mod tests {
     fn parse_partition_end_rejects_garbage() {
         assert!(parse_partition_end("msg_events_lol", "msg_events").is_none());
         assert!(parse_partition_end("msg_events_2026_99", "msg_events").is_none());
+    }
+
+    #[test]
+    fn a_partition_starts_the_month_before_its_end() {
+        let end = parse_partition_end("msg_dispatch_jobs_2026_01", "msg_dispatch_jobs").unwrap();
+        let start = partition_start(end);
+        assert_eq!((start.year(), start.month(), start.day()), (2026, 1, 1));
+        assert_eq!((end.year(), end.month(), end.day()), (2026, 2, 1));
+        // The year boundary.
+        let end = parse_partition_end("msg_dispatch_jobs_2026_12", "msg_dispatch_jobs").unwrap();
+        let start = partition_start(end);
+        assert_eq!((start.year(), start.month()), (2026, 12));
+        let end = parse_partition_end("msg_dispatch_jobs_2026_01", "msg_dispatch_jobs").unwrap();
+        assert_eq!(partition_start(end).month(), 1);
+    }
+
+    /// The queue delete is a half-open range on the job's creation time.
+    #[test]
+    fn the_queue_delete_is_the_partitions_half_open_range() {
+        assert_eq!(
+            DELETE_QUEUE_ROWS_SQL,
+            "DELETE FROM msg_dispatch_queue WHERE job_created_at >= $1 AND job_created_at < $2"
+        );
     }
 
     #[test]

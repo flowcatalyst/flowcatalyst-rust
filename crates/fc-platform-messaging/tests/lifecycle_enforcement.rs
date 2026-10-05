@@ -1,5 +1,5 @@
 //! Enforcement: nothing but the dispatch-job lifecycle writes
-//! `msg_dispatch_jobs`.
+//! `msg_dispatch_jobs` or its queue table `msg_dispatch_queue`.
 //!
 //! Scans the production source of every crate and binary in the workspace
 //! (everything under `crates/*/src` and `bin/*/src`, minus a file's trailing
@@ -28,12 +28,23 @@ const EXCEPTIONS: &[(&str, &str)] = &[
         "partition DDL (CREATE/DROP of month partitions); it does not write job rows",
     ),
 ];
+
+/// The queue table's deliberate exceptions, each with its reason.
+const QUEUE_EXCEPTIONS: &[(&str, &str)] = &[(
+    "crates/fc-stream/src/partition_manager.rs",
+    "dropping a msg_dispatch_jobs partition deletes that range's queue rows (no foreign key)",
+)];
 // Not scanned, by construction: migrations (.sql), and `fcdev fresh`, which
 // drops the whole schema and names no table.
 
 /// The statements that write the table, found in `src` (normalised to
 /// lower-case single spaces). Returns one description per hit.
 fn writes_in(src: &str) -> Vec<String> {
+    writes_to(src, "msg_dispatch_jobs")
+}
+
+/// As [`writes_in`], for any table.
+fn writes_to(src: &str, table: &str) -> Vec<String> {
     // A file's trailing test module is not production code.
     let prod = src.split("#[cfg(test)]").next().unwrap_or(src);
     let flat = prod
@@ -41,7 +52,6 @@ fn writes_in(src: &str) -> Vec<String> {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
-    let table = "msg_dispatch_jobs";
     let mut hits = Vec::new();
     let mut from = 0;
     while let Some(pos) = flat[from..].find(table) {
@@ -146,6 +156,49 @@ fn only_the_lifecycle_writes_msg_dispatch_jobs() {
 }
 
 #[test]
+fn only_the_lifecycle_writes_msg_dispatch_queue() {
+    let root = workspace_root();
+    let mut violations = Vec::new();
+    let mut lifecycle_writes = 0;
+    for file in production_sources(&root) {
+        let rel = relative(&root, &file);
+        let hits = writes_to(&fs::read_to_string(&file).unwrap(), "msg_dispatch_queue");
+        if rel == LIFECYCLE {
+            lifecycle_writes = hits.len();
+            continue;
+        }
+        if hits.is_empty() || QUEUE_EXCEPTIONS.iter().any(|(f, _)| *f == rel) {
+            continue;
+        }
+        violations.push(format!("{rel}: {}", hits.join(", ")));
+    }
+    // enter (upsert), leave (two deletes) and create (insert) at least.
+    assert!(
+        lifecycle_writes >= 4,
+        "the scanner found {lifecycle_writes} queue writes in {LIFECYCLE}: it is not detecting them"
+    );
+    assert!(
+        violations.is_empty(),
+        "msg_dispatch_queue is written outside the dispatch-job lifecycle \
+         ({LIFECYCLE}); add a lifecycle operation instead:\n  {}",
+        violations.join("\n  ")
+    );
+}
+
+#[test]
+fn the_named_queue_exceptions_are_still_real() {
+    let root = workspace_root();
+    for (file, reason) in QUEUE_EXCEPTIONS {
+        let src = fs::read_to_string(root.join(file))
+            .unwrap_or_else(|_| panic!("exception {file} ({reason}) no longer exists"));
+        assert!(
+            !writes_to(&src, "msg_dispatch_queue").is_empty(),
+            "exception {file} ({reason}) no longer writes the queue table: drop it"
+        );
+    }
+}
+
+#[test]
 fn the_named_exceptions_are_still_real() {
     let root = workspace_root();
     for (file, reason) in EXCEPTIONS {
@@ -173,6 +226,35 @@ fn the_detector_detects() {
     assert_eq!(writes_in("SELECT 1 FROM msg_dispatch_jobs WHERE").len(), 0);
     assert_eq!(
         writes_in("DROP TABLE IF EXISTS msg_dispatch_jobs_2026_05").len(),
+        0
+    );
+    // The queue table: every verb, and not a longer name.
+    assert_eq!(
+        writes_to(
+            "INSERT INTO msg_dispatch_queue (job_id)",
+            "msg_dispatch_queue"
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        writes_to(
+            "DELETE FROM msg_dispatch_queue q USING",
+            "msg_dispatch_queue"
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        writes_to("UPDATE msg_dispatch_queue SET", "msg_dispatch_queue").len(),
+        1
+    );
+    assert_eq!(
+        writes_to("SELECT 1 FROM msg_dispatch_queue q", "msg_dispatch_queue").len(),
+        0
+    );
+    assert_eq!(
+        writes_to("INSERT INTO msg_dispatch_queue_x (a)", "msg_dispatch_queue").len(),
         0
     );
     assert_eq!(

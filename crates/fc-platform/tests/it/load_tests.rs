@@ -267,6 +267,24 @@ async fn test_concurrent_client_inserts() {
 
 // ─── Query Performance Under Load ────────────────────────────────────────
 
+/// Test-only: the lifecycle creates every job PENDING, so a fixture that
+/// needs another status moves its jobs there after creating them, and drops
+/// their queue rows as the lifecycle would (a job that is not PENDING has
+/// none). This bypasses the lifecycle on purpose.
+async fn set_status_for_test(pool: &sqlx::PgPool, ids: &[String], status: &str) {
+    sqlx::query("UPDATE msg_dispatch_jobs SET status = $2 WHERE id = ANY($1)")
+        .bind(ids)
+        .bind(status)
+        .execute(pool)
+        .await
+        .expect("set status");
+    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id = ANY($1)")
+        .bind(ids)
+        .execute(pool)
+        .await
+        .expect("drop queue rows");
+}
+
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn test_dispatch_job_query_performance() {
@@ -284,6 +302,8 @@ async fn test_dispatch_job_query_performance() {
                     "https://example.com/webhook",
                     "{}",
                 );
+                // Creation is always PENDING; every third job is moved to
+                // QUEUED after it is created (below).
                 if i % 3 == 0 {
                     job.status = fc_platform::DispatchStatus::Queued;
                 }
@@ -293,6 +313,12 @@ async fn test_dispatch_job_query_performance() {
         repo.insert_many(&jobs)
             .await
             .expect("Failed to batch insert");
+        let queued: Vec<String> = jobs
+            .iter()
+            .filter(|j| j.status == fc_platform::DispatchStatus::Queued)
+            .map(|j| j.id.clone())
+            .collect();
+        set_status_for_test(&pool, &queued, "QUEUED").await;
     }
 
     let total = repo.count_all().await.expect("Failed to count");

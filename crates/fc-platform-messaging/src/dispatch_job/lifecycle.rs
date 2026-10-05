@@ -9,7 +9,8 @@ pub use fc_common::dispatch_lifecycle::*;
 
 use crate::dispatch_job::entity::DispatchJob;
 
-/// The insert row for `job`, columns as the entity carries them.
+/// The insert row for `job`, columns as the entity carries them. Its status
+/// is not carried: the lifecycle inserts every job PENDING.
 pub fn new_job(job: &DispatchJob) -> NewJob {
     NewJob {
         id: job.id.clone(),
@@ -35,7 +36,6 @@ pub fn new_job(job: &DispatchJob) -> NewJob {
         sequence: job.sequence,
         timeout_seconds: job.timeout_seconds as i32,
         schema_id: job.schema_id.clone(),
-        status: job.status.as_str().to_string(),
         max_retries: job.max_retries as i32,
         retry_strategy: job.retry_strategy.as_str().to_string(),
         scheduled_for: job.scheduled_for,

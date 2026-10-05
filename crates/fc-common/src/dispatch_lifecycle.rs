@@ -42,6 +42,53 @@
 //!
 //! [`TRANSITIONS`] states the whole lifecycle in one place; the tests at the
 //! bottom pin it.
+//!
+//! # The queue table
+//!
+//! `msg_dispatch_queue` (migration 064) holds exactly one row for every job
+//! whose status is PENDING, mirroring the job's current values (`version` is
+//! the job's `updated_at`), and none for any other job. Nothing reads it for
+//! dispatching yet. It is written ONLY here, by explicit application writes
+//! (no triggers), each fused with the job write into ONE statement through a
+//! data-modifying CTE, so the pair is atomic with no new transaction and no
+//! extra round trip (a caller's transaction is still honoured):
+//!
+//! * creation (`create_batch`, `create_fanned_out`): `WITH ins AS (INSERT
+//!   INTO msg_dispatch_jobs ... RETURNING ...) INSERT INTO
+//!   msg_dispatch_queue ... FROM ins ON CONFLICT (job_id) DO NOTHING`. Every
+//!   created job is PENDING.
+//! * [`enter_pending`]: `WITH moved AS (UPDATE ... RETURNING ...) INSERT INTO
+//!   msg_dispatch_queue ... FROM moved ON CONFLICT (job_id) DO UPDATE ...,
+//!   claimed_at = NULL`. Entering (or re-entering) PENDING refreshes
+//!   `version` and `scheduled_for` and resets `claimed_at`.
+//! * [`leave_pending`]: `WITH moved AS (UPDATE ... RETURNING ...), gone AS
+//!   (DELETE FROM msg_dispatch_queue ...) SELECT ... FROM moved`. Delete if
+//!   exists: complete / fail / claim may or may not find the job PENDING.
+//!   [`mark_queued`] additionally deletes the queue row of every
+//!   `(id, claimed version)` of its batch, even when the job row itself did
+//!   not match (status moved on without the queue row being refreshed); a
+//!   queue row with a different version (the job re-entered PENDING since
+//!   the claim) is left alone.
+//! * a partition drop removes that partition's queue rows (fc-stream's
+//!   partition manager).
+//!
+//! Transitions with PENDING on neither side (reclaim, operator cancel /
+//! complete) do not touch the queue.
+//!
+//! ## A known, accepted anomaly
+//!
+//! Under READ COMMITTED a statement's CTEs see the snapshot taken when the
+//! statement started. If an *enter* and a *leave* for the SAME job race, and
+//! the leave blocks on the job's row lock behind the enter, the leave's
+//! `DELETE` cannot see the queue row the enter has just inserted, so a queue
+//! row can outlive a job that is no longer PENDING. The opposite error (a
+//! PENDING job with no queue row: a lost job) cannot happen this way: an
+//! enter that waits behind a leave re-inserts with `ON CONFLICT`, which does
+//! see committed rows. The stale extra row is harmless and self-heals: the
+//! scheduler's mark-QUEUED removes it (the rule above), and a later reconcile
+//! sweep will. The hot paths are deliberately NOT wrapped in transactions to
+//! avoid it. [`queue_drift`] counts both kinds of error, for tests and
+//! diagnostics only.
 
 use chrono::{DateTime, Utc};
 use sqlx::{Error, Executor, FromRow, Postgres, QueryBuilder};
@@ -261,23 +308,43 @@ impl Selector<'_> {
         }
     }
 
-    fn push_prefix(&self, qb: &mut QueryBuilder<'_, Postgres>) {
-        if let Selector::StrandedSiblings { live_before } = self {
-            qb.push(
-                "WITH stranded AS ( \
-                     SELECT s.id, s.created_at \
-                       FROM msg_dispatch_jobs s \
-                       JOIN msg_dispatch_jobs h \
-                         ON h.message_group = s.message_group \
-                        AND h.status IN ('FAILED', 'ERROR') \
-                        AND (h.sequence, h.created_at, h.id) < (s.sequence, s.created_at, s.id) \
-                      WHERE s.mode = 'BLOCK_ON_ERROR' \
-                        AND s.message_group IS NOT NULL \
-                        AND s.status IN ('QUEUED', 'PROCESSING') \
-                        AND (s.status <> 'PROCESSING' OR s.updated_at < ",
-            )
-            .push_bind(*live_before)
-            .push(") ) ");
+    /// The leading `WITH` common table expressions the selector needs (the
+    /// stranded-sibling set; the scheduler's claimed `(id, created_at,
+    /// version)` batch). Returns whether a `WITH` was started.
+    fn push_ctes(&self, qb: &mut QueryBuilder<'_, Postgres>) -> bool {
+        match self {
+            Selector::StrandedSiblings { live_before } => {
+                qb.push(
+                    "WITH stranded AS ( \
+                         SELECT s.id, s.created_at \
+                           FROM msg_dispatch_jobs s \
+                           JOIN msg_dispatch_jobs h \
+                             ON h.message_group = s.message_group \
+                            AND h.status IN ('FAILED', 'ERROR') \
+                            AND (h.sequence, h.created_at, h.id) < (s.sequence, s.created_at, s.id) \
+                          WHERE s.mode = 'BLOCK_ON_ERROR' \
+                            AND s.message_group IS NOT NULL \
+                            AND s.status IN ('QUEUED', 'PROCESSING') \
+                            AND (s.status <> 'PROCESSING' OR s.updated_at < ",
+                )
+                .push_bind(*live_before)
+                .push(") )");
+                true
+            }
+            Selector::Versioned(keys) => {
+                let ids: Vec<String> = keys.iter().map(|k| k.0.clone()).collect();
+                let created: Vec<DateTime<Utc>> = keys.iter().map(|k| k.1).collect();
+                let updated: Vec<DateTime<Utc>> = keys.iter().map(|k| k.2).collect();
+                qb.push("WITH claimed AS ( SELECT * FROM UNNEST(")
+                    .push_bind(ids)
+                    .push("::varchar[], ")
+                    .push_bind(created)
+                    .push("::timestamptz[], ")
+                    .push_bind(updated)
+                    .push("::timestamptz[]) AS t(id, created_at, updated_at) )");
+                true
+            }
+            _ => false,
         }
     }
 
@@ -292,17 +359,8 @@ impl Selector<'_> {
                     .push_bind(created)
                     .push("::timestamptz[]) AS t(id, created_at)");
             }
-            Selector::Versioned(keys) => {
-                let ids: Vec<String> = keys.iter().map(|k| k.0.clone()).collect();
-                let created: Vec<DateTime<Utc>> = keys.iter().map(|k| k.1).collect();
-                let updated: Vec<DateTime<Utc>> = keys.iter().map(|k| k.2).collect();
-                qb.push(" FROM UNNEST(")
-                    .push_bind(ids)
-                    .push("::varchar[], ")
-                    .push_bind(created)
-                    .push("::timestamptz[], ")
-                    .push_bind(updated)
-                    .push("::timestamptz[]) AS t(id, created_at, updated_at)");
+            Selector::Versioned(_) => {
+                qb.push(" FROM claimed t");
             }
             Selector::StrandedSiblings { .. } => {
                 qb.push(" FROM stranded st");
@@ -404,17 +462,113 @@ enum Extra {
     ClaimedBefore(DateTime<Utc>),
 }
 
-/// Builds ONE `UPDATE msg_dispatch_jobs` for `t`: status to `t.to`, the
-/// guard on `t.from`, `updated_at = NOW()`, the selector, and the
-/// `RETURNING` of [`Transitioned`].
+/// How a transition's statement treats the queue table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wrap {
+    /// PENDING on neither side: the bare `UPDATE`, no queue write.
+    Plain,
+    /// The job becomes (or is refreshed as) PENDING: upsert its queue row.
+    Enter,
+    /// The job may stop being PENDING: delete its queue row if present.
+    Leave,
+}
+
+impl Wrap {
+    /// The wrap a transition needs, from the table alone.
+    fn of(t: &Transition) -> Wrap {
+        if t.to == DispatchStatus::Pending {
+            Wrap::Enter
+        } else if t.from.is_empty() || t.from.contains(&DispatchStatus::Pending) {
+            Wrap::Leave
+        } else {
+            Wrap::Plain
+        }
+    }
+}
+
+/// The queue row's columns, in `INSERT` order.
+macro_rules! queue_cols {
+    () => {
+        "job_id, job_created_at, message_group, sequence, scheduled_for, subscription_id, \
+         dispatch_pool_id, client_id, mode, queue, version"
+    };
+}
+
+/// A CTE named `moved` / `ins` re-selected under the alias `m` / `i`.
+macro_rules! select_moved {
+    () => {
+        "SELECT m.id, m.created_at, m.message_group, m.sequence, m.scheduled_for, \
+         m.subscription_id, m.dispatch_pool_id, m.client_id, m.mode, m.queue, m.updated_at \
+         FROM moved m"
+    };
+}
+
+/// Enter: upsert the queue row from the moved rows. Entering (or
+/// re-entering) PENDING refreshes everything the job carries and resets
+/// `claimed_at`. Returns the queue rows in [`Transitioned`] shape.
+const ENTER_TAIL: &str = concat!(
+    " ) INSERT INTO msg_dispatch_queue (",
+    queue_cols!(),
+    ") ",
+    select_moved!(),
+    " ON CONFLICT (job_id) DO UPDATE SET \
+     job_created_at = EXCLUDED.job_created_at, message_group = EXCLUDED.message_group, \
+     sequence = EXCLUDED.sequence, scheduled_for = EXCLUDED.scheduled_for, \
+     subscription_id = EXCLUDED.subscription_id, dispatch_pool_id = EXCLUDED.dispatch_pool_id, \
+     client_id = EXCLUDED.client_id, mode = EXCLUDED.mode, queue = EXCLUDED.queue, \
+     version = EXCLUDED.version, claimed_at = NULL \
+     RETURNING job_id AS id, job_created_at AS created_at, message_group, sequence, \
+     scheduled_for, subscription_id, dispatch_pool_id, client_id, mode, queue, \
+     version AS updated_at"
+);
+
+/// Leave: delete the queue row of every moved job (if it has one), then
+/// return the moved rows.
+const LEAVE_TAIL: &str = concat!(
+    " ), gone AS ( DELETE FROM msg_dispatch_queue q USING moved m WHERE q.job_id = m.id ) ",
+    select_moved!()
+);
+
+/// Leave for the scheduler's mark-QUEUED: additionally deletes the queue row
+/// of every `(id, claimed version)` of the batch even when the job row did
+/// not match (status moved on without the queue row being refreshed). A row
+/// whose version differs (the job re-entered PENDING since the claim) is left
+/// alone.
+const LEAVE_CLAIMED_TAIL: &str = concat!(
+    " ), gone AS ( DELETE FROM msg_dispatch_queue q USING ( \
+     SELECT m.id FROM moved m \
+     UNION \
+     SELECT c.id FROM claimed c \
+       JOIN msg_dispatch_queue s ON s.job_id = c.id AND s.version = c.updated_at \
+     ) d WHERE q.job_id = d.id ) ",
+    select_moved!()
+);
+
+/// Builds ONE statement for `t`: the `UPDATE msg_dispatch_jobs` (status to
+/// `t.to`, the guard on `t.from`, `updated_at = NOW()`, the selector) with its
+/// `RETURNING` of [`Transitioned`], wrapped per `wrap` so the queue row is
+/// written by the same statement.
 fn build_update<'q>(
     t: &Transition,
     sel: &Selector<'_>,
     changes: &[Change<'_>],
     extra: &Extra,
+    wrap: Wrap,
 ) -> QueryBuilder<'q, Postgres> {
     let mut qb: QueryBuilder<'q, Postgres> = QueryBuilder::new("");
-    sel.push_prefix(&mut qb);
+    let with = sel.push_ctes(&mut qb);
+    match (wrap, with) {
+        (Wrap::Plain, true) => {
+            qb.push(" ");
+        }
+        (Wrap::Plain, false) => {}
+        (_, true) => {
+            qb.push(", moved AS ( ");
+        }
+        (_, false) => {
+            qb.push("WITH moved AS ( ");
+        }
+    }
     qb.push("UPDATE msg_dispatch_jobs AS j SET status = '")
         .push(t.to.as_str())
         .push("'");
@@ -433,6 +587,18 @@ fn build_update<'q>(
             .push_bind(*at);
     }
     qb.push(RETURNING);
+    match (wrap, sel) {
+        (Wrap::Plain, _) => {}
+        (Wrap::Enter, _) => {
+            qb.push(ENTER_TAIL);
+        }
+        (Wrap::Leave, Selector::Versioned(_)) => {
+            qb.push(LEAVE_CLAIMED_TAIL);
+        }
+        (Wrap::Leave, _) => {
+            qb.push(LEAVE_TAIL);
+        }
+    }
     qb
 }
 
@@ -444,21 +610,24 @@ async fn run_transition<'e, E>(
     sel: &Selector<'_>,
     changes: &[Change<'_>],
     extra: &Extra,
+    wrap: Wrap,
 ) -> Result<Vec<Transitioned>, Error>
 where
     E: Executor<'e, Database = Postgres>,
 {
+    debug_assert_eq!(wrap, Wrap::of(t));
     // Nothing to address: no statement, nothing refused.
     if matches!(sel.expected(), Some(0)) {
         return Ok(Vec::new());
     }
-    let mut qb = build_update(t, sel, changes, extra);
+    let mut qb = build_update(t, sel, changes, extra, wrap);
     let rows: Vec<Transitioned> = qb.build_query_as().fetch_all(ex).await?;
     record_outcome(t, sel.expected(), rows.len());
     Ok(rows)
 }
 
-/// The single place a job becomes (or is refreshed as) PENDING.
+/// The single place a job becomes (or is refreshed as) PENDING: the job's
+/// `UPDATE` and its queue row's upsert are one statement.
 async fn enter_pending<'e, E>(
     ex: E,
     t: &Transition,
@@ -469,10 +638,11 @@ where
     E: Executor<'e, Database = Postgres>,
 {
     debug_assert_eq!(t.to, DispatchStatus::Pending);
-    run_transition(ex, t, &sel, changes, &Extra::None).await
+    run_transition(ex, t, &sel, changes, &Extra::None, Wrap::Enter).await
 }
 
-/// The single place a job stops being PENDING.
+/// The single place a job stops being PENDING: the job's `UPDATE` and the
+/// delete of its queue row (if any) are one statement.
 async fn leave_pending<'e, E>(
     ex: E,
     t: &Transition,
@@ -484,7 +654,7 @@ where
 {
     debug_assert_ne!(t.to, DispatchStatus::Pending);
     debug_assert!(t.from.is_empty() || t.from.contains(&DispatchStatus::Pending));
-    run_transition(ex, t, &sel, changes, &Extra::None).await
+    run_transition(ex, t, &sel, changes, &Extra::None, Wrap::Leave).await
 }
 
 /// Counts and logs a transition that moved fewer rows than addressed. Not
@@ -517,8 +687,9 @@ fn record_outcome(t: &Transition, expected: Option<usize>, moved: usize) {
 
 // ─── Creation ───────────────────────────────────────────────────────────────
 
-/// A job to insert in full (API ingest, SDK batch). `status` is the
-/// caller's; production callers always build PENDING jobs.
+/// A job to insert in full (API ingest, SDK batch). It has no status:
+/// [`create_batch`] always inserts PENDING (and its queue row). A test that
+/// needs a job in another status moves it there after creating it.
 #[derive(Debug, Clone)]
 pub struct NewJob {
     pub id: String,
@@ -544,7 +715,6 @@ pub struct NewJob {
     pub sequence: i32,
     pub timeout_seconds: i32,
     pub schema_id: Option<String>,
-    pub status: String,
     pub max_retries: i32,
     pub retry_strategy: String,
     pub scheduled_for: Option<DateTime<Utc>>,
@@ -561,7 +731,51 @@ pub struct NewJob {
     pub queue: Option<String>,
 }
 
-/// Insert jobs in full, one `UNNEST` statement. A single job is a batch of
+/// The queue row of every job a creation statement inserted (`ins` is the
+/// `RETURNING` of the job insert). Only rows actually inserted get one.
+const CREATE_TAIL: &str = concat!(
+    " ) INSERT INTO msg_dispatch_queue (",
+    queue_cols!(),
+    ") SELECT i.id, i.created_at, i.message_group, i.sequence, i.scheduled_for, \
+     i.subscription_id, i.dispatch_pool_id, i.client_id, i.mode, i.queue, i.updated_at \
+     FROM ins i ON CONFLICT (job_id) DO NOTHING"
+);
+
+/// The job columns a creation statement returns for its queue row.
+const CREATE_RETURNING: &str = " RETURNING id, created_at, message_group, sequence, \
+     scheduled_for, subscription_id, dispatch_pool_id, client_id, mode, queue, updated_at";
+
+/// The 37-column insert of [`create_batch`]: every job PENDING, and its
+/// queue row, in one statement.
+fn create_batch_sql() -> String {
+    format!(
+        "{}{}{}",
+        r#"WITH ins AS ( INSERT INTO msg_dispatch_jobs
+            (id, external_id, source, kind, code, subject, event_id, correlation_id,
+             metadata, target_url, protocol, payload, payload_content_type, data_only,
+             service_account_id, client_id, subscription_id, mode, dispatch_pool_id,
+             message_group, sequence, timeout_seconds, schema_id, max_retries,
+             retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
+             completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
+             descriptor, queue, status)
+        SELECT u.*, 'PENDING' FROM UNNEST(
+            $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[],
+            $6::varchar[], $7::varchar[], $8::varchar[], $9::jsonb[], $10::varchar[],
+            $11::varchar[], $12::text[], $13::varchar[], $14::bool[],
+            $15::varchar[], $16::varchar[], $17::varchar[], $18::varchar[], $19::varchar[],
+            $20::varchar[], $21::int4[], $22::int4[], $23::varchar[],
+            $24::int4[], $25::varchar[], $26::timestamptz[], $27::timestamptz[],
+            $28::int4[], $29::timestamptz[], $30::timestamptz[], $31::int8[],
+            $32::varchar[], $33::varchar[], $34::timestamptz[], $35::timestamptz[],
+            $36::varchar[], $37::varchar[]
+        ) AS u"#,
+        CREATE_RETURNING,
+        CREATE_TAIL,
+    )
+}
+
+/// Insert jobs in full, always PENDING, one statement: the `UNNEST` insert
+/// and the queue rows of the jobs it inserted. A single job is a batch of
 /// one. Run it inside the caller's transaction when other writes must be
 /// atomic with it.
 pub async fn create_batch<'e, E>(ex: E, jobs: &[NewJob]) -> Result<(), Error>
@@ -574,67 +788,46 @@ where
     fn col<'a, T>(jobs: &'a [NewJob], f: impl Fn(&'a NewJob) -> T) -> Vec<T> {
         jobs.iter().map(f).collect()
     }
-    sqlx::query(
-        r#"INSERT INTO msg_dispatch_jobs
-            (id, external_id, source, kind, code, subject, event_id, correlation_id,
-             metadata, target_url, protocol, payload, payload_content_type, data_only,
-             service_account_id, client_id, subscription_id, mode, dispatch_pool_id,
-             message_group, sequence, timeout_seconds, schema_id, status, max_retries,
-             retry_strategy, scheduled_for, expires_at, attempt_count, last_attempt_at,
-             completed_at, duration_millis, last_error, idempotency_key, created_at, updated_at,
-             descriptor, queue)
-        SELECT * FROM UNNEST(
-            $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[],
-            $6::varchar[], $7::varchar[], $8::varchar[], $9::jsonb[], $10::varchar[],
-            $11::varchar[], $12::text[], $13::varchar[], $14::bool[],
-            $15::varchar[], $16::varchar[], $17::varchar[], $18::varchar[], $19::varchar[],
-            $20::varchar[], $21::int4[], $22::int4[], $23::varchar[], $24::varchar[],
-            $25::int4[], $26::varchar[], $27::timestamptz[], $28::timestamptz[],
-            $29::int4[], $30::timestamptz[], $31::timestamptz[], $32::int8[],
-            $33::varchar[], $34::varchar[], $35::timestamptz[], $36::timestamptz[],
-            $37::varchar[], $38::varchar[]
-        )"#,
-    )
-    .bind(col(jobs, |j| j.id.as_str()))
-    .bind(col(jobs, |j| j.external_id.as_deref()))
-    .bind(col(jobs, |j| j.source.as_deref()))
-    .bind(col(jobs, |j| j.kind.as_str()))
-    .bind(col(jobs, |j| j.code.as_str()))
-    .bind(col(jobs, |j| j.subject.as_deref()))
-    .bind(col(jobs, |j| j.event_id.as_deref()))
-    .bind(col(jobs, |j| j.correlation_id.as_deref()))
-    .bind(col(jobs, |j| j.metadata.clone()))
-    .bind(col(jobs, |j| j.target_url.as_str()))
-    .bind(col(jobs, |j| j.protocol.as_str()))
-    .bind(col(jobs, |j| j.payload.as_deref()))
-    .bind(col(jobs, |j| Some(j.payload_content_type.as_str())))
-    .bind(col(jobs, |j| j.data_only))
-    .bind(col(jobs, |j| j.service_account_id.as_deref()))
-    .bind(col(jobs, |j| j.client_id.as_deref()))
-    .bind(col(jobs, |j| j.subscription_id.as_deref()))
-    .bind(col(jobs, |j| j.mode.as_str()))
-    .bind(col(jobs, |j| j.dispatch_pool_id.as_deref()))
-    .bind(col(jobs, |j| j.message_group.as_deref()))
-    .bind(col(jobs, |j| j.sequence))
-    .bind(col(jobs, |j| j.timeout_seconds))
-    .bind(col(jobs, |j| j.schema_id.as_deref()))
-    .bind(col(jobs, |j| j.status.as_str()))
-    .bind(col(jobs, |j| j.max_retries))
-    .bind(col(jobs, |j| j.retry_strategy.as_str()))
-    .bind(col(jobs, |j| j.scheduled_for))
-    .bind(col(jobs, |j| j.expires_at))
-    .bind(col(jobs, |j| j.attempt_count))
-    .bind(col(jobs, |j| j.last_attempt_at))
-    .bind(col(jobs, |j| j.completed_at))
-    .bind(col(jobs, |j| j.duration_millis))
-    .bind(col(jobs, |j| j.last_error.as_deref()))
-    .bind(col(jobs, |j| j.idempotency_key.as_deref()))
-    .bind(col(jobs, |j| j.created_at))
-    .bind(col(jobs, |j| j.updated_at))
-    .bind(col(jobs, |j| j.descriptor.as_deref()))
-    .bind(col(jobs, |j| j.queue.as_deref()))
-    .execute(ex)
-    .await?;
+    sqlx::query(&create_batch_sql())
+        .bind(col(jobs, |j| j.id.as_str()))
+        .bind(col(jobs, |j| j.external_id.as_deref()))
+        .bind(col(jobs, |j| j.source.as_deref()))
+        .bind(col(jobs, |j| j.kind.as_str()))
+        .bind(col(jobs, |j| j.code.as_str()))
+        .bind(col(jobs, |j| j.subject.as_deref()))
+        .bind(col(jobs, |j| j.event_id.as_deref()))
+        .bind(col(jobs, |j| j.correlation_id.as_deref()))
+        .bind(col(jobs, |j| j.metadata.clone()))
+        .bind(col(jobs, |j| j.target_url.as_str()))
+        .bind(col(jobs, |j| j.protocol.as_str()))
+        .bind(col(jobs, |j| j.payload.as_deref()))
+        .bind(col(jobs, |j| Some(j.payload_content_type.as_str())))
+        .bind(col(jobs, |j| j.data_only))
+        .bind(col(jobs, |j| j.service_account_id.as_deref()))
+        .bind(col(jobs, |j| j.client_id.as_deref()))
+        .bind(col(jobs, |j| j.subscription_id.as_deref()))
+        .bind(col(jobs, |j| j.mode.as_str()))
+        .bind(col(jobs, |j| j.dispatch_pool_id.as_deref()))
+        .bind(col(jobs, |j| j.message_group.as_deref()))
+        .bind(col(jobs, |j| j.sequence))
+        .bind(col(jobs, |j| j.timeout_seconds))
+        .bind(col(jobs, |j| j.schema_id.as_deref()))
+        .bind(col(jobs, |j| j.max_retries))
+        .bind(col(jobs, |j| j.retry_strategy.as_str()))
+        .bind(col(jobs, |j| j.scheduled_for))
+        .bind(col(jobs, |j| j.expires_at))
+        .bind(col(jobs, |j| j.attempt_count))
+        .bind(col(jobs, |j| j.last_attempt_at))
+        .bind(col(jobs, |j| j.completed_at))
+        .bind(col(jobs, |j| j.duration_millis))
+        .bind(col(jobs, |j| j.last_error.as_deref()))
+        .bind(col(jobs, |j| j.idempotency_key.as_deref()))
+        .bind(col(jobs, |j| j.created_at))
+        .bind(col(jobs, |j| j.updated_at))
+        .bind(col(jobs, |j| j.descriptor.as_deref()))
+        .bind(col(jobs, |j| j.queue.as_deref()))
+        .execute(ex)
+        .await?;
     Ok(())
 }
 
@@ -674,21 +867,13 @@ pub struct FanOutJob {
     pub created_at: DateTime<Utc>,
 }
 
-/// Insert fan-out jobs as PENDING, one `UNNEST` statement, in the caller's
-/// transaction (with the `fanned_out_at` stamp).
-pub async fn create_fanned_out<'e, E>(ex: E, jobs: &[FanOutJob]) -> Result<(), Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
-    if jobs.is_empty() {
-        return Ok(());
-    }
-    fn col<'a, T>(jobs: &'a [FanOutJob], f: impl Fn(&'a FanOutJob) -> T) -> Vec<T> {
-        jobs.iter().map(f).collect()
-    }
-    sqlx::query(
+/// The fan-out insert of [`create_fanned_out`] and its queue rows, in one
+/// statement.
+fn create_fanned_out_sql() -> String {
+    format!(
+        "{}{}{}",
         r#"
-        INSERT INTO msg_dispatch_jobs (
+        WITH ins AS ( INSERT INTO msg_dispatch_jobs (
             id, code, source, subject, event_id, correlation_id,
             target_url, protocol, payload, data_only, service_account_id, client_id,
             subscription_id, mode, dispatch_pool_id, message_group,
@@ -716,35 +901,51 @@ where
             subscription_id, mode, dispatch_pool_id, message_group,
             sequence, timeout_seconds, max_retries, idempotency_key,
             created_at, queue, descriptor, metadata
-        )
-        "#,
+        )"#,
+        CREATE_RETURNING,
+        CREATE_TAIL,
     )
-    .bind(col(jobs, |j| j.id.as_str()))
-    .bind(col(jobs, |j| j.code.as_str()))
-    .bind(col(jobs, |j| j.source.as_str()))
-    .bind(col(jobs, |j| j.subject.as_deref()))
-    .bind(col(jobs, |j| Some(j.event_id.as_str())))
-    .bind(col(jobs, |j| j.correlation_id.as_deref()))
-    .bind(col(jobs, |j| j.target_url.as_str()))
-    .bind(col(jobs, |j| j.protocol))
-    .bind(col(jobs, |j| j.payload.as_str()))
-    .bind(col(jobs, |j| j.data_only))
-    .bind(col(jobs, |j| j.service_account_id.as_deref()))
-    .bind(col(jobs, |j| j.client_id.as_deref()))
-    .bind(col(jobs, |j| j.subscription_id.as_str()))
-    .bind(col(jobs, |j| j.mode))
-    .bind(col(jobs, |j| j.dispatch_pool_id.as_deref()))
-    .bind(col(jobs, |j| j.message_group.as_deref()))
-    .bind(col(jobs, |j| j.sequence))
-    .bind(col(jobs, |j| j.timeout_seconds))
-    .bind(col(jobs, |j| j.max_retries))
-    .bind(col(jobs, |j| j.idempotency_key.as_str()))
-    .bind(col(jobs, |j| j.created_at))
-    .bind(col(jobs, |j| j.queue.as_deref()))
-    .bind(col(jobs, |j| j.descriptor.as_deref()))
-    .bind(col(jobs, |j| j.metadata.clone()))
-    .execute(ex)
-    .await?;
+}
+
+/// Insert fan-out jobs as PENDING, one `UNNEST` statement, in the caller's
+/// transaction (with the `fanned_out_at` stamp).
+pub async fn create_fanned_out<'e, E>(ex: E, jobs: &[FanOutJob]) -> Result<(), Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if jobs.is_empty() {
+        return Ok(());
+    }
+    fn col<'a, T>(jobs: &'a [FanOutJob], f: impl Fn(&'a FanOutJob) -> T) -> Vec<T> {
+        jobs.iter().map(f).collect()
+    }
+    sqlx::query(&create_fanned_out_sql())
+        .bind(col(jobs, |j| j.id.as_str()))
+        .bind(col(jobs, |j| j.code.as_str()))
+        .bind(col(jobs, |j| j.source.as_str()))
+        .bind(col(jobs, |j| j.subject.as_deref()))
+        .bind(col(jobs, |j| Some(j.event_id.as_str())))
+        .bind(col(jobs, |j| j.correlation_id.as_deref()))
+        .bind(col(jobs, |j| j.target_url.as_str()))
+        .bind(col(jobs, |j| j.protocol))
+        .bind(col(jobs, |j| j.payload.as_str()))
+        .bind(col(jobs, |j| j.data_only))
+        .bind(col(jobs, |j| j.service_account_id.as_deref()))
+        .bind(col(jobs, |j| j.client_id.as_deref()))
+        .bind(col(jobs, |j| j.subscription_id.as_str()))
+        .bind(col(jobs, |j| j.mode))
+        .bind(col(jobs, |j| j.dispatch_pool_id.as_deref()))
+        .bind(col(jobs, |j| j.message_group.as_deref()))
+        .bind(col(jobs, |j| j.sequence))
+        .bind(col(jobs, |j| j.timeout_seconds))
+        .bind(col(jobs, |j| j.max_retries))
+        .bind(col(jobs, |j| j.idempotency_key.as_str()))
+        .bind(col(jobs, |j| j.created_at))
+        .bind(col(jobs, |j| j.queue.as_deref()))
+        .bind(col(jobs, |j| j.descriptor.as_deref()))
+        .bind(col(jobs, |j| j.metadata.clone()))
+        .execute(ex)
+        .await?;
     Ok(())
 }
 
@@ -1051,6 +1252,7 @@ where
         &Selector::One { id, created_at },
         &[Change::StampLastAttempt],
         &Extra::ClaimedBefore(claimed_before),
+        Wrap::Plain,
     )
     .await?;
     Ok(!rows.is_empty())
@@ -1098,6 +1300,7 @@ where
         &Selector::One { id, created_at },
         &[Change::StampCompletedAt],
         &Extra::None,
+        Wrap::Plain,
     )
     .await?;
     if rows.is_empty() {
@@ -1108,6 +1311,43 @@ where
     }
     Ok(!rows.is_empty())
 }
+
+// ─── Drift check ────────────────────────────────────────────────────────────
+
+/// What [`queue_drift`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueDrift {
+    /// Jobs that are PENDING with no queue row, or whose queue row's
+    /// `version` / `scheduled_for` differs from the job's. A lost job.
+    pub missing_or_stale: i64,
+    /// Queue rows whose job is not PENDING or does not exist. The documented
+    /// enter / leave race can leave a few; they are harmless.
+    pub orphaned: i64,
+}
+
+/// Counts how far `msg_dispatch_queue` has drifted from the jobs (two
+/// queries). For tests and diagnostics: it scans, and is NOT called on any
+/// hot path.
+pub async fn queue_drift(pool: &sqlx::PgPool) -> Result<QueueDrift, Error> {
+    let (missing_or_stale,): (i64,) = sqlx::query_as(MISSING_OR_STALE_SQL).fetch_one(pool).await?;
+    let (orphaned,): (i64,) = sqlx::query_as(ORPHANED_SQL).fetch_one(pool).await?;
+    Ok(QueueDrift {
+        missing_or_stale,
+        orphaned,
+    })
+}
+
+const MISSING_OR_STALE_SQL: &str = "SELECT COUNT(*) FROM msg_dispatch_jobs j \
+     LEFT JOIN msg_dispatch_queue q ON q.job_id = j.id \
+     WHERE j.status = 'PENDING' \
+       AND (q.job_id IS NULL \
+            OR q.version IS DISTINCT FROM j.updated_at \
+            OR q.scheduled_for IS DISTINCT FROM j.scheduled_for)";
+
+const ORPHANED_SQL: &str = "SELECT COUNT(*) FROM msg_dispatch_queue q \
+     WHERE NOT EXISTS (SELECT 1 FROM msg_dispatch_jobs j \
+                        WHERE j.id = q.job_id AND j.created_at = q.job_created_at \
+                          AND j.status = 'PENDING')";
 
 #[cfg(test)]
 mod tests {
@@ -1412,8 +1652,218 @@ mod tests {
         assert_eq!(got.get(&key("reap")), None);
     }
 
+    /// Collapses whitespace so assertions do not depend on formatting.
+    fn flat(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn selector_for<'a>(
+        t: &Transition,
+        key: &'a [(String, DateTime<Utc>)],
+        ver: &'a [(String, DateTime<Utc>, DateTime<Utc>)],
+        ids: &'a [String],
+        at: DateTime<Utc>,
+    ) -> Selector<'a> {
+        match t.name {
+            "settle_return" => Selector::Ids(ids),
+            "reap" => Selector::StrandedSiblings { live_before: at },
+            "stale_queued" | "stale_processing" => Selector::StaleSince { before: at },
+            "requeue" => Selector::Keys(key),
+            "mark_queued" => Selector::Versioned(ver),
+            _ => Selector::One {
+                id: "a",
+                created_at: at,
+            },
+        }
+    }
+
+    /// The queue is written by exactly the transitions with PENDING on a
+    /// side: entering upserts, leaving deletes, the rest never mention it.
+    #[test]
+    fn the_queue_is_written_by_exactly_the_transitions_that_touch_pending() {
+        let at = Utc::now();
+        let key = vec![("a".to_string(), at)];
+        let ver = vec![("a".to_string(), at, at)];
+        let ids = vec!["a".to_string()];
+        for t in TRANSITIONS {
+            let sql = flat(&render(t, &selector_for(t, &key, &ver, &ids, at), &[]));
+            let enters = t.to == Pending;
+            let leaves = !enters && (t.from.is_empty() || t.from.contains(&Pending));
+            assert_eq!(Wrap::of(t) == Wrap::Enter, enters, "{}", t.name);
+            assert_eq!(Wrap::of(t) == Wrap::Leave, leaves, "{}", t.name);
+            assert_eq!(
+                sql.contains("INSERT INTO msg_dispatch_queue"),
+                enters,
+                "{}: {sql}",
+                t.name
+            );
+            assert_eq!(
+                sql.contains("DELETE FROM msg_dispatch_queue"),
+                leaves,
+                "{}: {sql}",
+                t.name
+            );
+            if !enters && !leaves {
+                assert!(!sql.contains("msg_dispatch_queue"), "{}: {sql}", t.name);
+                assert!(sql.starts_with("UPDATE msg_dispatch_jobs"), "{sql}");
+            }
+        }
+    }
+
+    /// enterPending, exact: the job UPDATE is the `moved` CTE; the queue row
+    /// is upserted from it; re-entering refreshes the version and
+    /// scheduled_for and resets claimed_at; the caller gets the queue row.
+    #[test]
+    fn enter_pending_statement_is_the_update_cte_and_the_queue_upsert() {
+        let at = Utc::now();
+        let sql = flat(&render(
+            &DEFER,
+            &Selector::One {
+                id: "a",
+                created_at: at,
+            },
+            &[Change::ScheduledFor(Some(at))],
+        ));
+        let expected = "WITH moved AS ( UPDATE msg_dispatch_jobs AS j SET status = 'PENDING', \
+            scheduled_for = $1, updated_at = NOW() WHERE j.id = $2 AND j.created_at = $3 \
+            AND j.status IN ('PENDING', 'QUEUED', 'PROCESSING') RETURNING j.id, j.created_at, \
+            j.message_group, j.sequence, j.scheduled_for, j.subscription_id, \
+            j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at ) \
+            INSERT INTO msg_dispatch_queue (job_id, job_created_at, message_group, sequence, \
+            scheduled_for, subscription_id, dispatch_pool_id, client_id, mode, queue, version) \
+            SELECT m.id, m.created_at, m.message_group, m.sequence, m.scheduled_for, \
+            m.subscription_id, m.dispatch_pool_id, m.client_id, m.mode, m.queue, m.updated_at \
+            FROM moved m ON CONFLICT (job_id) DO UPDATE SET \
+            job_created_at = EXCLUDED.job_created_at, message_group = EXCLUDED.message_group, \
+            sequence = EXCLUDED.sequence, scheduled_for = EXCLUDED.scheduled_for, \
+            subscription_id = EXCLUDED.subscription_id, \
+            dispatch_pool_id = EXCLUDED.dispatch_pool_id, client_id = EXCLUDED.client_id, \
+            mode = EXCLUDED.mode, queue = EXCLUDED.queue, version = EXCLUDED.version, \
+            claimed_at = NULL RETURNING job_id AS id, job_created_at AS created_at, \
+            message_group, sequence, scheduled_for, subscription_id, dispatch_pool_id, \
+            client_id, mode, queue, version AS updated_at";
+        assert_eq!(sql, flat(expected));
+    }
+
+    /// The reaper's `stranded` CTE and the `moved` CTE share one `WITH`.
+    #[test]
+    fn the_reaper_statement_chains_its_ctes() {
+        let at = Utc::now();
+        let sql = flat(&render(
+            &REAP,
+            &Selector::StrandedSiblings { live_before: at },
+            &[],
+        ));
+        assert!(sql.starts_with("WITH stranded AS ("), "{sql}");
+        assert_eq!(sql.matches("WITH ").count(), 1, "{sql}");
+        assert!(sql.contains(") ), moved AS ( UPDATE"), "{sql}");
+        assert!(sql.contains("INSERT INTO msg_dispatch_queue"), "{sql}");
+    }
+
+    /// leavePending, exact (a complete): the queue row is deleted by the
+    /// same statement, which returns the moved rows.
+    #[test]
+    fn leave_pending_statement_is_the_update_cte_and_the_queue_delete() {
+        let at = Utc::now();
+        let sql = flat(&render(
+            &COMPLETE,
+            &Selector::One {
+                id: "a",
+                created_at: at,
+            },
+            &[Change::StampCompletedAt],
+        ));
+        let expected = "WITH moved AS ( UPDATE msg_dispatch_jobs AS j SET status = 'COMPLETED', \
+            completed_at = NOW(), updated_at = NOW() WHERE j.id = $1 AND j.created_at = $2 \
+            AND j.status IN ('PENDING', 'QUEUED', 'PROCESSING') RETURNING j.id, j.created_at, \
+            j.message_group, j.sequence, j.scheduled_for, j.subscription_id, \
+            j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at ), \
+            gone AS ( DELETE FROM msg_dispatch_queue q USING moved m WHERE q.job_id = m.id ) \
+            SELECT m.id, m.created_at, m.message_group, m.sequence, m.scheduled_for, \
+            m.subscription_id, m.dispatch_pool_id, m.client_id, m.mode, m.queue, m.updated_at \
+            FROM moved m";
+        assert_eq!(sql, flat(expected));
+    }
+
+    /// The scheduler's mark-QUEUED, exact: the claimed batch is a CTE; the
+    /// UPDATE matches the version it read; the queue delete is keyed on the
+    /// moved rows AND on the batch's (id, claimed version) pairs.
+    #[test]
+    fn mark_queued_statement_deletes_by_claimed_version_too() {
+        let at = Utc::now();
+        let ver = vec![("a".to_string(), at, at)];
+        let sql = flat(&render(
+            &MARK_QUEUED,
+            &Selector::Versioned(&ver),
+            &[Change::StampQueuedAt],
+        ));
+        let expected = "WITH claimed AS ( SELECT * FROM UNNEST($1::varchar[], \
+            $2::timestamptz[], $3::timestamptz[]) AS t(id, created_at, updated_at) ), \
+            moved AS ( UPDATE msg_dispatch_jobs AS j SET status = 'QUEUED', queued_at = NOW(), \
+            updated_at = NOW() FROM claimed t WHERE j.id = t.id AND j.created_at = t.created_at \
+            AND j.updated_at = t.updated_at AND j.status = 'PENDING' RETURNING j.id, \
+            j.created_at, j.message_group, j.sequence, j.scheduled_for, j.subscription_id, \
+            j.dispatch_pool_id, j.client_id, j.mode, j.queue, j.updated_at ), \
+            gone AS ( DELETE FROM msg_dispatch_queue q USING ( SELECT m.id FROM moved m UNION \
+            SELECT c.id FROM claimed c JOIN msg_dispatch_queue s ON s.job_id = c.id \
+            AND s.version = c.updated_at ) d WHERE q.job_id = d.id ) \
+            SELECT m.id, m.created_at, m.message_group, m.sequence, m.scheduled_for, \
+            m.subscription_id, m.dispatch_pool_id, m.client_id, m.mode, m.queue, m.updated_at \
+            FROM moved m";
+        assert_eq!(sql, flat(expected));
+    }
+
+    /// Creation, both statements: every job PENDING, the queue row written
+    /// from the rows actually inserted, a skipped row adds nothing.
+    #[test]
+    fn creation_statements_insert_pending_jobs_and_their_queue_rows() {
+        for (name, sql) in [
+            ("batch", flat(&create_batch_sql())),
+            ("fan-out", flat(&create_fanned_out_sql())),
+        ] {
+            assert!(
+                sql.starts_with("WITH ins AS ( INSERT INTO msg_dispatch_jobs"),
+                "{name}: {sql}"
+            );
+            assert!(sql.contains("'PENDING'"), "{name}: {sql}");
+            assert!(
+                sql.contains(
+                    "RETURNING id, created_at, message_group, sequence, scheduled_for, \
+                     subscription_id, dispatch_pool_id, client_id, mode, queue, updated_at ) \
+                     INSERT INTO msg_dispatch_queue (job_id, job_created_at, message_group, \
+                     sequence, scheduled_for, subscription_id, dispatch_pool_id, client_id, \
+                     mode, queue, version) SELECT i.id, i.created_at, i.message_group, \
+                     i.sequence, i.scheduled_for, i.subscription_id, i.dispatch_pool_id, \
+                     i.client_id, i.mode, i.queue, i.updated_at FROM ins i \
+                     ON CONFLICT (job_id) DO NOTHING"
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .as_str()
+                ),
+                "{name}: {sql}"
+            );
+        }
+        // The batch binds 37 arrays (no status) and the fan-out 24.
+        assert!(flat(&create_batch_sql()).contains("$37::varchar[]"));
+        assert!(!flat(&create_batch_sql()).contains("$38"));
+        assert!(flat(&create_fanned_out_sql()).contains("$24::jsonb[]"));
+    }
+
+    /// The drift queries read; they never write.
+    #[test]
+    fn the_drift_queries_only_read() {
+        for sql in [MISSING_OR_STALE_SQL, ORPHANED_SQL] {
+            let sql = flat(sql);
+            assert!(sql.starts_with("SELECT COUNT(*)"), "{sql}");
+            for verb in ["INSERT", "UPDATE", "DELETE"] {
+                assert!(!sql.contains(verb), "{sql}");
+            }
+        }
+    }
+
     fn render(t: &Transition, sel: &Selector<'_>, changes: &[Change<'_>]) -> String {
-        build_update(t, sel, changes, &Extra::None)
+        build_update(t, sel, changes, &Extra::None, Wrap::of(t))
             .sql()
             .to_string()
     }
