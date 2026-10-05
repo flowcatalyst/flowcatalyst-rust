@@ -20,8 +20,6 @@
 //! blip after delivery) and would otherwise stay PROCESSING forever, as it
 //! does in Go. The price is at-least-once: such a job may be delivered again.
 //!
-//! (The queue reconcile sweep runs in the poller, which knows the in-flight
-//! set; see `poller.rs`.)
 
 use std::sync::Arc;
 use std::time::Duration;

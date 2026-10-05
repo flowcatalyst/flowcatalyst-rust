@@ -3,12 +3,12 @@
 //! A port of Go's dispatch-job scheduler (`internal/platform/scheduler`),
 //! behaving as a drop-in for it:
 //!
-//! - [`PendingJobPoller`] claims due jobs from `msg_dispatch_queue` (one
-//!   statement, no transaction held open; a claimed row is stamped and not
-//!   claimed again) and hands them to a few dispatcher lanes, never waiting
-//!   for a publish (`poller.rs`). A lane publishes its jobs and marks the
-//!   published ones QUEUED in bulk (`lane.rs`). The claim of a job that is not
-//!   published is released, so the job stays PENDING and is claimed again.
+//! - [`PendingJobPoller`] claims due PENDING jobs from `msg_dispatch_jobs`
+//!   (one plain SELECT, no lock, no transaction; the in-memory in-flight ids
+//!   are excluded from the next claim) and hands them to a few dispatcher
+//!   lanes, never waiting for a publish (`poller.rs`). A lane publishes its
+//!   jobs and marks the published ones QUEUED in bulk (`lane.rs`). Unpublished
+//!   jobs stay PENDING.
 //! - [`MessageGroupDispatcher`] renders each queue message (signed token,
 //!   resolved pool code, dispatch mode, message group), publishes a lane's
 //!   batch under a deadline and reports exactly the unpublished jobs
@@ -17,8 +17,7 @@
 //!   priority) SQS FIFO queues in production (`publisher.rs`,
 //!   `destination.rs`).
 //! - [`StaleQueuedJobPoller`] returns jobs QUEUED (15 minutes) or PROCESSING
-//!   (75 minutes) for too long to PENDING, and reconciles the queue table
-//!   against the jobs (`stale_recovery.rs`).
+//!   (75 minutes) for too long to PENDING (`stale_recovery.rs`).
 //! - [`DispatchAuthService`] signs job ids with Go's HKDF-derived key
 //!   (`auth.rs`).
 //!
@@ -96,7 +95,7 @@ pub struct SchedulerConfig {
     /// PROCESSING longer than this goes back to PENDING (an outcome write that
     /// was lost).
     pub stale_processing_after: Duration,
-    /// How often stale recovery and the queue reconcile sweep run.
+    /// How often stale recovery runs.
     pub stale_scan_interval: Duration,
     /// The URL stamped into every message's `mediationTarget`: the
     /// platform's `/api/dispatch/process`.

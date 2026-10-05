@@ -132,22 +132,15 @@ fc_scheduler_stale_jobs_queued_recovered_total       # the QUEUED part
 fc_scheduler_stale_jobs_processing_recovered_total   # the PROCESSING part
 fc_scheduler_active_groups                  # gauge
 
-# The dispatch queue table (msg_dispatch_queue), sampled by the leader every 15 s
-fc_scheduler_queue_backlog                  # gauge — due rows in the queue: the dispatch backlog
-fc_scheduler_queue_oldest_age_seconds       # gauge — age of the oldest of them (0 when empty)
+# The PENDING backlog, sampled by the leader every 30 s (a bounded count)
+fc_scheduler_pending_backlog                # gauge — PENDING jobs, saturating at 100000
+fc_scheduler_pending_oldest_age_seconds     # gauge — age of the first PENDING job in claim order
 
-# Claims (a claim deletes the queue row; a job that is not published has it restored from the job table)
-fc_scheduler_claims_restored_total          # queue rows put back (job not published / not marked QUEUED / withheld / held back): claimed again in order
-fc_scheduler_claims_restored_at_start_total # restored when this instance became leader (a dead leader's claims)
-fc_scheduler_jobs_held_total                # claimed but found held back by an earlier job of their group (rows restored)
+# Hold-back and withholds
+fc_scheduler_jobs_held_total                # claimed but found held back by an earlier job of their group (they stay PENDING)
 fc_scheduler_held_groups                    # gauge — groups remembered as held (skipped by the claim for 5 s each)
-fc_scheduler_jobs_withheld_total            # claimed but not submitted (behind a doomed job, or already in flight)
-
-# The reconcile sweep (leader, every 60 s). Any non-zero count is a bug or an older binary writing msg_dispatch_jobs (logged at WARN)
-fc_scheduler_queue_reconcile_inserted_total
-fc_scheduler_queue_reconcile_deleted_total
-fc_scheduler_queue_reconcile_refreshed_total
-fc_scheduler_queue_reconcile_duration_seconds   # histogram
+fc_scheduler_jobs_withheld_total            # claimed but not submitted (behind a doomed job of their group; they stay PENDING)
+fc_scheduler_claim_in_flight_duplicates_total  # a row returned for an id already in flight (the claim excludes them): should stay 0
 ```
 
 ### Stream processor metrics

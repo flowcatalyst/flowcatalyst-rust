@@ -9,25 +9,21 @@
 //!    +----------- released --------------+
 //! ```
 //!
-//! The poller claims due jobs from `msg_dispatch_queue` (one row per PENDING
-//! job, kept exact by the lifecycle) in the total order
-//! `(message_group NULLS LAST, sequence, created_at, id)` and hands them to
-//! the lanes; it never waits for a publish. It blocks only when
+//! The poller claims due PENDING jobs from `msg_dispatch_jobs` in the total
+//! order `(message_group NULLS LAST, sequence, created_at, id)` and hands them
+//! to the lanes; it never waits for a publish. It blocks only when
 //! `buffer_capacity` jobs are already claimed and not yet finished. A lane
 //! publishes its jobs through the [`MessageGroupDispatcher`] and marks the
 //! published ids QUEUED in one statement (see [`super::lane`]).
 //!
-//! The claim is one statement with no transaction held open
-//! ([`lifecycle::claim`]): it stamps `claimed_at` on the rows it returns, and
-//! a stamped row is not claimed again. It never reads `msg_dispatch_jobs`
-//! except to look for a FAILED / ERROR holder of a candidate's group. A job
-//! that is published is marked QUEUED (the lifecycle deletes its queue row in
-//! the same statement). A job that is NOT published (a failed publish, a drop
-//! as poisoned, a withhold) has its claim RELEASED so that it is claimed again
-//! in order; see [`super::lane`] for the ordering rule, which is unchanged.
-//! A crash needs the stale-claim release: when an instance becomes leader it
-//! releases every claim it does not hold in memory, and the leader releases
-//! claims older than five minutes that it does not hold, every minute.
+//! The claim is one plain `SELECT` ([`lifecycle::claim`]): no lock, no
+//! transaction, no write. What keeps a claimed job out of the next claim is
+//! the poller's in-memory in-flight set, passed to the claim (`id <> ALL($4)`),
+//! not a status or a column: until the lane's update runs the row is still
+//! PENDING. Only the leader claims, so nothing else competes for the rows. A
+//! crash needs no recovery: whatever was not yet marked is still PENDING and
+//! the next leader publishes it. The claim walks `idx_dispatch_jobs_status_group`
+//! in order and stops early.
 //!
 //! The price is that a job can be published twice (a lane that published and
 //! then failed to mark; a claim that raced a failure). That is accepted: the
@@ -35,18 +31,15 @@
 //! `/api/dispatch/process` claims a job before delivering it, so a copy that
 //! finds the job taken or finished never delivers it.
 //!
-//! Held and paused jobs are excluded **inside the claim statement** (a
-//! deliberate improvement on Go and Java, which filter after the `LIMIT`: a
-//! full batch of held or paused rows at the head of the order would stall
-//! every other group). Excluded:
-//! - jobs whose subscription's connection is PAUSED (cached set, refreshed
-//!   every `paused_cache_ttl`);
-//! - BLOCK_ON_ERROR jobs with an EARLIER job in their group that is holding
-//!   it: FAILED/ERROR (read from `msg_dispatch_jobs` through
-//!   `idx_dispatch_jobs_status_group`), or PENDING in a retry backoff (read
-//!   from the queue table). The comparison is positional, so the holder
-//!   itself dispatches once its backoff expires. IMMEDIATE and NEXT_ON_ERROR
-//!   (and, per X-01, an absent or unknown mode) never wait.
+//! Paused jobs are excluded **inside the claim**. Jobs held back (a
+//! BLOCK_ON_ERROR job with an EARLIER job in its group that is FAILED / ERROR
+//! or PENDING in a retry backoff) are found by one batched query after the
+//! claim and dropped (they stay PENDING); the poller remembers each group it
+//! has just found held for 5 seconds and skips it in the claim, so a
+//! batch-full of held rows at the head of the order does not starve the
+//! groups behind it. The comparison is positional, so the holder itself
+//! dispatches once its backoff expires. IMMEDIATE and NEXT_ON_ERROR (and, per
+//! X-01, an absent or unknown mode) never wait.
 //!
 //! A NULL group never holds; an ungrouped job is held only by a row whose
 //! group is literally `default`: Go's quirk, kept.
@@ -67,7 +60,7 @@ use tokio::task::JoinSet;
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 use tracing::field::Empty;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use super::destination::PoolCodeResolver;
 use super::dispatcher::{DispatchJobToken, MessageGroupDispatcher};
@@ -124,44 +117,33 @@ pub(crate) type MarkKey = (String, DateTime<Utc>, DateTime<Utc>);
 pub(crate) struct ClaimOutcome {
     /// The claimed jobs that may be published, in claim order.
     pub jobs: Vec<ClaimedJob>,
-    /// Groups in which the claim found a job held back (their rows are back
-    /// in the queue): the poller skips them for a few seconds.
+    /// Groups in which the claim found a job held back (the held jobs stay
+    /// PENDING and are not returned): the poller skips them for a few seconds.
     pub held_groups: Vec<String>,
-    /// Rows the claim took in all, held ones included.
+    /// Rows the claim read in all, held ones included.
     pub taken: usize,
 }
 
 /// The database side of the pipeline, so the loop can be tested without one.
 #[async_trait]
 pub(crate) trait JobStore: Send + Sync {
-    /// Claim up to `limit` due jobs in claim order, minus paused
-    /// subscriptions and the groups in `skip_groups`: the claim DELETES their
-    /// queue rows. Jobs held back by an earlier job of their group are
-    /// restored to the queue and reported by group, not returned.
+    /// Up to `limit` due PENDING jobs in claim order, minus paused
+    /// subscriptions, the groups in `skip_groups` and the ids in `in_flight`.
+    /// Jobs held back by an earlier job of their group are not returned; their
+    /// groups are reported.
     async fn claim(
         &self,
         limit: usize,
         skip_groups: &[String],
+        in_flight: &[String],
     ) -> Result<ClaimOutcome, SchedulerError>;
 
-    /// Mark the given jobs QUEUED where they are still PENDING; returns how
-    /// many rows changed.
+    /// Mark the given jobs QUEUED where they are still PENDING at the version
+    /// the claim read; returns how many rows changed.
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError>;
 
-    /// Put claimed jobs back in the queue, from the job table: only those
-    /// still PENDING, and never over an existing row.
-    async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError>;
-
-    /// Leader start: restore every PENDING job that has no queue row (what a
-    /// dead leader had claimed), except `exclude`, with no age guard.
-    async fn restore_missing_at_start(&self, exclude: &[String]) -> Result<u64, SchedulerError>;
-
-    /// The periodic reconcile pass (age guards; `exclude` is the in-flight
-    /// set, which must not be queued again).
-    async fn reconcile(&self, exclude: &[String]) -> Result<lifecycle::Reconciled, SchedulerError>;
-
-    /// Due rows in the queue and the age of the oldest.
-    async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
+    /// The PENDING backlog, bounded.
+    async fn backlog(&self) -> Result<Option<lifecycle::PendingBacklog>, SchedulerError> {
         Ok(None)
     }
 }
@@ -178,30 +160,28 @@ impl JobStore for PgJobStore {
         &self,
         limit: usize,
         skip_groups: &[String],
+        in_flight: &[String],
     ) -> Result<ClaimOutcome, SchedulerError> {
         let paused = self.paused.paused_subscription_ids().await?;
-        let rows = lifecycle::claim(&self.pool, limit as i64, &paused, skip_groups).await?;
+        let rows =
+            lifecycle::claim(&self.pool, limit as i64, &paused, skip_groups, in_flight).await?;
         let taken = rows.len();
-        // The hold-back: one batched query. The rows are already out of the
-        // queue, so a failure here puts them all back.
-        let held_ids: HashSet<String> = match lifecycle::held_among(&self.pool, &rows).await {
-            Ok(ids) => ids.into_iter().collect(),
-            Err(e) => {
-                self.restore_rows(&rows).await;
-                return Err(e.into());
-            }
-        };
-        let mut held_rows = Vec::new();
+        // The hold-back: one batched query. Held jobs stay PENDING.
+        let held_ids: HashSet<String> = lifecycle::held_among(&self.pool, &rows)
+            .await?
+            .into_iter()
+            .collect();
         let mut held_groups: Vec<String> = Vec::new();
         let mut jobs = Vec::with_capacity(rows.len());
+        let mut held = 0u64;
         for c in rows {
             if held_ids.contains(&c.job_id) {
+                held += 1;
                 if let Some(g) = c.message_group.as_deref() {
                     if !held_groups.iter().any(|h| h == g) {
                         held_groups.push(g.to_string());
                     }
                 }
-                held_rows.push(c);
                 continue;
             }
             let pool_code = self
@@ -222,9 +202,8 @@ impl JobStore for PgJobStore {
                 },
             });
         }
-        if !held_rows.is_empty() {
-            metrics::counter!("scheduler.jobs.held_total").increment(held_rows.len() as u64);
-            self.restore_rows(&held_rows).await;
+        if held > 0 {
+            metrics::counter!("scheduler.jobs.held_total").increment(held);
         }
         Ok(ClaimOutcome {
             jobs,
@@ -245,56 +224,8 @@ impl JobStore for PgJobStore {
         Ok(done.len() as u64)
     }
 
-    async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
-        Ok(lifecycle::restore_to_queue(&self.pool, jobs).await?)
-    }
-
-    async fn restore_missing_at_start(&self, exclude: &[String]) -> Result<u64, SchedulerError> {
-        Ok(lifecycle::restore_all_missing(&self.pool, exclude).await?)
-    }
-
-    async fn reconcile(&self, exclude: &[String]) -> Result<lifecycle::Reconciled, SchedulerError> {
-        let started = Instant::now();
-        let done = lifecycle::reconcile_queue(
-            &self.pool,
-            lifecycle::ReconcileGuards::production(),
-            exclude,
-        )
-        .await?;
-        metrics::histogram!("scheduler.queue_reconcile.duration_seconds").record(started.elapsed());
-        metrics::counter!("scheduler.queue_reconcile.inserted_total").increment(done.inserted);
-        metrics::counter!("scheduler.queue_reconcile.deleted_total").increment(done.deleted);
-        metrics::counter!("scheduler.queue_reconcile.refreshed_total").increment(done.refreshed);
-        if done.total() > 0 {
-            warn!(
-                inserted = done.inserted,
-                deleted = done.deleted,
-                refreshed = done.refreshed,
-                "msg_dispatch_queue was out of step with msg_dispatch_jobs and was repaired \
-                 (a claim lost to a crash, a bug, or an older binary writing the jobs table)"
-            );
-        }
-        Ok(done)
-    }
-
-    async fn backlog(&self) -> Result<Option<lifecycle::QueueBacklog>, SchedulerError> {
-        Ok(Some(lifecycle::queue_backlog(&self.pool).await?))
-    }
-}
-
-impl PgJobStore {
-    /// Best effort: put claimed rows back (the reconcile sweep is the
-    /// backstop when this fails).
-    async fn restore_rows(&self, rows: &[lifecycle::QueueClaim]) {
-        let jobs: Vec<(String, DateTime<Utc>)> = rows
-            .iter()
-            .map(|c| (c.job_id.clone(), c.job_created_at))
-            .collect();
-        match lifecycle::restore_to_queue(&self.pool, &jobs).await {
-            Ok(n) => metrics::counter!("scheduler.claims.restored_total").increment(n),
-            Err(e) => warn!(jobs = jobs.len(), error = %e,
-                "restoring held dispatch queue rows failed; the reconcile sweep will"),
-        }
+    async fn backlog(&self) -> Result<Option<lifecycle::PendingBacklog>, SchedulerError> {
+        Ok(Some(lifecycle::pending_backlog(&self.pool).await?))
     }
 }
 
@@ -307,7 +238,7 @@ fn describe_metrics() {
     );
     describe_counter!(
         "scheduler.jobs.claimed_total",
-        "Jobs claimed from the dispatch queue by the poller."
+        "Jobs claimed from PENDING by the poller."
     );
     describe_counter!(
         "scheduler.poll.full_batches_total",
@@ -358,16 +289,8 @@ fn describe_metrics() {
         "Published jobs the QUEUED update left alone because they had already moved past PENDING."
     );
     describe_counter!(
-        "scheduler.claims.restored_total",
-        "Queue rows put back (from the job table) because the claimed job was not published, not marked QUEUED, dropped as poisoned, withheld or held back: it is claimed again in order."
-    );
-    describe_counter!(
-        "scheduler.claims.restored_at_start_total",
-        "Queue rows restored when this instance became leader (PENDING jobs with no queue row: claimed by a leader that died before publishing them)."
-    );
-    describe_counter!(
         "scheduler.jobs.held_total",
-        "Claimed jobs found held back by an earlier job of their group (FAILED / ERROR, or in a retry backoff); their queue rows are restored."
+        "Claimed jobs found held back by an earlier job of their group (FAILED / ERROR, or in a retry backoff); they stay PENDING."
     );
     describe_gauge!(
         "scheduler.held_groups",
@@ -375,16 +298,20 @@ fn describe_metrics() {
     );
     describe_counter!(
         "scheduler.jobs.withheld_total",
-        "Claimed jobs the poller did not submit (behind a doomed job, or already in flight); their claims are released."
+        "Claimed jobs the poller did not submit because they were behind a doomed job of their group; they stay PENDING."
+    );
+    describe_counter!(
+        "scheduler.claim.in_flight_duplicates_total",
+        "Claimed rows dropped because their id was already in flight (the claim excludes the in-flight set, so this should stay 0)."
     );
     describe_gauge!(
-        "scheduler.queue.backlog",
-        "Unclaimed, due rows in msg_dispatch_queue (the dispatch backlog), sampled by the leader every 15 s."
+        "scheduler.pending.backlog",
+        "PENDING jobs (counted up to 100,000: the gauge saturates at 100000), sampled by the leader every 30 s."
     );
     describe_gauge!(
-        "scheduler.queue.oldest_age_seconds",
+        "scheduler.pending.oldest_age_seconds",
         Unit::Seconds,
-        "Age of the oldest unclaimed, due row in msg_dispatch_queue (0 when empty), sampled with the backlog."
+        "Age of the first PENDING job in claim order, sampled with the backlog."
     );
     describe_gauge!(
         "scheduler.poll.last_success_timestamp_seconds",
@@ -539,13 +466,9 @@ impl ClaimStage {
 
     /// Claim up to `want` jobs, holding `want` permits. The jobs come back
     /// stamped and already in the in-flight set; the permits for the rest
-    /// are released. A failed claim releases them all. A job the claim took
-    /// but this pass does not submit (behind a doomed job, or already in
-    /// flight) has its queue row restored.
+    /// are released. A failed claim releases them all. A job the claim read
+    /// but this pass does not submit (behind a doomed job) stays PENDING.
     async fn claim(&self, want: usize) -> Result<(Vec<LaneJob>, usize), SchedulerError> {
-        // From the first statement until the jobs are in flight or restored:
-        // the periodic reconcile must not run in this window.
-        let _gate = self.pipeline.claim_gate.lock().await;
         // The generation BEFORE the snapshot: the ordering rule in `lane`
         // depends on it.
         let generation = self.pipeline.next_generation();
@@ -553,7 +476,7 @@ impl ClaimStage {
         let snapshot = self.pipeline.snapshot_in_flight();
         let skip = self.held.active();
         let started = Instant::now();
-        let claimed = self.store.claim(want, &skip).await;
+        let claimed = self.store.claim(want, &skip, &snapshot.ids).await;
         metrics::histogram!("scheduler.claim.duration_seconds").record(started.elapsed());
         let outcome = match claimed {
             Ok(o) => o,
@@ -565,96 +488,36 @@ impl ClaimStage {
         self.held.remember(&outcome.held_groups);
         let taken = outcome.taken;
         let mut jobs = Vec::with_capacity(outcome.jobs.len());
-        // Jobs taken but not submitted, and the groups they belong to: a
-        // later job of such a group would overtake them.
-        let mut withheld: Vec<(String, DateTime<Utc>)> = Vec::new();
+        // Groups with a job this pass did not submit: a later job of such a
+        // group would overtake it.
         let mut withheld_groups: HashSet<String> = HashSet::new();
+        let mut withheld = 0u64;
         for job in outcome.jobs {
             let group = job.group().map(str::to_string);
             // The claim skipped a job of this group that is doomed (it will be
-            // dropped): this one is behind it. Its queue row is put back; it is
-            // claimed again, in order, once the doomed job has gone.
+            // dropped): this one is behind it. It stays PENDING and is claimed
+            // again, in order, once the doomed job has gone.
             let behind = group.as_deref().is_some_and(|g| {
                 withheld_groups.contains(g) || self.pipeline.skipped_a_doomed_job(&snapshot, g)
             });
-            // Already in flight: this claim ran between a lane's restore of
-            // the job and the lane removing it. Not submitted twice, and
-            // nothing behind it goes first.
-            if behind || !self.pipeline.add_in_flight(&job, generation) {
-                withheld.push((job.id().to_string(), job.created_at));
+            if behind {
+                withheld += 1;
+                withheld_groups.extend(group);
+                continue;
+            }
+            // Cannot happen (the claim excluded the set); never submit twice.
+            if !self.pipeline.add_in_flight(&job, generation) {
+                metrics::counter!("scheduler.claim.in_flight_duplicates_total").increment(1);
                 withheld_groups.extend(group);
                 continue;
             }
             jobs.push(LaneJob { job, generation });
         }
-        if !withheld.is_empty() {
-            metrics::counter!("scheduler.jobs.withheld_total").increment(withheld.len() as u64);
-            self.restore_unsubmitted(&withheld).await;
+        if withheld > 0 {
+            metrics::counter!("scheduler.jobs.withheld_total").increment(withheld);
         }
         self.pipeline.release(want.saturating_sub(jobs.len()));
         Ok((jobs, taken))
-    }
-
-    /// Put back the queue rows of jobs that were claimed but not submitted to
-    /// a lane. A failure is retried (see [`Self::retry_restores`]); until then
-    /// the jobs are not claimable, which only delays them.
-    async fn restore_unsubmitted(&self, jobs: &[(String, DateTime<Utc>)]) {
-        if jobs.is_empty() {
-            return;
-        }
-        match self.store.restore(jobs).await {
-            Ok(n) => metrics::counter!("scheduler.claims.restored_total").increment(n),
-            Err(e) => {
-                warn!(jobs = jobs.len(), error = %e, "restoring unsubmitted dispatch queue rows failed; retrying");
-                self.pipeline
-                    .defer_restore(jobs.iter().map(|(id, c)| (id.clone(), *c, None)));
-            }
-        }
-    }
-
-    /// Retry the restores that failed (a lane's, or this stage's), once per
-    /// pass before the next claim. A lane's job leaves the in-flight set only
-    /// when its row is restored.
-    async fn retry_restores(&self) {
-        let pending = self.pipeline.take_unrestored();
-        if pending.is_empty() {
-            return;
-        }
-        let jobs: Vec<(String, DateTime<Utc>)> = pending
-            .iter()
-            .map(|(id, created, _)| (id.clone(), *created))
-            .collect();
-        match self.store.restore(&jobs).await {
-            Ok(n) => {
-                metrics::counter!("scheduler.claims.restored_total").increment(n);
-                self.pipeline.remove_in_flight(
-                    pending
-                        .iter()
-                        .filter_map(|(id, _, generation)| generation.map(|g| (id.as_str(), g))),
-                );
-            }
-            Err(e) => {
-                warn!(jobs = jobs.len(), error = %e, "retrying the restore of dispatch queue rows failed");
-                self.pipeline.defer_restore(pending);
-            }
-        }
-    }
-
-    /// When this instance starts polling as leader: restore every PENDING job
-    /// without a queue row that it does not hold (at process start, all of
-    /// them: what a previous leader had claimed and not published).
-    async fn restore_missing_at_start(&self) -> Result<(), SchedulerError> {
-        let _gate = self.pipeline.claim_gate.lock().await;
-        let held = self.pipeline.held_ids();
-        let restored = self.store.restore_missing_at_start(&held).await?;
-        metrics::counter!("scheduler.claims.restored_at_start_total").increment(restored);
-        if restored > 0 {
-            info!(
-                restored,
-                "restored dispatch queue rows lost with a previous leader"
-            );
-        }
-        Ok(())
     }
 }
 
@@ -705,9 +568,6 @@ impl Claimer {
                         .pipeline
                         .remove_in_flight([(job.job.id(), job.generation)]);
                     self.stage.pipeline.release(1);
-                    self.stage
-                        .restore_unsubmitted(&[(job.job.id().to_string(), job.job.created_at)])
-                        .await;
                 }
             }
         }
@@ -745,20 +605,11 @@ pub(crate) struct PollCtl {
 /// One poll pass, so [`drive`] can be tested without a database.
 pub(crate) trait PollSource {
     async fn poll(&self, ctl: &PollCtl) -> Result<PassReport, SchedulerError>;
-
-    /// This instance has become leader (and polls for the first time since):
-    /// release the claims it does not hold. A failure is retried before the
-    /// first pass.
-    async fn on_start_leading(&self) -> Result<(), SchedulerError> {
-        Ok(())
-    }
 }
 
 impl PollSource for Claimer {
-    /// Retry pending releases, block for permits (cancellable), re-check
-    /// leadership, claim, route.
+    /// Block for permits (cancellable), re-check leadership, claim, route.
     async fn poll(&self, ctl: &PollCtl) -> Result<PassReport, SchedulerError> {
-        self.stage.retry_restores().await;
         let pipeline = &self.stage.pipeline;
         let want = tokio::select! {
             biased;
@@ -772,45 +623,26 @@ impl PollSource for Claimer {
         }
         self.claim_pass(want).await
     }
-
-    async fn on_start_leading(&self) -> Result<(), SchedulerError> {
-        self.stage.restore_missing_at_start().await
-    }
 }
 
 /// The poller loop: a pass, then a wait only when [`PassReport::should_pause`]
 /// says so (a backlog drains at the speed of the lanes, not at
 /// `batch / interval`). Leadership and cancellation are re-checked before
-/// every pass; a non-leader just waits. Each time the instance becomes
-/// leader it first releases the claims it does not hold.
+/// every pass; a non-leader just waits.
 pub(crate) async fn drive<S: PollSource>(source: &S, interval: Duration, ctl: &PollCtl) {
-    let mut leading = false;
     loop {
         if ctl.cancel.is_cancelled() {
             break;
         }
         let pause = if (ctl.is_leader)() {
-            if !leading {
-                match source.on_start_leading().await {
-                    Ok(()) => leading = true,
-                    Err(e) => {
-                        warn!(error = %e, "releasing the dispatch claims left by a previous leader failed")
-                    }
+            match source.poll(ctl).await {
+                Ok(report) => report.should_pause(),
+                Err(e) => {
+                    warn!(error = %e, "dispatch poll error");
+                    true
                 }
-            }
-            if leading {
-                match source.poll(ctl).await {
-                    Ok(report) => report.should_pause(),
-                    Err(e) => {
-                        warn!(error = %e, "dispatch poll error");
-                        true
-                    }
-                }
-            } else {
-                true
             }
         } else {
-            leading = false;
             true
         };
         if pause {
@@ -822,63 +654,37 @@ pub(crate) async fn drive<S: PollSource>(source: &S, interval: Duration, ctl: &P
     }
 }
 
-/// How often the leader samples the queue backlog.
-const BACKLOG_EVERY: Duration = Duration::from_secs(15);
-/// How often the leader runs the reconcile sweep.
-const RECONCILE_EVERY: Duration = Duration::from_secs(60);
+/// How often the leader samples the PENDING backlog.
+const BACKLOG_EVERY: Duration = Duration::from_secs(30);
 
-/// One periodic reconcile pass: no claim runs while the in-flight ids are
-/// read and the statements run, so a job being claimed right now is either
-/// still in the queue or already in the in-flight set (excluded).
-async fn reconcile_pass(
-    store: &dyn JobStore,
-    pipeline: &Pipeline,
-) -> Result<lifecycle::Reconciled, SchedulerError> {
-    let _gate = pipeline.claim_gate.lock().await;
-    let held = pipeline.held_ids();
-    store.reconcile(&held).await
-}
-
-/// The leader's housekeeping, off the claim path: the backlog gauge every 15
-/// s, and every 60 s the reconcile sweep, which is also the periodic crash
-/// recovery (a PENDING job with no queue row is queued again once it is old
-/// enough). The sweep must not queue the jobs this process is publishing:
-/// their ids are excluded. Repairs are counted and logged at WARN.
+/// The leader's housekeeping, off the claim path: the backlog gauge every 30
+/// s. The count is bounded (it saturates at 100,000), so a huge backlog is
+/// never scanned.
 async fn maintain(
     store: Arc<dyn JobStore>,
-    pipeline: Arc<Pipeline>,
     is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
     cancel: CancellationToken,
 ) {
     let mut backlog = time::interval_at(time::Instant::now() + BACKLOG_EVERY, BACKLOG_EVERY);
-    let mut reconcile = time::interval_at(time::Instant::now() + RECONCILE_EVERY, RECONCILE_EVERY);
     backlog.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-    reconcile.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
     loop {
-        let sample_backlog = tokio::select! {
+        tokio::select! {
             () = cancel.cancelled() => break,
-            _ = backlog.tick() => true,
-            _ = reconcile.tick() => false,
-        };
+            _ = backlog.tick() => {}
+        }
         if !is_leader() {
             continue;
         }
-        if sample_backlog {
-            match store.backlog().await {
-                Ok(Some(b)) => {
-                    metrics::gauge!("scheduler.queue.backlog").set(b.depth as f64);
-                    let age = b.oldest_enqueued_at.map_or(0.0, |t| {
-                        (Utc::now() - t).num_milliseconds().max(0) as f64 / 1e3
-                    });
-                    metrics::gauge!("scheduler.queue.oldest_age_seconds").set(age);
-                }
-                Ok(None) => {}
-                Err(e) => warn!(error = %e, "sampling the dispatch queue backlog failed"),
+        match store.backlog().await {
+            Ok(Some(b)) => {
+                metrics::gauge!("scheduler.pending.backlog").set(b.depth as f64);
+                let age = b.oldest_created_at.map_or(0.0, |t| {
+                    (Utc::now() - t).num_milliseconds().max(0) as f64 / 1e3
+                });
+                metrics::gauge!("scheduler.pending.oldest_age_seconds").set(age);
             }
-            continue;
-        }
-        if let Err(e) = reconcile_pass(&*store, &pipeline).await {
-            warn!(error = %e, "dispatch queue reconcile failed");
+            Ok(None) => {}
+            Err(e) => warn!(error = %e, "sampling the dispatch backlog failed"),
         }
     }
 }
@@ -920,13 +726,10 @@ impl PendingJobPoller {
     /// One pass, synchronously: claim, publish through one lane, mark the
     /// published jobs QUEUED, return. For tests and tooling; the scheduler
     /// itself runs [`Self::run`]. Each call starts as a new process would:
-    /// an empty in-flight set, and every PENDING job without a queue row restored.
+    /// an empty in-flight set.
     pub async fn poll_once(&self) -> Result<PollReport, SchedulerError> {
         let pipeline = Arc::new(Pipeline::new(self.settings.buffer_capacity));
         let stage = ClaimStage::new(self.store.clone(), pipeline.clone());
-        // A fresh process: a PENDING job with no queue row was claimed by one
-        // that is gone.
-        stage.restore_missing_at_start().await?;
         let want = pipeline.acquire_up_to(self.settings.batch_size).await;
         let (jobs, claimed) = stage.claim(want).await.inspect_err(|_| {
             metrics::counter!("scheduler.poll.errors_total").increment(1);
@@ -943,13 +746,6 @@ impl PendingJobPoller {
             claimed,
             published: report.published,
         })
-    }
-
-    /// One reconcile pass with the production guards and no in-flight ids,
-    /// for tests and tooling (the scheduler runs it every minute, leader only,
-    /// excluding what it is publishing).
-    pub async fn reconcile_once(&self) -> Result<lifecycle::Reconciled, SchedulerError> {
-        self.store.reconcile(&[]).await
     }
 
     /// Run the poller and its lanes until cancelled, claiming only while
@@ -997,7 +793,6 @@ impl PendingJobPoller {
         };
         let maintenance = tokio::spawn(maintain(
             self.store.clone(),
-            claimer.stage.pipeline.clone(),
             is_leader.clone(),
             cancel.clone(),
         ));
@@ -1043,7 +838,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::Mutex;
 
-    use tokio::sync::{Notify, Semaphore};
+    use tokio::sync::Semaphore;
     use tokio::time::Instant as TokioInstant;
 
     use super::*;
@@ -1438,7 +1233,7 @@ mod tests {
         assert_eq!(r.store.count(Status::Queued), 20);
         for c in lock(&r.store.claims).iter() {
             assert!(
-                c.held_before + c.returned.len() <= 4,
+                c.exclude.len() + c.returned.len() <= 4,
                 "more than the capacity in flight: {c:?}"
             );
         }
@@ -1737,6 +1532,7 @@ mod tests {
             &self,
             _limit: usize,
             _skip_groups: &[String],
+            _in_flight: &[String],
         ) -> Result<ClaimOutcome, SchedulerError> {
             let jobs = mem::take(&mut *lock(&self.0));
             Ok(ClaimOutcome {
@@ -1747,15 +1543,6 @@ mod tests {
         }
         async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
             Ok(jobs.len() as u64)
-        }
-        async fn restore(&self, jobs: &[(String, DateTime<Utc>)]) -> Result<u64, SchedulerError> {
-            Ok(jobs.len() as u64)
-        }
-        async fn restore_missing_at_start(&self, _: &[String]) -> Result<u64, SchedulerError> {
-            Ok(0)
-        }
-        async fn reconcile(&self, _: &[String]) -> Result<lifecycle::Reconciled, SchedulerError> {
-            Ok(lifecycle::Reconciled::default())
         }
     }
 
@@ -1822,11 +1609,6 @@ mod tests {
         assert_eq!(claimed, 2, "the store did return j1 and j3");
         assert!(b.is_empty(), "submitted behind a doomed job: {b:?}");
         assert_eq!(pipeline.available(), 10 - 1, "only j2 holds a permit");
-        assert_eq!(
-            r.store.claimed_count(),
-            1,
-            "the withheld claims (j1, j3) are released; only j2 is claimed"
-        );
 
         // The lane drops j2; claim C sees everything, in order.
         assert_eq!(lane.process(vec![a2]).await.dropped, 1);
@@ -1838,298 +1620,65 @@ mod tests {
         assert_eq!(pipeline.available(), 10);
     }
 
-    /// A claim that returns a job already in the in-flight set (a lane
-    /// released it and has not yet removed it) withholds that job and the
-    /// rest of its group, and releases them.
+    /// The claim excludes the ids this process is publishing (the in-flight
+    /// set): a job that is still PENDING in the table while its publish is
+    /// under way is not claimed again.
     #[tokio::test]
-    async fn a_job_already_in_flight_is_withheld_with_its_group_and_released() {
-        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "x1"]
+    async fn the_claim_excludes_the_in_flight_ids() {
+        let ids: Vec<(String, Option<String>)> = ["a", "b", "c"]
             .iter()
-            .map(|i| {
-                (
-                    i.to_string(),
-                    Some(if *i == "x1" { "h" } else { "g" }.to_string()),
-                )
-            })
+            .map(|i| (i.to_string(), None))
             .collect();
-        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
+        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 5));
         let pipeline = Arc::new(Pipeline::new(10));
         let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
-        // j1 is in flight under an older claim of this process.
-        let g0 = pipeline.next_generation();
-        assert!(pipeline.add_in_flight(&claimed("j1", Some("g")), g0));
+        assert!(pipeline.add_in_flight(&claimed("a", None), 1));
+        assert_eq!(pipeline.acquire_up_to(5).await, 5);
+        let (jobs, _) = stage.claim(5).await.unwrap();
+        let got: Vec<&str> = jobs.iter().map(|j| j.job.id()).collect();
+        assert_eq!(got, vec!["b", "c"]);
+        assert_eq!(lock(&r.store.claims)[0].exclude, vec!["a".to_string()]);
+    }
+
+    /// A row the claim returns although its id is in flight cannot happen (it
+    /// was excluded); if it does it is dropped and counted, never submitted
+    /// twice, and nothing behind it in its group goes ahead of it.
+    #[tokio::test]
+    async fn a_row_returned_for_an_id_already_in_flight_is_dropped_with_its_group() {
+        struct Echo(Mutex<Vec<ClaimedJob>>);
+        #[async_trait]
+        impl JobStore for Echo {
+            async fn claim(
+                &self,
+                _: usize,
+                _: &[String],
+                _: &[String],
+            ) -> Result<ClaimOutcome, SchedulerError> {
+                let jobs = mem::take(&mut *lock(&self.0));
+                Ok(ClaimOutcome {
+                    taken: jobs.len(),
+                    jobs,
+                    held_groups: Vec::new(),
+                })
+            }
+            async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
+                Ok(jobs.len() as u64)
+            }
+        }
+        let rows = vec![
+            claimed("j1", Some("g")),
+            claimed("j2", Some("g")),
+            claimed("x1", Some("h")),
+        ];
+        let pipeline = Arc::new(Pipeline::new(10));
+        let stage = ClaimStage::new(Arc::new(Echo(Mutex::new(rows))), pipeline.clone());
+        assert!(pipeline.add_in_flight(&claimed("j1", Some("g")), 1));
         assert_eq!(pipeline.acquire_up_to(3).await, 3);
         let (jobs, taken) = stage.claim(3).await.unwrap();
         assert_eq!(taken, 3);
         let got: Vec<&str> = jobs.iter().map(|j| j.job.id()).collect();
         assert_eq!(got, vec!["x1"], "j1 is a duplicate, j2 is behind it");
-        assert!(!r.store.is_claimed("j1") && !r.store.is_claimed("j2"));
-        assert!(r.store.is_claimed("x1"));
         assert_eq!(pipeline.available(), 10 - 1);
-    }
-
-    /// A failed release is retried before the next claim; until it succeeds
-    /// the group is held back, and when it does the group is published in
-    /// order.
-    #[tokio::test]
-    async fn a_failed_release_is_retried_and_the_group_stays_in_order() {
-        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "j3"]
-            .iter()
-            .map(|i| (i.to_string(), Some("g".to_string())))
-            .collect();
-        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 2));
-        lock(&r.publisher.fail_once).insert("j1".into());
-        let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
-        let mut lane = Lane::new(
-            0,
-            pipeline.clone(),
-            r.store.clone(),
-            dispatcher(r.publisher.clone()),
-            0,
-        );
-        let take = |n: usize| {
-            let pipeline = pipeline.clone();
-            async move {
-                let mut got = 0;
-                while got < n {
-                    got += pipeline.acquire_up_to(n - got).await;
-                }
-            }
-        };
-        r.store.fail_restore.store(true, Ordering::SeqCst);
-
-        take(2).await;
-        let (mut a, _) = stage.claim(2).await.unwrap();
-        let (a2, a1) = (a.pop().unwrap(), a.pop().unwrap());
-        // j1 fails to publish and its claim cannot be released.
-        assert_eq!(lane.process(vec![a1]).await.unpublished, 1);
-        assert!(r.store.is_claimed("j1"));
-
-        // The next claim finds j3 (j1 and j2 are claimed) behind j1: held back.
-        take(1).await;
-        let (b, claimed_n) = stage.claim(1).await.unwrap();
-        assert_eq!(claimed_n, 1);
-        assert!(b.is_empty(), "j3 must not go ahead of j1: {b:?}");
-
-        // j2 is dropped (poisoned); everything is still claimed.
-        assert_eq!(lane.process(vec![a2]).await.dropped, 1);
-        assert!(pipeline.take_failure());
-
-        // The database comes back: the retry releases them all.
-        r.store.fail_restore.store(false, Ordering::SeqCst);
-        stage.retry_restores().await;
-        assert_eq!(r.store.claimed_count(), 0);
-        assert_eq!(pipeline.in_flight_len(), 0);
-        assert_eq!(pipeline.unrestored_len(), 0);
-
-        take(3).await;
-        let (c, _) = stage.claim(3).await.unwrap();
-        let order: Vec<&str> = c.iter().map(|j| j.job.id()).collect();
-        assert_eq!(order, vec!["j1", "j2", "j3"]);
-        assert_eq!(lane.process(c).await.published, 3);
-        assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
-        assert_eq!(pipeline.available(), 10);
-    }
-
-    /// A job released by a failed batch can be claimed AGAIN before the lane
-    /// removes that batch from the in-flight set. The new claim must not
-    /// take the job (nor the group's later jobs) past the lane, and settling
-    /// the old batch must leave the ordering intact.
-    #[tokio::test]
-    async fn a_job_claimed_again_between_its_release_and_its_removal_changes_nothing() {
-        let ids: Vec<(String, Option<String>)> = ["j1", "j2", "j3"]
-            .iter()
-            .map(|i| (i.to_string(), Some("g".to_string())))
-            .collect();
-        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
-        lock(&r.publisher.fail_once).insert("j1".into());
-        let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
-        let mut lane = Lane::new(
-            0,
-            pipeline.clone(),
-            r.store.clone(),
-            dispatcher(r.publisher.clone()),
-            0,
-        );
-        assert_eq!(pipeline.acquire_up_to(2).await, 2);
-        let (first, _) = stage.claim(2).await.unwrap();
-        assert_eq!(first.len(), 2);
-        let (released, proceed) = (Arc::new(Notify::new()), Arc::new(Semaphore::new(0)));
-        *lock(&r.store.restore_gate) = Some((released.clone(), proceed.clone()));
-
-        let lane_task = lane.process(first);
-        let interleave = async {
-            // The batch's claims are released; the lane has not yet removed it.
-            released.notified().await;
-            assert_eq!(pipeline.in_flight_len(), 2);
-            *lock(&r.store.restore_gate) = None;
-            // A claim now sees j1, j2, j3 unclaimed.
-            assert_eq!(pipeline.acquire_up_to(3).await, 3);
-            let (jobs, taken) = stage.claim(3).await.unwrap();
-            assert_eq!(taken, 3);
-            assert!(
-                jobs.is_empty(),
-                "nothing may be submitted while the old batch is unsettled: {jobs:?}"
-            );
-            assert_eq!(r.store.claimed_count(), 0, "all withheld and released");
-            assert_eq!(pipeline.in_flight_len(), 2, "the old entries are untouched");
-            proceed.add_permits(1);
-        };
-        let (report, ()) = tokio::join!(lane_task, interleave);
-        assert_eq!(report.unpublished, 2);
-        assert_eq!(pipeline.in_flight_len(), 0);
-
-        // Afterwards the group is claimed and published in order.
-        assert_eq!(pipeline.acquire_up_to(3).await, 3);
-        let (c, _) = stage.claim(3).await.unwrap();
-        let order: Vec<&str> = c.iter().map(|j| j.job.id()).collect();
-        assert_eq!(order, vec!["j1", "j2", "j3"]);
-        assert_eq!(lane.process(c).await.published, 3);
-        assert_eq!(r.publisher.published_ids(), vec!["j1", "j2", "j3"]);
-    }
-
-    /// At leader start every claim the process does not hold is released;
-    /// one it does hold is not.
-    #[tokio::test]
-    async fn leader_start_releases_the_claims_this_process_does_not_hold() {
-        let ids: Vec<(String, Option<String>)> = ["a", "b", "c"]
-            .iter()
-            .map(|i| (i.to_string(), None))
-            .collect();
-        let r = rig(FakeStore::with_jobs(ids), settings(10, 1, 3));
-        let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
-        let now = Utc::now();
-        for id in ["a", "b"] {
-            r.store.claim_by_hand(id, now);
-        }
-        // b is held by this process.
-        assert!(pipeline.add_in_flight(&claimed("b", None), 1));
-        stage.restore_missing_at_start().await.unwrap();
-        assert!(!r.store.is_claimed("a"), "a stranger's claim is released");
-        assert!(r.store.is_claimed("b"), "this process's own is not");
-    }
-
-    /// `drive` runs the leader-start hook once per spell of leadership, and
-    /// retries it (without polling) when it fails.
-    #[tokio::test(start_paused = true)]
-    async fn the_leader_start_hook_runs_once_per_leadership_and_is_retried() {
-        struct Hooked {
-            hook_calls: AtomicUsize,
-            hook_fails: AtomicUsize,
-            polls: AtomicUsize,
-        }
-        impl PollSource for Hooked {
-            async fn poll(&self, _ctl: &PollCtl) -> Result<PassReport, SchedulerError> {
-                self.polls.fetch_add(1, Ordering::SeqCst);
-                Ok(PassReport::default())
-            }
-            async fn on_start_leading(&self) -> Result<(), SchedulerError> {
-                self.hook_calls.fetch_add(1, Ordering::SeqCst);
-                if self.hook_fails.load(Ordering::SeqCst) > 0 {
-                    self.hook_fails.fetch_sub(1, Ordering::SeqCst);
-                    return Err(SchedulerError::ConfigError("boom".into()));
-                }
-                Ok(())
-            }
-        }
-        let source = Hooked {
-            hook_calls: AtomicUsize::new(0),
-            hook_fails: AtomicUsize::new(1),
-            polls: AtomicUsize::new(0),
-        };
-        let cancel = CancellationToken::new();
-        // Leader for seconds 0-3, not leader 3-6, leader again 6-9.
-        let t0 = TokioInstant::now();
-        let is_leader: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
-            let s = t0.elapsed().as_secs();
-            !(3..6).contains(&s)
-        });
-        let stop = cancel.clone();
-        tokio::spawn(async move {
-            time::sleep(Duration::from_millis(8500)).await;
-            stop.cancel();
-        });
-        drive(&source, TICK, &ctl(is_leader, &cancel)).await;
-        // 1st spell: one failed attempt then one success; 2nd spell: one.
-        assert_eq!(source.hook_calls.load(Ordering::SeqCst), 3);
-        assert!(source.polls.load(Ordering::SeqCst) >= 4);
-    }
-
-    /// The leader's periodic reconcile restores the queue rows that have been
-    /// missing for over a minute, never the ones of jobs this process is
-    /// publishing (its in-flight set), and a non-leader does nothing.
-    #[tokio::test(start_paused = true)]
-    async fn the_periodic_reconcile_restores_old_missing_rows_but_never_the_in_flight_ones() {
-        let ids: Vec<(String, Option<String>)> = ["old", "young", "held"]
-            .iter()
-            .map(|i| (i.to_string(), None))
-            .collect();
-        for leading in [false, true] {
-            let store = FakeStore::with_jobs(ids.clone());
-            let pipeline = Arc::new(Pipeline::new(10));
-            let now = Utc::now();
-            // "No queue row" in the fake: claimed since.
-            store.claim_by_hand("old", now - chrono::Duration::minutes(10));
-            store.claim_by_hand("young", now - chrono::Duration::seconds(10));
-            store.claim_by_hand("held", now - chrono::Duration::minutes(10));
-            assert!(pipeline.add_in_flight(&claimed("held", None), 1));
-            let cancel = CancellationToken::new();
-            let task = tokio::spawn(maintain(
-                store.clone(),
-                pipeline,
-                leader(leading),
-                cancel.clone(),
-            ));
-            time::sleep(Duration::from_secs(61)).await;
-            cancel.cancel();
-            task.await.unwrap();
-            assert_eq!(store.is_claimed("old"), !leading, "old, leading={leading}");
-            assert!(store.is_claimed("young"), "young is not drift yet");
-            assert!(store.is_claimed("held"), "an in-flight job is never queued");
-        }
-    }
-
-    /// The CLAIM WINDOW: between the claim's DELETE and the moment its jobs
-    /// are in the in-flight set a claimed job is PENDING with no queue row and
-    /// not yet in flight. A periodic reconcile that ran now would queue it
-    /// again (a backlog job is far older than the age guard). The claim gate
-    /// keeps the reconcile out of the window; without it the job is re-queued.
-    #[tokio::test]
-    async fn the_periodic_reconcile_cannot_requeue_a_job_in_the_claim_window() {
-        let r = rig(
-            FakeStore::with_jobs(vec![("j1".to_string(), None)]),
-            settings(10, 1, 5),
-        );
-        r.store.reconcile_ignores_age.store(true, Ordering::SeqCst);
-        let (taken_signal, proceed) = (Arc::new(Notify::new()), Arc::new(Semaphore::new(0)));
-        *lock(&r.store.post_claim_gate) = Some((taken_signal.clone(), proceed.clone()));
-        let pipeline = Arc::new(Pipeline::new(10));
-        let stage = ClaimStage::new(r.store.clone(), pipeline.clone());
-        assert_eq!(pipeline.acquire_up_to(5).await, 5);
-
-        let window = async {
-            // j1's queue row is gone (claimed); it is not in flight yet.
-            taken_signal.notified().await;
-            assert!(r.store.is_claimed("j1"));
-            assert_eq!(pipeline.in_flight_len(), 0);
-            let reconcile = reconcile_pass(&*r.store, &pipeline);
-            tokio::pin!(reconcile);
-            let early = time::timeout(Duration::from_millis(100), &mut reconcile).await;
-            assert!(early.is_err(), "the reconcile ran inside the claim window");
-            proceed.add_permits(1);
-            reconcile.await.unwrap()
-        };
-        let (claim, done) = tokio::join!(stage.claim(5), window);
-        let (jobs, _) = claim.unwrap();
-        assert_eq!(jobs.len(), 1, "j1 was claimed");
-        assert_eq!(done.inserted, 0, "{done:?}");
-        assert!(
-            r.store.is_claimed("j1"),
-            "its queue row was not re-inserted"
-        );
     }
 
     /// STARVATION: more than a batch of held rows at the head of the order
@@ -2158,7 +1707,6 @@ mod tests {
             100,
             "the held rows are back"
         );
-        assert_eq!(r.store.claimed_count(), 0, "and restored to the queue");
         let skips: Vec<usize> = lock(&r.store.claims).iter().map(|c| c.skip.len()).collect();
         assert!(
             skips.contains(&1),

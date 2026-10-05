@@ -240,7 +240,7 @@ Router architecture: [../architecture/message-router.md](../architecture/message
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
 
-The poller claims jobs from the dispatch queue table (`msg_dispatch_queue`, one row per PENDING job; the claim deletes the rows it takes and an unpublished job's row is restored) and hands them to dispatcher lanes that publish and mark them QUEUED in bulk; it never waits for a publish and blocks only when `FC_SCHEDULER_BUFFER_CAPACITY` jobs are already claimed and unfinished. A message group always uses one lane. A value that is unset, empty, unparseable or zero keeps the default.
+The poller claims PENDING jobs from `msg_dispatch_jobs` (one plain SELECT; what it is publishing is kept out of the next claim in memory; an unpublished job simply stays PENDING) and hands them to dispatcher lanes that publish and mark them QUEUED in bulk; it never waits for a publish and blocks only when `FC_SCHEDULER_BUFFER_CAPACITY` jobs are already claimed and unfinished. A message group always uses one lane. A value that is unset, empty, unparseable or zero keeps the default.
 
 | Variable | Alias | Default | Description |
 |---|---|---|---|
@@ -255,11 +255,8 @@ The lane batch (100) and the thresholds below are fixed:
 |---|---|
 | A job QUEUED longer than this goes back to PENDING (stale recovery) | 15 minutes |
 | A job PROCESSING longer than this goes back to PENDING | 75 minutes |
-| Queue reconcile sweep (leader only, every 60 s): inserts the queue rows of PENDING jobs that have none and were not updated for 60 s (never the ids the leader is publishing), deletes / refreshes rows whose job is missing, not PENDING or whose version differs; at most 5,000 rows of each kind per pass; any repair is logged at WARN | 60 s / 5,000 |
 | A group found held back (an earlier job FAILED / ERROR or in a retry backoff) is skipped by the claim for this long, so held rows at the head of the order do not starve the groups behind them (at most 10,000 groups remembered) | 5 s |
-| Backlog gauge sampled by the leader | every 15 s |
-
-When an instance becomes leader it first restores every PENDING job that has no queue row (no age guard): a previous leader that died between claiming and publishing leaves such jobs behind.
+| Backlog gauge sampled by the leader (a bounded count: saturates at 100,000) | every 30 s |
 
 The scheduler's own database pool sets `plan_cache_mode = force_custom_plan` and `enable_sort = off` on every connection (no other pool does); see [postgres.md](postgres.md#the-schedulers-own-connection-pool) for why.
 
