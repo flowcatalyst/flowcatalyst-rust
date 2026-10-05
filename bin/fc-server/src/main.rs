@@ -1181,11 +1181,11 @@ async fn spawn_scheduler(
     // The scheduler's own pool: its claim and its lanes' status updates must
     // not compete with API requests for the shared pool's connections. Like
     // every pool opened from these credentials it registers its own refresh.
-    let pg_pool = database::create_pool_sized(database_url, config.db_max_connections())
+    let pg_pool = database::create_scheduler_pool(database_url, config.db_max_connections())
         .await
         .map_err(|e| anyhow::anyhow!("dispatch scheduler PG pool failed: {e}"))?;
     if let Some(provider) = secret_provider {
-        database::start_secret_refresh(
+        database::start_scheduler_secret_refresh(
             provider,
             pg_pool.clone(),
             database_url.to_string(),

@@ -873,7 +873,7 @@ async fn main() -> Result<()> {
         // The scheduler's own pool, so its claim and status updates do not
         // compete with the API for connections.
         let scheduler_pool =
-            database::create_pool_sized(&args.database_url, config.db_max_connections())
+            database::create_scheduler_pool(&args.database_url, config.db_max_connections())
                 .await
                 .map_err(|e| anyhow::anyhow!("dispatch scheduler PG pool failed: {e}"))?;
         let pool_codes = Arc::new(PoolCodeResolver::new(

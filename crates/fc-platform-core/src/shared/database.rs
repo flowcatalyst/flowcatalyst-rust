@@ -64,23 +64,52 @@ fn env_parse<T: FromStr>(key: &str, default: T) -> T {
 /// * `FC_DB_IDLE_TIMEOUT_SECS` (default: 300)
 /// * `FC_DB_MAX_LIFETIME_SECS` (default: 1800)
 pub async fn create_pool(database_url: &str) -> Result<PgPool, sqlx::Error> {
-    create_pool_with(database_url, PoolConfig::from_env()).await
+    create_pool_with(
+        PgConnectOptions::from_str(database_url)?,
+        PoolConfig::from_env(),
+    )
+    .await
 }
 
-/// [`create_pool`] with its own `max_connections` (the other settings still
-/// come from the environment): for a subsystem that must not compete with the
-/// API for connections. The minimum is capped at the maximum.
-pub async fn create_pool_sized(
+/// The scheduler's planner settings. Every connection of the dispatch
+/// scheduler's pool sets them at connect time, and no other pool does.
+///
+/// * `plan_cache_mode = force_custom_plan`: sqlx prepares and caches every
+///   statement per connection, and after a few executions PostgreSQL may switch
+///   a cached statement to a GENERIC plan. A generic plan made while the queue
+///   was empty is a seq scan, and is then reused after a burst (measured:
+///   850 ms per claim at 200,000 queue rows) until the next autoanalyze.
+/// * `enable_sort = off`: the claim's `ORDER BY ... LIMIT` must walk
+///   `idx_dispatch_queue_order`, never sort the queue (without statistics, or
+///   with statistics taken while the queue was empty, the planner prefers a
+///   seq scan plus a sort).
+pub const SCHEDULER_PLANNER_OPTIONS: [(&str, &str); 2] = [
+    ("plan_cache_mode", "force_custom_plan"),
+    ("enable_sort", "off"),
+];
+
+/// `opts` with [`SCHEDULER_PLANNER_OPTIONS`] applied at connect time.
+pub fn with_scheduler_planner_options(opts: PgConnectOptions) -> PgConnectOptions {
+    opts.options(SCHEDULER_PLANNER_OPTIONS)
+}
+
+/// The dispatch scheduler's OWN pool: `max_connections` of its own (the other
+/// settings still come from the environment), so it does not compete with the
+/// API for connections, and [`SCHEDULER_PLANNER_OPTIONS`] on every connection.
+/// The minimum is capped at the maximum. Use it for the scheduler and nothing
+/// else: the platform's pool must keep the server's planner defaults.
+pub async fn create_scheduler_pool(
     database_url: &str,
     max_connections: u32,
 ) -> Result<PgPool, sqlx::Error> {
     let mut cfg = PoolConfig::from_env();
     cfg.max_connections = max_connections.max(1);
     cfg.min_connections = cfg.min_connections.min(cfg.max_connections);
-    create_pool_with(database_url, cfg).await
+    let opts = with_scheduler_planner_options(PgConnectOptions::from_str(database_url)?);
+    create_pool_with(opts, cfg).await
 }
 
-async fn create_pool_with(database_url: &str, cfg: PoolConfig) -> Result<PgPool, sqlx::Error> {
+async fn create_pool_with(opts: PgConnectOptions, cfg: PoolConfig) -> Result<PgPool, sqlx::Error> {
     info!(
         max_connections = cfg.max_connections,
         min_connections = cfg.min_connections,
@@ -93,7 +122,7 @@ async fn create_pool_with(database_url: &str, cfg: PoolConfig) -> Result<PgPool,
         .acquire_timeout(Duration::from_secs(cfg.connect_timeout))
         .idle_timeout(Duration::from_secs(cfg.idle_timeout))
         .max_lifetime(Duration::from_secs(cfg.max_lifetime))
-        .connect(database_url)
+        .connect_with(opts)
         .await?;
 
     info!("SQLx PgPool established");
@@ -336,6 +365,33 @@ pub fn start_secret_refresh(
     initial_url: String,
     interval: Duration,
 ) {
+    start_secret_refresh_with(provider, pg_pool, initial_url, interval, |o| o);
+}
+
+/// [`start_secret_refresh`] for the scheduler's pool: the refreshed connect
+/// options keep [`SCHEDULER_PLANNER_OPTIONS`].
+pub fn start_scheduler_secret_refresh(
+    provider: Arc<dyn SecretProvider>,
+    pg_pool: PgPool,
+    initial_url: String,
+    interval: Duration,
+) {
+    start_secret_refresh_with(
+        provider,
+        pg_pool,
+        initial_url,
+        interval,
+        with_scheduler_planner_options,
+    );
+}
+
+fn start_secret_refresh_with(
+    provider: Arc<dyn SecretProvider>,
+    pg_pool: PgPool,
+    initial_url: String,
+    interval: Duration,
+    tune: fn(PgConnectOptions) -> PgConnectOptions,
+) {
     if interval.is_zero() {
         info!("DB secret refresh disabled (interval=0)");
         return;
@@ -364,7 +420,7 @@ pub fn start_secret_refresh(
                             // will use the new credentials. The dual-password
                             // window on RDS keeps existing connections valid
                             // until they cycle out naturally.
-                            pg_pool.set_connect_options(opts);
+                            pg_pool.set_connect_options(tune(opts));
                             current_url = new_url;
                             info!("Pool connect options updated successfully");
                         }
