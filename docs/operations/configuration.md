@@ -81,7 +81,7 @@ Each role is a flag, with Go's names and truth table (`1/true/yes/on`, `0/false/
 | `FC_STREAM_PROCESSOR_ENABLED` | `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor + fan-out + partition manager |
 | `FC_OUTBOX_ENABLED` | `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the embedded outbox processor (uncommon — outbox usually runs as application sidecar) |
 | `FC_MCP_ENABLED` | — | `false` | Run the read-only MCP server on its own listener ([MCP](#mcp-server-fc-server-with-fc_mcp_enabledtrue)) |
-| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the function host: WASI components and JS bundles ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)) |
+| `FC_FUNCTION_HOST_ENABLED` | — | `false` | Run the function host: WASI components and JS bundles ([function host](#function-host-fc-server-with-fc_function_host_enabledtrue)). Needs the default `function-host` build feature: an `fc-server` built with `--no-default-features` (no wasmtime, no V8) refuses to start with it on |
 
 ---
 

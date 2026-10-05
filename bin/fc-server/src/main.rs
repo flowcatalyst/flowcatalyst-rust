@@ -133,6 +133,10 @@ use tokio::time;
 use tokio_util::sync::CancellationToken;
 
 mod diagnostics;
+#[cfg(feature = "function-host")]
+mod function_host;
+#[cfg(not(feature = "function-host"))]
+#[path = "function_host_disabled.rs"]
 mod function_host;
 mod mcp;
 

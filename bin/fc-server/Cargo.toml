@@ -22,9 +22,11 @@ fc-stream = { path = "../../crates/fc-stream" }
 # startup (`fc_server_outbox_backend`).
 fc-outbox = { path = "../../crates/fc-outbox", features = ["postgres", "mysql", "admin"] }
 fc-mcp = { path = "../../crates/fc-mcp" }
-# The function-host role. `ecr`: ECR registry auth for oci:// artifacts
-# (owner decision #14), as the former fc-fnhost binary had it.
-fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr", "aws-secrets"] }
+# The function-host role, behind the default `function-host` feature: off,
+# the binary carries no wasmtime and refuses FC_FUNCTION_HOST_ENABLED=true.
+# `ecr`: ECR registry auth for oci:// artifacts (owner decision #14), as the
+# former fc-fnhost binary had it.
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr", "aws-secrets"], optional = true }
 # The function host's JS runtime (runtime: js, V8 isolates), behind the
 # default `js` feature: off, the host loads WASI components only and the
 # binary carries no V8.
@@ -77,9 +79,13 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 x509-cert = { version = "0.2", default-features = false, features = ["std"] }
 
 [features]
-default = ["js"]
+default = ["function-host", "js"]
+# The function-host role (fc-fnhost-core, wasmtime). Build without it with
+# `--no-default-features`: a smaller, faster build for nodes that never host
+# functions (the router, the platform).
+function-host = ["dep:fc-fnhost-core"]
 # The function host's JS runtime (fc-fnhost-js, V8 through deno_core).
-js = ["dep:fc-fnhost-js"]
+js = ["function-host", "dep:fc-fnhost-js"]
 # The router role's optional extras (formerly the standalone fc-router's):
 # ALB self-registration, e-mail notifications, the OIDC-flow router UI auth.
 alb = ["fc-router/alb"]
