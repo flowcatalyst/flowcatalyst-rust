@@ -253,9 +253,8 @@ async fn test_concurrent_client_inserts() {
 // ─── Query Performance Under Load ────────────────────────────────────────
 
 /// Test-only: the lifecycle creates every job PENDING, so a fixture that
-/// needs another status moves its jobs there after creating them, and drops
-/// their queue rows as the lifecycle would (a job that is not PENDING has
-/// none). This bypasses the lifecycle on purpose.
+/// needs another status moves its jobs there after creating them. This
+/// bypasses the lifecycle on purpose.
 async fn set_status_for_test(pool: &sqlx::PgPool, ids: &[String], status: &str) {
     sqlx::query("UPDATE msg_dispatch_jobs SET status = $2 WHERE id = ANY($1)")
         .bind(ids)
@@ -263,11 +262,6 @@ async fn set_status_for_test(pool: &sqlx::PgPool, ids: &[String], status: &str) 
         .execute(pool)
         .await
         .expect("set status");
-    sqlx::query("DELETE FROM msg_dispatch_queue WHERE job_id = ANY($1)")
-        .bind(ids)
-        .execute(pool)
-        .await
-        .expect("drop queue rows");
 }
 
 #[tokio::test]

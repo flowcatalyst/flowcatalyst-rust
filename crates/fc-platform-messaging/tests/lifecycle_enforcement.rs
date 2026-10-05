@@ -1,5 +1,6 @@
 //! Enforcement: nothing but the dispatch-job lifecycle writes
-//! `msg_dispatch_jobs` or its queue table `msg_dispatch_queue`.
+//! `msg_dispatch_jobs`, and nothing names the retired queue table
+//! `msg_dispatch_queue` (migration 066).
 //!
 //! Scans the production source of every crate and binary in the workspace
 //! (everything under `crates/*/src` and `bin/*/src`, minus a file's trailing
@@ -29,11 +30,6 @@ const EXCEPTIONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// The queue table's deliberate exceptions, each with its reason.
-const QUEUE_EXCEPTIONS: &[(&str, &str)] = &[(
-    "crates/fc-stream/src/partition_manager.rs",
-    "dropping a msg_dispatch_jobs partition deletes that range's queue rows (no foreign key)",
-)];
 // Not scanned, by construction: migrations (.sql), and `fcdev fresh`, which
 // drops the whole schema and names no table.
 
@@ -155,62 +151,31 @@ fn only_the_lifecycle_writes_msg_dispatch_jobs() {
     );
 }
 
+/// The queue table was retired by migration 066: no production code reads or
+/// writes it (tests and migrations may name it).
 #[test]
-fn only_the_lifecycle_writes_msg_dispatch_queue() {
+fn no_production_code_names_the_retired_queue_table() {
     let root = workspace_root();
-    let mut violations = Vec::new();
-    let mut lifecycle_writes = 0;
     for file in production_sources(&root) {
-        let rel = relative(&root, &file);
-        let hits = writes_to(&fs::read_to_string(&file).unwrap(), "msg_dispatch_queue");
-        if rel == LIFECYCLE {
-            lifecycle_writes = hits.len();
-            continue;
-        }
-        if hits.is_empty() || QUEUE_EXCEPTIONS.iter().any(|(f, _)| *f == rel) {
-            continue;
-        }
-        violations.push(format!("{rel}: {}", hits.join(", ")));
-    }
-    // enter (upsert), leave (two deletes) and create (insert) at least.
-    assert!(
-        lifecycle_writes >= 4,
-        "the scanner found {lifecycle_writes} queue writes in {LIFECYCLE}: it is not detecting them"
-    );
-    assert!(
-        violations.is_empty(),
-        "msg_dispatch_queue is written outside the dispatch-job lifecycle \
-         ({LIFECYCLE}); add a lifecycle operation instead:\n  {}",
-        violations.join("\n  ")
-    );
-}
-
-/// Production code reads the queue of PENDING jobs from `msg_dispatch_queue`
-/// (through the lifecycle's claim, its hold-back lookups and its reconcile
-/// sweep), never by asking `msg_dispatch_jobs` for `status = 'PENDING'`: the
-/// partial indexes that made that cheap are gone (migration 065), and a read
-/// that comes back is a seq scan or a slow plan under load. The lifecycle
-/// itself reads the table for PENDING in its reconcile statements.
-#[test]
-fn nothing_outside_the_lifecycle_reads_pending_jobs_from_the_jobs_table() {
-    let root = workspace_root();
-    let mut violations = Vec::new();
-    for file in production_sources(&root) {
-        let rel = relative(&root, &file);
-        if rel == LIFECYCLE {
+        // The migration runner's probes name the table (to recognise a
+        // database another platform migrated).
+        if relative(&root, &file) == "crates/fc-platform-core/src/shared/database.rs" {
             continue;
         }
         let src = fs::read_to_string(&file).unwrap();
-        for hit in pending_reads_in(&src) {
-            violations.push(format!("{rel}: {hit}"));
-        }
+        let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);
+        // Comments may explain the history; SQL strings may not.
+        let code: String = prod
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains("msg_dispatch_queue"),
+            "{} names msg_dispatch_queue, which migration 066 dropped",
+            relative(&root, &file)
+        );
     }
-    assert!(
-        violations.is_empty(),
-        "msg_dispatch_jobs is read for status = 'PENDING' outside the lifecycle; \
-         read msg_dispatch_queue (a lifecycle operation) instead:\n  {}",
-        violations.join("\n  ")
-    );
 }
 
 /// The three indexes migration 065 dropped are not named by any production
@@ -232,75 +197,6 @@ fn no_production_code_names_a_dropped_dispatch_index() {
                 relative(&root, &file)
             );
         }
-    }
-}
-
-/// Statements in `src` (normalised) that select from `msg_dispatch_jobs` with
-/// `status = 'PENDING'` in the same statement.
-fn pending_reads_in(src: &str) -> Vec<String> {
-    let prod = src.split("#[cfg(test)]").next().unwrap_or(src);
-    let flat = prod
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    let mut hits = Vec::new();
-    let mut from = 0;
-    while let Some(pos) = flat[from..].find("status = 'pending'") {
-        let at = from + pos;
-        from = at + "status = 'pending'".len();
-        // The statement around it: back to the previous quote that opens the
-        // string, forward to the next one.
-        let start = flat[..at].rfind('"').map_or(0, |i| i + 1);
-        let end = flat[from..].find('"').map_or(flat.len(), |i| from + i);
-        let statement = &flat[start..end];
-        let mut rest = statement;
-        while let Some(i) = rest.find("msg_dispatch_jobs") {
-            let after = rest[i + "msg_dispatch_jobs".len()..].chars().next();
-            if !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-                hits.push(statement.chars().take(100).collect::<String>());
-                break;
-            }
-            rest = &rest[i + "msg_dispatch_jobs".len()..];
-        }
-    }
-    hits
-}
-
-#[test]
-fn the_pending_read_detector_detects() {
-    assert_eq!(
-        pending_reads_in(
-            "sqlx::query(\"SELECT 1 FROM msg_dispatch_jobs WHERE status = 'PENDING'\")"
-        )
-        .len(),
-        1
-    );
-    // Other tables, the read table and other statuses are not it.
-    assert!(pending_reads_in("\"SELECT 1 FROM iam_requests WHERE status = 'PENDING'\"").is_empty());
-    assert!(
-        pending_reads_in("\"SELECT 1 FROM msg_dispatch_jobs_read WHERE status = 'PENDING'\"")
-            .is_empty()
-    );
-    assert!(
-        pending_reads_in("\"SELECT 1 FROM msg_dispatch_jobs WHERE status = 'QUEUED'\"").is_empty()
-    );
-    assert!(pending_reads_in(
-        "fn a() {}\n#[cfg(test)]\nmod t { \"FROM msg_dispatch_jobs WHERE status = 'PENDING'\" }"
-    )
-    .is_empty());
-}
-
-#[test]
-fn the_named_queue_exceptions_are_still_real() {
-    let root = workspace_root();
-    for (file, reason) in QUEUE_EXCEPTIONS {
-        let src = fs::read_to_string(root.join(file))
-            .unwrap_or_else(|_| panic!("exception {file} ({reason}) no longer exists"));
-        assert!(
-            !writes_to(&src, "msg_dispatch_queue").is_empty(),
-            "exception {file} ({reason}) no longer writes the queue table: drop it"
-        );
     }
 }
 

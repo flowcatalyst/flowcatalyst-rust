@@ -414,13 +414,13 @@ impl DispatchJobRepository {
         }
     }
 
-    /// The due PENDING jobs, read through the queue table (one row per
-    /// PENDING job), not by scanning the jobs table for the status.
+    /// The due PENDING jobs, by status (`idx_dispatch_jobs_status_group`).
+    /// For tests and tools; the scheduler claims through
+    /// `lifecycle::claim`.
     pub async fn find_pending_for_dispatch(&self, limit: i64) -> Result<Vec<DispatchJob>> {
         let now = Utc::now();
-        let sql = "SELECT j.* FROM msg_dispatch_queue q \
-                   JOIN msg_dispatch_jobs j ON j.id = q.job_id AND j.created_at = q.job_created_at \
-                   WHERE (q.scheduled_for IS NULL OR q.scheduled_for <= $1)";
+        let sql = "SELECT * FROM msg_dispatch_jobs \
+                   WHERE status = 'PENDING' AND (scheduled_for IS NULL OR scheduled_for <= $1)";
         let rows = if limit > 0 {
             sqlx::query_as::<_, DispatchJobRow>(&format!("{sql} LIMIT $2"))
                 .bind(now)

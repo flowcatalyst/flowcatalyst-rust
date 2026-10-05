@@ -765,6 +765,12 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "065_dispatch_queue_reads",
             include_str!("../../../../migrations/065_dispatch_queue_reads.sql"),
         ),
+        // The queue table is retired: the scheduler claims from
+        // msg_dispatch_jobs again and nothing reads or writes it.
+        (
+            "066_drop_dispatch_queue",
+            include_str!("../../../../migrations/066_drop_dispatch_queue.sql"),
+        ),
     ]
 }
 
@@ -1118,14 +1124,20 @@ pub async fn run_migrations_with(
              WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
                AND indexname = 'idx_msg_dispatch_jobs_dirty')",
         ),
-        // 064 creates the table and its index; the index means it ran (the
-        // backfill is in the same migration, and a Go- or Java-migrated
-        // database already has both from its own copy of the DDL).
+        // 064 creates the table and its index; the index means it ran. A
+        // database another platform migrated all the way (Go 068 / Java V23)
+        // has 065's index and no queue table: 064 ran there too, and must not
+        // run again (it would recreate the table 066 retires).
         (
             "064_dispatch_queue",
             "SELECT EXISTS (SELECT 1 FROM pg_indexes \
              WHERE schemaname = 'public' AND tablename = 'msg_dispatch_queue' \
-               AND indexname = 'idx_dispatch_queue_order')",
+               AND indexname = 'idx_dispatch_queue_order') \
+             OR (EXISTS (SELECT 1 FROM pg_indexes \
+                 WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
+                   AND indexname = 'idx_dispatch_jobs_status_group') \
+                 AND NOT EXISTS (SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = 'public' AND table_name = 'msg_dispatch_queue'))",
         ),
         // 065's new index means it ran (Go's 067 and Java's V22 create the
         // same index, so a database they migrated already has it).
@@ -1134,6 +1146,15 @@ pub async fn run_migrations_with(
             "SELECT EXISTS (SELECT 1 FROM pg_indexes \
              WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
                AND indexname = 'idx_dispatch_jobs_status_group')",
+        ),
+        // 066 ran when 065's index exists and the queue table does not.
+        (
+            "066_drop_dispatch_queue",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
+               AND indexname = 'idx_dispatch_jobs_status_group') \
+             AND NOT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'msg_dispatch_queue')",
         ),
     ];
 

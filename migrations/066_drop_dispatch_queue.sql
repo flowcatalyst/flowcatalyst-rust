@@ -1,0 +1,28 @@
+-- Retire msg_dispatch_queue (migrations 064/065). The scheduler claims from
+-- msg_dispatch_jobs again, with an in-memory in-flight exclusion, and nothing
+-- reads or writes the queue table: a small table that swings between empty and
+-- very full is the planner's worst case (statistics say "empty", so every
+-- statement that joins it is planned as a scan), while the big partitioned job
+-- table never is. idx_dispatch_jobs_status_group (065) stays; no partial index
+-- is used by the dispatch path. Identical in every FlowCatalyst implementation
+-- that shares the database (Go 068, Rust 066, Java V23).
+DROP TABLE IF EXISTS msg_dispatch_queue;
+
+-- Rollback: the table and index as 064 created them, without a backfill.
+--   CREATE TABLE IF NOT EXISTS msg_dispatch_queue (
+--       job_id           VARCHAR(13)  PRIMARY KEY,
+--       job_created_at   TIMESTAMPTZ  NOT NULL,
+--       message_group    VARCHAR(200),
+--       sequence         INTEGER      NOT NULL,
+--       scheduled_for    TIMESTAMPTZ,
+--       subscription_id  VARCHAR(17),
+--       dispatch_pool_id VARCHAR(17),
+--       client_id        VARCHAR(17),
+--       mode             VARCHAR(30)  NOT NULL,
+--       queue            VARCHAR(255),
+--       version          TIMESTAMPTZ  NOT NULL,
+--       claimed_at       TIMESTAMPTZ,
+--       enqueued_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+--   );
+--   CREATE INDEX IF NOT EXISTS idx_dispatch_queue_order
+--       ON msg_dispatch_queue (message_group NULLS LAST, sequence, job_created_at, job_id);
