@@ -1,10 +1,12 @@
 //! The two writes an operator makes to `msg_dispatch_jobs` (Go
-//! `Repository.Persist` for a reset or a status flip). The read projection
+//! `Repository.Persist` for a reset or a status flip), each now an explicit
+//! [`lifecycle`] operation. The read projection
 //! follows through `updated_at`, as for every other dispatch-job write.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
+use crate::dispatch_job::lifecycle;
 use fc_platform_core::shared::error::{PlatformError, Result};
 use fc_platform_core::usecase::unit_of_work::HasId;
 use fc_platform_core::usecase::DbTx;
@@ -72,19 +74,7 @@ impl Persist<JobsRequeue> for DispatchJobActionsRepository {
         if r.jobs.is_empty() {
             return Ok(());
         }
-        let ids: Vec<&str> = r.jobs.iter().map(|(id, _)| id.as_str()).collect();
-        let created: Vec<DateTime<Utc>> = r.jobs.iter().map(|(_, c)| *c).collect();
-        sqlx::query(
-            "UPDATE msg_dispatch_jobs j SET status = 'PENDING', scheduled_for = NULL, \
-                 attempt_count = 0, completed_at = NULL, duration_millis = NULL, \
-                 last_error = NULL, queued_at = NULL, updated_at = NOW() \
-             FROM UNNEST($1::text[], $2::timestamptz[]) AS u(id, created_at) \
-             WHERE j.id = u.id AND j.created_at = u.created_at",
-        )
-        .bind(&ids)
-        .bind(&created)
-        .execute(&mut **tx.inner)
-        .await?;
+        lifecycle::requeue(&mut **tx.inner, &r.jobs).await?;
         Ok(())
     }
 
@@ -95,15 +85,27 @@ impl Persist<JobsRequeue> for DispatchJobActionsRepository {
 
 impl Persist<JobStatusFlip> for DispatchJobActionsRepository {
     async fn persist(&self, f: &JobStatusFlip, tx: &mut DbTx<'_>) -> Result<()> {
-        sqlx::query(
-            "UPDATE msg_dispatch_jobs SET status = $3, completed_at = NOW(), updated_at = NOW() \
-             WHERE id = $1 AND created_at = $2",
-        )
-        .bind(&f.id)
-        .bind(f.created_at)
-        .bind(f.status)
-        .execute(&mut **tx.inner)
-        .await?;
+        // The FAILED check is in the statement: a job that is not FAILED
+        // any more (it moved between the use case's read and this write) is
+        // left alone, and the unit of work rolls back rather than record an
+        // event for a change that did not happen.
+        let moved = match f.status {
+            "CANCELLED" => lifecycle::operator_cancel(&mut **tx.inner, &f.id, f.created_at).await?,
+            "COMPLETED" => {
+                lifecycle::operator_complete(&mut **tx.inner, &f.id, f.created_at).await?
+            }
+            other => {
+                return Err(PlatformError::internal(format!(
+                    "a dispatch job is not settled by hand as {other}"
+                )))
+            }
+        };
+        if !moved {
+            return Err(PlatformError::business_rule(
+                "NOT_FAILED",
+                "dispatch job is not FAILED; only a FAILED job can be overridden",
+            ));
+        }
         Ok(())
     }
 

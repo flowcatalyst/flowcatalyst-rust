@@ -16,18 +16,19 @@
 //! happen in one transaction. `FOR UPDATE SKIP LOCKED` on the claim makes
 //! it safe to run multiple stream nodes against the same DB.
 //!
-//! Pure SQL: deliberately does not depend on `fc-platform`. The
-//! subscription set is loaded with a small projection query and cached
-//! locally; dispatch jobs are written via a raw `INSERT ... SELECT FROM
-//! UNNEST(...)` against the table directly.
+//! Deliberately does not depend on `fc-platform`. The subscription set is
+//! loaded with a small projection query and cached locally; dispatch jobs
+//! are written through `fc_common::dispatch_lifecycle`, the one owner of
+//! the table's writes, inside the fan-out transaction.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use fc_common::dispatch_lifecycle::{self as lifecycle, FanOutJob};
 use fc_common::tsid;
-use fc_common::{DispatchMode, DispatchStatus};
+use fc_common::DispatchMode;
 use sqlx::{PgPool, Postgres, Transaction};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -159,7 +160,7 @@ async fn poll_once(
         return Ok(CycleReport { events: 0, jobs: 0 });
     }
 
-    let mut jobs: Vec<NewJobRow> = Vec::new();
+    let mut jobs: Vec<FanOutJob> = Vec::new();
 
     for event in &claimed {
         for sub in subscriptions {
@@ -169,13 +170,13 @@ async fn poll_once(
             if !sub.matches_client(event.client_id.as_deref()) {
                 continue;
             }
-            jobs.push(NewJobRow::build(event, sub));
+            jobs.push(build_job(event, sub));
         }
     }
 
     let job_count = jobs.len();
     if !jobs.is_empty() {
-        insert_dispatch_jobs_tx(&mut tx, &jobs).await?;
+        lifecycle::create_fanned_out(&mut *tx, &jobs).await?;
     }
     tx.commit().await?;
 
@@ -420,83 +421,41 @@ impl SubscriptionCache {
 
 // ── Dispatch job insert ───────────────────────────────────────────────
 
-/// One row to be inserted into `msg_dispatch_jobs`. Carries only the
-/// columns fan-out actually sets — every other column (kind='EVENT',
-/// retry_strategy='exponential', external_id=NULL, etc.) takes the
-/// table default. `protocol` is set explicitly to 'HTTP_WEBHOOK' even
-/// though the column defaults to the same value, to match the TS
-/// fan-out path and keep the transport discriminator visible at the
-/// call site.
-struct NewJobRow {
-    id: String,
-    code: String,
-    source: String,
-    subject: Option<String>,
-    event_id: String,
-    correlation_id: Option<String>,
-    target_url: String,
-    protocol: &'static str,
-    payload: String,
-    data_only: bool,
-    service_account_id: Option<String>,
-    client_id: Option<String>,
-    subscription_id: String,
-    queue: Option<String>,
-    /// The raising subscription's name ([`descriptor_for`]).
-    descriptor: Option<String>,
-    /// The raising event's `context_data`, verbatim; `None` takes `[]`.
-    metadata: Option<serde_json::Value>,
-    mode: &'static str,
-    dispatch_pool_id: Option<String>,
-    message_group: Option<String>,
-    sequence: i32,
-    timeout_seconds: i32,
-    status: &'static str,
-    max_retries: i32,
-    /// `{event.id}:{subscription.id}` — used by downstream consumers to
-    /// dedupe redeliveries of the same fan-out pairing.
-    idempotency_key: String,
-    /// Inherits the source event's created_at so the scheduler's
-    /// `ORDER BY created_at` preserves source order within a message
-    /// group, and so events and their dispatch jobs land in the same
-    /// monthly partition.
-    created_at: DateTime<Utc>,
-}
+// ── Dispatch job build ────────────────────────────────────────────────
 
-impl NewJobRow {
-    fn build(event: &EventClaimRow, sub: &CachedSubscription) -> Self {
-        let payload = serde_json::to_string(&event.data.clone().unwrap_or(serde_json::Value::Null))
-            .unwrap_or_default();
-        Self {
-            // Untyped, 13 characters: `msg_dispatch_jobs.id` is
-            // VARCHAR(13) (Go's fan-out does the same). A typed `djb_` id
-            // overflowed it and failed every fan-out insert.
-            id: tsid::generate_untyped(),
-            code: event.event_type.clone(),
-            source: event.source.clone(),
-            subject: event.subject.clone(),
-            event_id: event.id.clone(),
-            correlation_id: event.correlation_id.clone(),
-            target_url: sub.target.clone(),
-            protocol: "HTTP_WEBHOOK",
-            payload,
-            data_only: sub.data_only,
-            service_account_id: sub.service_account_id.clone(),
-            client_id: event.client_id.clone(),
-            subscription_id: sub.id.clone(),
-            queue: sub.queue.clone(),
-            descriptor: descriptor_for(&sub.name),
-            metadata: event.context_data.clone(),
-            mode: dispatch_mode_str(sub.mode),
-            dispatch_pool_id: sub.dispatch_pool_id.clone(),
-            message_group: event.message_group.clone(),
-            sequence: sub.sequence,
-            timeout_seconds: sub.timeout_seconds,
-            status: DispatchStatus::Pending.as_str(),
-            max_retries: sub.max_retries,
-            idempotency_key: format!("{}:{}", event.id, sub.id),
-            created_at: event.created_at,
-        }
+/// The job `event` raises for `sub`: only the columns fan-out sets (the
+/// rest take the table default). The lifecycle inserts it PENDING.
+fn build_job(event: &EventClaimRow, sub: &CachedSubscription) -> FanOutJob {
+    let payload = serde_json::to_string(&event.data.clone().unwrap_or(serde_json::Value::Null))
+        .unwrap_or_default();
+    FanOutJob {
+        // Untyped, 13 characters: `msg_dispatch_jobs.id` is
+        // VARCHAR(13) (Go's fan-out does the same). A typed `djb_` id
+        // overflowed it and failed every fan-out insert.
+        id: tsid::generate_untyped(),
+        code: event.event_type.clone(),
+        source: event.source.clone(),
+        subject: event.subject.clone(),
+        event_id: event.id.clone(),
+        correlation_id: event.correlation_id.clone(),
+        target_url: sub.target.clone(),
+        protocol: "HTTP_WEBHOOK",
+        payload,
+        data_only: sub.data_only,
+        service_account_id: sub.service_account_id.clone(),
+        client_id: event.client_id.clone(),
+        subscription_id: sub.id.clone(),
+        queue: sub.queue.clone(),
+        descriptor: descriptor_for(&sub.name),
+        metadata: event.context_data.clone(),
+        mode: dispatch_mode_str(sub.mode),
+        dispatch_pool_id: sub.dispatch_pool_id.clone(),
+        message_group: event.message_group.clone(),
+        sequence: sub.sequence,
+        timeout_seconds: sub.timeout_seconds,
+        max_retries: sub.max_retries,
+        idempotency_key: format!("{}:{}", event.id, sub.id),
+        created_at: event.created_at,
     }
 }
 
@@ -521,133 +480,6 @@ fn dispatch_mode_str(m: DispatchMode) -> &'static str {
         DispatchMode::NextOnError => "NEXT_ON_ERROR",
         DispatchMode::BlockOnError => "BLOCK_ON_ERROR",
     }
-}
-
-async fn insert_dispatch_jobs_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    jobs: &[NewJobRow],
-) -> anyhow::Result<()> {
-    if jobs.is_empty() {
-        return Ok(());
-    }
-
-    let mut ids = Vec::with_capacity(jobs.len());
-    let mut codes = Vec::with_capacity(jobs.len());
-    let mut sources = Vec::with_capacity(jobs.len());
-    let mut subjects: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut event_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut correlation_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut target_urls = Vec::with_capacity(jobs.len());
-    let mut protocols = Vec::with_capacity(jobs.len());
-    let mut payloads = Vec::with_capacity(jobs.len());
-    let mut data_onlys = Vec::with_capacity(jobs.len());
-    let mut service_account_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut client_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut subscription_ids = Vec::with_capacity(jobs.len());
-    let mut queues: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut descriptors: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut metadatas: Vec<Option<serde_json::Value>> = Vec::with_capacity(jobs.len());
-    let mut modes = Vec::with_capacity(jobs.len());
-    let mut dispatch_pool_ids: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut message_groups: Vec<Option<String>> = Vec::with_capacity(jobs.len());
-    let mut sequences = Vec::with_capacity(jobs.len());
-    let mut timeout_secs = Vec::with_capacity(jobs.len());
-    let mut statuses = Vec::with_capacity(jobs.len());
-    let mut max_retries_vec = Vec::with_capacity(jobs.len());
-    let mut idempotency_keys = Vec::with_capacity(jobs.len());
-    let mut created_ats = Vec::with_capacity(jobs.len());
-
-    for j in jobs {
-        ids.push(j.id.clone());
-        codes.push(j.code.clone());
-        sources.push(j.source.clone());
-        subjects.push(j.subject.clone());
-        event_ids.push(Some(j.event_id.clone()));
-        correlation_ids.push(j.correlation_id.clone());
-        target_urls.push(j.target_url.clone());
-        protocols.push(j.protocol.to_string());
-        payloads.push(j.payload.clone());
-        data_onlys.push(j.data_only);
-        service_account_ids.push(j.service_account_id.clone());
-        client_ids.push(j.client_id.clone());
-        subscription_ids.push(j.subscription_id.clone());
-        queues.push(j.queue.clone());
-        descriptors.push(j.descriptor.clone());
-        metadatas.push(j.metadata.clone());
-        modes.push(j.mode.to_string());
-        dispatch_pool_ids.push(j.dispatch_pool_id.clone());
-        message_groups.push(j.message_group.clone());
-        sequences.push(j.sequence);
-        timeout_secs.push(j.timeout_seconds);
-        statuses.push(j.status.to_string());
-        max_retries_vec.push(j.max_retries);
-        idempotency_keys.push(j.idempotency_key.clone());
-        created_ats.push(j.created_at);
-    }
-
-    sqlx::query(
-        r#"
-        INSERT INTO msg_dispatch_jobs (
-            id, code, source, subject, event_id, correlation_id,
-            target_url, protocol, payload, data_only, service_account_id, client_id,
-            subscription_id, mode, dispatch_pool_id, message_group,
-            sequence, timeout_seconds, status, max_retries, idempotency_key,
-            created_at, updated_at, queue, descriptor, metadata
-        )
-        SELECT
-            u.id, u.code, u.source, u.subject, u.event_id, u.correlation_id,
-            u.target_url, u.protocol, u.payload, u.data_only, u.service_account_id, u.client_id,
-            u.subscription_id, u.mode, u.dispatch_pool_id, u.message_group,
-            u.sequence, u.timeout_seconds, u.status, u.max_retries, u.idempotency_key,
-            u.created_at, u.created_at, u.queue, u.descriptor,
-            -- Go: COALESCE($23::jsonb, '[]'::jsonb) — an event without
-            -- context data raises a job with no metadata.
-            COALESCE(u.metadata, '[]'::jsonb)
-        FROM UNNEST(
-            $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
-            $5::varchar[], $6::varchar[],
-            $7::varchar[], $8::varchar[], $9::text[], $10::bool[], $11::varchar[], $12::varchar[],
-            $13::varchar[], $14::varchar[], $15::varchar[], $16::varchar[],
-            $17::int[], $18::int[], $19::varchar[], $20::int[], $21::varchar[],
-            $22::timestamptz[], $23::varchar[], $24::varchar[], $25::jsonb[]
-        ) AS u(
-            id, code, source, subject, event_id, correlation_id,
-            target_url, protocol, payload, data_only, service_account_id, client_id,
-            subscription_id, mode, dispatch_pool_id, message_group,
-            sequence, timeout_seconds, status, max_retries, idempotency_key,
-            created_at, queue, descriptor, metadata
-        )
-        "#,
-    )
-    .bind(&ids)
-    .bind(&codes)
-    .bind(&sources)
-    .bind(&subjects)
-    .bind(&event_ids)
-    .bind(&correlation_ids)
-    .bind(&target_urls)
-    .bind(&protocols)
-    .bind(&payloads)
-    .bind(&data_onlys)
-    .bind(&service_account_ids)
-    .bind(&client_ids)
-    .bind(&subscription_ids)
-    .bind(&modes)
-    .bind(&dispatch_pool_ids)
-    .bind(&message_groups)
-    .bind(&sequences)
-    .bind(&timeout_secs)
-    .bind(&statuses)
-    .bind(&max_retries_vec)
-    .bind(&idempotency_keys)
-    .bind(&created_ats)
-    .bind(&queues)
-    .bind(&descriptors)
-    .bind(&metadatas)
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
 }
 
 /// Sleep duration based on cycle yield: 0 if the batch was full (more

@@ -25,6 +25,7 @@ use chrono::Utc;
 use sqlx::PgPool;
 use tracing::{info, warn};
 
+use crate::dispatch_job::lifecycle;
 use crate::scheduler::SchedulerError;
 use tokio::time;
 use tokio::time::Instant;
@@ -59,25 +60,13 @@ impl StaleQueuedJobPoller {
             - chrono::Duration::from_std(self.stale_after)
                 .unwrap_or_else(|_| chrono::Duration::minutes(75));
 
-        let queued = sqlx::query(
-            "UPDATE msg_dispatch_jobs SET status = 'PENDING', queued_at = NULL, updated_at = NOW() \
-             WHERE status = 'QUEUED' AND updated_at < $1",
-        )
-        .bind(cutoff)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
-
-        let processing = sqlx::query(
-            "UPDATE msg_dispatch_jobs SET status = 'PENDING', queued_at = NULL, last_error = $2, \
-                    updated_at = NOW() \
-             WHERE status = 'PROCESSING' AND updated_at < $1",
-        )
-        .bind(cutoff)
-        .bind(STALE_PROCESSING_REASON)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        let queued = lifecycle::recover_stale_queued(&self.pool, cutoff)
+            .await?
+            .len() as u64;
+        let processing =
+            lifecycle::recover_stale_processing(&self.pool, cutoff, STALE_PROCESSING_REASON)
+                .await?
+                .len() as u64;
 
         metrics::counter!("scheduler.stale_jobs.recovered_total").increment(queued + processing);
         if queued + processing > 0 {

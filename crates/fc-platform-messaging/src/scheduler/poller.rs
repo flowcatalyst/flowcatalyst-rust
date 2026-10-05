@@ -45,6 +45,7 @@
 //! held only by a row whose group is literally `default` — Go's quirk,
 //! kept.
 
+use crate::dispatch_job::lifecycle;
 use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -92,21 +93,6 @@ SELECT j.id, j.subscription_id, j.message_group, j.mode, j.dispatch_pool_id, j.c
            AND (h.sequence, h.created_at, h.id) < (j.sequence, j.created_at, j.id))) \
  ORDER BY j.message_group ASC NULLS LAST, j.sequence ASC, j.created_at ASC, j.id ASC \
  LIMIT $1";
-
-/// Marks exactly the published ids QUEUED, on a pooled connection, and only
-/// the row version the claim read. The router can deliver and the callback
-/// can move the job on before this runs; the update must never regress it.
-/// `status = 'PENDING'` covers a job that is past PENDING; `updated_at`
-/// covers one the callback put back to PENDING (a retry, a deferral, a
-/// BLOCK_ON_ERROR hold) in the meantime: every status write on the table
-/// stamps `updated_at`, so such a row is no longer the version claimed and
-/// stays PENDING, to be claimed and published again.
-const MARK_QUEUED_SQL: &str = "\
-UPDATE msg_dispatch_jobs SET status = 'QUEUED', queued_at = NOW(), updated_at = NOW() \
-  FROM UNNEST($1::varchar[], $2::timestamptz[], $3::timestamptz[]) AS t(id, created_at, updated_at) \
- WHERE msg_dispatch_jobs.id = t.id AND msg_dispatch_jobs.created_at = t.created_at \
-   AND msg_dispatch_jobs.status = 'PENDING' \
-   AND msg_dispatch_jobs.updated_at = t.updated_at";
 
 #[derive(Debug, sqlx::FromRow)]
 struct ClaimRow {
@@ -225,17 +211,16 @@ impl JobStore for PgJobStore {
         Ok(jobs)
     }
 
+    /// Marks exactly the published ids QUEUED, on a pooled connection, and
+    /// only the row version the claim read: the router can deliver and the
+    /// callback can move the job on before this runs, and the update must
+    /// never regress it. The status guard covers a job that is past
+    /// PENDING; the `updated_at` version covers one the callback put back
+    /// to PENDING (a retry, a deferral, a hold) in the meantime. The
+    /// statement is the lifecycle's `mark_queued`.
     async fn mark_queued(&self, jobs: &[MarkKey]) -> Result<u64, SchedulerError> {
-        let ids: Vec<&str> = jobs.iter().map(|(id, _, _)| id.as_str()).collect();
-        let created: Vec<DateTime<Utc>> = jobs.iter().map(|(_, at, _)| *at).collect();
-        let updated: Vec<DateTime<Utc>> = jobs.iter().map(|(_, _, at)| *at).collect();
-        let done = sqlx::query(MARK_QUEUED_SQL)
-            .bind(&ids)
-            .bind(&created)
-            .bind(&updated)
-            .execute(&self.pool)
-            .await?;
-        Ok(done.rows_affected())
+        let done = lifecycle::mark_queued(&self.pool, jobs).await?;
+        Ok(done.len() as u64)
     }
 }
 
@@ -725,18 +710,6 @@ mod tests {
         // The in-flight exclusion is a bind that is valid when empty.
         assert!(CLAIM_SQL.contains("j.id <> ALL($3::text[])"));
         assert!(CLAIM_SQL.ends_with("LIMIT $1"));
-    }
-
-    /// The update never regresses a job the callback already moved on.
-    #[test]
-    fn the_queued_update_only_touches_pending_rows() {
-        assert!(MARK_QUEUED_SQL.contains("AND msg_dispatch_jobs.status = 'PENDING'"));
-        // ...and only the row version the claim read: a job the callback put
-        // back to PENDING (reschedule, hold, retry) is not QUEUED.
-        assert!(MARK_QUEUED_SQL.contains("AND msg_dispatch_jobs.updated_at = t.updated_at"));
-        assert!(MARK_QUEUED_SQL.contains("$3::timestamptz[]"));
-        assert!(CLAIM_SQL.contains("j.updated_at"));
-        assert!(MARK_QUEUED_SQL.contains("queued_at = NOW()"));
     }
 
     /// The claim inlines the holding condition under an alias; it must be

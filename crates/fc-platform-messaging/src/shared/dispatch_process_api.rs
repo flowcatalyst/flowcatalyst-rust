@@ -310,7 +310,7 @@ pub async fn process_dispatch(
             {
                 Ok(false) => {}
                 Ok(true) => {
-                    if let Err(e) = repo.reschedule(&job.id, job.created_at, Utc::now()).await {
+                    if let Err(e) = repo.hold(&job.id, job.created_at, Utc::now()).await {
                         error!(job_id = %job_id, error = %e, "dispatch process: blocked-group revert failed");
                         return reply(
                             StatusCode::SERVICE_UNAVAILABLE,
@@ -543,7 +543,7 @@ async fn advance(
     } else if res.deferral {
         // Cooperative back-pressure: later, without spending the budget.
         info!(job_id = %id, retry_after_secs = res.retry_after.as_secs_f64(), reason = %res.err_message, "dispatch deferred");
-        repo.reschedule(id, job.created_at, Utc::now() + to_chrono(res.retry_after))
+        repo.defer(id, job.created_at, Utc::now() + to_chrono(res.retry_after))
             .await
     } else if matches!(res.status, Some(401) | Some(403)) {
         // The subscriber refused the credentials; a retry sends the same

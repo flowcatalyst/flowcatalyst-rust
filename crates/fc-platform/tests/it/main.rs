@@ -25,6 +25,7 @@ mod developer_portal_scope_test;
 mod dispatch_descriptor_test;
 mod dispatch_fan_out_test;
 mod dispatch_ingest_pending_test;
+mod dispatch_lifecycle_test;
 mod dispatch_pool_write_permission_test;
 mod dispatch_process_test;
 mod dispatch_scheduler_test;

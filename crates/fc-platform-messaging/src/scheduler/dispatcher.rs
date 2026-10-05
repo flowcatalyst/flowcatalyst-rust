@@ -4,14 +4,12 @@
 //! batch goes to the publisher in one call, in claim order, and the
 //! publisher reports exactly which ids it did not publish. Each lane
 //! ([`super::lane`]) calls it with the jobs it was handed and marks only the
-//! published ids QUEUED, so nothing needs reverting; [`revert_unpublished`]
-//! is kept for a batch that was marked QUEUED before publishing.
+//! published ids QUEUED, so nothing needs reverting.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use fc_common::{MediationType, Message};
-use sqlx::PgPool;
 use tokio::time;
 use tracing::warn;
 
@@ -145,19 +143,6 @@ impl MessageGroupDispatcher {
         }
         outcome
     }
-}
-
-/// `QUEUED → PENDING` for jobs that never reached the broker. Only rows
-/// still QUEUED: anything `/process` advanced is left alone.
-pub async fn revert_unpublished(pool: &PgPool, ids: &[String]) -> Result<u64, sqlx::Error> {
-    let r = sqlx::query(
-        "UPDATE msg_dispatch_jobs SET status = 'PENDING', queued_at = NULL, updated_at = NOW() \
-         WHERE id = ANY($1) AND status = 'QUEUED'",
-    )
-    .bind(ids)
-    .execute(pool)
-    .await?;
-    Ok(r.rows_affected())
 }
 
 #[cfg(test)]

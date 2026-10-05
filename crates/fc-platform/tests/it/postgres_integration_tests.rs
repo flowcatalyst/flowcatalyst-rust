@@ -10,6 +10,7 @@
 //! Or run all (including ignored):
 //!   cargo test -p fc-platform --test it postgres_integration_tests:: -- --include-ignored
 
+use fc_platform::dispatch_job::lifecycle;
 use fc_platform_core::shared::id::ClientId;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
@@ -1193,14 +1194,13 @@ async fn test_dispatch_job_lifecycle() {
     assert_eq!(found.code, "order:created");
     assert_eq!(found.target_url, "https://example.com/webhook");
 
-    // Update status to Queued. update_status requires `created_at` because
-    // msg_dispatch_jobs is RANGE-partitioned on created_at — including it
-    // in the WHERE lets PG prune to a single partition.
-    let updated = repo
-        .update_status(&job.id, job.created_at, DispatchStatus::Queued)
+    // Mark it QUEUED through the lifecycle (the scheduler's transition):
+    // `created_at` is part of the key because msg_dispatch_jobs is
+    // RANGE-partitioned on it, and `updated_at` is the version read.
+    let moved = lifecycle::mark_queued(&pool, &[(job.id.clone(), job.created_at, job.updated_at)])
         .await
-        .expect("Failed to update status");
-    assert!(updated);
+        .expect("Failed to mark queued");
+    assert_eq!(moved.len(), 1);
 
     let queued = repo.find_by_id(&job.id).await.unwrap().unwrap();
     assert_eq!(queued.status, DispatchStatus::Queued);

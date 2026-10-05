@@ -22,7 +22,6 @@ use aws_sdk_sqs::config::Credentials;
 use aws_sdk_sqs::types::MessageSystemAttributeName;
 use aws_sdk_sqs::types::QueueAttributeName;
 use fc_platform::scheduler::destination::DestinationResolver;
-use fc_platform::scheduler::dispatcher;
 use fc_platform::scheduler::{
     DispatchAuthService, DispatchPublisher, DispatchQueueKind, DispatchQueueSettings,
     DispatchScheduler, PoolCodeResolver, PostgresDispatchPublisher, PublishItem, PublishOutcome,
@@ -33,7 +32,6 @@ use fc_queue::sqs_publisher::AwsSqsBatchApi;
 use fc_queue::sqs_publisher::QueueAddressing;
 use fc_queue::sqs_publisher::SqsFifoPublisher;
 use std::future;
-use std::slice;
 use tokio::time;
 
 const APP_KEY: &str = "scheduler-test-app-key";
@@ -296,11 +294,11 @@ async fn a_claimed_job_is_queued_and_its_message_is_gos() {
     assert_eq!(again.claimed, 0);
 }
 
-/// Only the jobs the publisher refused go back to PENDING; a job
-/// `/process` already advanced is left alone.
+/// Only the jobs the publisher took are marked QUEUED; the refused ones
+/// stay PENDING (nothing is reverted: they were never marked).
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn only_unpublished_jobs_revert_and_only_while_queued() {
+async fn only_published_jobs_are_marked_queued() {
     let (pool, _c) = setup_db().await;
     let (a, b) = (job(1), job(2));
     insert(&pool, &a).await;
@@ -312,17 +310,6 @@ async fn only_unpublished_jobs_revert_and_only_while_queued() {
     assert_eq!((report.claimed, report.published), (2, 1));
     assert_eq!(status(&pool, &a.id).await, "QUEUED");
     assert_eq!(status(&pool, &b.id).await, "PENDING");
-
-    // The revert is guarded on QUEUED.
-    sqlx::query("UPDATE msg_dispatch_jobs SET status = 'PROCESSING' WHERE id = $1")
-        .bind(&a.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    dispatcher::revert_unpublished(&pool, slice::from_ref(&a.id))
-        .await
-        .unwrap();
-    assert_eq!(status(&pool, &a.id).await, "PROCESSING");
 }
 
 /// Publishes, then never returns: a worker killed in the middle of its
