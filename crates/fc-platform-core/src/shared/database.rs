@@ -695,6 +695,12 @@ fn core_migrations() -> &'static [(&'static str, &'static str)] {
             "063_dispatch_job_scheduler_indexes",
             include_str!("../../../../migrations/063_dispatch_job_scheduler_indexes.sql"),
         ),
+        // msg_dispatch_queue: one row per PENDING dispatch job, kept exact by
+        // the dispatch-job lifecycle's writes. Nothing reads it yet.
+        (
+            "064_dispatch_queue",
+            include_str!("../../../../migrations/064_dispatch_queue.sql"),
+        ),
     ]
 }
 
@@ -1047,6 +1053,15 @@ pub async fn run_migrations_with(
             "SELECT EXISTS (SELECT 1 FROM pg_indexes \
              WHERE schemaname = 'public' AND tablename = 'msg_dispatch_jobs' \
                AND indexname = 'idx_msg_dispatch_jobs_dirty')",
+        ),
+        // 064 creates the table and its index; the index means it ran (the
+        // backfill is in the same migration, and a Go- or Java-migrated
+        // database already has both from its own copy of the DDL).
+        (
+            "064_dispatch_queue",
+            "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' AND tablename = 'msg_dispatch_queue' \
+               AND indexname = 'idx_dispatch_queue_order')",
         ),
     ];
 
