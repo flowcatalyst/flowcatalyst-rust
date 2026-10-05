@@ -7,9 +7,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::support::start_db;
 use sqlx::PgPool;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
 use tokio_util::sync::CancellationToken;
 
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
@@ -49,18 +48,7 @@ async fn fanned_out(pool: &PgPool, id: &str) -> bool {
 #[ignore = "requires Docker"]
 async fn fan_out_waits_for_its_first_subscription_load() {
     let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .unwrap();
-    let url = format!(
-        "postgresql://test:test@{}:{}/fc",
-        container.get_host().await.unwrap(),
-        container.get_host_port_ipv4(5432).await.unwrap()
-    );
+    let (_container, url) = start_db("fc").await;
     let pool = create_pool(&url).await.unwrap();
     run_migrations(&pool, MigrationProfile::Production)
         .await

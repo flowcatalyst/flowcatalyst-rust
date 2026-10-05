@@ -2,18 +2,16 @@
 //! from every status, ends where `lifecycle::TRANSITIONS` says (or is
 //! refused and leaves the row untouched), every move stamps `updated_at`,
 //! and `msg_dispatch_queue` holds exactly one up-to-date row per PENDING job
-//! after every operation. Requires Docker (NOT runnable without it; compile-checked
-//! only in environments that have none):
+//! after every operation. Requires Docker, or a local PostgreSQL through
+//! `FC_TEST_PG_BIN` (see `support/db.rs`):
 //!   cargo test -p fc-platform --test it dispatch_lifecycle_test:: -- --ignored
 
 use std::collections::HashMap;
 use std::time::Duration as StdDuration;
 
+use crate::support::{start_db, TestDb};
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
-use testcontainers_modules::postgres::Postgres;
 
 use fc_platform::dispatch_job::lifecycle::{self, Transition, TRANSITIONS};
 use fc_platform::dispatch_job::DispatchStatus;
@@ -31,19 +29,9 @@ const STATUSES: [&str; 7] = [
     "EXPIRED",
 ];
 
-async fn setup_db() -> (PgPool, ContainerAsync<Postgres>) {
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .expect("start postgres");
-    let host = container.get_host().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let pool = create_pool(&format!("postgresql://test:test@{host}:{port}/fc"))
-        .await
-        .expect("connect");
+async fn setup_db() -> (PgPool, TestDb) {
+    let (container, url) = start_db("fc").await;
+    let pool = create_pool(&url).await.expect("connect");
     run_migrations(&pool, MigrationProfile::Production)
         .await
         .expect("migrate");

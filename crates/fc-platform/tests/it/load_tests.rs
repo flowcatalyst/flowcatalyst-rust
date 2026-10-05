@@ -11,8 +11,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
+use crate::support::{start_db, TestDb};
 
 use fc_platform::dispatch_job::signing_guard::SigningGuard;
 use fc_platform::permissions;
@@ -23,22 +22,8 @@ use fc_platform::{
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
-async fn setup_test_db() -> (sqlx::PgPool, testcontainers::ContainerAsync<Postgres>) {
-    let container = Postgres::default()
-        .with_db_name("flowcatalyst_test")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .expect("Failed to start PostgreSQL container");
-
-    let host = container.get_host().await.expect("Failed to get host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("Failed to get port");
-
-    let database_url = format!("postgresql://test:test@{}:{}/flowcatalyst_test", host, port);
+async fn setup_test_db() -> (sqlx::PgPool, TestDb) {
+    let (container, database_url) = start_db("flowcatalyst_test").await;
 
     let pool = create_pool(&database_url)
         .await

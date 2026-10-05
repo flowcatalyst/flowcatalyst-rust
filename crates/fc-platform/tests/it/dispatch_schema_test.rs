@@ -2,26 +2,14 @@
 //! the job's own queue priority and an attempt's request summary; 057 the
 //! descriptor and the read projection's metadata. Requires Docker.
 
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
+use crate::support::start_db;
 
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn migration_039_adds_gos_columns_and_is_recognised_when_already_applied() {
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .unwrap();
-    let url = format!(
-        "postgresql://test:test@{}:{}/fc",
-        container.get_host().await.unwrap(),
-        container.get_host_port_ipv4(5432).await.unwrap()
-    );
+    let (_container, url) = start_db("fc").await;
     let pool = create_pool(&url).await.unwrap();
     run_migrations(&pool, MigrationProfile::Production)
         .await
@@ -82,18 +70,7 @@ type ColumnShape = (String, String, String, Option<i32>, String, Option<String>)
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn migration_057_adds_gos_descriptor_and_read_metadata() {
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .unwrap();
-    let url = format!(
-        "postgresql://test:test@{}:{}/fc",
-        container.get_host().await.unwrap(),
-        container.get_host_port_ipv4(5432).await.unwrap()
-    );
+    let (_container, url) = start_db("fc").await;
     let pool = create_pool(&url).await.unwrap();
     run_migrations(&pool, MigrationProfile::Production)
         .await

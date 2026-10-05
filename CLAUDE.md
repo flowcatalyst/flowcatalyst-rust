@@ -403,6 +403,29 @@ change process-wide state — fc-platform's `route_table_snapshot_test` and
 `function_host_e2e_test`, fc-router's `log_correlation_test`, the
 fc-fnhost logging tests — stay their own binaries).
 
+The database tests are `#[ignore = "requires Docker"]` and start a PostgreSQL
+container each. Without Docker, point the harness (`tests/it/support/db.rs`)
+at a local PostgreSQL and run them with `--include-ignored`:
+
+- `FC_TEST_PG_BIN=<dir>`: a PostgreSQL `bin` directory holding `initdb` and
+  `postgres` (15+). The harness starts one private cluster per test process
+  on a free loopback port, gives each test its own database on it, and stops
+  and deletes the cluster when the process ends. The Go repo's embedded
+  Postgres archive works: `mkdir -p $DIR && tar -xJf
+  ~/.embedded-postgres-go/embedded-postgres-binaries-*.txz -C $DIR`, then
+  `FC_TEST_PG_BIN=$DIR/bin`.
+- `FC_TEST_DATABASE_URL=postgresql://user:pass@host:port/postgres`: an
+  already running server (the user must be able to `CREATE DATABASE`); each
+  test gets and drops its own database.
+
+`FC_TEST_PG_BIN=$DIR/bin cargo test -p fc-platform --test it
+dispatch_lifecycle_test:: -- --include-ignored`. Test files go through
+`support::start_db` (the dispatch suites and `TestApp` do; the rest still use
+testcontainers directly). A test that starts anything else in Docker (the
+SQS publisher test's LocalStack) still needs Docker. macOS allows 32 SysV
+shared-memory segments for the whole machine, one per running postgres: do
+not start a cluster per test.
+
 Binaries and tests build a `PlatformContext` and call
 `fc_platform::router::build(&ctx)`. Guardrails:
 `crates/fc-platform/tests/route_table_snapshot_test.rs` pins every route (methods, auth, limiter,

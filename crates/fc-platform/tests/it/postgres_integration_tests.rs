@@ -10,10 +10,9 @@
 //! Or run all (including ignored):
 //!   cargo test -p fc-platform --test it postgres_integration_tests:: -- --include-ignored
 
+use crate::support::{start_db, TestDb};
 use fc_platform::dispatch_job::lifecycle;
 use fc_platform_core::shared::id::ClientId;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
 use fc_platform::domain::{Principal, UserScope};
@@ -44,22 +43,8 @@ use std::time::Duration;
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
 /// Start a PostgreSQL testcontainer and return the connection pool.
-async fn setup_test_db() -> (sqlx::PgPool, testcontainers::ContainerAsync<Postgres>) {
-    let container = Postgres::default()
-        .with_db_name("flowcatalyst_test")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .expect("Failed to start PostgreSQL container");
-
-    let host = container.get_host().await.expect("Failed to get host");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("Failed to get port");
-
-    let database_url = format!("postgresql://test:test@{}:{}/flowcatalyst_test", host, port);
+async fn setup_test_db() -> (sqlx::PgPool, TestDb) {
+    let (container, database_url) = start_db("flowcatalyst_test").await;
 
     let pool = create_pool(&database_url)
         .await

@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::support::{start_db, TestDb};
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -19,9 +20,6 @@ use fc_common::netguard;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
-use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
 use axum::routing;
@@ -106,7 +104,7 @@ struct Fixture {
     auth: DispatchAuthService,
     subscriber: Arc<Subscriber>,
     target: String,
-    _container: ContainerAsync<Postgres>,
+    _container: TestDb,
 }
 
 async fn fixture() -> Fixture {
@@ -114,18 +112,8 @@ async fn fixture() -> Fixture {
 }
 
 async fn fixture_with_policy(policy: &'static netguard::Policy) -> Fixture {
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .expect("start postgres");
-    let host = container.get_host().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let pool = create_pool(&format!("postgresql://test:test@{host}:{port}/fc"))
-        .await
-        .unwrap();
+    let (container, url) = start_db("fc").await;
+    let pool = create_pool(&url).await.unwrap();
     run_migrations(&pool, MigrationProfile::Production)
         .await
         .unwrap();

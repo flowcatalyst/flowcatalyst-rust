@@ -10,13 +10,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::support::{start_db, TestDb};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, ImageExt};
+use testcontainers::ImageExt;
 use testcontainers_modules::localstack::LocalStack;
-use testcontainers_modules::postgres::Postgres;
 
 use aws_sdk_sqs::config::Credentials;
 use aws_sdk_sqs::types::MessageSystemAttributeName;
@@ -37,19 +37,9 @@ use tokio::time;
 const APP_KEY: &str = "scheduler-test-app-key";
 const ENDPOINT: &str = "http://fc-platform:8080/api/dispatch/process";
 
-async fn setup_db() -> (PgPool, ContainerAsync<Postgres>) {
-    let container = Postgres::default()
-        .with_db_name("fc")
-        .with_user("test")
-        .with_password("test")
-        .start()
-        .await
-        .expect("start postgres");
-    let host = container.get_host().await.unwrap();
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let pool = create_pool(&format!("postgresql://test:test@{host}:{port}/fc"))
-        .await
-        .expect("connect");
+async fn setup_db() -> (PgPool, TestDb) {
+    let (container, url) = start_db("fc").await;
+    let pool = create_pool(&url).await.expect("connect");
     run_migrations(&pool, MigrationProfile::Production)
         .await
         .expect("migrate");

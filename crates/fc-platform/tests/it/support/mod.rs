@@ -1,6 +1,7 @@
 //! Shared test harness for fc-platform integration tests.
 //!
-//! `TestApp::setup()` spins up a PostgreSQL testcontainer, runs migrations,
+//! `TestApp::setup()` starts a PostgreSQL (a Docker container, or a local one
+//! when `FC_TEST_PG_BIN` / `FC_TEST_DATABASE_URL` is set: see [`db`]), runs migrations,
 //! builds the full production router via `fc_platform::router::build`, and
 //! exposes helpers for:
 //!   - generating auth tokens (anchor / partner / service account)
@@ -13,7 +14,10 @@
 
 #![allow(dead_code)] // helpers are used selectively across test files
 
+pub mod db;
 pub mod sources;
+
+pub use db::{start_db, TestDb};
 
 use fc_platform_core::shared::id::ClientId;
 use std::sync::Arc;
@@ -26,9 +30,6 @@ use axum::{
 use http_body_util::BodyExt;
 use serde::Serialize;
 use serde_json::Value;
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ContainerAsync;
-use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
@@ -72,7 +73,7 @@ pub struct TestApp {
     pub auth_service: Arc<AuthService>,
     pub repos: Repositories,
     pub unit_of_work: Arc<PgUnitOfWork>,
-    _container: ContainerAsync<Postgres>,
+    _container: TestDb,
 }
 
 impl TestApp {
@@ -87,17 +88,7 @@ impl TestApp {
     pub async fn setup_with_rate_limit_store(
         store: impl FnOnce(&sqlx::PgPool) -> Arc<dyn RateLimitStore>,
     ) -> Self {
-        let container = Postgres::default()
-            .with_db_name("flowcatalyst_test")
-            .with_user("test")
-            .with_password("test")
-            .start()
-            .await
-            .expect("failed to start Postgres container");
-
-        let host = container.get_host().await.expect("host");
-        let port = container.get_host_port_ipv4(5432).await.expect("port");
-        let database_url = format!("postgresql://test:test@{}:{}/flowcatalyst_test", host, port);
+        let (container, database_url) = start_db("flowcatalyst_test").await;
 
         let pool = create_pool(&database_url).await.expect("pool");
         run_migrations(&pool, MigrationProfile::Production)
