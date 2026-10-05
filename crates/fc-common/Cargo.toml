@@ -27,6 +27,9 @@ opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry-http = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+# The dispatch-job lifecycle's SQL and refusal counter (feature `dispatch-lifecycle`).
+sqlx = { workspace = true, features = ["postgres"], optional = true }
+metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
@@ -37,6 +40,10 @@ libc = { workspace = true }
 
 [features]
 default = []
+# The dispatch-job lifecycle (`dispatch_lifecycle`): the one owner of
+# `msg_dispatch_jobs.status`. Lives here, not in the messaging crate, because
+# fc-stream's fan-out writes jobs too and cannot depend on that crate.
+dispatch-lifecycle = ["dep:sqlx", "dep:metrics"]
 # Task dumps (`Handle::dump`). Also needs RUSTFLAGS="--cfg tokio_unstable";
 # the production image builds with both (Dockerfile, FC_TASKDUMP).
 taskdump = ["tokio/taskdump"]

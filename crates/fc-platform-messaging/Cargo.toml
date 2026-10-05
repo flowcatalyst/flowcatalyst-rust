@@ -9,7 +9,7 @@ description = "FlowCatalyst Platform - messaging: event types, events, subscript
 # The kernel. IAM lookups go through `fc_platform_core::directory`
 # (the assembly injects fc-platform-iam's implementations).
 fc-platform-core = { path = "../fc-platform-core" }
-fc-common = { path = "../fc-common", features = ["guarded-http"] }
+fc-common = { path = "../fc-common", features = ["guarded-http", "dispatch-lifecycle"] }
 fc-queue = { path = "../fc-queue", features = ["sqs", "postgres"] }
 
 # Async runtime
